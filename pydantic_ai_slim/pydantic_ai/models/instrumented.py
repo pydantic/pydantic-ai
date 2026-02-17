@@ -92,7 +92,7 @@ class InstrumentationSettings:
     event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
     include_content: bool = True
-    version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION
+    version: Literal[1, 2, 3, 4] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = False
 
     def __init__(
@@ -102,7 +102,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
-        version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION,
+        version: Literal[1, 2, 3, 4] = DEFAULT_INSTRUMENTATION_VERSION,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
         logger_provider: LoggerProvider | None = None,
         use_aggregated_usage_attribute_names: bool = False,
@@ -127,6 +127,11 @@ class InstrumentationSettings:
                     - `gen_ai.system_instructions` for instructions passed to the agent.
                     - `gen_ai.input.messages` and `gen_ai.output.messages` on model request spans.
                     - `pydantic_ai.all_messages` on agent run spans.
+                Version 3 is the same as version 2, with additional support for thinking tokens.
+                Version 4 is the same as version 3, with GenAI semantic conventions for multimodal content:
+                    URL-based media uses type='uri' with uri and mime_type fields (and modality for image/audio/video).
+                    Inline binary content uses type='blob' with mime_type and content fields (and modality for image/audio/video).
+                    https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
             event_mode: The mode for emitting events in version 1.
                 If `'attributes'`, events are attached to the span as attributes.
                 If `'logs'`, events are emitted as OpenTelemetry log-based events.

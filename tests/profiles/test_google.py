@@ -10,10 +10,11 @@ from __future__ import annotations as _annotations
 
 from typing import Literal
 
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
+
+from .._inline_snapshot import snapshot
 
 # =============================================================================
 # Transformer Tests - const to enum conversion with type inference
