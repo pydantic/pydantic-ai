@@ -44,7 +44,7 @@ agent = Agent(model)
 
 ## Thinking mode
 
-Z.AI's `glm-4.7` model supports thinking/reasoning mode, where the model produces reasoning content before the final response. You can enable this via `ZaiModelSettings`:
+Z.AI's `glm-5`, `glm-4.7`, and `glm-4.6` (hybrid thinking) models support thinking/reasoning mode, where the model produces reasoning content before the final response. You can enable this via `ZaiModelSettings`:
 
 ```python
 from pydantic_ai import Agent
