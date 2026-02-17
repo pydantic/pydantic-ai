@@ -96,7 +96,18 @@ def _put_file(container: Container, path: str, data: bytes) -> None:
 
 
 class DockerSandboxProcess(ExecutionProcess):
-    """Interactive process inside a Docker container using exec with socket I/O."""
+    """Interactive process inside a Docker container using exec with socket I/O.
+
+    Docker's exec socket uses a multiplexed stream protocol where stdout and
+    stderr frames are interleaved with 8-byte headers indicating the stream
+    type.  This class properly separates the two streams so that ``recv()``
+    returns only stdout data and ``recv_stderr()`` returns only stderr data.
+    When one stream is requested but the other arrives first, the unexpected
+    frame is buffered for the next call to the appropriate method.
+    """
+
+    _STDOUT = 1
+    _STDERR = 2
 
     def __init__(self, container: Container, command: str, work_dir: str, env: dict[str, str] | None = None) -> None:
         self._container = container
@@ -106,6 +117,9 @@ class DockerSandboxProcess(ExecutionProcess):
         self._exec_id: str | None = None
         self._socket: Any = None
         self._returncode: int | None = None
+        self._stdout_buffer: list[bytes] = []
+        self._stderr_buffer: list[bytes] = []
+        self._eof = False
 
     async def _start(self) -> None:
         """Start the exec and open the socket (called from __aenter__)."""
@@ -141,44 +155,70 @@ class DockerSandboxProcess(ExecutionProcess):
         await anyio.to_thread.run_sync(self._socket.sendall, data)
 
     async def recv(self, timeout: float | None = None) -> bytes:
+        if self._stdout_buffer:
+            return self._stdout_buffer.pop(0)
         if timeout is not None:
             with anyio.fail_after(timeout):
-                return await anyio.to_thread.run_sync(self._read_chunk, abandon_on_cancel=True)
-        return await anyio.to_thread.run_sync(self._read_chunk)
+                return await self._recv_stream(self._STDOUT)
+        return await self._recv_stream(self._STDOUT)
 
-    def _read_chunk(self) -> bytes:
-        """Read a chunk from the Docker multiplexed stream.
+    async def recv_stderr(self, timeout: float | None = None) -> bytes:
+        if self._stderr_buffer:
+            return self._stderr_buffer.pop(0)
+        if timeout is not None:
+            with anyio.fail_after(timeout):
+                return await self._recv_stream(self._STDERR)
+        return await self._recv_stream(self._STDERR)
+
+    async def _recv_stream(self, wanted: int) -> bytes:
+        """Read frames until one for the wanted stream type arrives."""
+        while True:
+            stream_type, data = await anyio.to_thread.run_sync(self._read_frame)
+            if not data:
+                return b''
+            if stream_type == wanted:
+                return data
+            # Buffer the frame for the other stream
+            if stream_type == self._STDOUT:
+                self._stdout_buffer.append(data)
+            else:
+                self._stderr_buffer.append(data)
+
+    def _read_frame(self) -> tuple[int, bytes]:
+        """Read one frame from the Docker multiplexed stream.
 
         Docker exec socket uses a multiplexed protocol:
         - 8 byte header: [stream_type(1), 0, 0, 0, size(4)]
-        - followed by `size` bytes of data
+        - followed by ``size`` bytes of data
+
+        Returns:
+            A ``(stream_type, data)`` tuple.  ``stream_type`` is 1 for stdout
+            and 2 for stderr.  Returns ``(0, b'')`` on EOF.
         """
+        if self._eof:
+            return 0, b''
+
         header = b''
         while len(header) < 8:
             chunk = self._socket.recv(8 - len(header))
             if not chunk:
-                return b''
+                self._eof = True
+                return 0, b''
             header += chunk
 
-        # Parse header: stream type (1=stdout, 2=stderr), then 3 padding bytes, then 4-byte big-endian size
-        _stream_type = header[0]
+        stream_type = header[0]
         size = struct.unpack('>I', header[4:8])[0]
         if size == 0:
-            return b''
+            return stream_type, b''
 
         data = b''
         while len(data) < size:
             chunk = self._socket.recv(size - len(data))
             if not chunk:
+                self._eof = True
                 break
             data += chunk
-        return data
-
-    async def recv_stderr(self, timeout: float | None = None) -> bytes:
-        # Docker multiplexed stream interleaves stdout/stderr;
-        # separating them requires tracking stream_type in _read_chunk.
-        # For now, recv() returns both mixed together.
-        return await self.recv(timeout=timeout)
+        return stream_type, data
 
     @property
     def returncode(self) -> int | None:
@@ -249,7 +289,14 @@ class DockerSandbox(ExecutionEnvironment):
         volumes: dict[str, dict[str, str]] | None = None,
         memory_limit: str | None = None,
         cpu_limit: float | None = None,
+        pids_limit: int | None = None,
         network_disabled: bool = False,
+        read_only: bool = False,
+        cap_drop: Sequence[str] | None = None,
+        security_opt: Sequence[str] | None = None,
+        user: str | None = None,
+        tmpfs: dict[str, str] | None = None,
+        init: bool = False,
         cache_built_image: bool = True,
     ) -> None:
         """Create a Docker sandbox.
@@ -264,7 +311,18 @@ class DockerSandbox(ExecutionEnvironment):
             volumes: Volume mounts (Docker format).
             memory_limit: Memory limit (e.g. '512m', '1g').
             cpu_limit: CPU limit (e.g. 1.0 for one CPU).
+            pids_limit: Maximum number of PIDs in the container (e.g. 256).
+                Prevents fork bombs.
             network_disabled: Whether to disable network access.
+            read_only: Whether to mount the root filesystem as read-only.
+                Use with ``tmpfs`` to provide writable scratch space.
+            cap_drop: Linux capabilities to drop (e.g. ``['ALL']``).
+            security_opt: Security options (e.g. ``['no-new-privileges']``).
+            user: User to run as inside the container (e.g. ``'nobody'``).
+            tmpfs: tmpfs mounts as ``{path: options}``
+                (e.g. ``{'/tmp': 'noexec,nosuid,size=64m'}``).
+            init: Whether to use ``--init`` to run an init process as PID 1.
+                Ensures proper signal handling and zombie reaping.
             cache_built_image: Whether to cache custom-built images.
         """
         self._image = image
@@ -276,7 +334,14 @@ class DockerSandbox(ExecutionEnvironment):
         self._volumes = volumes
         self._memory_limit = memory_limit
         self._cpu_limit = cpu_limit
+        self._pids_limit = pids_limit
         self._network_disabled = network_disabled
+        self._read_only = read_only
+        self._cap_drop = list(cap_drop) if cap_drop else None
+        self._security_opt = list(security_opt) if security_opt else None
+        self._user = user
+        self._tmpfs = tmpfs
+        self._init = init
         self._cache_built_image = cache_built_image
 
         self._client: docker.DockerClient | None = None
@@ -306,8 +371,22 @@ class DockerSandbox(ExecutionEnvironment):
             kwargs['mem_limit'] = self._memory_limit
         if self._cpu_limit:
             kwargs['nano_cpus'] = int(self._cpu_limit * 1e9)
+        if self._pids_limit is not None:
+            kwargs['pids_limit'] = self._pids_limit
         if self._network_disabled:
             kwargs['network_disabled'] = True
+        if self._read_only:
+            kwargs['read_only'] = True
+        if self._cap_drop:
+            kwargs['cap_drop'] = self._cap_drop
+        if self._security_opt:
+            kwargs['security_opt'] = self._security_opt
+        if self._user:
+            kwargs['user'] = self._user
+        if self._tmpfs:
+            kwargs['tmpfs'] = self._tmpfs
+        if self._init:
+            kwargs['init'] = True
 
         self._container = cast(Container, self._client.containers.run(**kwargs))
 

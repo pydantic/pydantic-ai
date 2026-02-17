@@ -87,6 +87,28 @@ sandbox = DockerSandbox(
 
 Built images are cached by default (keyed on the image, packages, and setup commands) so subsequent starts are fast.
 
+For running untrusted code, you can harden the container with Linux security options:
+
+```python {title="environments_docker_hardened.py" test="skip"}
+from pydantic_ai.environments.docker import DockerSandbox
+
+sandbox = DockerSandbox(
+    image='python:3.12-slim',
+    network_disabled=True,
+    read_only=True,
+    cap_drop=['ALL'],
+    security_opt=['no-new-privileges'],
+    user='nobody',
+    pids_limit=256,
+    tmpfs={'/tmp': 'noexec,nosuid,size=64m', '/workspace': 'size=128m'},
+    init=True,
+    memory_limit='512m',
+    cpu_limit=1.0,
+)
+```
+
+This drops all Linux capabilities, prevents privilege escalation, runs as an unprivileged user, limits the number of processes, and makes the root filesystem read-only (with writable tmpfs mounts for scratch space and the working directory).
+
 ### E2BSandbox
 
 [`E2BSandbox`][pydantic_ai.environments.e2b.E2BSandbox] runs commands in a cloud-hosted micro-VM via [E2B](https://e2b.dev). It provides full Linux isolation with no local Docker required.

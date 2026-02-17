@@ -1242,6 +1242,20 @@ def test_docker_sandbox_instantiation():
     )
     assert isinstance(sandbox_with_opts, DockerSandbox)
 
+    # Verify security hardening parameters are accepted
+    sandbox_hardened = DockerSandbox(
+        image='python:3.12-slim',
+        network_disabled=True,
+        read_only=True,
+        cap_drop=['ALL'],
+        security_opt=['no-new-privileges'],
+        user='nobody',
+        pids_limit=256,
+        tmpfs={'/tmp': 'noexec,nosuid,size=64m'},
+        init=True,
+    )
+    assert isinstance(sandbox_hardened, DockerSandbox)
+
 
 def test_e2b_sandbox_instantiation():
     """E2BSandbox can be constructed without connecting to E2B."""
