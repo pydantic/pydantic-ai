@@ -66,6 +66,8 @@ with try_import() as imports_successful:
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
+        BetaBashCodeExecutionResultBlock,
+        BetaBashCodeExecutionToolResultBlock,
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
         BetaContentBlock,
@@ -90,6 +92,8 @@ with try_import() as imports_successful:
         BetaServerToolUseBlock,
         BetaTextBlock,
         BetaTextDelta,
+        BetaTextEditorCodeExecutionToolResultBlock,
+        BetaTextEditorCodeExecutionViewResultBlock,
         BetaToolUseBlock,
         BetaUsage,
         BetaWebSearchResultBlock,
@@ -7300,6 +7304,241 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     agent2 = Agent(m)
     result2 = await agent2.run('What was the code execution result?', message_history=result.all_messages())
     assert result2.output == 'The code execution returned the result: 4'
+
+
+async def test_anthropic_bash_code_execution_tool_result(env: TestEnv, allow_model_requests: None):
+    """Test handling of bash_code_execution tool result blocks."""
+    # Create the mock response with bash_code_execution server tool blocks
+    content: list[BetaContentBlock] = []
+    content.append(BetaTextBlock(text='Let me run a bash command.', type='text'))
+    content.append(
+        BetaServerToolUseBlock(
+            id='server_tool_789',
+            name='bash_code_execution',
+            input={'command': 'echo hello'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        )
+    )
+    content.append(
+        BetaBashCodeExecutionToolResultBlock(
+            tool_use_id='server_tool_789',
+            type='bash_code_execution_tool_result',
+            content=BetaBashCodeExecutionResultBlock(
+                content=[],
+                return_code=0,
+                stderr='',
+                stdout='hello\n',
+                type='bash_code_execution_result',
+            ),
+        ),
+    )
+    content.append(BetaTextBlock(text='The bash command printed hello.', type='text'))
+    first_response = completion_message(
+        content,
+        BetaUsage(input_tokens=10, output_tokens=20),
+    )
+
+    mock_client = MockAnthropic.create_mock([first_response])
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('Run echo hello')
+
+    # Verify we have the correct tool parts in the history
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    assert len(server_tool_calls) == 1
+    assert len(server_tool_returns) == 1
+    # bash_code_execution preserves its original tool_name for message history round-trip
+    assert server_tool_calls[0].tool_name == 'bash_code_execution'
+    assert server_tool_returns[0].tool_name == 'bash_code_execution'
+    assert server_tool_returns[0].content == {
+        'content': [],
+        'return_code': 0,
+        'stderr': '',
+        'stdout': 'hello\n',
+        'type': 'bash_code_execution_result',
+    }
+
+
+async def test_anthropic_text_editor_code_execution_tool_result(env: TestEnv, allow_model_requests: None):
+    """Test handling of text_editor_code_execution tool result blocks."""
+    # Create the mock response with text_editor_code_execution server tool blocks
+    content: list[BetaContentBlock] = []
+    content.append(BetaTextBlock(text='Let me view a file.', type='text'))
+    content.append(
+        BetaServerToolUseBlock(
+            id='server_tool_abc',
+            name='text_editor_code_execution',
+            input={'command': 'view', 'path': '/tmp/test.txt'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        )
+    )
+    content.append(
+        BetaTextEditorCodeExecutionToolResultBlock(
+            tool_use_id='server_tool_abc',
+            type='text_editor_code_execution_tool_result',
+            content=BetaTextEditorCodeExecutionViewResultBlock(
+                content='Hello, World!',
+                file_type='text',
+                num_lines=1,
+                start_line=1,
+                total_lines=1,
+                type='text_editor_code_execution_view_result',
+            ),
+        ),
+    )
+    content.append(BetaTextBlock(text='The file contains "Hello, World!".', type='text'))
+    first_response = completion_message(
+        content,
+        BetaUsage(input_tokens=10, output_tokens=20),
+    )
+
+    mock_client = MockAnthropic.create_mock([first_response])
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('View the file /tmp/test.txt')
+
+    # Verify we have the correct tool parts in the history
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    assert len(server_tool_calls) == 1
+    assert len(server_tool_returns) == 1
+    # text_editor_code_execution preserves its original tool_name for message history round-trip
+    assert server_tool_calls[0].tool_name == 'text_editor_code_execution'
+    assert server_tool_returns[0].tool_name == 'text_editor_code_execution'
+    assert server_tool_returns[0].content == {
+        'content': 'Hello, World!',
+        'file_type': 'text',
+        'num_lines': 1,
+        'start_line': 1,
+        'total_lines': 1,
+        'type': 'text_editor_code_execution_view_result',
+    }
+
+
+async def test_anthropic_bash_code_execution_pass_history_back(env: TestEnv, allow_model_requests: None):
+    """Test passing bash_code_execution tool history back to Anthropic for round-trip replay."""
+    # Create the first mock response with bash_code_execution server tool blocks
+    content: list[BetaContentBlock] = []
+    content.append(BetaTextBlock(text='Let me run a bash command.', type='text'))
+    content.append(
+        BetaServerToolUseBlock(
+            id='server_tool_bash',
+            name='bash_code_execution',
+            input={'command': 'echo hello'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        )
+    )
+    content.append(
+        BetaBashCodeExecutionToolResultBlock(
+            tool_use_id='server_tool_bash',
+            type='bash_code_execution_tool_result',
+            content=BetaBashCodeExecutionResultBlock(
+                content=[],
+                return_code=0,
+                stderr='',
+                stdout='hello\n',
+                type='bash_code_execution_result',
+            ),
+        ),
+    )
+    content.append(BetaTextBlock(text='The bash command printed hello.', type='text'))
+    first_response = completion_message(
+        content,
+        BetaUsage(input_tokens=10, output_tokens=20),
+    )
+
+    # Create the second mock response that references the history
+    second_response = completion_message(
+        [BetaTextBlock(text='The bash command output was: hello', type='text')],
+        BetaUsage(input_tokens=50, output_tokens=30),
+    )
+
+    mock_client = MockAnthropic.create_mock([first_response, second_response])
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    # First run to get server tool history
+    result = await agent.run('Run echo hello')
+
+    # Verify we have server tool parts in the history
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    assert len(server_tool_calls) == 1
+    assert len(server_tool_returns) == 1
+    assert server_tool_calls[0].tool_name == 'bash_code_execution'
+    assert server_tool_returns[0].tool_name == 'bash_code_execution'
+
+    # Pass the history back to another Anthropic agent run - this validates the round-trip replay
+    agent2 = Agent(m)
+    result2 = await agent2.run('What was the bash output?', message_history=result.all_messages())
+    assert result2.output == 'The bash command output was: hello'
+
+
+async def test_anthropic_text_editor_code_execution_pass_history_back(env: TestEnv, allow_model_requests: None):
+    """Test passing text_editor_code_execution tool history back to Anthropic for round-trip replay."""
+    # Create the first mock response with text_editor_code_execution server tool blocks
+    content: list[BetaContentBlock] = []
+    content.append(BetaTextBlock(text='Let me view a file.', type='text'))
+    content.append(
+        BetaServerToolUseBlock(
+            id='server_tool_editor',
+            name='text_editor_code_execution',
+            input={'command': 'view', 'path': '/tmp/test.txt'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        )
+    )
+    content.append(
+        BetaTextEditorCodeExecutionToolResultBlock(
+            tool_use_id='server_tool_editor',
+            type='text_editor_code_execution_tool_result',
+            content=BetaTextEditorCodeExecutionViewResultBlock(
+                content='Hello, World!',
+                file_type='text',
+                num_lines=1,
+                start_line=1,
+                total_lines=1,
+                type='text_editor_code_execution_view_result',
+            ),
+        ),
+    )
+    content.append(BetaTextBlock(text='The file contains "Hello, World!".', type='text'))
+    first_response = completion_message(
+        content,
+        BetaUsage(input_tokens=10, output_tokens=20),
+    )
+
+    # Create the second mock response that references the history
+    second_response = completion_message(
+        [BetaTextBlock(text='The file content was: Hello, World!', type='text')],
+        BetaUsage(input_tokens=50, output_tokens=30),
+    )
+
+    mock_client = MockAnthropic.create_mock([first_response, second_response])
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    # First run to get server tool history
+    result = await agent.run('View the file /tmp/test.txt')
+
+    # Verify we have server tool parts in the history
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    assert len(server_tool_calls) == 1
+    assert len(server_tool_returns) == 1
+    assert server_tool_calls[0].tool_name == 'text_editor_code_execution'
+    assert server_tool_returns[0].tool_name == 'text_editor_code_execution'
+
+    # Pass the history back to another Anthropic agent run - this validates the round-trip replay
+    agent2 = Agent(m)
+    result2 = await agent2.run('What was the file content?', message_history=result.all_messages())
+    assert result2.output == 'The file content was: Hello, World!'
 
 
 async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):
