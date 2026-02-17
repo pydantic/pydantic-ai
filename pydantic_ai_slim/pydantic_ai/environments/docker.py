@@ -1,0 +1,573 @@
+"""Docker container-based sandbox for isolated code execution.
+
+Requires the `docker` package: `pip install pydantic-ai-slim[docker-sandbox]`
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import io
+import struct
+import tarfile
+from collections.abc import Sequence
+from pathlib import PurePosixPath
+from typing import Any, Literal, cast
+
+from typing_extensions import Self
+
+from ._base import (
+    MAX_OUTPUT_CHARS,
+    ExecuteResult,
+    ExecutionEnvironment,
+    ExecutionProcess,
+    FileInfo,
+    apply_edit,
+    build_glob_cmd,
+    build_grep_cmd,
+    build_read_file_cmd,
+    filter_grep_count_output,
+    parse_glob_output,
+    shell_escape,
+)
+
+try:
+    import docker
+    from docker.errors import DockerException, ImageNotFound
+    from docker.models.containers import Container
+except ImportError as _import_error:
+    raise ImportError(
+        'The `docker` package is required for DockerSandbox. '
+        'Install it with: pip install pydantic-ai-slim[docker-sandbox]'
+    ) from _import_error
+
+
+def _build_dockerfile(
+    base_image: str,
+    packages: Sequence[str],
+    package_manager: str,
+    setup_commands: Sequence[str],
+) -> str:
+    """Generate a Dockerfile from configuration."""
+    lines = [f'FROM {base_image}']
+
+    if packages:
+        if package_manager == 'pip':
+            pkg_list = ' '.join(f'"{p}"' for p in packages)
+            lines.append(f'RUN pip install --no-cache-dir {pkg_list}')
+        elif package_manager == 'apt':
+            pkg_list = ' '.join(packages)
+            lines.append(
+                f'RUN apt-get update && apt-get install -y --no-install-recommends {pkg_list} && rm -rf /var/lib/apt/lists/*'
+            )
+        elif package_manager == 'npm':
+            pkg_list = ' '.join(packages)
+            lines.append(f'RUN npm install -g {pkg_list}')
+
+    for cmd in setup_commands:
+        lines.append(f'RUN {cmd}')
+
+    return '\n'.join(lines)
+
+
+def _config_hash(
+    image: str,
+    packages: Sequence[str],
+    package_manager: str,
+    setup_commands: Sequence[str],
+) -> str:
+    """Deterministic hash for image caching."""
+    key = f'{image}|{"|".join(packages)}|{package_manager}|{"|".join(setup_commands)}'
+    return hashlib.md5(key.encode()).hexdigest()[:12]
+
+
+def _put_file(container: Container, path: str, data: bytes) -> None:
+    """Write file data into a container via put_archive."""
+    parent = str(PurePosixPath(path).parent)
+    filename = PurePosixPath(path).name
+    f = io.BytesIO()
+    with tarfile.open(fileobj=f, mode='w') as tar:
+        info = tarfile.TarInfo(name=filename)
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    f.seek(0)
+    container.put_archive(parent, f)  # pyright: ignore[reportUnknownMemberType]
+
+
+class DockerSandboxProcess(ExecutionProcess):
+    """Interactive process inside a Docker container using exec with socket I/O."""
+
+    def __init__(self, container: Container, command: str, work_dir: str, env: dict[str, str] | None = None) -> None:
+        self._container = container
+        self._command = command
+        self._work_dir = work_dir
+        self._env = env
+        self._exec_id: str | None = None
+        self._socket: Any = None
+        self._returncode: int | None = None
+
+    async def _start(self) -> None:
+        """Start the exec and open the socket (called from __aenter__)."""
+        loop = asyncio.get_running_loop()
+
+        def _do_start() -> tuple[str, Any]:
+            client: Any = self._container.client
+            kwargs: dict[str, Any] = {
+                'stdin': True,
+                'stdout': True,
+                'stderr': True,
+                'workdir': self._work_dir,
+            }
+            if self._env:
+                kwargs['environment'] = self._env
+            exec_id: str = client.api.exec_create(
+                self._container.id,
+                ['sh', '-c', self._command],
+                **kwargs,
+            )['Id']
+            sock = client.api.exec_start(exec_id, socket=True)
+            # docker-py returns a SocketIO wrapper; get the raw socket
+            raw = getattr(sock, '_sock', sock)
+            return exec_id, raw
+
+        self._exec_id, self._socket = await loop.run_in_executor(None, _do_start)
+
+    async def __aenter__(self) -> Self:
+        if self._exec_id is None:
+            await self._start()
+        return self
+
+    async def send(self, data: bytes) -> None:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._socket.sendall, data)
+
+    async def recv(self, timeout: float | None = None) -> bytes:
+        loop = asyncio.get_running_loop()
+
+        async def _read() -> bytes:
+            return await loop.run_in_executor(None, self._read_chunk)
+
+        if timeout is not None:
+            return await asyncio.wait_for(_read(), timeout=timeout)
+        return await _read()
+
+    def _read_chunk(self) -> bytes:
+        """Read a chunk from the Docker multiplexed stream.
+
+        Docker exec socket uses a multiplexed protocol:
+        - 8 byte header: [stream_type(1), 0, 0, 0, size(4)]
+        - followed by `size` bytes of data
+        """
+        header = b''
+        while len(header) < 8:
+            chunk = self._socket.recv(8 - len(header))
+            if not chunk:
+                return b''
+            header += chunk
+
+        # Parse header: stream type (1=stdout, 2=stderr), then 3 padding bytes, then 4-byte big-endian size
+        _stream_type = header[0]
+        size = struct.unpack('>I', header[4:8])[0]
+        if size == 0:
+            return b''
+
+        data = b''
+        while len(data) < size:
+            chunk = self._socket.recv(size - len(data))
+            if not chunk:
+                break
+            data += chunk
+        return data
+
+    async def recv_stderr(self, timeout: float | None = None) -> bytes:
+        # Docker multiplexed stream interleaves stdout/stderr;
+        # separating them requires tracking stream_type in _read_chunk.
+        # For now, recv() returns both mixed together.
+        return await self.recv(timeout=timeout)
+
+    @property
+    def returncode(self) -> int | None:
+        if self._returncode is not None:
+            return self._returncode
+        if self._exec_id is None:
+            return None
+        try:
+            client: Any = self._container.client
+            info = client.api.exec_inspect(self._exec_id)
+            rc = info.get('ExitCode')
+            if rc is not None and rc != -1:  # -1 means still running in docker
+                self._returncode = rc
+                return rc
+        except (DockerException, OSError):
+            # Docker API may raise various errors (connection, not found, etc.)
+            # when inspecting exec state — treat as "still running"
+            pass
+        return None
+
+    async def wait(self, timeout: float | None = None) -> int:
+        async def _poll() -> int:
+            while True:
+                rc = self.returncode
+                if rc is not None:
+                    return rc
+                await asyncio.sleep(0.1)
+
+        if timeout is not None:
+            return await asyncio.wait_for(_poll(), timeout=timeout)
+        return await _poll()
+
+    async def kill(self) -> None:
+        # Docker exec doesn't provide a direct kill; close the socket
+        try:
+            self._socket.close()
+        except OSError:
+            pass
+
+
+class DockerSandbox(ExecutionEnvironment):
+    """Docker container-based sandbox for isolated code execution.
+
+    Provides isolated code execution with configurable runtimes,
+    package installation, and persistent or ephemeral workspaces.
+
+    Usage:
+        ```python {test="skip" lint="skip"}
+        async with DockerSandbox(
+            image='python:3.12-slim',
+            packages=['numpy', 'opencv-python-headless'],
+        ) as sandbox:
+            result = await sandbox.execute('python -c "import numpy; print(numpy.__version__)"')
+            print(result.output)
+        ```
+    """
+
+    def __init__(
+        self,
+        *,
+        image: str = 'python:3.12-slim',
+        packages: Sequence[str] = (),
+        package_manager: Literal['pip', 'apt', 'npm'] = 'pip',
+        setup_commands: Sequence[str] = (),
+        env_vars: dict[str, str] | None = None,
+        work_dir: str = '/workspace',
+        volumes: dict[str, dict[str, str]] | None = None,
+        memory_limit: str | None = None,
+        cpu_limit: float | None = None,
+        network_disabled: bool = False,
+        cache_built_image: bool = True,
+    ) -> None:
+        """Create a Docker sandbox.
+
+        Args:
+            image: Base Docker image to use.
+            packages: Packages to install on top of the base image.
+            package_manager: Package manager to use ('pip', 'apt', or 'npm').
+            setup_commands: Additional shell commands to run during image build.
+            env_vars: Baseline environment variables to set in the container.
+            work_dir: Working directory inside the container.
+            volumes: Volume mounts (Docker format).
+            memory_limit: Memory limit (e.g. '512m', '1g').
+            cpu_limit: CPU limit (e.g. 1.0 for one CPU).
+            network_disabled: Whether to disable network access.
+            cache_built_image: Whether to cache custom-built images.
+        """
+        self._image = image
+        self._packages = tuple(packages)
+        self._package_manager = package_manager
+        self._setup_commands = tuple(setup_commands)
+        self._env_vars = env_vars or {}
+        self._work_dir = work_dir
+        self._volumes = volumes
+        self._memory_limit = memory_limit
+        self._cpu_limit = cpu_limit
+        self._network_disabled = network_disabled
+        self._cache_built_image = cache_built_image
+
+        self._client: docker.DockerClient | None = None
+        self._container: Container | None = None
+
+    async def __aenter__(self) -> Self:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._setup)
+        return self
+
+    def _setup(self) -> None:
+        """Build image if needed and start container (sync, runs in executor)."""
+        self._client = docker.from_env()
+        image_name = self._resolve_image()
+
+        # Create and start container
+        kwargs: dict[str, Any] = {
+            'image': image_name,
+            'command': 'sleep infinity',
+            'detach': True,
+            'working_dir': self._work_dir,
+            'environment': self._env_vars,
+            'auto_remove': False,
+        }
+        if self._volumes:
+            kwargs['volumes'] = self._volumes
+        if self._memory_limit:
+            kwargs['mem_limit'] = self._memory_limit
+        if self._cpu_limit:
+            kwargs['nano_cpus'] = int(self._cpu_limit * 1e9)
+        if self._network_disabled:
+            kwargs['network_disabled'] = True
+
+        self._container = cast(Container, self._client.containers.run(**kwargs))
+
+        # Ensure work_dir exists
+        self._container.exec_run(['mkdir', '-p', self._work_dir])
+
+    def _resolve_image(self) -> str:
+        """Determine the image to use, building a custom one if needed."""
+        assert self._client is not None
+
+        if not self._packages and not self._setup_commands:
+            return self._image
+
+        # Build a custom image with packages installed
+        tag_hash = _config_hash(self._image, self._packages, self._package_manager, self._setup_commands)
+        tag = f'pydantic-ai-sandbox:{self._image.replace(":", "-").replace("/", "-")}-{tag_hash}'
+
+        # Check if cached image exists
+        if self._cache_built_image:
+            try:
+                self._client.images.get(tag)
+                return tag
+            except ImageNotFound:
+                pass
+
+        dockerfile = _build_dockerfile(self._image, self._packages, self._package_manager, self._setup_commands)
+
+        # Build using a tar context
+        f = io.BytesIO()
+        with tarfile.open(fileobj=f, mode='w') as tar:
+            dockerfile_bytes = dockerfile.encode('utf-8')
+            info = tarfile.TarInfo(name='Dockerfile')
+            info.size = len(dockerfile_bytes)
+            tar.addfile(info, io.BytesIO(dockerfile_bytes))
+        f.seek(0)
+
+        self._client.images.build(fileobj=f, custom_context=True, tag=tag, rm=True)
+        return tag
+
+    async def __aexit__(self, *_args: Any) -> None:
+        if self._container is not None:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._teardown)
+
+    def _teardown(self) -> None:
+        """Stop and remove container (sync, runs in executor)."""
+        if self._container is not None:
+            try:
+                self._container.stop(timeout=5)
+            except Exception:
+                # Best-effort cleanup: container may already be stopped or removed
+                pass
+            try:
+                self._container.remove(force=True)
+            except Exception:
+                # Best-effort cleanup: container may already be removed
+                pass
+            self._container = None
+
+    @property
+    def container(self) -> Container:
+        if self._container is None:
+            raise RuntimeError('DockerSandbox not started. Use `async with DockerSandbox(...) as sandbox:`')
+        return self._container
+
+    async def create_process(
+        self,
+        command: str,
+        *,
+        env: dict[str, str] | None = None,
+    ) -> ExecutionProcess:
+        return DockerSandboxProcess(self.container, command, self._work_dir, env=env)
+
+    async def execute(
+        self,
+        command: str,
+        *,
+        timeout: float | None = 120,
+        env: dict[str, str] | None = None,
+    ) -> ExecuteResult:
+        """Execute a command in the container."""
+        loop = asyncio.get_running_loop()
+
+        async def _run() -> ExecuteResult:
+            def _exec() -> tuple[int, bytes]:
+                if timeout is not None:
+                    wrapped = f'timeout {int(timeout)} sh -c {shell_escape(command)}'
+                else:
+                    wrapped = command
+                exec_kwargs: dict[str, Any] = {'workdir': self._work_dir}
+                if env:
+                    exec_kwargs['environment'] = env
+                exit_code, output = self.container.exec_run(
+                    ['sh', '-c', wrapped],
+                    **exec_kwargs,
+                )
+                return exit_code, output
+
+            exit_code, output_bytes = await loop.run_in_executor(None, _exec)
+            output = output_bytes.decode('utf-8', errors='replace')
+            truncated = len(output) > MAX_OUTPUT_CHARS
+            if truncated:
+                output = output[:MAX_OUTPUT_CHARS]
+            # timeout command returns 124 on timeout
+            if exit_code == 124 and timeout is not None:
+                output += '\n[Command timed out]'
+            return ExecuteResult(output=output, exit_code=exit_code, truncated=truncated)
+
+        return await _run()
+
+    async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str:
+        loop = asyncio.get_running_loop()
+
+        def _read() -> str:
+            cmd = build_read_file_cmd(path, offset=offset, limit=limit)
+            exit_code, output = self.container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
+            if exit_code != 0:
+                raise FileNotFoundError(f'File not found or not readable: {path}')
+            return output.decode('utf-8', errors='replace')
+
+        return await loop.run_in_executor(None, _read)
+
+    async def read_file_bytes(self, path: str) -> bytes:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._read_file_bytes_sync, path)
+
+    def _read_file_bytes_sync(self, path: str) -> bytes:
+        """Read raw file bytes using Docker's get_archive API."""
+        bits, _ = self.container.get_archive(path)
+        # get_archive returns a tar stream
+        tar_bytes = b''.join(bits)
+        with tarfile.open(fileobj=io.BytesIO(tar_bytes)) as tar:
+            members = tar.getmembers()
+            if not members:
+                raise FileNotFoundError(f'File not found: {path}')
+            extracted = tar.extractfile(members[0])
+            if extracted is None:
+                raise FileNotFoundError(f'Cannot read file: {path}')
+            return extracted.read()
+
+    async def write_file(self, path: str, content: str | bytes) -> None:
+        loop = asyncio.get_running_loop()
+
+        def _write() -> None:
+            # Ensure parent directory exists
+            parent = str(PurePosixPath(path).parent)
+            self.container.exec_run(['mkdir', '-p', parent], workdir=self._work_dir)
+
+            data = content.encode('utf-8') if isinstance(content, str) else content
+            _put_file(self.container, path, data)
+
+        await loop.run_in_executor(None, _write)
+
+    async def edit_file(
+        self,
+        path: str,
+        old_string: str,
+        new_string: str,
+        *,
+        replace_all: bool = False,
+    ) -> int:
+        loop = asyncio.get_running_loop()
+
+        def _edit() -> int:
+            raw = self._read_file_bytes_sync(path)
+            text = raw.decode('utf-8')
+            new_text, count = apply_edit(text, old_string, new_string, path, replace_all=replace_all)
+            _put_file(self.container, path, new_text.encode('utf-8'))
+            return count
+
+        return await loop.run_in_executor(None, _edit)
+
+    async def ls(self, path: str = '.') -> list[FileInfo]:
+        loop = asyncio.get_running_loop()
+
+        def _ls() -> list[FileInfo]:
+            cmd = f'ls -la {shell_escape(path)}'
+            exit_code, output = self.container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
+            if exit_code != 0:
+                raise NotADirectoryError(f'Not a directory or not found: {path}')
+
+            entries: list[FileInfo] = []
+            for line in output.decode('utf-8', errors='replace').splitlines():
+                # Skip total line and empty lines
+                if not line or line.startswith('total'):
+                    continue
+                parts = line.split(None, 8)
+                if len(parts) < 9:
+                    continue
+                perms, _, _, _, size_str, _, _, _, name = parts
+                is_dir = perms.startswith('d')
+                try:
+                    size = int(size_str) if not is_dir else None
+                except ValueError:
+                    size = None
+                entry_path = f'{path}/{name}' if path != '.' else name
+                entries.append(FileInfo(name=name, path=entry_path, is_dir=is_dir, size=size))
+            return entries
+
+        return await loop.run_in_executor(None, _ls)
+
+    async def glob(self, pattern: str, *, path: str = '.') -> list[str]:
+        loop = asyncio.get_running_loop()
+
+        def _glob() -> list[str]:
+            cmd = build_glob_cmd(pattern, path=path)
+            _, output = self.container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
+            return parse_glob_output(output.decode('utf-8', errors='replace'))
+
+        return await loop.run_in_executor(None, _glob)
+
+    async def grep(
+        self,
+        pattern: str,
+        *,
+        path: str | None = None,
+        glob_pattern: str | None = None,
+        output_mode: Literal['content', 'files_with_matches', 'count'] = 'content',
+    ) -> str:
+        loop = asyncio.get_running_loop()
+
+        def _grep() -> str:
+            cmd = build_grep_cmd(pattern, path=path, glob_pattern=glob_pattern, output_mode=output_mode)
+            _, output = self.container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
+            text = output.decode('utf-8', errors='replace').strip()
+            if output_mode == 'count':
+                text = filter_grep_count_output(text)
+            return text
+
+        return await loop.run_in_executor(None, _grep)
+
+    @property
+    def system_prompt(self) -> str:
+        return (
+            'This environment runs inside a Docker container.\n'
+            '- `grep` uses POSIX basic regex, not Python `re` syntax.\n'
+            '- `glob` uses `find` for pattern matching; `**` is not supported.\n'
+        )
+
+    async def is_alive(self) -> bool:
+        """Check if the container is running.
+
+        Returns:
+            True if the container is running, False otherwise.
+        """
+        if self._container is None:
+            return False
+        loop = asyncio.get_running_loop()
+
+        def _check() -> bool:
+            assert self._container is not None
+            try:
+                self._container.reload()
+                return self._container.status == 'running'
+            except Exception:
+                return False
+
+        return await loop.run_in_executor(None, _check)
