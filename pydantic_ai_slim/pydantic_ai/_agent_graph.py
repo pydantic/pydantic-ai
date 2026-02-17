@@ -981,7 +981,7 @@ async def process_tool_calls(  # noqa: C901
             except exceptions.UnexpectedModelBehavior as e:
                 if final_result:
                     for event in _emit_skipped_output_tool(
-                        call, 'Output tool not used - tool execution failed.', output_parts, args_valid=True
+                        call, 'Output tool not used - output function execution failed.', output_parts, args_valid=True
                     ):
                         yield event
                     continue
