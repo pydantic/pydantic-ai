@@ -914,8 +914,8 @@ async def process_tool_calls(  # noqa: C901
                 tool_call_id=call.tool_call_id,
             )
             output_parts.append(part)
-        # Early strategy is chosen and final result is already set
-        elif ctx.deps.end_strategy in ('early', 'complete') and final_result:
+        # A final result is already set and this strategy skips remaining output tools
+        elif ctx.deps.end_strategy != 'exhaustive' and final_result:
             yield _messages.FunctionToolCallEvent(call)
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
@@ -924,8 +924,7 @@ async def process_tool_calls(  # noqa: C901
             )
             yield _messages.FunctionToolResultEvent(part)
             output_parts.append(part)
-        # Early strategy is chosen and final result is not yet set
-        # Or exhaustive strategy is chosen
+        # No final result yet, or exhaustive strategy processes all output tools
         else:
             try:
                 result_data = await tool_manager.handle_call(call)
@@ -966,7 +965,7 @@ async def process_tool_calls(  # noqa: C901
                 )
                 output_parts.append(part)
 
-                # In both `early` and `exhaustive` modes, use the first output tool's result as the final result
+                # Use the first valid output tool's result as the final result
                 if not final_result:
                     final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
 
