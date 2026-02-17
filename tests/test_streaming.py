@@ -3385,18 +3385,56 @@ async def test_args_validator_failure_events():
     async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
         events.append(event)
 
-    tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'add_numbers']
-
-    # First call: validation fails -> args_valid=False; retry: validation passes -> args_valid=True
-    args_valid_values = [e.args_valid for e in tool_call_events]
-    assert args_valid_values[0] is False
-    assert args_valid_values[1] is True
-
-    # Verify retry prompt contains the validation error message
-    result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]
-    retry_results = [e for e in result_events if isinstance(e.result, RetryPromptPart)]
-    assert retry_results
-    assert 'x must be positive' in str(retry_results[0].result.content)
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+                args_valid=False,
+            ),
+            FunctionToolResultEvent(
+                result=RetryPromptPart(
+                    content='Validation failed: x must be positive',
+                    tool_name='add_numbers',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ),
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+                args_valid=True,
+            ),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='add_numbers',
+                    content=0,
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"add_nu')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='mbers":0}')),
+            PartEndEvent(index=0, part=TextPart(content='{"add_numbers":0}')),
+            AgentRunResultEvent(result=AgentRunResult(output='{"add_numbers":0}')),
+        ]
+    )
 
 
 async def test_args_validator_event_args_valid_field():
