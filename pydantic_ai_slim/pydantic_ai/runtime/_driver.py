@@ -169,7 +169,7 @@ async def _execute(init_msg: dict[str, Any], reader: asyncio.StreamReader) -> No
     pending_futures: dict[int, asyncio.Future[Any]] = {}
     calls_ready_handle: list[asyncio.Handle | None] = [None]
 
-    code_globals: dict[str, Any] = {'__builtins__': __builtins__}
+    code_globals: dict[str, Any] = {'__builtins__': __builtins__, 'asyncio': asyncio}
     for name in functions:
         code_globals[name] = _build_proxy(name, loop, call_counter, pending_futures, result_cache, calls_ready_handle)
 
