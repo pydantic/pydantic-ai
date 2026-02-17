@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
+from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_origin
 
 from pydantic import ConfigDict
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
@@ -184,8 +184,6 @@ def function_schema(  # noqa: C901
         raise UserError(f'Error generating schema for {function.__qualname__}:\n  {error_details}')
 
     core_config = config_wrapper.core_config(None)
-    # noinspection PyTypedDict
-    core_config['extra_fields_behavior'] = 'allow' if var_kwargs_schema else 'forbid'
 
     schema, single_arg_name = _build_schema(fields, var_kwargs_schema, gen_schema, core_config)
     schema = gen_schema.clean_schema(schema)
@@ -289,9 +287,11 @@ def _build_schema(
         if td_field['metadata']['is_model_like']:  # type: ignore
             return td_field['schema'], name
 
+    extra_behavior: Literal['allow', 'forbid'] = 'allow' if var_kwargs_schema else 'forbid'
     td_schema = core_schema.typed_dict_schema(
         fields,
         config=core_config,
+        extra_behavior=extra_behavior,
         extras_schema=gen_schema.generate_schema(var_kwargs_schema) if var_kwargs_schema else None,
     )
     return td_schema, None
