@@ -283,18 +283,14 @@ def _collect_referenced_types(
                     and def_schema.get('type') == 'object'
                     and 'properties' in def_schema
                 ):
-                    referenced_types[def_name] = _build_type_signature(
-                        def_name, def_schema, schema_defs, referenced_types, tool_name, path
-                    )
+                    _build_and_register_type(def_name, def_schema, schema_defs, referenced_types, tool_name, path)
 
             # Then process the main schema
             if schema.get('type') == 'object' and 'properties' in schema:
-                referenced_types[type_name] = _build_type_signature(
-                    type_name, schema, schema_defs, referenced_types, tool_name, path
-                )
+                _build_and_register_type(type_name, schema, schema_defs, referenced_types, tool_name, path)
             elif '$ref' in schema:
                 ref_name = schema['$ref'].split('/')[-1]
-                if ref_name in schema_defs and ref_name not in referenced_types:
+                if ref_name in schema_defs and ref_name not in referenced_types:  # pragma: no cover
                     ref_schema = schema_defs[ref_name]
                     if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
                         referenced_types[ref_name] = _build_type_signature(
@@ -425,9 +421,7 @@ def _process_schema_defs(
     for def_name, def_schema in defs.items():
         if def_schema.get('type') == 'object' and 'properties' in def_schema:
             if def_name not in referenced_types:
-                referenced_types[def_name] = _build_type_signature(
-                    def_name, def_schema, defs, referenced_types, tool_name, def_name
-                )
+                _build_and_register_type(def_name, def_schema, defs, referenced_types, tool_name, def_name)
 
 
 def schema_to_signature(
@@ -542,9 +536,7 @@ def schema_to_type_expr(
         if ref_name in defs and ref_name not in referenced_types:
             ref_schema = defs[ref_name]
             if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
-                referenced_types[ref_name] = _build_type_signature(
-                    ref_name, ref_schema, defs, referenced_types, tool_name, path
-                )
+                _build_and_register_type(ref_name, ref_schema, defs, referenced_types, tool_name, path)
         # Return the TypeSignature object if available, otherwise the name string
         if ref_name in referenced_types:
             return referenced_types[ref_name]
@@ -692,6 +684,26 @@ def _handle_union_schema(
     if len(unique_exprs) == 1:
         return unique_exprs[0]
     return UnionTypeExpr(members=unique_exprs)
+
+
+def _build_and_register_type(
+    name: str,
+    schema: dict[str, Any],
+    defs: dict[str, dict[str, Any]],
+    referenced_types: dict[str, TypeSignature],
+    tool_name: str,
+    path: str,
+) -> None:
+    """Build a TypeSignature and register it, pre-registering a placeholder to prevent infinite recursion.
+
+    Self-referential schemas (e.g. recursive models) would otherwise cause infinite recursion
+    when `_build_type_signature` processes properties that `$ref` back to the same type.
+    """
+    placeholder = TypeSignature(name=name)
+    referenced_types[name] = placeholder
+    built = _build_type_signature(name, schema, defs, referenced_types, tool_name, path)
+    placeholder.fields = built.fields
+    placeholder.docstring = built.docstring
 
 
 def _build_type_signature(

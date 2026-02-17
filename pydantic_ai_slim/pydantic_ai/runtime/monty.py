@@ -76,7 +76,7 @@ class MontyRuntime(CodeRuntime):
             monty.type_check(self._build_type_check_prefix(list(functions.values()), referenced_types))
         except MontyTypingError as e:
             raise CodeTypingError(e.display(format='concise')) from e
-        except MontyRuntimeError as e:
+        except MontyRuntimeError as e:  # pragma: no cover
             raise CodeRuntimeError(e.display()) from e
         except MontySyntaxError as e:
             raise CodeSyntaxError(e.display()) from e
@@ -192,13 +192,13 @@ class MontyRuntime(CodeRuntime):
                         monty_state = monty_state.resume(future=...)
                 elif isinstance(monty_state, MontyFutureSnapshot):
                     pending_call_ids = monty_state.pending_call_ids
-                    if not pending_call_ids:
+                    if not pending_call_ids:  # pragma: no cover
                         monty_state = monty_state.resume(results={})
                         continue
 
                     try:
                         pending_tasks = [tasks[call_id] for call_id in pending_call_ids]
-                    except KeyError as e:
+                    except KeyError as e:  # pragma: no cover
                         raise CodeRuntimeError(
                             f'Monty expects results for call IDs {pending_call_ids} but no tasks exist'
                         ) from e

@@ -102,7 +102,7 @@ class _Resource(TypedDict):
 
 def _find_resources(*, query: str, limit: int = 10) -> list[_Resource]:
     """Find resources matching a query."""
-    return []
+    return []  # pragma: no cover
 
 
 # TODO (Douwe): this doesn't actually work :)
@@ -119,17 +119,17 @@ class _LookupItem(TypedDict):
 
 def _search_items(*, query: str) -> list[_SearchItem]:
     """Search for items by name."""
-    return []
+    return []  # pragma: no cover
 
 
 def _get_item(*, item_id: int) -> list[_LookupItem]:
     """Get items by ID."""
-    return []
+    return []  # pragma: no cover
 
 
 def _tag_resource(*, resource_name: str, tag: _Tag) -> bool:
     """Add a tag to a resource."""
-    return True
+    return True  # pragma: no cover
 
 
 async def test_full_description_snapshot():
@@ -425,3 +425,10 @@ async def test_description_no_all_functions_are_async():
     _, tools = await build_code_mode_toolset(MontyRuntime(), (add, False))
     description = tools['run_code_with_tools'].tool_def.description or ''
     assert 'All functions are async' not in description
+
+
+async def test_pending_tasks_cancelled_on_runtime_error():
+    """Async tasks fired before a runtime error are cancelled in the finally block."""
+    code = 'f = add(x=1, y=2)\n1 / 0'
+    with pytest.raises(ModelRetry, match='Runtime error in generated code'):
+        await run_code_with_tools(code, MontyRuntime(), (add, False))

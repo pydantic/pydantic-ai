@@ -6,7 +6,7 @@ from typing import Optional, Union
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, RootModel
 
 from pydantic_ai._python_signature import (
     FunctionParam,
@@ -323,7 +323,7 @@ def test_function_tool_definition_produces_same_signature_as_function_based():
 
     def my_tool(x: int, y: str = 'hello') -> bool:
         """A test tool."""
-        return True
+        return True  # pragma: no cover
 
     tool = Tool(my_tool)
     tool_def = tool.tool_def
@@ -381,7 +381,7 @@ def test_function_signature_special_params():
     """RunContext skipped, unannotated → Any."""
 
     def with_ctx(ctx: RunContext[None], x: int) -> int:
-        return x
+        return x  # pragma: no cover
 
     assert str(function_to_signature(with_ctx, name='with_ctx')) == snapshot("""\
 async def with_ctx(*, x: int) -> int:
@@ -389,7 +389,7 @@ async def with_ctx(*, x: int) -> int:
 """)
 
     def no_annot(x):  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
-        return x  # pyright: ignore[reportUnknownVariableType]
+        return x  # pragma: no cover  # pyright: ignore[reportUnknownVariableType]
 
     assert str(
         function_to_signature(no_annot, name='no_annot')  # pyright: ignore[reportUnknownArgumentType]
@@ -403,6 +403,15 @@ class _UserInfo(BaseModel):
     name: str
 
 
+class _IntList(RootModel[list[int]]):
+    pass
+
+
+class _TreeNode(BaseModel):
+    value: int
+    children: list[_TreeNode] = []
+
+
 def test_function_signature_union_and_model_types():
     """Unions, optionals, and model types render correct signatures."""
 
@@ -411,7 +420,7 @@ def test_function_signature_union_and_model_types():
         b: int | str,
         c: Optional[int] = None,  # noqa: UP045 — testing Optional[] code path
         d: _UserInfo | None = None,
-    ) -> _UserInfo: ...
+    ) -> _UserInfo: ...  # pragma: no cover
 
     sig = function_to_signature(complex_func, name='complex_func')
     assert str(sig) == snapshot("""\
@@ -774,3 +783,261 @@ class Result(TypedDict):
 async def t5(*, x: str | None) -> Any:
     ...\
 """)
+
+
+# =============================================================================
+# Additional coverage tests
+# =============================================================================
+
+
+def test_function_tool_definition_eq_non_tool():
+    """FunctionToolDefinition.__eq__ returns NotImplemented for non-ToolDefinition."""
+    td = FunctionToolDefinition(name='t', parameters_json_schema={}, original_func=None)
+    assert td != 'not a tool'
+
+
+def test_get_type_name_repr_fallback():
+    """Types without __name__ use repr fallback, NoneType returns 'None'."""
+    import typing
+
+    from pydantic_ai._python_signature import _get_type_name  # pyright: ignore[reportPrivateUsage]
+
+    # ClassVar has no __name__ attribute
+    result = _get_type_name(typing.ClassVar)
+    assert 'ClassVar' in result
+
+    # NoneType returns 'None'
+    assert _get_type_name(type(None)) == 'None'
+
+
+def test_function_signature_bare_generic_no_args():
+    """Bare generic (e.g. list without type args) renders as base type name."""
+    import typing
+
+    def func_bare_list(x: typing.List) -> None:  # pyright: ignore[reportMissingTypeArgument,reportUnknownParameterType] # noqa: UP006
+        ...  # pragma: no cover
+
+    sig = function_to_signature(func_bare_list, name='func_bare_list')  # pyright: ignore[reportUnknownArgumentType]
+    assert 'list' in str(sig)
+
+
+def test_function_signature_nameerror_fallback():
+    """Functions with unresolvable forward refs fall back to empty type hints."""
+    ns: dict[str, object] = {}
+    exec(
+        "def func_with_fwd_ref(x: 'NonexistentType') -> None: ...",
+        ns,
+    )
+    func = ns['func_with_fwd_ref']
+    sig = function_to_signature(func, name='func_fwd')  # pyright: ignore[reportArgumentType]
+    # Should not raise — falls back to empty hints, x becomes Any
+    assert 'x' in sig.params
+
+
+def test_schema_allows_null_anyof():
+    """_schema_allows_null detects null in anyOf."""
+    from pydantic_ai._python_signature import _schema_allows_null  # pyright: ignore[reportPrivateUsage]
+
+    assert _schema_allows_null({'anyOf': [{'type': 'string'}, {'type': 'null'}]}) is True
+    assert _schema_allows_null({'anyOf': [{'type': 'string'}]}) is False
+
+
+def test_schema_bare_object():
+    """Bare object type (no properties, no additionalProperties) renders as dict."""
+    sig = schema_to_signature(
+        't_bare',
+        {
+            'type': 'object',
+            'properties': {'data': {'type': 'object'}},
+            'required': ['data'],
+        },
+    )
+    assert 'dict[str, Any]' in str(sig)
+
+
+def test_schema_object_type_list_no_null():
+    """Object in type list without null renders without union."""
+    sig = schema_to_signature(
+        't_obj_list',
+        {
+            'type': 'object',
+            'properties': {
+                'config': {
+                    'type': ['object'],
+                    'properties': {'x': {'type': 'string'}},
+                    'required': ['x'],
+                },
+            },
+            'required': ['config'],
+        },
+    )
+    rendered = str(sig)
+    assert 'None' not in rendered
+    assert 'TObjListConfig' in rendered
+
+
+def test_schema_single_type_after_filtering():
+    """Single-element type list renders as plain type."""
+    sig = schema_to_signature(
+        't_single',
+        {
+            'type': 'object',
+            'properties': {'x': {'type': ['string']}},
+            'required': ['x'],
+        },
+    )
+    assert 'str' in str(sig)
+    # Should not be a union
+    assert '|' not in str(sig)
+
+
+def test_schema_single_anyof_member():
+    """Single-member anyOf returns the type directly, not a union."""
+    sig = schema_to_signature(
+        't_anyof_single',
+        {
+            'type': 'object',
+            'properties': {'x': {'anyOf': [{'type': 'string'}]}},
+            'required': ['x'],
+        },
+    )
+    rendered = str(sig)
+    assert 'str' in rendered
+    assert '|' not in rendered
+
+
+def test_schema_defs_already_processed():
+    """Second call with same $defs name finds it already processed."""
+    sig = schema_to_signature(
+        'tool_shared',
+        {
+            'type': 'object',
+            'properties': {
+                'a': {'$ref': '#/$defs/Shared'},
+                'b': {'$ref': '#/$defs/Shared'},
+            },
+            'required': ['a', 'b'],
+            '$defs': {
+                'Shared': {
+                    'type': 'object',
+                    'properties': {'v': {'type': 'integer'}},
+                    'required': ['v'],
+                }
+            },
+        },
+    )
+    # Both params reference the same TypeSignature
+    assert render_type_expr(sig.params['a'].type) == 'Shared'
+    assert render_type_expr(sig.params['b'].type) == 'Shared'
+    # Only one referenced type
+    assert len(sig.referenced_types) == 1
+
+
+def test_schema_return_type_dedup():
+    """Param and return schemas sharing a $defs type produce one definition."""
+    shared_def = {
+        'type': 'object',
+        'properties': {'id': {'type': 'integer'}},
+        'required': ['id'],
+    }
+    sig = schema_to_signature(
+        'tool_dedup',
+        {
+            'type': 'object',
+            'properties': {'item': {'$ref': '#/$defs/Item'}},
+            'required': ['item'],
+            '$defs': {'Item': shared_def},
+        },
+        return_schema={
+            '$ref': '#/$defs/Item',
+            '$defs': {'Item': shared_def},
+        },
+    )
+    # Both param and return reference Item
+    assert render_type_expr(sig.params['item'].type) == 'Item'
+    assert render_type_expr(sig.return_type) == 'Item'
+
+
+def test_schema_object_type_name_collision():
+    """Two properties generating the same path-based type name — second is reused."""
+    sig = schema_to_signature(
+        'tool_collision',
+        {
+            'type': 'object',
+            'properties': {
+                'data': {
+                    'type': 'object',
+                    'properties': {'x': {'type': 'string'}},
+                    'required': ['x'],
+                },
+            },
+            'required': ['data'],
+        },
+    )
+    # Should have a TypedDict for the nested object
+    assert len(sig.referenced_types) == 1
+    assert sig.referenced_types[0].name == 'ToolCollisionData'
+
+
+def test_function_signature_root_model():
+    """RootModel wrapping a non-object type renders as the type name without a TypedDict."""
+
+    def func_with_root_model(x: _IntList) -> None: ...  # pragma: no cover
+
+    sig = function_to_signature(func_with_root_model, name='func_with_root_model')
+    # RootModel produces a non-object schema, so it's referenced by name but not as a TypedDict
+    assert str(sig) == snapshot("""\
+async def func_with_root_model(*, x: _IntList) -> None:
+    ...\
+""")
+    assert sig.referenced_types == []
+
+
+def test_function_signature_recursive_model():
+    """Recursive BaseModel with top-level $ref in schema produces correct TypedDict."""
+
+    def func_with_tree(x: _TreeNode) -> None: ...  # pragma: no cover
+
+    sig = function_to_signature(func_with_tree, name='func_with_tree')
+    assert str(sig) == snapshot("""\
+async def func_with_tree(*, x: _TreeNode) -> None:
+    ...\
+""")
+    assert len(sig.referenced_types) == 1
+    assert sig.referenced_types[0].name == '_TreeNode'
+    assert 'value' in sig.referenced_types[0].fields
+    assert 'children' in sig.referenced_types[0].fields
+
+
+def test_schema_cross_referencing_defs():
+    """$ref in a def property lazily resolves another def not yet processed."""
+    sig = schema_to_signature(
+        'tool',
+        {
+            'type': 'object',
+            'properties': {'item': {'$ref': '#/$defs/Container'}},
+            'required': ['item'],
+            '$defs': {
+                'Container': {
+                    'type': 'object',
+                    'properties': {'inner': {'$ref': '#/$defs/Inner'}},
+                    'required': ['inner'],
+                },
+                'Inner': {
+                    'type': 'object',
+                    'properties': {'value': {'type': 'string'}},
+                    'required': ['value'],
+                },
+            },
+        },
+    )
+    assert str(sig) == snapshot("""\
+async def tool(*, item: Container) -> Any:
+    ...\
+""")
+    # Both Container and Inner should be resolved as TypeSignatures
+    type_names = {t.name for t in sig.referenced_types}
+    assert type_names == {'Container', 'Inner'}
+    # Container's 'inner' field references the Inner TypeSignature
+    container = next(t for t in sig.referenced_types if t.name == 'Container')
+    assert render_type_expr(container.fields['inner'].type) == 'Inner'
