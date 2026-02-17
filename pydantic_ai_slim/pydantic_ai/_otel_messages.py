@@ -37,6 +37,22 @@ class MediaUrlPart(TypedDict):
     url: NotRequired[str]
 
 
+class UriPart(TypedDict):
+    """Part type for URIs following OpenTelemetry GenAI semantic conventions.
+
+    Used in instrumentation version 4+ to align with the GenAI spec:
+    https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
+
+    The modality field is present for supported types (ImageUrl, AudioUrl, VideoUrl) but omitted for
+    unsupported types (DocumentUrl) since the spec only defines image, audio, and video modalities.
+    """
+
+    type: Literal['uri']
+    modality: NotRequired[Literal['image', 'audio', 'video']]
+    uri: NotRequired[str]
+    mime_type: NotRequired[str]
+
+
 class FilePart(TypedDict):
     """Represents an external referenced file sent to the model by file id (OTel GenAI spec)."""
 
@@ -52,14 +68,28 @@ class BinaryDataPart(TypedDict):
     content: NotRequired[str]
 
 
+class BlobPart(TypedDict):
+    """Part type for inline binary data following OpenTelemetry GenAI semantic conventions.
+
+    Used in instrumentation version 4+ to align with the GenAI spec:
+    https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
+
+    The modality field is optional since it's inferred from media_type, which may fail for unknown MIME types.
+    Only image, audio, and video modalities are included per the spec.
+    """
+
+    type: Literal['blob']
+    modality: NotRequired[Literal['image', 'audio', 'video']]
+    mime_type: NotRequired[str]
+    content: NotRequired[str]
+
+
 class ThinkingPart(TypedDict):
     type: Literal['thinking']
     content: NotRequired[str]
 
 
-MessagePart: TypeAlias = (
-    'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | FilePart | BinaryDataPart | ThinkingPart'
-)
+MessagePart: TypeAlias = 'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | UriPart | FilePart | BinaryDataPart | BlobPart | ThinkingPart'
 
 
 Role = Literal['system', 'user', 'assistant']
