@@ -166,7 +166,7 @@ def build_default_description(
 
         if referenced_types:
             parts.append('# Available types:')
-            parts.append('\n\n'.join(str(t) for t in referenced_types))
+            parts.extend(str(t) for t in referenced_types)
 
         parts.append('# Available functions:')
         parts.extend(str(sig) for sig in signatures)
