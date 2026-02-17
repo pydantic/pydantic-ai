@@ -15,6 +15,7 @@ from pydantic_ai._python_signature import (
     TypeFieldSignature,
     TypeSignature,
     UnionTypeExpr,
+    _annotation_to_type_expr,  # pyright: ignore[reportPrivateUsage]
     _to_pascal_case,  # pyright: ignore[reportPrivateUsage]
     collect_unique_referenced_types,
     dedup_referenced_types,
@@ -798,27 +799,32 @@ def test_function_tool_definition_eq_non_tool():
 
 def test_get_type_name_repr_fallback():
     """Types without __name__ use repr fallback, NoneType returns 'None'."""
-    import typing
-
     from pydantic_ai._python_signature import _get_type_name  # pyright: ignore[reportPrivateUsage]
-
-    # ClassVar has no __name__ attribute
-    result = _get_type_name(typing.ClassVar)
-    assert 'ClassVar' in result
 
     # NoneType returns 'None'
     assert _get_type_name(type(None)) == 'None'
 
+    # Literal type args (e.g. the string 'a') have no __name__ → repr fallback
+    assert _get_type_name('some_value') == "'some_value'"
 
-def test_function_signature_bare_generic_no_args():
-    """Bare generic (e.g. list without type args) renders as base type name."""
+
+def test_function_signature_literal_annotation():
+    """Literal type annotations exercise the repr fallback in _get_type_name."""
     import typing
 
-    def func_bare_list(x: typing.List) -> None:  # pyright: ignore[reportMissingTypeArgument,reportUnknownParameterType] # noqa: UP006
-        ...  # pragma: no cover
+    ns: dict[str, object] = {'typing': typing}
+    exec("def func(x: typing.Literal['a', 'b']) -> None: ...", ns)
+    sig = function_to_signature(ns['func'], name='func')  # pyright: ignore[reportArgumentType]
+    assert "Literal['a', 'b']" in str(sig)
 
-    sig = function_to_signature(func_bare_list, name='func_bare_list')  # pyright: ignore[reportUnknownArgumentType]
-    assert 'list' in str(sig)
+
+def test_annotation_to_type_expr_bare_generic():
+    """Bare generic (origin but no type args) returns the origin's type name."""
+    import typing
+
+    # typing.List has __origin__=list but no __args__
+    result = _annotation_to_type_expr(typing.List, {})  # noqa: UP006
+    assert result == 'list'
 
 
 def test_function_signature_nameerror_fallback():
@@ -1041,3 +1047,81 @@ async def tool(*, item: Container) -> Any:
     # Container's 'inner' field references the Inner TypeSignature
     container = next(t for t in sig.referenced_types if t.name == 'Container')
     assert render_type_expr(container.fields['inner'].type) == 'Inner'
+
+
+def test_collect_referenced_types_skips_already_registered():
+    """When a $def name is already in referenced_types, _collect_referenced_types skips it."""
+    from pydantic_ai._python_signature import _collect_referenced_types  # pyright: ignore[reportPrivateUsage]
+
+    class _Address(BaseModel):
+        street: str
+
+    class _Person(BaseModel):
+        name: str
+        home: _Address
+
+    # Processing Address first registers it
+    referenced_types: dict[str, TypeSignature] = {}
+    _collect_referenced_types(_Address, referenced_types, 'func', 'a')
+    assert '_Address' in referenced_types
+
+    # Now collect Person — its $defs include _Address which should be skipped
+    _collect_referenced_types(_Person, referenced_types, 'func', 'b')
+    assert '_Person' in referenced_types
+
+
+def test_schema_inline_object_reuses_existing_typename():
+    """Inline object property reuses a $defs type when path-based names collide."""
+    sig = schema_to_signature(
+        'tool',
+        {
+            'type': 'object',
+            'properties': {
+                'data': {
+                    'type': 'object',
+                    'properties': {'x': {'type': 'string'}},
+                    'required': ['x'],
+                },
+            },
+            'required': ['data'],
+            '$defs': {
+                # This $def's name matches the path-based typename for property 'data'
+                # _path_to_typename('tool', 'data') == 'ToolData'
+                'ToolData': {
+                    'type': 'object',
+                    'properties': {'y': {'type': 'integer'}},
+                    'required': ['y'],
+                },
+            },
+        },
+    )
+    # The $defs ToolData was registered first; the inline 'data' property reuses it
+    assert render_type_expr(sig.params['data'].type) == 'ToolData'
+
+
+def test_schema_additional_properties_false():
+    """additionalProperties: false falls through to dict[str, Any]."""
+    sig = schema_to_signature(
+        't_ap_false',
+        {
+            'type': 'object',
+            'properties': {
+                'meta': {'type': 'object', 'additionalProperties': False},
+            },
+            'required': ['meta'],
+        },
+    )
+    assert 'dict[str, Any]' in str(sig)
+
+
+def test_schema_empty_type_list():
+    """Empty type list produces Any."""
+    sig = schema_to_signature(
+        't_empty',
+        {
+            'type': 'object',
+            'properties': {'x': {'type': []}},
+            'required': ['x'],
+        },
+    )
+    assert 'Any' in str(sig)

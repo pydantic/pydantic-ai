@@ -4,6 +4,8 @@ import asyncio
 import textwrap
 from typing import Any
 
+from typing_extensions import assert_never
+
 from pydantic_ai._python_signature import FunctionSignature, TypeSignature
 from pydantic_ai.runtime.abstract import (
     CodeExecutionTimeout,
@@ -219,6 +221,8 @@ class MontyRuntime(CodeRuntime):
                             for call_id, result in zip(pending_call_ids, task_results)
                         }
                     )
+                else:
+                    assert_never(monty_state)
         finally:
             for t in tasks.values():
                 t.cancel()

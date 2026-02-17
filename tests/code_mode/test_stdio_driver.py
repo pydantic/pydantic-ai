@@ -617,3 +617,109 @@ async def test_execute_runtime_syntax_error(monkeypatch: pytest.MonkeyPatch):
     reader.feed_eof()
     await _execute({'code': 'eval("def while")', 'functions': []}, reader)
     assert messages[0]['error_type'] == 'syntax'
+
+
+async def test_build_proxy_normal_call(monkeypatch: pytest.MonkeyPatch):
+    """Proxy without cache hit creates a pending future and writes call + calls_ready messages."""
+    messages: list[dict[str, object]] = []
+    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+
+    loop = asyncio.get_running_loop()
+    call_counter: list[int] = [0]
+    pending: dict[int, asyncio.Future[object]] = {}
+    cache: dict[str, object] = {}
+    handle: list[asyncio.Handle | None] = [None]
+
+    proxy = _build_proxy('add', loop, call_counter, pending, cache, handle)
+    future = proxy(x=1, y=2)
+
+    # Future is pending (not resolved from cache)
+    assert not future.done()
+    assert 1 in pending
+    assert pending[1] is future
+
+    # Call message was written
+    assert messages[0] == {'type': 'call', 'id': 1, 'function': 'add', 'args': [], 'kwargs': {'x': 1, 'y': 2}}
+
+    # Let the event loop process the calls_ready callback
+    await asyncio.sleep(0)
+    assert messages[1] == {'type': 'calls_ready'}
+
+    # Clean up: cancel the handle
+    if handle[0] is not None:
+        handle[0].cancel()
+
+
+async def test_stdin_reader_result_no_pending_future():
+    """Result for an unknown call ID is silently skipped."""
+    reader = asyncio.StreamReader()
+    reader.feed_data(json.dumps({'type': 'result', 'id': 999, 'result': 42}).encode() + b'\n')
+    reader.feed_eof()
+    pending: dict[int, asyncio.Future[object]] = {}
+    await _stdin_reader(reader, pending)
+    # No crash — unknown ID is ignored
+
+
+async def test_stdin_reader_unknown_msg_type():
+    """Unknown message type is silently skipped."""
+    reader = asyncio.StreamReader()
+    reader.feed_data(json.dumps({'type': 'heartbeat'}).encode() + b'\n')
+    reader.feed_eof()
+    pending: dict[int, asyncio.Future[object]] = {}
+    await _stdin_reader(reader, pending)
+    # No crash — unknown type is ignored
+
+
+async def test_stdin_reader_error_no_pending_future():
+    """Error for an unknown call ID is silently skipped."""
+    reader = asyncio.StreamReader()
+    reader.feed_data(json.dumps({'type': 'error', 'id': 999, 'error': 'fail'}).encode() + b'\n')
+    reader.feed_eof()
+    pending: dict[int, asyncio.Future[object]] = {}
+    await _stdin_reader(reader, pending)
+    # No crash — unknown ID is ignored
+
+
+async def test_stdin_reader_result_for_done_future():
+    """Result for an already-resolved future does not overwrite it."""
+    reader = asyncio.StreamReader()
+    reader.feed_data(json.dumps({'type': 'result', 'id': 1, 'result': 99}).encode() + b'\n')
+    reader.feed_eof()
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[object] = loop.create_future()
+    future.set_result('already done')
+    pending: dict[int, asyncio.Future[object]] = {1: future}
+    await _stdin_reader(reader, pending)
+    assert future.result() == 'already done'
+
+
+async def test_execute_with_function_call(monkeypatch: pytest.MonkeyPatch):
+    """_execute with functions builds proxies, calls them, and completes successfully."""
+    messages: list[dict[str, object]] = []
+    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+
+    reader = asyncio.StreamReader()
+
+    async def provide_result():
+        # Wait for the calls_ready message
+        while not any(m.get('type') == 'calls_ready' for m in messages):
+            await asyncio.sleep(0.01)
+        # Feed result for call id 1
+        reader.feed_data(json.dumps({'type': 'result', 'id': 1, 'result': 42}).encode() + b'\n')
+        reader.feed_eof()
+
+    provider = asyncio.create_task(provide_result())
+
+    await _execute(
+        {'code': 'await add(x=1, y=2)', 'functions': ['add']},
+        reader,
+    )
+    await provider
+
+    call_msgs = [m for m in messages if m.get('type') == 'call']
+    assert len(call_msgs) == 1
+    assert call_msgs[0]['function'] == 'add'
+
+    complete_msgs = [m for m in messages if m.get('type') == 'complete']
+    assert len(complete_msgs) == 1
+    assert complete_msgs[0]['result'] == 42

@@ -158,7 +158,10 @@ async def test_aenter_cleanup_on_wrapped_failure():
             nonlocal exit_count
             exit_count += 1
 
-    cm = CodeModeToolset(FailingToolset(), runtime=TrackingRuntime())
+    failing = FailingToolset()
+    assert failing.id is None  # verify the property works
+
+    cm = CodeModeToolset(failing, runtime=TrackingRuntime())
     with pytest.raises(RuntimeError, match='wrapped failed'):
         await cm.__aenter__()
     assert enter_count == 1
@@ -202,3 +205,13 @@ async def test_call_deferred_during_execution(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(ModelRetry):
         await cm.call_tool('run_code_with_tools', {'code': 'await _add(x=1, y=2)'}, ctx, tool)
     assert call_made
+
+
+def test_get_weather_helper():
+    """Verify get_weather fixture helper returns expected data."""
+    result = get_weather('London')
+    assert result == {'city': 'London', 'temperature': 15.0, 'unit': 'celsius', 'conditions': 'cloudy'}
+
+    # Unknown city uses fallback data
+    result = get_weather('Atlantis')
+    assert result == {'city': 'Atlantis', 'temperature': 20.0, 'unit': 'celsius', 'conditions': 'unknown'}

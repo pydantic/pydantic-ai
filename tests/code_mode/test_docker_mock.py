@@ -175,20 +175,15 @@ async def test_copy_driver_rm_timeout(monkeypatch: pytest.MonkeyPatch):
     """Timeout during rm in _copy_driver raises RuntimeError."""
     import asyncio
 
-    call_count = 0
-
     async def slow_exec(*args: object, **kwargs: object) -> object:
-        nonlocal call_count
-        call_count += 1
         proc = AsyncMock()
         proc.kill = lambda: None
-        if call_count == 1:  # rm command
 
-            async def never_finish() -> int:
-                await asyncio.sleep(100)
-                return 0  # pragma: no cover
+        async def never_finish() -> int:
+            await asyncio.sleep(100)
+            return 0  # pragma: no cover
 
-            proc.wait = never_finish
+        proc.wait = never_finish
         return proc
 
     monkeypatch.setattr('asyncio.create_subprocess_exec', slow_exec)
@@ -280,28 +275,21 @@ def test_get_runtime_docker():
 
 async def test_unmanaged_driver_copied_already(monkeypatch: pytest.MonkeyPatch):
     """Unmanaged mode with _driver_copied=True skips copy."""
-    copy_calls: list[str] = []
-
-    async def fake_copy(self: DockerRuntime) -> None:
-        copy_calls.append('copied')
-
+    fake_copy = AsyncMock()
     monkeypatch.setattr(DockerRuntime, '_copy_driver', fake_copy)
     rt = DockerRuntime(container_id='existing-container')
     rt._driver_copied = True  # pyright: ignore[reportPrivateUsage]
     await rt.__aenter__()
-    assert copy_calls == []  # copy was skipped
+    fake_copy.assert_not_called()
     await rt.__aexit__(None, None, None)
 
 
 async def test_unmanaged_copy_failure_no_remove(monkeypatch: pytest.MonkeyPatch):
     """Copy failure on unmanaged runtime does not remove container."""
-    remove_calls: list[str] = []
+    fake_remove = AsyncMock()
 
     async def fake_copy_fail(self: DockerRuntime) -> None:
         raise RuntimeError('copy failed')
-
-    async def fake_remove(self: DockerRuntime) -> None:
-        remove_calls.append('removed')
 
     monkeypatch.setattr(DockerRuntime, '_copy_driver', fake_copy_fail)
     monkeypatch.setattr(DockerRuntime, '_remove_container', fake_remove)
@@ -309,6 +297,19 @@ async def test_unmanaged_copy_failure_no_remove(monkeypatch: pytest.MonkeyPatch)
     with pytest.raises(RuntimeError, match='copy failed'):
         await rt.__aenter__()
     # Container should NOT be removed (unmanaged mode)
-    assert remove_calls == []
+    fake_remove.assert_not_called()
     # Container ID should be preserved
     assert rt.container_id == 'existing-container'
+
+
+async def test_async_subprocess_driver_read_stderr():
+    """_AsyncSubprocessDriver.read_stderr reads from the process stderr pipe."""
+    from pydantic_ai.runtime.docker import _AsyncSubprocessDriver  # pyright: ignore[reportPrivateUsage]
+
+    proc = AsyncMock()
+    proc.stderr = AsyncMock()
+    proc.stderr.read = AsyncMock(return_value=b'error output')
+
+    driver = _AsyncSubprocessDriver(proc)
+    result = await driver.read_stderr()
+    assert result == b'error output'

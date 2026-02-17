@@ -52,7 +52,7 @@ def get_weather(city: str) -> WeatherResult:
     Returns:
         Weather data including temperature and conditions.
     """
-    data = _WEATHER_DATA.get(city, {'temperature': 20.0, 'conditions': 'unknown'})  # pragma: no cover
+    data = _WEATHER_DATA.get(city, {'temperature': 20.0, 'conditions': 'unknown'})
     return {'city': city, 'temperature': data['temperature'], 'unit': 'celsius', 'conditions': data['conditions']}
 
 
