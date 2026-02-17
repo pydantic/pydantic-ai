@@ -1231,7 +1231,7 @@ class FilePart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False)
+@pydantic_dataclass(repr=False)
 class BaseToolCallPart:
     """A tool call from a model."""
 
@@ -1273,6 +1273,15 @@ class BaseToolCallPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
+    otel_metadata: Annotated[
+        _otel_messages.ToolCallPartOtelMetadata | None, pydantic.Field(default=None, exclude=True)
+    ] = field(default=None, init=False, repr=False, compare=False)
+    """Metadata from the tool definition to include in OpenTelemetry tool call events.
+
+    This is populated by the instrumentation layer from [`ToolDefinition.metadata`][pydantic_ai.tools.ToolDefinition.metadata]
+    and is not intended to be set directly. It is not serialized or sent to any model provider.
+    """
+
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
@@ -1309,7 +1318,7 @@ class BaseToolCallPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False)
+@pydantic_dataclass(repr=False)
 class ToolCallPart(BaseToolCallPart):
     """A tool call from a model."""
 
@@ -1319,7 +1328,7 @@ class ToolCallPart(BaseToolCallPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
 
-@dataclass(repr=False)
+@pydantic_dataclass(repr=False)
 class BuiltinToolCallPart(BaseToolCallPart):
     """A tool call to a built-in tool."""
 
@@ -1549,6 +1558,11 @@ class ModelResponse:
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
                 if isinstance(part, BuiltinToolCallPart):
                     call_part['builtin'] = True
+                if part.otel_metadata:
+                    if code_arg_name := part.otel_metadata.get('code_arg_name'):
+                        call_part['code_arg_name'] = code_arg_name
+                    if code_arg_language := part.otel_metadata.get('code_arg_language'):
+                        call_part['code_arg_language'] = code_arg_language
                 if settings.include_content and part.args is not None:
                     from .models.instrumented import InstrumentedModel
 
