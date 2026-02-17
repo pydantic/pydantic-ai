@@ -14,7 +14,7 @@ from pydantic_ai.providers import Provider
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:
+except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the Z.AI provider, '
         'you can use the `zai` optional group — `pip install "pydantic-ai-slim[zai]"`'
@@ -45,6 +45,7 @@ class ZaiProvider(Provider[AsyncOpenAI]):
 
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
+            supports_json_object_output=True,
             openai_chat_thinking_field='reasoning_content',
             openai_chat_send_back_thinking_parts='field',
         ).update(profile)
