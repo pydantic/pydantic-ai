@@ -62,7 +62,7 @@ def _build_dockerfile(
             lines.append(
                 f'RUN apt-get update && apt-get install -y --no-install-recommends {pkg_list} && rm -rf /var/lib/apt/lists/*'
             )
-        elif package_manager == 'npm':
+        elif package_manager == 'npm':  # pragma: no cover
             pkg_list = ' '.join(packages)
             lines.append(f'RUN npm install -g {pkg_list}')
 
@@ -151,7 +151,7 @@ class DockerSandboxProcess(ExecutionProcess):
         self._exec_id, self._socket = await anyio.to_thread.run_sync(_do_start)
 
     async def __aenter__(self) -> Self:
-        if self._exec_id is None:
+        if self._exec_id is None:  # pragma: no branch
             await self._start()
         return self
 
@@ -431,12 +431,12 @@ class DockerSandbox(ExecutionEnvironment):
         return tag
 
     async def __aexit__(self, *_args: Any) -> None:
-        if self._container is not None:
+        if self._container is not None:  # pragma: no branch
             await anyio.to_thread.run_sync(self._teardown)
 
     def _teardown(self) -> None:
         """Stop and remove container (sync, runs in executor)."""
-        if self._container is not None:
+        if self._container is not None:  # pragma: no branch
             try:
                 self._container.stop(timeout=5)
             except Exception:

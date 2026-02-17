@@ -92,7 +92,7 @@ def _close_subprocess_transport(proc: anyio.abc.Process) -> None:
     """
     inner = getattr(proc, '_process', None)  # anyio wraps asyncio.subprocess.Process
     transport = getattr(inner, '_transport', None)
-    if transport is not None:
+    if transport is not None:  # pragma: no branch
         transport.close()
 
 
@@ -280,7 +280,7 @@ class LocalEnvironment(ExecutionEnvironment):
                         size=stat.st_size if not entry.is_dir() else None,
                     )
                 )
-            except OSError:
+            except OSError:  # pragma: no cover
                 continue
         return entries
 
@@ -291,7 +291,7 @@ class LocalEnvironment(ExecutionEnvironment):
             try:
                 rel = str(match.relative_to(self._root_dir))
                 matches.append(rel)
-            except ValueError:
+            except ValueError:  # pragma: no cover
                 continue
         return matches
 

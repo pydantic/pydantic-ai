@@ -34,7 +34,33 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
+try:
+    from docker.errors import NotFound as DockerNotFound
+
+    from pydantic_ai.environments.docker import (
+        DockerSandbox,
+        DockerSandboxProcess,
+        ImageNotFound,
+        _build_dockerfile,
+        _config_hash,
+        _put_file,
+    )
+except ImportError:  # pragma: lax no cover
+    docker_installed = False
+else:
+    docker_installed = True
+
+try:
+    from pydantic_ai.environments.e2b import E2BSandbox, E2BSandboxProcess
+except ImportError:  # pragma: lax no cover
+    e2b_installed = False
+else:
+    e2b_installed = True
+
 pytestmark = pytest.mark.anyio
+
+docker_skip = pytest.mark.skipif(not docker_installed, reason='docker package not installed')
+e2b_skip = pytest.mark.skipif(not e2b_installed, reason='e2b-code-interpreter package not installed')
 
 
 def build_run_context(deps: Any = None, run_step: int = 0) -> RunContext[Any]:
@@ -1236,12 +1262,9 @@ new.py\
 # --- Docker/E2B instantiation tests ---
 
 
+@docker_skip
 def test_docker_sandbox_instantiation():
     """DockerSandbox can be constructed without starting Docker."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandbox
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     # Verify construction succeeds with default and custom settings
     sandbox = DockerSandbox(image='python:3.12-slim')
@@ -1272,12 +1295,9 @@ def test_docker_sandbox_instantiation():
     assert isinstance(sandbox_hardened, DockerSandbox)
 
 
+@e2b_skip
 def test_e2b_sandbox_instantiation():
     """E2BSandbox can be constructed without connecting to E2B."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandbox
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     sandbox = E2BSandbox(template='base', api_key='test-key', timeout=60)
     assert isinstance(sandbox, E2BSandbox)
@@ -1304,7 +1324,7 @@ async def test_agent_with_execution_toolset():
         assert result.output is not None
 
 
-# pyright: reportPrivateUsage=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false
+# pyright: reportPrivateUsage=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportPossiblyUnboundVariable=false
 
 
 # --- _base.py helper functions ---
@@ -1791,7 +1811,7 @@ class MockContainer:
         if isinstance(cmd, list):
             cmd_str = ' '.join(cmd)
         else:
-            cmd_str = cmd
+            cmd_str = cmd  # pragma: no cover
 
         # Handle mkdir -p
         if 'mkdir -p' in cmd_str:
@@ -1805,7 +1825,7 @@ class MockContainer:
             for fpath, data in self._files.items():
                 # Check if the filename or path appears in the command
                 name = fpath.rsplit('/', 1)[-1] if '/' in fpath else fpath
-                if name in cmd_str or fpath in cmd_str:
+                if name in cmd_str or fpath in cmd_str:  # pragma: no branch
                     text = data.decode('utf-8', errors='replace')
                     lines = text.splitlines(keepends=True)
                     numbered = [f'{i:>6}\t{line}' for i, line in enumerate(lines, start=1)]
@@ -1824,7 +1844,7 @@ class MockContainer:
         if 'find' in cmd_str:
             matches = []
             for path in sorted(self._files):
-                matches.append(path)
+                matches.append(path)  # pragma: no cover
             return 0, '\n'.join(matches).encode('utf-8')
 
         # Handle grep
@@ -1837,10 +1857,10 @@ class MockContainer:
             msg = cmd_str.split('echo ', 1)[-1] if 'echo ' in cmd_str else ''
             return 0, (msg + '\n').encode('utf-8')
 
-        if 'exit' in cmd_str:
+        if 'exit' in cmd_str:  # pragma: no cover
             return 1, b''
 
-        return 0, b''
+        return 0, b''  # pragma: no cover
 
     def put_archive(self, path: str, data: Any) -> bool:
         """Simulate file upload by extracting tar data."""
@@ -1848,7 +1868,7 @@ class MockContainer:
         with tarfile.open(fileobj=io.BytesIO(tar_data)) as tar:
             for member in tar.getmembers():
                 extracted = tar.extractfile(member)
-                if extracted:
+                if extracted:  # pragma: no branch
                     full_path = f'{path}/{member.name}' if path != '.' else member.name
                     self._files[full_path] = extracted.read()
         return True
@@ -1857,16 +1877,14 @@ class MockContainer:
         """Simulate file download."""
         if path not in self._files:
             # Check if file exists at resolved path
-            for fpath, data in self._files.items():
+            for fpath, data in self._files.items():  # pragma: no cover
                 if fpath.endswith(path) or path.endswith(fpath.split('/')[-1]):
-                    return [_make_tar(fpath.split('/')[-1], data)], {}
-            from docker.errors import NotFound  # pragma: lax no cover
-
-            raise NotFound('File not found')  # pragma: lax no cover
+                    return [_make_tar(fpath.split('/')[-1], data)], {}  # pragma: no cover
+            raise DockerNotFound('File not found')  # pragma: no cover
         data = self._files[path]
         return [_make_tar(path.split('/')[-1], data)], {}
 
-    def stop(self, timeout: int = 5) -> None:
+    def stop(self, timeout: int = 5) -> None:  # pragma: no cover
         self.status = 'stopped'
 
     def remove(self, force: bool = False) -> None:
@@ -1884,9 +1902,7 @@ def mock_container() -> MockContainer:
 @pytest.fixture
 def mock_docker_sandbox(mock_container: MockContainer) -> Any:
     """Create a DockerSandbox with a mock container."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandbox
-    except ImportError:
+    if not docker_installed:
         pytest.skip('docker package not installed')
 
     sandbox = DockerSandbox(image='python:3.12-slim')
@@ -1988,19 +2004,16 @@ async def test_docker_grep_count(mock_docker_sandbox: Any, mock_container: MockC
             cmd_str = cmd[-1] if len(cmd) > 1 else ''
             if 'grep' in cmd_str and '-c' in cmd_str:
                 return 0, b'a.py:3\nb.py:0\nc.py:1'
-        return original_exec_run(cmd, **kwargs)
+        return original_exec_run(cmd, **kwargs)  # pragma: no cover
 
     mock_container.exec_run = count_exec_run  # type: ignore[assignment]
     result = await mock_docker_sandbox.grep('pattern', output_mode='count')
     assert 'b.py:0' not in result
 
 
+@docker_skip
 async def test_docker_container_property(mock_docker_sandbox: Any) -> None:
     """DockerSandbox.container raises when not started."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandbox
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     sandbox = DockerSandbox()
     with pytest.raises(RuntimeError, match='not started'):
@@ -2026,12 +2039,9 @@ async def test_docker_is_alive(mock_docker_sandbox: Any) -> None:
     assert result is True
 
 
+@docker_skip
 async def test_docker_is_alive_not_started() -> None:
     """DockerSandbox.is_alive returns False when not started."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandbox
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     sandbox = DockerSandbox()
     result = await sandbox.is_alive()
@@ -2045,12 +2055,9 @@ async def test_docker_resolve_path(mock_docker_sandbox: Any) -> None:
     assert mock_docker_sandbox._resolve_path('sub/dir/file.py') == '/workspace/sub/dir/file.py'
 
 
+@docker_skip
 def test_docker_build_dockerfile() -> None:
     """_build_dockerfile generates correct Dockerfiles."""
-    try:
-        from pydantic_ai.environments.docker import _build_dockerfile
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     # pip
     result = _build_dockerfile('python:3.12-slim', ['numpy', 'pandas'], 'pip', [])
@@ -2076,12 +2083,9 @@ def test_docker_build_dockerfile() -> None:
     assert result == 'FROM python:3.12-slim'
 
 
+@docker_skip
 def test_docker_config_hash() -> None:
     """_config_hash produces deterministic, collision-resistant hashes."""
-    try:
-        from pydantic_ai.environments.docker import _config_hash
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     h1 = _config_hash('python:3.12', ['numpy', 'pandas'], 'pip', [])
     h2 = _config_hash('python:3.12', ['numpy', 'pandas'], 'pip', [])
@@ -2098,12 +2102,9 @@ def test_docker_config_hash() -> None:
     assert h4 != h5
 
 
+@docker_skip
 def test_docker_put_file() -> None:
     """_put_file creates a tar archive and uploads it."""
-    try:
-        from pydantic_ai.environments.docker import _put_file
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     _put_file(container, '/workspace/test.txt', b'hello')  # type: ignore[arg-type]
@@ -2111,12 +2112,9 @@ def test_docker_put_file() -> None:
     assert container._files['/workspace/test.txt'] == b'hello'
 
 
+@docker_skip
 def test_docker_sandbox_process_read_frame() -> None:
     """DockerSandboxProcess._read_frame parses multiplexed stream frames."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -2134,12 +2132,9 @@ def test_docker_sandbox_process_read_frame() -> None:
     assert data == stdout_data
 
 
+@docker_skip
 def test_docker_sandbox_process_read_frame_stderr() -> None:
     """DockerSandboxProcess._read_frame handles stderr frames."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -2156,12 +2151,9 @@ def test_docker_sandbox_process_read_frame_stderr() -> None:
     assert data == stderr_data
 
 
+@docker_skip
 def test_docker_sandbox_process_read_frame_eof() -> None:
     """DockerSandboxProcess._read_frame returns empty on EOF."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -2176,12 +2168,9 @@ def test_docker_sandbox_process_read_frame_eof() -> None:
     assert proc._eof is True
 
 
+@docker_skip
 def test_docker_sandbox_process_read_frame_zero_size() -> None:
     """DockerSandboxProcess._read_frame handles zero-size frames."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -2197,12 +2186,9 @@ def test_docker_sandbox_process_read_frame_zero_size() -> None:
     assert data == b''
 
 
+@docker_skip
 def test_docker_sandbox_process_already_eof() -> None:
     """DockerSandboxProcess._read_frame returns empty when already at EOF."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -2247,9 +2233,7 @@ def _make_mock_e2b_sandbox() -> Any:
 @pytest.fixture
 def mock_e2b_sandbox() -> Any:
     """Create an E2BSandbox with mocked internals."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandbox
-    except ImportError:
+    if not e2b_installed:
         pytest.skip('e2b-code-interpreter package not installed')
 
     sandbox = E2BSandbox(template='base', api_key='test-key')
@@ -2406,12 +2390,9 @@ async def test_e2b_system_prompt(mock_e2b_sandbox: Any) -> None:
     assert 'POSIX' in prompt
 
 
+@e2b_skip
 async def test_e2b_sandbox_property() -> None:
     """E2BSandbox.sandbox raises when not started."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandbox
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     sandbox = E2BSandbox(api_key='test')
     with pytest.raises(RuntimeError, match='not started'):
@@ -2441,7 +2422,6 @@ async def test_e2b_merge_env_empty(mock_e2b_sandbox: Any) -> None:
 
 async def test_e2b_create_process(mock_e2b_sandbox: Any) -> None:
     """E2BSandbox.create_process returns an E2BSandboxProcess."""
-    from pydantic_ai.environments.e2b import E2BSandboxProcess
 
     proc = await mock_e2b_sandbox.create_process('echo test')
     assert isinstance(proc, E2BSandboxProcess)
@@ -2744,7 +2724,7 @@ async def test_docker_execute_truncation(mock_docker_sandbox: Any, mock_containe
     def big_output(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
         if isinstance(cmd, list) and 'echo' in str(cmd):
             return 0, b'x' * 200_000
-        return original(cmd, **kwargs)
+        return original(cmd, **kwargs)  # pragma: no cover
 
     mock_container.exec_run = big_output  # type: ignore[assignment]
     result = await mock_docker_sandbox.execute('echo big')
@@ -2764,14 +2744,10 @@ async def test_docker_execute_timeout_exit_code(mock_docker_sandbox: Any, mock_c
     assert '[Command timed out]' in result.output
 
 
+@docker_skip
 async def test_docker_setup_teardown() -> None:
     """DockerSandbox._setup and _teardown with mocked Docker client."""
-    try:
-        from unittest.mock import patch as mock_patch
-
-        from pydantic_ai.environments.docker import DockerSandbox
-    except ImportError:
-        pytest.skip('docker package not installed')
+    from unittest.mock import patch as mock_patch
 
     sandbox = DockerSandbox(image='python:3.12-slim')
 
@@ -2791,12 +2767,9 @@ async def test_docker_setup_teardown() -> None:
     assert sandbox._container is None
 
 
+@docker_skip
 async def test_docker_teardown_cleanup_errors() -> None:
     """DockerSandbox._teardown handles exceptions gracefully."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandbox
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     sandbox = DockerSandbox()
     mock_container = MagicMock()
@@ -2809,12 +2782,9 @@ async def test_docker_teardown_cleanup_errors() -> None:
     assert sandbox._container is None
 
 
+@docker_skip
 async def test_docker_resolve_image_no_packages() -> None:
     """DockerSandbox._resolve_image returns base image when no packages."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandbox
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     sandbox = DockerSandbox(image='python:3.12-slim')
     sandbox._client = MagicMock()
@@ -2822,12 +2792,9 @@ async def test_docker_resolve_image_no_packages() -> None:
     assert result == 'python:3.12-slim'
 
 
+@docker_skip
 async def test_docker_resolve_image_with_cache() -> None:
     """DockerSandbox._resolve_image returns cached image if it exists."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandbox
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     sandbox = DockerSandbox(image='python:3.12-slim', packages=['numpy'])
     mock_client = MagicMock()
@@ -2839,12 +2806,9 @@ async def test_docker_resolve_image_with_cache() -> None:
     mock_client.images.build.assert_not_called()
 
 
+@docker_skip
 async def test_docker_resolve_image_build_new() -> None:
     """DockerSandbox._resolve_image builds when cache miss."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandbox, ImageNotFound
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     sandbox = DockerSandbox(image='python:3.12-slim', packages=['numpy'])
     mock_client = MagicMock()
@@ -2857,12 +2821,9 @@ async def test_docker_resolve_image_build_new() -> None:
     mock_client.images.build.assert_called_once()
 
 
+@docker_skip
 async def test_docker_resolve_image_no_cache() -> None:
     """DockerSandbox._resolve_image skips cache check when disabled."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandbox
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     sandbox = DockerSandbox(image='python:3.12-slim', packages=['numpy'], cache_built_image=False)
     mock_client = MagicMock()
@@ -2875,14 +2836,10 @@ async def test_docker_resolve_image_no_cache() -> None:
     mock_client.images.build.assert_called_once()
 
 
+@docker_skip
 async def test_docker_setup_with_all_options() -> None:
     """DockerSandbox._setup passes all container options."""
-    try:
-        from unittest.mock import patch as mock_patch
-
-        from pydantic_ai.environments.docker import DockerSandbox
-    except ImportError:
-        pytest.skip('docker package not installed')
+    from unittest.mock import patch as mock_patch
 
     sandbox = DockerSandbox(
         image='python:3.12-slim',
@@ -2922,12 +2879,9 @@ async def test_docker_setup_with_all_options() -> None:
     assert call_kwargs['init'] is True
 
 
+@docker_skip
 async def test_docker_process_recv_with_buffered_data() -> None:
     """DockerSandboxProcess.recv returns buffered stdout data first."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -2938,12 +2892,9 @@ async def test_docker_process_recv_with_buffered_data() -> None:
     assert proc._stdout_buffer == []
 
 
+@docker_skip
 async def test_docker_process_recv_stderr_with_buffered_data() -> None:
     """DockerSandboxProcess.recv_stderr returns buffered stderr data first."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -2954,12 +2905,9 @@ async def test_docker_process_recv_stderr_with_buffered_data() -> None:
     assert proc._stderr_buffer == []
 
 
+@docker_skip
 async def test_docker_process_recv_stream_buffers_other() -> None:
     """DockerSandboxProcess._recv_stream buffers frames for the other stream."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -2980,12 +2928,9 @@ async def test_docker_process_recv_stream_buffers_other() -> None:
     assert proc._stderr_buffer == [stderr_data]
 
 
+@docker_skip
 async def test_docker_process_recv_stream_eof() -> None:
     """DockerSandboxProcess._recv_stream returns empty on EOF."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -2998,12 +2943,9 @@ async def test_docker_process_recv_stream_eof() -> None:
     assert result == b''
 
 
+@docker_skip
 async def test_docker_process_kill() -> None:
     """DockerSandboxProcess.kill closes the socket."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -3014,12 +2956,9 @@ async def test_docker_process_kill() -> None:
     mock_socket.close.assert_called_once()
 
 
+@docker_skip
 async def test_docker_process_kill_oserror() -> None:
     """DockerSandboxProcess.kill handles OSError."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -3031,12 +2970,9 @@ async def test_docker_process_kill_oserror() -> None:
     await proc.kill()
 
 
+@docker_skip
 async def test_docker_process_returncode() -> None:
     """DockerSandboxProcess.returncode checks exec status."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -3050,12 +2986,9 @@ async def test_docker_process_returncode() -> None:
     assert proc.returncode == 0
 
 
+@docker_skip
 async def test_docker_process_returncode_from_inspect() -> None:
     """DockerSandboxProcess.returncode polls Docker API."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     container.client.api.exec_inspect.return_value = {'ExitCode': 42, 'Running': False}
@@ -3066,12 +2999,9 @@ async def test_docker_process_returncode_from_inspect() -> None:
     assert proc._returncode == 42
 
 
+@docker_skip
 async def test_docker_process_returncode_still_running() -> None:
     """DockerSandboxProcess.returncode returns None when process is running (ExitCode=0, Running=True)."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     # Docker returns ExitCode=0 + Running=True for still-running processes
@@ -3082,12 +3012,9 @@ async def test_docker_process_returncode_still_running() -> None:
     assert proc.returncode is None
 
 
+@docker_skip
 async def test_docker_process_returncode_inspect_error() -> None:
     """DockerSandboxProcess.returncode handles API errors."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     container.client.api.exec_inspect.side_effect = OSError('connection failed')
@@ -3097,12 +3024,9 @@ async def test_docker_process_returncode_inspect_error() -> None:
     assert proc.returncode is None
 
 
+@docker_skip
 async def test_docker_process_send() -> None:
     """DockerSandboxProcess.send writes to socket."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -3113,12 +3037,9 @@ async def test_docker_process_send() -> None:
     mock_socket.sendall.assert_called_once_with(b'hello')
 
 
+@docker_skip
 async def test_docker_process_recv_with_timeout() -> None:
     """DockerSandboxProcess.recv with timeout."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -3133,12 +3054,9 @@ async def test_docker_process_recv_with_timeout() -> None:
     assert result == stdout_data
 
 
+@docker_skip
 async def test_docker_process_recv_stderr_with_timeout() -> None:
     """DockerSandboxProcess.recv_stderr with timeout."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -3153,12 +3071,9 @@ async def test_docker_process_recv_stderr_with_timeout() -> None:
     assert result == stderr_data
 
 
+@docker_skip
 async def test_docker_read_frame_data_eof_during_read() -> None:
     """DockerSandboxProcess._read_frame handles EOF during data read."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -3175,12 +3090,9 @@ async def test_docker_read_frame_data_eof_during_read() -> None:
     assert proc._eof is True
 
 
+@docker_skip
 async def test_docker_process_start_with_env() -> None:
     """DockerSandboxProcess._do_start passes env to exec_create."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     container.client.api.exec_create.return_value = {'Id': 'exec-test'}
@@ -3200,12 +3112,9 @@ async def test_docker_process_start_with_env() -> None:
     assert call_kwargs['environment'] == {'FOO': 'bar'}
 
 
+@docker_skip
 async def test_docker_process_aenter() -> None:
     """DockerSandboxProcess.__aenter__ starts the process."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     container.client.api.exec_create.return_value = {'Id': 'exec-aenter'}
@@ -3225,37 +3134,31 @@ async def test_docker_ls_not_found(mock_docker_sandbox: Any, mock_container: Moc
     def fail_ls(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
         if isinstance(cmd, list) and 'ls -la' in ' '.join(cmd):
             return 1, b'ls: cannot access: No such file or directory'
-        return original(cmd, **kwargs)
+        return original(cmd, **kwargs)  # pragma: no cover
 
     mock_container.exec_run = fail_ls  # type: ignore[assignment]
     with pytest.raises(NotADirectoryError):
         await mock_docker_sandbox.ls('nonexistent')
 
 
+@docker_skip
 async def test_docker_read_file_bytes_not_found(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
     """DockerSandbox.read_file_bytes raises FileNotFoundError for missing files."""
-    try:
-        from docker.errors import NotFound
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     def fail_get_archive(path: str) -> Any:
-        raise NotFound('File not found')
+        raise DockerNotFound('File not found')
 
     mock_container.get_archive = fail_get_archive
-    with pytest.raises(NotFound):
+    with pytest.raises(DockerNotFound):
         await mock_docker_sandbox.read_file_bytes('missing.txt')
 
 
 # --- Additional E2B coverage: process methods, lifecycle ---
 
 
+@e2b_skip
 async def test_e2b_process_start_with_env() -> None:
     """E2BSandboxProcess._start passes env to commands.start."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandboxProcess
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     mock_sandbox = MagicMock()
     mock_proc = MagicMock()
@@ -3278,12 +3181,9 @@ async def test_e2b_process_start_with_env() -> None:
     await proc._stderr_recv.aclose()
 
 
+@e2b_skip
 async def test_e2b_process_aenter() -> None:
     """E2BSandboxProcess.__aenter__ starts the process."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandboxProcess
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     mock_sandbox = MagicMock()
     mock_proc = MagicMock()
@@ -3301,12 +3201,9 @@ async def test_e2b_process_aenter() -> None:
     await proc._stderr_recv.aclose()
 
 
+@e2b_skip
 async def test_e2b_process_send() -> None:
     """E2BSandboxProcess.send writes to process stdin."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandboxProcess
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     mock_sandbox = MagicMock()
     mock_proc = MagicMock()
@@ -3325,12 +3222,9 @@ async def test_e2b_process_send() -> None:
     await proc._stderr_recv.aclose()
 
 
+@e2b_skip
 async def test_e2b_process_recv() -> None:
     """E2BSandboxProcess.recv reads from stdout stream."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandboxProcess
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     mock_sandbox = MagicMock()
     proc = E2BSandboxProcess(mock_sandbox, 'echo test')
@@ -3347,12 +3241,9 @@ async def test_e2b_process_recv() -> None:
     await proc._stderr_recv.aclose()
 
 
+@e2b_skip
 async def test_e2b_process_recv_no_timeout() -> None:
     """E2BSandboxProcess.recv without timeout."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandboxProcess
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     mock_sandbox = MagicMock()
     proc = E2BSandboxProcess(mock_sandbox, 'echo test')
@@ -3368,12 +3259,9 @@ async def test_e2b_process_recv_no_timeout() -> None:
     await proc._stderr_recv.aclose()
 
 
+@e2b_skip
 async def test_e2b_process_recv_stderr() -> None:
     """E2BSandboxProcess.recv_stderr reads from stderr stream."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandboxProcess
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     mock_sandbox = MagicMock()
     proc = E2BSandboxProcess(mock_sandbox, 'echo test')
@@ -3389,12 +3277,9 @@ async def test_e2b_process_recv_stderr() -> None:
     await proc._stderr_recv.aclose()
 
 
+@e2b_skip
 async def test_e2b_process_recv_stderr_no_timeout() -> None:
     """E2BSandboxProcess.recv_stderr without timeout."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandboxProcess
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     mock_sandbox = MagicMock()
     proc = E2BSandboxProcess(mock_sandbox, 'echo test')
@@ -3410,12 +3295,9 @@ async def test_e2b_process_recv_stderr_no_timeout() -> None:
     await proc._stderr_recv.aclose()
 
 
+@e2b_skip
 async def test_e2b_process_returncode() -> None:
     """E2BSandboxProcess.returncode reflects exit status."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandboxProcess
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     mock_sandbox = MagicMock()
     proc = E2BSandboxProcess(mock_sandbox, 'echo test')
@@ -3431,12 +3313,9 @@ async def test_e2b_process_returncode() -> None:
     await proc._stderr_recv.aclose()
 
 
+@e2b_skip
 async def test_e2b_process_wait() -> None:
     """E2BSandboxProcess.wait returns exit code."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandboxProcess
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     mock_sandbox = MagicMock()
     proc = E2BSandboxProcess(mock_sandbox, 'echo test')
@@ -3453,12 +3332,9 @@ async def test_e2b_process_wait() -> None:
     await proc._stderr_recv.aclose()
 
 
+@e2b_skip
 async def test_e2b_process_wait_no_timeout() -> None:
     """E2BSandboxProcess.wait without timeout."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandboxProcess
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     mock_sandbox = MagicMock()
     proc = E2BSandboxProcess(mock_sandbox, 'echo test')
@@ -3474,12 +3350,9 @@ async def test_e2b_process_wait_no_timeout() -> None:
     await proc._stderr_recv.aclose()
 
 
+@e2b_skip
 async def test_e2b_process_kill() -> None:
     """E2BSandboxProcess.kill terminates the process."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandboxProcess
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     mock_sandbox = MagicMock()
     mock_proc = MagicMock()
@@ -3498,12 +3371,9 @@ async def test_e2b_process_kill() -> None:
     await proc._stderr_recv.aclose()
 
 
+@e2b_skip
 async def test_e2b_process_kill_not_started() -> None:
     """E2BSandboxProcess.kill does nothing when process not started."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandboxProcess
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     mock_sandbox = MagicMock()
     proc = E2BSandboxProcess(mock_sandbox, 'echo test')
@@ -3517,12 +3387,9 @@ async def test_e2b_process_kill_not_started() -> None:
     await proc._stderr_recv.aclose()
 
 
+@e2b_skip
 async def test_e2b_process_kill_error() -> None:
     """E2BSandboxProcess.kill handles exceptions gracefully."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandboxProcess
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     mock_sandbox = MagicMock()
     mock_proc = MagicMock()
@@ -3575,12 +3442,9 @@ async def test_e2b_execute_no_timeout(mock_e2b_sandbox: Any) -> None:
 # --- Final coverage gap tests ---
 
 
+@docker_skip
 async def test_docker_process_recv_stderr_no_timeout_no_buffer() -> None:
     """DockerSandboxProcess.recv_stderr without timeout and no buffer hits line 175."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -3596,12 +3460,9 @@ async def test_docker_process_recv_stderr_no_timeout_no_buffer() -> None:
     assert result == stderr_data
 
 
+@docker_skip
 async def test_docker_process_recv_stream_buffers_stdout_for_stderr() -> None:
     """DockerSandboxProcess._recv_stream buffers stdout when requesting stderr (line 187)."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
@@ -3622,12 +3483,9 @@ async def test_docker_process_recv_stream_buffers_stdout_for_stderr() -> None:
     assert proc._stdout_buffer == [stdout_data]
 
 
+@docker_skip
 async def test_docker_process_wait_with_timeout() -> None:
     """DockerSandboxProcess.wait with timeout (lines 247-257)."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     container.client.api.exec_inspect.return_value = {'ExitCode': 0}
@@ -3638,12 +3496,9 @@ async def test_docker_process_wait_with_timeout() -> None:
     assert exit_code == 0
 
 
+@docker_skip
 async def test_docker_process_wait_no_timeout() -> None:
     """DockerSandboxProcess.wait without timeout (line 257)."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     container.client.api.exec_inspect.return_value = {'ExitCode': 1}
@@ -3654,14 +3509,10 @@ async def test_docker_process_wait_no_timeout() -> None:
     assert exit_code == 1
 
 
+@docker_skip
 async def test_docker_aenter_aexit() -> None:
     """DockerSandbox.__aenter__ and __aexit__ (lines 355-356, 434-435)."""
-    try:
-        from unittest.mock import patch as mock_patch
-
-        from pydantic_ai.environments.docker import DockerSandbox
-    except ImportError:
-        pytest.skip('docker package not installed')
+    from unittest.mock import patch as mock_patch
 
     sandbox = DockerSandbox(image='python:3.12-slim')
 
@@ -3725,7 +3576,7 @@ async def test_docker_ls_short_lines(mock_docker_sandbox: Any, mock_container: M
                 'drwxr-xr-x 2 root root 4096 Jan  1 00:00 subdir\n'
             )
             return 0, output.encode()
-        return original(cmd, **kwargs)
+        return original(cmd, **kwargs)  # pragma: no cover
 
     mock_container.exec_run = custom_ls  # type: ignore[assignment]
     entries = await mock_docker_sandbox.ls('.')
@@ -3836,12 +3687,9 @@ async def test_local_process_recv_eof(tmp_path: Path):
         assert data == b''
 
 
+@docker_skip
 async def test_docker_process_wait_poll_loop() -> None:
     """DockerSandboxProcess.wait poll loop (line 252)."""
-    try:
-        from pydantic_ai.environments.docker import DockerSandboxProcess
-    except ImportError:
-        pytest.skip('docker package not installed')
 
     container = MockContainer()
     # First two calls return still running, third returns exited
@@ -3865,7 +3713,7 @@ async def test_docker_ls_size_value_error(mock_docker_sandbox: Any, mock_contain
         if isinstance(cmd, list) and 'ls -la' in ' '.join(cmd):
             output = 'total 8\n-rw-r--r-- 1 root root NaN Jan  1 00:00 weird.txt\n'
             return 0, output.encode()
-        return original(cmd, **kwargs)
+        return original(cmd, **kwargs)  # pragma: no cover
 
     mock_container.exec_run = custom_ls  # type: ignore[assignment]
     entries = await mock_docker_sandbox.ls('.')
@@ -3874,14 +3722,10 @@ async def test_docker_ls_size_value_error(mock_docker_sandbox: Any, mock_contain
     assert entries[0].size is None  # NaN couldn't be parsed
 
 
+@e2b_skip
 async def test_e2b_lifecycle() -> None:
     """E2BSandbox.__aenter__ and __aexit__ (lines 166-186)."""
-    try:
-        from unittest.mock import patch as mock_patch
-
-        from pydantic_ai.environments.e2b import E2BSandbox
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
+    from unittest.mock import patch as mock_patch
 
     mock_sandbox_instance = MagicMock()
     mock_sandbox_instance.close = AsyncMock()
@@ -3900,14 +3744,10 @@ async def test_e2b_lifecycle() -> None:
         mock_sandbox_instance.close.assert_called_once()
 
 
+@e2b_skip
 async def test_e2b_lifecycle_close_error() -> None:
     """E2BSandbox.__aexit__ handles close errors gracefully (lines 183-185)."""
-    try:
-        from unittest.mock import patch as mock_patch
-
-        from pydantic_ai.environments.e2b import E2BSandbox
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
+    from unittest.mock import patch as mock_patch
 
     mock_sandbox_instance = MagicMock()
     mock_sandbox_instance.close = AsyncMock(side_effect=Exception('close failed'))
@@ -3922,12 +3762,9 @@ async def test_e2b_lifecycle_close_error() -> None:
         assert sandbox._sandbox is None
 
 
+@e2b_skip
 async def test_e2b_process_wait_polls() -> None:
     """E2BSandboxProcess.wait polls until exit code appears (line 110)."""
-    try:
-        from pydantic_ai.environments.e2b import E2BSandboxProcess
-    except ImportError:
-        pytest.skip('e2b-code-interpreter package not installed')
 
     import anyio
 
@@ -3967,3 +3804,12 @@ async def test_memory_normalize_absolute_path():
     # Normalize /path.txt should strip leading /
     normalized = env._normalize('/path.txt')
     assert normalized == 'path.txt'
+
+
+async def test_memory_read_file_that_is_also_directory_prefix():
+    """MemoryEnvironment.read_file when path exists as both file and directory prefix."""
+    # 'dir' exists as a file AND 'dir/child.txt' makes it look like a directory too
+    env = MemoryEnvironment(files={'dir': 'I am a file', 'dir/child.txt': 'child content'})
+    async with env:
+        content = await env.read_file('dir')
+        assert 'I am a file' in content

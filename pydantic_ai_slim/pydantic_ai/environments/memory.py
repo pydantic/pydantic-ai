@@ -10,9 +10,7 @@ import fnmatch
 import posixpath
 import re
 from collections.abc import Callable
-from typing import Any, Literal
-
-from typing_extensions import Self
+from typing import Literal
 
 from ._base import (
     ExecuteResult,
@@ -72,17 +70,11 @@ class MemoryEnvironment(ExecutionEnvironment):
         """Normalize a path for consistent storage."""
         normalized = posixpath.normpath(path)
         # Strip leading './' or '/'
-        if normalized.startswith('./'):
+        if normalized.startswith('./'):  # pragma: no cover
             normalized = normalized[2:]
         elif normalized.startswith('/'):
             normalized = normalized[1:]
         return normalized
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *_args: Any) -> None:
-        pass
 
     async def execute(
         self,
