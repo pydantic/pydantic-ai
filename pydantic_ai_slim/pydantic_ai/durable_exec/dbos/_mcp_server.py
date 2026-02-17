@@ -15,8 +15,6 @@ class DBOSMCPServer(DBOSMCPToolset[AgentDepsT]):
     respecting the wrapped server's `cache_tools` setting.
     """
 
-    _cached_tool_defs: dict[str, ToolDefinition] | None = None
-
     def __init__(
         self,
         wrapped: MCPServer,
@@ -29,6 +27,7 @@ class DBOSMCPServer(DBOSMCPToolset[AgentDepsT]):
             step_name_prefix=step_name_prefix,
             step_config=step_config,
         )
+        self._cached_tool_defs: dict[str, ToolDefinition] | None = None
 
     @property
     def _server(self) -> MCPServer:

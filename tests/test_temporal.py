@@ -197,6 +197,14 @@ async def client_with_logfire(temporal_env: WorkflowEnvironment) -> Client:
     )
 
 
+@pytest.fixture(autouse=True)
+def _clear_mcp_tool_cache() -> None:
+    """Clear cached tool defs on module-level TemporalMCPServer instances between tests."""
+    for toolset in complex_temporal_agent.toolsets:
+        if isinstance(toolset, TemporalMCPServer):
+            toolset._cached_tool_defs = None  # pyright: ignore[reportPrivateUsage]
+
+
 # Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
 model = OpenAIChatModel(
     'gpt-4o',
@@ -752,11 +760,6 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
     from unittest.mock import patch
 
     from mcp.client.session import ClientSession
-
-    # Clear any cached tool defs from previous tests (e.g. test_complex_agent_run_in_workflow)
-    # that share the same module-level complex_temporal_agent.
-    temporal_mcp_toolset = next(t for t in complex_temporal_agent.toolsets if isinstance(t, TemporalMCPServer))
-    temporal_mcp_toolset._cached_tool_defs = None  # pyright: ignore[reportPrivateUsage]
 
     original_send_request = ClientSession.send_request
     methods_called: list[str] = []

@@ -19,8 +19,6 @@ class TemporalMCPServer(TemporalMCPToolset[AgentDepsT]):
     respecting the wrapped server's `cache_tools` setting.
     """
 
-    _cached_tool_defs: dict[str, ToolDefinition] | None = None
-
     def __init__(
         self,
         server: MCPServer,
@@ -39,6 +37,7 @@ class TemporalMCPServer(TemporalMCPToolset[AgentDepsT]):
             deps_type=deps_type,
             run_context_type=run_context_type,
         )
+        self._cached_tool_defs: dict[str, ToolDefinition] | None = None
 
     @property
     def _server(self) -> MCPServer:
