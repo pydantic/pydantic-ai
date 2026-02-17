@@ -233,7 +233,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
                 messages.pop()
-                next_message = _messages.ModelRequest(parts=last_message.parts, run_id=last_message.run_id)
+                next_message = _messages.ModelRequest(
+                    parts=last_message.parts,
+                    run_id=last_message.run_id,
+                    metadata=last_message.metadata,
+                )
                 is_resuming_without_prompt = True
 
                 # Extract `UserPromptPart` content from the popped message and add to `ctx.deps.prompt`
