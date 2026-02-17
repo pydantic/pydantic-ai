@@ -73,32 +73,37 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
         schema.pop('$schema', None)
 
         if schema.get('type') == 'object':
-            schema['additionalProperties'] = False
+            if self.strict is True:
+                schema['additionalProperties'] = False
+            elif self.strict is None:
+                if schema.get('additionalProperties', None) not in (None, False):
+                    self.is_strict_compatible = False
+                else:
+                    schema['additionalProperties'] = False
 
-        # Collect Bedrock-incompatible constraints based on schema type
-        incompatible: dict[str, Any] = {}
-        schema_type = schema.get('type')
+        if self.strict is True:
+            # Collect and strip Bedrock-incompatible constraints
+            incompatible: dict[str, Any] = {}
+            schema_type = schema.get('type')
 
-        if schema_type in ('number', 'integer'):
-            for key in _STRICT_INCOMPATIBLE_KEYS:
-                if key in schema:
-                    incompatible[key] = schema[key]
+            if schema_type in ('number', 'integer'):
+                for key in _STRICT_INCOMPATIBLE_KEYS:
+                    if key in schema:
+                        incompatible[key] = schema[key]
+            elif schema_type == 'array':
+                if 'maxItems' in schema:
+                    incompatible['maxItems'] = schema['maxItems']
+                if 'minItems' in schema and schema['minItems'] > 1:
+                    incompatible['minItems'] = schema['minItems']
 
-        elif schema_type == 'array':
-            if 'maxItems' in schema:
-                incompatible['maxItems'] = schema['maxItems']
-            if 'minItems' in schema and schema['minItems'] > 1:
-                incompatible['minItems'] = schema['minItems']
-
-        # Strip incompatible keys only when strict=True
-        if incompatible and self.strict is True:
-            notes: list[str] = []
-            for key, value in incompatible.items():
-                schema.pop(key)
-                notes.append(f'{key}={value}')
-            notes_str = ', '.join(notes)
-            desc = schema.get('description')
-            schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
+            if incompatible:
+                notes: list[str] = []
+                for key, value in incompatible.items():
+                    schema.pop(key)
+                    notes.append(f'{key}={value}')
+                notes_str = ', '.join(notes)
+                desc = schema.get('description')
+                schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
 
         return schema
 

@@ -3362,10 +3362,17 @@ def test_bedrock_strict_tool_definition_unsupported_model(
 
     result = model._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
 
-    tool_spec = result['toolSpec']  # pyright: ignore[reportTypedDictNotRequiredAccess]
-    assert tool_spec['name'] == 'get_weather'
-    # strict field should NOT be in the result for unsupported models
-    assert 'strict' not in tool_spec
+    assert result == snapshot(
+        {
+            'toolSpec': {
+                'name': 'get_weather',
+                'inputSchema': {
+                    'json': {'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']}
+                },
+                'description': 'Get the weather for a city',
+            }
+        }
+    )
 
 
 def test_bedrock_strict_tool_definition_none(
@@ -3384,10 +3391,17 @@ def test_bedrock_strict_tool_definition_none(
 
     result = model._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
 
-    tool_spec = result['toolSpec']  # pyright: ignore[reportTypedDictNotRequiredAccess]
-    assert tool_spec['name'] == 'get_weather'
-    # strict field should NOT be in the result when strict=None
-    assert 'strict' not in tool_spec
+    assert result == snapshot(
+        {
+            'toolSpec': {
+                'name': 'get_weather',
+                'inputSchema': {
+                    'json': {'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']}
+                },
+                'description': 'Get the weather for a city',
+            }
+        }
+    )
 
 
 @pytest.mark.vcr()
@@ -3694,11 +3708,19 @@ def test_bedrock_native_output_format_without_name_description():
 
     result = BedrockConverseModel._native_output_format(params)  # pyright: ignore[reportPrivateUsage]
 
-    assert result is not None
-    json_schema_config = result['textFormat']['structure']['jsonSchema']
-    assert json_schema_config['name'] == 'final_result'
-    assert 'description' not in json_schema_config
-    assert 'schema' in json_schema_config
+    assert result == snapshot(
+        {
+            'textFormat': {
+                'type': 'json_schema',
+                'structure': {
+                    'jsonSchema': {
+                        'name': 'final_result',
+                        'schema': '{"type": "object", "properties": {"city": {"type": "string"}}}',
+                    }
+                },
+            }
+        }
+    )
 
 
 class CityInfo(BaseModel):
@@ -3751,6 +3773,48 @@ async def test_bedrock_native_output_numerical_constraints(
             ModelResponse(
                 parts=[TextPart(content='{"score": 85.5, "rating": 15, "priority": "high"}')],
                 usage=RequestUsage(input_tokens=308, output_tokens=23),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_native_output_stream(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude Sonnet 4.5 via Bedrock: NativeOutput with streaming."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    async with agent.run_stream(
+        'What is the capital of France? Give me the city name, country, and population.'
+    ) as result:
+        output = await result.get_output()
+
+    assert output == snapshot(CityInfo(city='Paris', country='France', population=2161000))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of France? Give me the city name, country, and population.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city":"Paris","country":"France","population":2161000}')],
+                usage=RequestUsage(input_tokens=210, output_tokens=18),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',

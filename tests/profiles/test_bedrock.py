@@ -151,7 +151,6 @@ def test_strict_false_preserves_schema():
                 'age': {'type': 'integer'},
             },
             'required': ['username', 'age'],
-            'additionalProperties': False,
         }
     )
 
@@ -231,6 +230,28 @@ def test_strict_none_incompatible_schema_disables_auto_strict():
             },
             'required': ['username', 'count'],
             'additionalProperties': False,
+        }
+    )
+
+
+def test_strict_none_with_additional_properties_true():
+    """With strict=None and explicit additionalProperties=True, is_strict_compatible=False and value preserved."""
+    schema = {
+        'type': 'object',
+        'properties': {'name': {'type': 'string'}},
+        'required': ['name'],
+        'additionalProperties': True,
+    }
+    transformer = BedrockJsonSchemaTransformer(schema, strict=None)
+    transformed = transformer.walk()
+
+    assert transformer.is_strict_compatible is False
+    assert transformed == snapshot(
+        {
+            'type': 'object',
+            'properties': {'name': {'type': 'string'}},
+            'required': ['name'],
+            'additionalProperties': True,
         }
     )
 
@@ -520,7 +541,6 @@ def test_strict_false_preserves_numeric_constraints():
                 'rating': {'type': 'integer', 'multipleOf': 5},
             },
             'required': ['score', 'rating'],
-            'additionalProperties': False,
         }
     )
 
