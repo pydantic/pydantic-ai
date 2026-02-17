@@ -1050,14 +1050,43 @@ async def process_tool_calls(  # noqa: C901
     deferred_metadata: dict[str, dict[str, Any]] = {}
 
     if calls_to_run:
+        # Check usage limits before running tools
+        if ctx.deps.usage_limits.tool_calls_limit is not None:
+            projected_usage = deepcopy(ctx.state.usage)
+            projected_usage.tool_calls += len(calls_to_run)
+            ctx.deps.usage_limits.check_before_tool_call(projected_usage)
+
+        # Validate upfront and cache results. For ToolApproved deferred results, validate
+        # with the approval context so the event reflects the actual validation outcome.
+        # Other deferred result types (ToolDenied, ModelRetry, etc.) skip validation since
+        # the tool won't actually execute.
+        validated_calls: dict[str, ToolCallValidation[DepsT]] = {}
+        for call in calls_to_run:
+            deferred_result = calls_to_run_results.get(call.tool_call_id)
+            if deferred_result is not None and not isinstance(deferred_result, ToolApproved):
+                yield _messages.FunctionToolCallEvent(call)
+                continue
+            try:
+                if isinstance(deferred_result, ToolApproved):
+                    validate_call = call
+                    if deferred_result.override_args is not None:
+                        validate_call = dataclasses.replace(call, args=deferred_result.override_args)
+                    metadata = tool_call_metadata.get(call.tool_call_id) if tool_call_metadata else None
+                    validated = await tool_manager.validate_tool_call(validate_call, approved=True, metadata=metadata)
+                else:
+                    validated = await tool_manager.validate_tool_call(call)
+            except exceptions.UnexpectedModelBehavior:
+                yield _messages.FunctionToolCallEvent(call, args_valid=False)
+                raise
+            validated_calls[call.tool_call_id] = validated
+            yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
+
         async for event in _call_tools(
             tool_manager=tool_manager,
             tool_calls=calls_to_run,
             tool_call_results=calls_to_run_results,
-            tool_call_metadata=tool_call_metadata,
+            validated_calls=validated_calls,
             tracer=ctx.deps.tracer,
-            usage=ctx.state.usage,
-            usage_limits=ctx.deps.usage_limits,
             output_parts=output_parts,
             output_deferred_calls=deferred_calls,
             output_deferred_metadata=deferred_metadata,
@@ -1124,10 +1153,8 @@ async def _call_tools(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult],
-    tool_call_metadata: dict[str, dict[str, Any]] | None,
+    validated_calls: dict[str, ToolCallValidation[DepsT]],
     tracer: Tracer,
-    usage: _usage.RunUsage,
-    usage_limits: _usage.UsageLimits,
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
     output_deferred_metadata: dict[str, dict[str, Any]],
@@ -1136,36 +1163,6 @@ async def _call_tools(  # noqa: C901
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
     deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
-
-    if usage_limits.tool_calls_limit is not None:
-        projected_usage = deepcopy(usage)
-        projected_usage.tool_calls += len(tool_calls)
-        usage_limits.check_before_tool_call(projected_usage)
-
-    # Validate upfront and cache results. For ToolApproved deferred results, validate
-    # with the approval context so the event reflects the actual validation outcome.
-    # Other deferred result types (ToolDenied, ModelRetry, etc.) skip validation since
-    # the tool won't actually execute.
-    validated_calls: dict[str, ToolCallValidation[DepsT]] = {}
-    for call in tool_calls:
-        deferred_result = tool_call_results.get(call.tool_call_id)
-        if deferred_result is not None and not isinstance(deferred_result, ToolApproved):
-            yield _messages.FunctionToolCallEvent(call)
-            continue
-        try:
-            if isinstance(deferred_result, ToolApproved):
-                validate_call = call
-                if deferred_result.override_args is not None:
-                    validate_call = dataclasses.replace(call, args=deferred_result.override_args)
-                metadata = tool_call_metadata.get(call.tool_call_id) if tool_call_metadata else None
-                validated = await tool_manager.validate_tool_call(validate_call, approved=True, metadata=metadata)
-            else:
-                validated = await tool_manager.validate_tool_call(call)
-        except exceptions.UnexpectedModelBehavior:
-            yield _messages.FunctionToolCallEvent(call, args_valid=False)
-            raise
-        validated_calls[call.tool_call_id] = validated
-        yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 
     with tracer.start_as_current_span(
         'running tools',
@@ -1213,7 +1210,6 @@ async def _call_tools(  # noqa: C901
                         tool_manager,
                         validated_calls.get(call.tool_call_id, call),
                         tool_call_results.get(call.tool_call_id),
-                        tool_call_metadata,
                     ),
                     index,
                 ):
@@ -1226,7 +1222,6 @@ async def _call_tools(  # noqa: C901
                         tool_manager,
                         validated_calls.get(call.tool_call_id, call),
                         tool_call_results.get(call.tool_call_id),
-                        tool_call_metadata,
                     ),
                     name=call.tool_name,
                 )
@@ -1288,7 +1283,6 @@ async def _call_tool(
     tool_manager: ToolManager[DepsT],
     tool_call: ToolCallValidation[DepsT] | _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
-    tool_call_metadata: dict[str, dict[str, Any]] | None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
     if isinstance(tool_call, ToolCallValidation):
         validated = tool_call
