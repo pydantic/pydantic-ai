@@ -89,8 +89,19 @@ jobs:
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
-    runs-on: ubuntu-latest
-    # anything past 12 minutes is hanging
+    # Use Depot 4-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
+    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Depot outages)
+    runs-on: >-
+      ${{
+        !contains(github.event.pull_request.labels.*.name, 'ci:slow')
+        && matrix.install.name == 'all-extras'
+        && (
+          github.event.pull_request.head.repo.full_name == github.repository
+          || contains(github.event.pull_request.labels.*.name, 'ci:fast')
+        )
+        && 'depot-ubuntu-24.04-4'
+        || 'ubuntu-latest'
+      }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -140,8 +151,19 @@ jobs:
 
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Use Depot 4-core runners for maintainers or opted in via 'ci:fast' label
+    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Depot outages)
+    runs-on: >-
+      ${{
+        !contains(github.event.pull_request.labels.*.name, 'ci:slow')
+        && (
+          github.event.pull_request.head.repo.full_name == github.repository
+          || contains(github.event.pull_request.labels.*.name, 'ci:fast')
+        )
+        && 'depot-ubuntu-24.04-4'
+        || 'ubuntu-latest'
+      }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

@@ -66,8 +66,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
-from inline_snapshot import snapshot
-
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr
 
 pytestmark = [
