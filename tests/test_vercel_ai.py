@@ -5,7 +5,6 @@ from collections.abc import AsyncIterator, MutableMapping
 from typing import Any, cast
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.builtin_tools import WebSearchTool
@@ -68,6 +67,7 @@ from pydantic_ai.ui.vercel_ai.response_types import (
     ToolInputStartChunk,
 )
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr, try_import
 
 with try_import() as starlette_import_successful:

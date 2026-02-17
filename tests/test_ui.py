@@ -6,7 +6,6 @@ from functools import cached_property
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -48,6 +47,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 from pydantic_ai.ui import NativeEvent, UIAdapter, UIEventStream
 
+from ._inline_snapshot import snapshot
 from .conftest import try_import
 
 with try_import() as starlette_import_successful:
