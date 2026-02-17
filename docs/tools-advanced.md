@@ -409,10 +409,10 @@ The `args_validator` parameter lets you define custom validation that runs after
 
 The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, or raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on failure.
 
-```python {title="args_validator_basic.py"}
-from pydantic_ai import Agent, ModelRetry, RunContext
+```python {title="args_validator_approval.py"}
+from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
 
-agent = Agent('test', deps_type=int)
+agent = Agent('test', deps_type=int, output_type=[str, DeferredToolRequests])
 
 
 def validate_sum_limit(ctx: RunContext[int], x: int, y: int) -> None:
@@ -421,15 +421,19 @@ def validate_sum_limit(ctx: RunContext[int], x: int, y: int) -> None:
         raise ModelRetry(f'Sum of x and y must not exceed {ctx.deps}')
 
 
-@agent.tool(args_validator=validate_sum_limit)
+# Validation runs *before* approval is requested, so the model can
+# fix bad args without bothering the user.
+@agent.tool(requires_approval=True, args_validator=validate_sum_limit)
 def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
     """Add two numbers (sum must not exceed the configured limit)."""
     return x + y
 
 
 result = agent.run_sync('add 5 and 3', deps=100)
-print(result.output)
-#> {"add_numbers":0}
+assert isinstance(result.output, DeferredToolRequests)
+# The validated args are ready for the user to approve
+print(result.output.approvals[0].args)
+#> {'x': 0, 'y': 0}
 ```
 
 _(This example is complete, it can be run "as is")_
