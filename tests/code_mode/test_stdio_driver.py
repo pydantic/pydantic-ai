@@ -650,6 +650,33 @@ async def test_build_proxy_normal_call(monkeypatch: pytest.MonkeyPatch):
         handle[0].cancel()
 
 
+async def test_build_proxy_batched_calls(monkeypatch: pytest.MonkeyPatch):
+    """Two proxy calls without awaiting cancel the first calls_ready handle, emitting only one."""
+    messages: list[dict[str, object]] = []
+    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+
+    loop = asyncio.get_running_loop()
+    call_counter: list[int] = [0]
+    pending: dict[int, asyncio.Future[object]] = {}
+    cache: dict[str, object] = {}
+    handle: list[asyncio.Handle | None] = [None]
+
+    proxy = _build_proxy('add', loop, call_counter, pending, cache, handle)
+    proxy(x=1, y=2)
+    proxy(x=3, y=4)
+
+    # Both call messages written, but only one calls_ready after the loop tick
+    await asyncio.sleep(0)
+    assert messages == [
+        {'type': 'call', 'id': 1, 'function': 'add', 'args': [], 'kwargs': {'x': 1, 'y': 2}},
+        {'type': 'call', 'id': 2, 'function': 'add', 'args': [], 'kwargs': {'x': 3, 'y': 4}},
+        {'type': 'calls_ready'},
+    ]
+
+    if handle[0] is not None:
+        handle[0].cancel()
+
+
 async def test_stdin_reader_result_no_pending_future():
     """Result for an unknown call ID is silently skipped."""
     reader = asyncio.StreamReader()
