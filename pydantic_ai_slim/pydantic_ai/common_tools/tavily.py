@@ -57,7 +57,7 @@ class TavilySearchTool:
     async def __call__(
         self,
         query: str,
-        search_deep: Literal['basic', 'advanced', 'fast', 'ultra-fast'] = 'basic',
+        search_depth: Literal['basic', 'advanced', 'fast', 'ultra-fast'] = 'basic',
         topic: Literal['general', 'news', 'finance'] = 'general',
         time_range: Literal['day', 'week', 'month', 'year'] | None = None,
         include_domains: list[str] | None = None,
@@ -67,7 +67,7 @@ class TavilySearchTool:
 
         Args:
             query: The search query to execute with Tavily.
-            search_deep: The depth of the search.
+            search_depth: The depth of the search.
             topic: The category of the search.
             time_range: The time range back from the current date to filter results.
             include_domains: List of domains to specifically include in the search results.
@@ -78,7 +78,7 @@ class TavilySearchTool:
         """
         results: dict[str, Any] = await self.client.search(  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
             query,
-            search_depth=search_deep,
+            search_depth=search_depth,
             topic=topic,
             time_range=time_range,  # pyright: ignore[reportArgumentType]
             max_results=self.max_results,  # pyright: ignore[reportArgumentType]
@@ -92,7 +92,7 @@ def tavily_search_tool(
     api_key: str,
     *,
     max_results: int | None = None,
-    search_deep: Literal['basic', 'advanced', 'fast', 'ultra-fast'] = _UNSET,
+    search_depth: Literal['basic', 'advanced', 'fast', 'ultra-fast'] = _UNSET,
     topic: Literal['general', 'news', 'finance'] = _UNSET,
     time_range: Literal['day', 'week', 'month', 'year'] | None = _UNSET,
     include_domains: list[str] | None = _UNSET,
@@ -109,7 +109,7 @@ def tavily_search_tool(
 
             You can get one by signing up at [https://app.tavily.com/home](https://app.tavily.com/home).
         max_results: The maximum number of results. If None, the Tavily default is used.
-        search_deep: The depth of the search.
+        search_depth: The depth of the search.
         topic: The category of the search.
         time_range: The time range back from the current date to filter results.
         include_domains: List of domains to specifically include in the search results.
@@ -118,8 +118,8 @@ def tavily_search_tool(
     func = TavilySearchTool(client=AsyncTavilyClient(api_key), max_results=max_results).__call__
 
     kwargs: dict[str, Any] = {}
-    if search_deep is not _UNSET:
-        kwargs['search_deep'] = search_deep
+    if search_depth is not _UNSET:
+        kwargs['search_depth'] = search_depth
     if topic is not _UNSET:
         kwargs['topic'] = topic
     if time_range is not _UNSET:

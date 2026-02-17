@@ -132,7 +132,7 @@ def test_no_params_bound_exposes_all_in_schema(tavily_api_key: str):
                     'description': 'The search query to execute with Tavily.',
                     'type': 'string',
                 },
-                'search_deep': {
+                'search_depth': {
                     'default': 'basic',
                     'description': 'The depth of the search.',
                     'enum': ['basic', 'advanced', 'fast', 'ultra-fast'],
@@ -173,7 +173,7 @@ def test_bound_params_hidden_from_schema(tavily_api_key: str):
     """Test that factory-provided params are excluded from the tool schema."""
     tool = tavily_search_tool(
         tavily_api_key,
-        search_deep='advanced',
+        search_depth='advanced',
         topic='news',
         time_range='week',
         include_domains=['arxiv.org'],
