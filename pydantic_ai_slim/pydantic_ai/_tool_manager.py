@@ -248,6 +248,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         name = call.tool_name
         tool = self.tools.get(name)
+        ctx = self.ctx
 
         try:
             if tool is None:
@@ -285,7 +286,7 @@ class ToolManager(Generic[AgentDepsT]):
             return ValidatedToolCall(
                 call=call,
                 tool=tool,
-                ctx=self.ctx if tool is None else ctx,
+                ctx=ctx,
                 args_valid=False,
                 validated_args=None,
                 validation_error=validation_error,
