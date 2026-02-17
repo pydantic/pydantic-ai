@@ -1305,8 +1305,7 @@ async def process_tool_calls(  # noqa: C901
                 call, 'Output tool not used - a final result was already processed.', output_parts, args_valid=None
             ):
                 yield event
-        # Early strategy is chosen and final result is not yet set
-        # Or exhaustive strategy is chosen
+        # No final result yet, or exhaustive strategy processes all output tools
         else:
             # Validate and execute the output tool call — unlike deferred tools,
             # output tools track retries and can be skipped if a final_result exists.
@@ -1373,7 +1372,7 @@ async def process_tool_calls(  # noqa: C901
             )
             output_parts.append(part)
 
-            # In both `early` and `exhaustive` modes, use the first output tool's result as the final result
+            # Use the first valid output tool's result as the final result
             if not final_result:
                 final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
 
