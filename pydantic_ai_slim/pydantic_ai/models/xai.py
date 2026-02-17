@@ -778,8 +778,6 @@ class XaiStreamedResponse(StreamedResponse):
             call_part = BuiltinToolCallPart(
                 tool_name=builtin_tool_name, args=parsed_args, tool_call_id=tool_call.id, provider_name=self.system
             )
-            if builtin_tool_name == CodeExecutionTool.kind:
-                call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
             yield self._parts_manager.handle_part(vendor_part_id=tool_call.id, part=call_part)
             return
 
@@ -1191,15 +1189,15 @@ def _create_tool_call_part(
                 args = _build_mcp_tool_call_args(tool_call)
             else:
                 args = _parse_tool_args(tool_call.function.arguments)
-            call_part = BuiltinToolCallPart(
-                tool_name=builtin_tool_name,
-                args=args,
-                tool_call_id=tool_call.id,
-                provider_name=provider_name,
+            return (
+                tool_call.id,
+                BuiltinToolCallPart(
+                    tool_name=builtin_tool_name,
+                    args=args,
+                    tool_call_id=tool_call.id,
+                    provider_name=provider_name,
+                ),
             )
-            if builtin_tool_name == CodeExecutionTool.kind:
-                call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
-            return (tool_call.id, call_part)
     else:
         # Client-side tool call
         return (

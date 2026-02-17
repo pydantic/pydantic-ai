@@ -464,14 +464,14 @@ class BedrockConverseModel(Model):
                 elif tool_use := item.get('toolUse'):
                     if tool_use.get('type') == 'server_tool_use':
                         if tool_use['name'] == 'nova_code_interpreter':  # pragma: no branch
-                            call_part = BuiltinToolCallPart(
-                                provider_name=self.system,
-                                tool_name=CodeExecutionTool.kind,
-                                args=tool_use['input'],
-                                tool_call_id=tool_use['toolUseId'],
+                            items.append(
+                                BuiltinToolCallPart(
+                                    provider_name=self.system,
+                                    tool_name=CodeExecutionTool.kind,
+                                    args=tool_use['input'],
+                                    tool_call_id=tool_use['toolUseId'],
+                                )
                             )
-                            call_part.otel_metadata = {'code_arg_name': 'snippet', 'code_arg_language': 'python'}
-                            items.append(call_part)
                     else:
                         items.append(
                             ToolCallPart(
@@ -1042,7 +1042,6 @@ class BedrockStreamedResponse(StreamedResponse):
                                     tool_call_id=tool_id,
                                     provider_name=self.provider_name,
                                 )
-                                part.otel_metadata = {'code_arg_name': 'snippet', 'code_arg_language': 'python'}
                                 yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
                         elif maybe_event := self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=index,
