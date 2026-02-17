@@ -80,6 +80,26 @@ def wrong_tool_prepare(ctx: RunContext[MyDeps], x: int, y: str) -> str:
     return f'{ctx.deps.foo} {x} {y}'
 
 
+# args_validator: matching params
+def args_validator_ok(ctx: RunContext[MyDeps], x: int, y: str) -> None:
+    pass
+
+
+@typed_agent.tool(args_validator=args_validator_ok)
+def ok_tool_args_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
+# args_validator: wrong params
+def args_validator_wrong_params(ctx: RunContext[MyDeps], a: float) -> None:
+    pass
+
+
+@typed_agent.tool(args_validator=args_validator_wrong_params)  # type: ignore[arg-type]
+def wrong_tool_args_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
 @typed_agent.tool_plain
 def ok_tool_plain(x: str) -> dict[str, str]:
     return {'x': x}
