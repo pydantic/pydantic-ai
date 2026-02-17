@@ -4,6 +4,9 @@ from typing import Any, cast
 
 import pytest
 
+from pydantic_ai import Agent, ModelRequest, TextPart
+from pydantic_ai.direct import model_request
+
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -19,7 +22,25 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
+    pytest.mark.vcr,
 ]
+
+
+async def test_zai_model_simple(allow_model_requests: None, zai_api_key: str):
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-4.7', provider=provider)
+    agent = Agent(model=model)
+    result = await agent.run('What is 2 + 2?')
+    assert '4' in result.output
+
+
+async def test_zai_thinking_mode(allow_model_requests: None, zai_api_key: str):
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-4.7', provider=provider)
+    settings = ZaiModelSettings(zai_thinking=True)
+    response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
+    text_part = cast(TextPart, response.parts[-1])
+    assert '4' in text_part.content
 
 
 async def test_zai_settings_transformation_thinking_enabled():
