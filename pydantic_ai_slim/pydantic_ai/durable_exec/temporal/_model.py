@@ -328,7 +328,7 @@ class TemporalModel(WrapperModel):
         return current.system
 
     @property
-    def profile(self) -> ModelProfile:  # type: ignore[override]
+    def profile(self) -> ModelProfile:
         """Get the model profile, inferring from raw strings without provider construction.
 
         Note: This overrides a cached_property with a regular property because the profile

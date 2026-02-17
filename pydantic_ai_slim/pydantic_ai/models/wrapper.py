@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from functools import cached_property
 from typing import Any
 
 from .._run_context import RunContext
@@ -75,8 +74,8 @@ class WrapperModel(Model):
     def system(self) -> str:
         return self.wrapped.system
 
-    @cached_property
-    def profile(self) -> ModelProfile:
+    @property
+    def profile(self) -> ModelProfile:  # type: ignore[override]
         return self.wrapped.profile
 
     @property

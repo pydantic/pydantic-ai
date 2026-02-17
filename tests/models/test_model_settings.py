@@ -12,6 +12,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 
 
@@ -89,6 +90,35 @@ def test_instrumented_model_settings_delegation():
     base_model_no_settings = TestModel()
     instrumented_no_settings = InstrumentedModel(base_model_no_settings)
     assert instrumented_no_settings.settings is None
+
+
+def test_wrapper_model_profile_delegation_is_dynamic():
+    """Test that WrapperModel delegates profile dynamically, not caching it.
+
+    This is important for cases like InstrumentedModel(TemporalModel(...)) where
+    the wrapped model's profile can change dynamically (e.g. via using_model()).
+    """
+    profile_a = ModelProfile(supports_tools=True)
+    profile_b = ModelProfile(supports_tools=False)
+
+    class _DynamicProfileModel(TestModel):
+        active_profile: ModelProfile = profile_a
+
+        @property
+        def profile(self) -> ModelProfile:  # type: ignore[override]
+            return self.active_profile
+
+    inner = _DynamicProfileModel()
+    wrapper = WrapperModel(inner)
+    instrumented = InstrumentedModel(inner)
+
+    assert wrapper.profile is profile_a
+    assert instrumented.profile is profile_a
+
+    # After changing the inner model's profile, wrappers should reflect the change
+    inner.active_profile = profile_b
+    assert wrapper.profile is profile_b
+    assert instrumented.profile is profile_b
 
 
 def test_settings_merge_hierarchy():

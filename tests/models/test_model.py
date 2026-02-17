@@ -298,6 +298,8 @@ def test_parse_model_id(model_id: str, expected: tuple[str | None, str]):
         pytest.param('unknown-model', True, id='unknown-no-prefix'),
         pytest.param('nebius:model-without-slash', False, id='provider-unknown-model'),
         pytest.param('google:gemini-2.0-flash', False, id='google-shorthand'),
+        pytest.param('openrouter:model-without-slash', True, id='openrouter-no-slash'),
+        pytest.param('together:model-without-slash', True, id='together-no-slash'),
     ],
 )
 def test_infer_model_profile(model_id: str, is_default: bool):

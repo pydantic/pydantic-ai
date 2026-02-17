@@ -1174,7 +1174,10 @@ def infer_model_profile(model: str) -> ModelProfile:
     except ValueError:
         return DEFAULT_PROFILE
 
-    return provider_class.model_profile(model_name) or DEFAULT_PROFILE
+    try:
+        return provider_class.model_profile(model_name) or DEFAULT_PROFILE
+    except (ValueError, UserError):
+        return DEFAULT_PROFILE
 
 
 def infer_model(  # noqa: C901
