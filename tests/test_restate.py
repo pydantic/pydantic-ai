@@ -147,53 +147,6 @@ def test_pydantic_type_adapter_deserialize_non_empty_buffer():
     assert serde.deserialize(buf) == 123
 
 
-def test_pydantic_type_adapter_coverage_smoke():
-    import coverage
-
-    cov = coverage.Coverage()
-
-    @cov.collect()
-    def run() -> None:
-        serde = PydanticTypeAdapter(int)
-        assert serde.deserialize(b'') is None
-        assert serde.serialize(None) == b''
-        assert serde.deserialize(serde.serialize(123)) == 123
-
-    run()
-    cov.save()
-
-
-def test_restate_toolset_coverage_smoke():
-    import coverage
-
-    cov = coverage.Coverage()
-
-    @cov.collect()
-    def run() -> None:
-        import asyncio
-
-        from pydantic_ai.durable_exec.restate._toolset import run_get_tools_step, wrap_tool_call_result
-
-        class Context:
-            async def run_typed(self, name: str, fn: Any, options: Any = None, *args: Any, **kwargs: Any) -> Any:
-                return await fn()
-
-        async def get_tools_action() -> dict[str, ToolDefinition]:
-            return {}
-
-        async def ok() -> str:
-            return 'ok'
-
-        async def main() -> None:
-            await run_get_tools_step(Context(), 'get tools', get_tools_action)
-            await wrap_tool_call_result(ok)
-
-        asyncio.run(main())
-
-    run()
-    cov.save()
-
-
 @pytest.mark.anyio
 async def test_wrap_tool_call_result_direct_paths():
     async def ok() -> dict[str, Any]:
@@ -376,6 +329,14 @@ async def test_fake_restate_context_run_typed_options_none():
 
 
 @pytest.mark.anyio
+async def test_passthrough_restate_context_run_typed_sync_fn():
+    passthrough_ctx = PassthroughRestateContext()
+    result = await passthrough_ctx.run_typed('sync', lambda: 'ok')
+    assert result == 'ok'
+    assert passthrough_ctx.calls == ['sync']
+
+
+@pytest.mark.anyio
 async def test_restate_context_run_toolset_success_and_error_mapping():
     fake_ctx = PassthroughRestateContext()
     toolset = FunctionToolset()
@@ -428,6 +389,7 @@ async def test_restate_context_run_toolset_success_and_error_mapping():
 async def test_restate_context_run_toolset_result_is_corrupted():
     class InvalidContext(PassthroughRestateContext):
         async def run_typed(self, name: str, fn: Any, options: Any = None, *args: Any, **kwargs: Any) -> Any:
+            await fn(*args, **kwargs)
             return RestateContextRunResult(kind='model_retry', output=None, error=None)
 
     ctx = _run_ctx()
@@ -460,6 +422,7 @@ async def test_fake_restate_context_run_typed_serialization_round_trip():
 async def test_restate_context_run_toolset_invalid_result_kind():
     class InvalidContext(PassthroughRestateContext):
         async def run_typed(self, name: str, fn: Any, options: Any = None, *args: Any, **kwargs: Any) -> Any:
+            await fn(*args, **kwargs)
             return RestateContextRunResult(kind='unexpected', output=None)  # type: ignore[arg-type]
 
     ctx = _run_ctx()
@@ -642,6 +605,12 @@ async def test_restate_agent_event_stream_handler_none_when_disabled():
 
     async def handler(_: RunContext[Any], __: AsyncIterable[Any]) -> None:
         return None
+
+    async def no_events() -> AsyncIterable[Any]:
+        if False:  # pragma: no cover
+            yield
+
+    assert await handler(_run_ctx(), no_events()) is None
 
     agent = Agent(TestModel())
     restate_agent = RestateAgent(agent, fake_ctx, event_stream_handler=handler, disable_auto_wrapping_tools=True)
@@ -977,6 +946,7 @@ async def test_restate_dynamic_toolset_get_tools_noop_enter_exit_and_id_passthro
     tools = await durable_dynamic.get_tools(ctx)
     assert tools
     assert durable_dynamic.id == dynamic.id
+    assert await durable_dynamic.call_tool('add_one', {'x': 1}, ctx, tools['add_one']) == 2
 
 
 @pytest.mark.anyio
@@ -1023,6 +993,11 @@ async def test_restate_dynamic_toolset_id_none_is_handled():
     dynamic = DynamicToolset[None](toolset_func=toolset_func)
     durable_dynamic = RestateDynamicToolset(dynamic, fake_ctx, disable_auto_wrapping_tools=False)
     assert durable_dynamic.id is None
+
+    ctx = _run_ctx()
+    tools = await durable_dynamic.get_tools(ctx)
+    assert 'add_one' in tools
+    assert await durable_dynamic.call_tool('add_one', {'x': 1}, ctx, tools['add_one']) == 2
 
 
 @pytest.mark.anyio
@@ -1291,6 +1266,11 @@ async def test_restate_fastmcp_toolset_id_none_is_handled():
     fake_ctx = FakeRestateContext()
     durable_toolset = RestateFastMCPToolset(toolset, fake_ctx)
     assert durable_toolset.id is None
+
+    ctx = _run_ctx()
+    tools = await durable_toolset.get_tools(ctx)
+    result = await durable_toolset.call_tool('echo', {'value': 1}, ctx, tools['echo'])
+    assert result == {'value': 1}
 
 
 @pytest.mark.anyio
