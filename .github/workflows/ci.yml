@@ -12,7 +12,6 @@ env:
   COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: "1"
-  UV_COMPILE_BYTECODE: "1"
 
 permissions:
   contents: read
