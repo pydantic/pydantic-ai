@@ -62,7 +62,8 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             event_stream_handler: Optional event stream handler. Must be set at creation time, not at `run()` time.
             disable_auto_wrapping_tools: If `True`, function tools are executed outside `ctx.run_typed()`, allowing
                 tools to use the Restate context directly. Model calls and MCP/FastMCP tool calls are still wrapped.
-            max_attempts: Maximum retry attempts for durable model calls. `None` uses the Restate default.
+            max_attempts: Maximum retry attempts for durable model calls. Tool calls use Restate defaults. `None`
+                uses the Restate default for model calls.
         """
         super().__init__(wrapped)
         if isinstance(wrapped, RestateAgent):

@@ -103,6 +103,7 @@ class RestateContextRunToolset(WrapperToolset[AgentDepsT]):
     def __init__(self, wrapped: AbstractToolset[AgentDepsT], context: Context):
         super().__init__(wrapped)
         self._context = context
+        # Use Restate defaults for tool call retries (unbounded) and keep model calls bounded separately.
         self._options = RunOptions[RestateContextRunResult](serde=CONTEXT_RUN_SERDE)
 
     async def call_tool(

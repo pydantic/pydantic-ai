@@ -14,6 +14,8 @@ For more details, see the Restate docs on [Durable Execution](https://docs.resta
 
 Any agent can be wrapped in a [`RestateAgent`][pydantic_ai.durable_exec.restate.RestateAgent] to run **model calls**, **tool calls**, and **tool discovery** inside Restate `ctx.run_typed(...)` blocks.
 
+Model calls default to a bounded retry count (`max_attempts=3`). Tool calls use Restate defaults for retries (unbounded) unless you wrap the tool to raise a `TerminalError` on non-retryable failures.
+
 This includes:
 
 - Function tools (by default)
