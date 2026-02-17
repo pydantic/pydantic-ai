@@ -110,9 +110,9 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        if name == SEARCH_TOOLS_NAME:
-            search_tool = cast(_SearchToolsetTool[AgentDepsT], tool)
-            return await self._search_tools(tool_args, search_tool.deferred_tools)
+        if name == SEARCH_TOOLS_NAME and isinstance(tool, _SearchToolsetTool):
+            return await self._search_tools(tool_args, tool.deferred_tools)
+        return await self.wrapped.call_tool(name, tool_args, ctx, tool)
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
     async def _search_tools(
