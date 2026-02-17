@@ -87,12 +87,9 @@ def empty_env():
 def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
     if provider == 'google-vertex':
         try:
-            result = infer_provider(provider)
-        except (GoogleAuthError, ValueError):
+            infer_provider(provider)
+        except (GoogleAuthError, ValueError):  # pragma: no branch
             pytest.skip('Google credentials not available')
-        else:
-            assert isinstance(result, provider_cls)
-        return
 
     if exception_has is not None:
         with pytest.raises((UserError, OpenAIError, GoogleAuthError), match=rf'.*{exception_has}.*'):
