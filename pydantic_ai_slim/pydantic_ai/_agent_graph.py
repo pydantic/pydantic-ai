@@ -878,7 +878,7 @@ def build_validation_context(
         return validation_ctx
 
 
-def _skip_output_tool(
+def _emit_skipped_output_tool(
     call: _messages.ToolCallPart,
     message: str,
     output_parts: list[_messages.ModelRequestPart],
@@ -934,7 +934,7 @@ async def process_tool_calls(  # noqa: C901
             output_parts.append(part)
         # Early strategy is chosen and final result is already set
         elif ctx.deps.end_strategy == 'early' and final_result:
-            for event in _skip_output_tool(
+            for event in _emit_skipped_output_tool(
                 call, 'Output tool not used - a final result was already processed.', output_parts, args_valid=None
             ):
                 yield event
@@ -946,7 +946,7 @@ async def process_tool_calls(  # noqa: C901
                 validated = await tool_manager.validate_tool_call(call)
             except exceptions.UnexpectedModelBehavior as e:
                 if final_result:
-                    for event in _skip_output_tool(
+                    for event in _emit_skipped_output_tool(
                         call, 'Output tool not used - output failed validation.', output_parts, args_valid=False
                     ):
                         yield event
@@ -959,7 +959,7 @@ async def process_tool_calls(  # noqa: C901
             if not validated.args_valid:
                 assert validated.validation_error is not None
                 if final_result:
-                    for event in _skip_output_tool(
+                    for event in _emit_skipped_output_tool(
                         call, 'Output tool not used - output failed validation.', output_parts, args_valid=False
                     ):
                         yield event
@@ -980,7 +980,7 @@ async def process_tool_calls(  # noqa: C901
                 result_data = await tool_manager.execute_tool_call(validated)
             except exceptions.UnexpectedModelBehavior as e:
                 if final_result:
-                    for event in _skip_output_tool(
+                    for event in _emit_skipped_output_tool(
                         call, 'Output tool not used - tool execution failed.', output_parts, args_valid=True
                     ):
                         yield event
