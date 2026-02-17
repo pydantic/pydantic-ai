@@ -1211,10 +1211,9 @@ async def _call_tools(  # noqa: C901
                 if event := await handle_call_or_result(
                     _call_tool(
                         tool_manager,
-                        call,
+                        validated_calls.get(call.tool_call_id, call),
                         tool_call_results.get(call.tool_call_id),
                         tool_call_metadata,
-                        validated_calls.get(call.tool_call_id),
                     ),
                     index,
                 ):
@@ -1225,10 +1224,9 @@ async def _call_tools(  # noqa: C901
                 asyncio.create_task(
                     _call_tool(
                         tool_manager,
-                        call,
+                        validated_calls.get(call.tool_call_id, call),
                         tool_call_results.get(call.tool_call_id),
                         tool_call_metadata,
-                        validated_calls.get(call.tool_call_id),
                     ),
                     name=call.tool_name,
                 )
@@ -1288,11 +1286,17 @@ def _populate_deferred_calls(
 
 async def _call_tool(
     tool_manager: ToolManager[DepsT],
-    tool_call: _messages.ToolCallPart,
+    tool_call: ToolCallValidation[DepsT] | _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
     tool_call_metadata: dict[str, dict[str, Any]] | None,
-    validated: ToolCallValidation[DepsT] | None = None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
+    if isinstance(tool_call, ToolCallValidation):
+        validated = tool_call
+        call = tool_call.call
+    else:
+        validated = None
+        call = tool_call
+
     try:
         if tool_call_result is None or isinstance(tool_call_result, ToolApproved):
             if validated is not None:
@@ -1301,20 +1305,20 @@ async def _call_tool(
                 raise RuntimeError('Expected validated tool call')  # pragma: no cover
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
-                tool_name=tool_call.tool_name,
+                tool_name=call.tool_name,
                 content=tool_call_result.message,
-                tool_call_id=tool_call.tool_call_id,
+                tool_call_id=call.tool_call_id,
             ), None
         elif isinstance(tool_call_result, exceptions.ModelRetry):
             m = _messages.RetryPromptPart(
                 content=tool_call_result.message,
-                tool_name=tool_call.tool_name,
-                tool_call_id=tool_call.tool_call_id,
+                tool_name=call.tool_name,
+                tool_call_id=call.tool_call_id,
             )
             raise ToolRetryError(m)
         elif isinstance(tool_call_result, _messages.RetryPromptPart):
-            tool_call_result.tool_name = tool_call.tool_name
-            tool_call_result.tool_call_id = tool_call.tool_call_id
+            tool_call_result.tool_name = call.tool_name
+            tool_call_result.tool_call_id = call.tool_call_id
             raise ToolRetryError(tool_call_result)
         else:
             tool_result = tool_call_result
@@ -1332,7 +1336,7 @@ async def _call_tool(
         for content in contents:
             if isinstance(content, _messages.ToolReturn):
                 raise exceptions.UserError(
-                    f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
+                    f'The return value of tool {call.tool_name!r} contains invalid nested `ToolReturn` objects. '
                     f'`ToolReturn` should be used directly.'
                 )
             elif isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES):
@@ -1357,13 +1361,13 @@ async def _call_tool(
         )
     ):
         raise exceptions.UserError(
-            f'The `return_value` of tool {tool_call.tool_name!r} contains invalid nested `MultiModalContent` objects. '
+            f'The `return_value` of tool {call.tool_name!r} contains invalid nested `MultiModalContent` objects. '
             f'Please use `content` instead.'
         )
 
     return_part = _messages.ToolReturnPart(
-        tool_name=tool_call.tool_name,
-        tool_call_id=tool_call.tool_call_id,
+        tool_name=call.tool_name,
+        tool_call_id=call.tool_call_id,
         content=tool_return.return_value,  # type: ignore
         metadata=tool_return.metadata,
     )
