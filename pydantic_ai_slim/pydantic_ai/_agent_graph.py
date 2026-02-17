@@ -18,7 +18,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._tool_manager import ToolCallValidation, ToolManager
+from pydantic_ai._tool_manager import ToolManager, ValidatedToolCall
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, GraphRunContext
@@ -941,7 +941,8 @@ async def process_tool_calls(  # noqa: C901
         # Early strategy is chosen and final result is not yet set
         # Or exhaustive strategy is chosen
         else:
-            # Validate and execute the output tool call
+            # Validate and execute the output tool call — unlike deferred tools,
+            # output tools track retries and can be skipped if a final_result exists.
             try:
                 validated = await tool_manager.validate_tool_call(call)
             except exceptions.UnexpectedModelBehavior as e:
@@ -1066,7 +1067,7 @@ async def process_tool_calls(  # noqa: C901
         # with the approval context so the event reflects the actual validation outcome.
         # Other deferred result types (ToolDenied, ModelRetry, etc.) skip validation since
         # the tool won't actually execute.
-        validated_calls: dict[str, ToolCallValidation[DepsT]] = {}
+        validated_calls: dict[str, ValidatedToolCall[DepsT]] = {}
         for call in calls_to_run:
             deferred_result = calls_to_run_results.get(call.tool_call_id)
             if deferred_result is not None and not isinstance(deferred_result, ToolApproved):
@@ -1159,7 +1160,7 @@ async def _call_tools(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult],
-    validated_calls: dict[str, ToolCallValidation[DepsT]],
+    validated_calls: dict[str, ValidatedToolCall[DepsT]],
     tracer: Tracer,
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
@@ -1287,10 +1288,10 @@ def _populate_deferred_calls(
 
 async def _call_tool(
     tool_manager: ToolManager[DepsT],
-    tool_call: ToolCallValidation[DepsT] | _messages.ToolCallPart,
+    tool_call: ValidatedToolCall[DepsT] | _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
-    if isinstance(tool_call, ToolCallValidation):
+    if isinstance(tool_call, ValidatedToolCall):
         validated = tool_call
         call = tool_call.call
     else:

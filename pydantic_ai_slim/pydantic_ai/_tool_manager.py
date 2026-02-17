@@ -29,7 +29,7 @@ _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar
 
 
 @dataclass
-class ToolCallValidation(Generic[AgentDepsT]):
+class ValidatedToolCall(Generic[AgentDepsT]):
     """Result of validating a tool call's arguments (may represent success or failure).
 
     This separates validation from execution, allowing callers to:
@@ -225,7 +225,7 @@ class ToolManager(Generic[AgentDepsT]):
         wrap_validation_errors: bool = True,
         approved: bool = False,
         metadata: Any = None,
-    ) -> ToolCallValidation[AgentDepsT]:
+    ) -> ValidatedToolCall[AgentDepsT]:
         """Validate tool arguments without executing the tool.
 
         This method validates arguments BEFORE the tool is executed, allowing the caller to:
@@ -241,7 +241,7 @@ class ToolManager(Generic[AgentDepsT]):
             metadata: Additional metadata from DeferredToolResults.metadata.
 
         Returns:
-            ToolCallValidation with validation results, ready for execution via execute_tool_call().
+            ValidatedToolCall with validation results, ready for execution via execute_tool_call().
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -261,7 +261,7 @@ class ToolManager(Generic[AgentDepsT]):
                 call, tool, allow_partial=allow_partial, approved=approved, metadata=metadata
             )
             validated_args = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial)
-            return ToolCallValidation(
+            return ValidatedToolCall(
                 call=call,
                 tool=tool,
                 ctx=ctx,
@@ -282,7 +282,7 @@ class ToolManager(Generic[AgentDepsT]):
                 # If we're validating partial arguments, we don't want to count this as a failed tool as it may still succeed once the full arguments are received.
                 self.failed_tools.add(name)
 
-            return ToolCallValidation(
+            return ValidatedToolCall(
                 call=call,
                 tool=tool,
                 ctx=self.ctx if tool is None else ctx,
@@ -293,7 +293,7 @@ class ToolManager(Generic[AgentDepsT]):
 
     async def execute_tool_call(
         self,
-        validated: ToolCallValidation[AgentDepsT],
+        validated: ValidatedToolCall[AgentDepsT],
     ) -> Any:
         """Execute a validated tool call, within a trace span for function tools.
 
@@ -326,7 +326,7 @@ class ToolManager(Generic[AgentDepsT]):
 
     async def _execute_tool_call_impl(
         self,
-        validated: ToolCallValidation[AgentDepsT],
+        validated: ValidatedToolCall[AgentDepsT],
         *,
         usage: RunUsage | None = None,
     ) -> Any:
@@ -365,7 +365,7 @@ class ToolManager(Generic[AgentDepsT]):
 
     async def _execute_function_tool_call(
         self,
-        validated: ToolCallValidation[AgentDepsT],
+        validated: ValidatedToolCall[AgentDepsT],
         *,
         tracer: Tracer,
         include_content: bool,
