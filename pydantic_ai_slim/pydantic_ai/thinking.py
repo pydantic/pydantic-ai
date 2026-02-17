@@ -47,22 +47,17 @@ def _resolve_thinking_config(  # pyright: ignore[reportUnusedFunction]
     if thinking is None and effort is None:
         return None
 
-    # thinking=False -> disabled (effort ignored per precedence rule 2)
-    if thinking is False:
-        return _ResolvedThinkingConfig(enabled=False)
-
-    # thinking=True or effort set (implicit enable, precedence rule 3)
-    resolved = _ResolvedThinkingConfig(
-        enabled=True,
-        effort=effort,
-    )
-
     # Profile guards (skip if no profile provided)
     if profile is not None:
         if not profile.supports_thinking:
             return None
         # thinking=False on always-on models → no-op (silent ignore)
-        if not resolved.enabled and profile.thinking_always_enabled:
+        if thinking is False and profile.thinking_always_enabled:
             return None
 
-    return resolved
+    # thinking=False -> disabled (effort ignored per precedence rule 2)
+    if thinking is False:
+        return _ResolvedThinkingConfig(enabled=False)
+
+    # thinking=True or effort set (implicit enable, precedence rule 3)
+    return _ResolvedThinkingConfig(enabled=True, effort=effort)

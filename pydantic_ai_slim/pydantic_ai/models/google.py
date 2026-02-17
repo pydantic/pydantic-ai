@@ -300,8 +300,7 @@ class GoogleModel(Model):
                 result['thinking_level'] = ThinkingLevel.HIGH
         elif resolved.effort:
             # Gemini 2.5: Map effort to thinking_budget
-            if budget := _GOOGLE_EFFORT_TO_BUDGET.get(resolved.effort):
-                result['thinking_budget'] = budget
+            result['thinking_budget'] = _GOOGLE_EFFORT_TO_BUDGET[resolved.effort]
 
         return result if result else None
 

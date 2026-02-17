@@ -127,6 +127,14 @@ class TestResolveThinkingConfig:
         assert result.enabled is False
         # Effort is not checked when disabled
 
+    def test_thinking_false_always_on_returns_none(self):
+        """thinking=False on always-on model → None (silent ignore)."""
+        from pydantic_ai.thinking import _resolve_thinking_config
+
+        profile = ModelProfile(supports_thinking=True, thinking_always_enabled=True)
+        result = _resolve_thinking_config({'thinking': False}, profile)
+        assert result is None
+
 
 # ============================================================================
 # Anthropic unified thinking tests
