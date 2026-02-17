@@ -1733,33 +1733,12 @@ class OpenAIResponsesModel(Model):
                 tools.append(file_search_tool)
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
-                tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
+                container: responses.tool_param.CodeInterpreterContainerCodeInterpreterToolAuto = {'type': 'auto'}
+                if tool.file_ids:
+                    container['file_ids'] = tool.file_ids
+                tools.append(responses.tool_param.CodeInterpreter(type='code_interpreter', container=container))
             elif isinstance(tool, MCPServerTool):
-                mcp_tool = responses.tool_param.Mcp(
-                    type='mcp',
-                    server_label=tool.id,
-                    require_approval='never',
-                )
-
-                if tool.authorization_token:  # pragma: no branch
-                    mcp_tool['authorization'] = tool.authorization_token
-
-                if tool.allowed_tools is not None:  # pragma: no branch
-                    mcp_tool['allowed_tools'] = tool.allowed_tools
-
-                if tool.description:  # pragma: no branch
-                    mcp_tool['server_description'] = tool.description
-
-                if tool.headers:  # pragma: no branch
-                    mcp_tool['headers'] = tool.headers
-
-                if tool.url.startswith(MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME + ':'):
-                    _, connector_id = tool.url.split(':', maxsplit=1)
-                    mcp_tool['connector_id'] = connector_id  # pyright: ignore[reportGeneralTypeIssues]
-                else:
-                    mcp_tool['server_url'] = tool.url
-
-                tools.append(mcp_tool)
+                tools.append(self._map_mcp_server_tool(tool))
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
                 has_image_generating_tool = True
                 size = _resolve_openai_image_generation_size(tool)
@@ -1796,6 +1775,33 @@ class OpenAIResponsesModel(Model):
                 f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
             ),
         }
+
+    def _map_mcp_server_tool(self, tool: MCPServerTool) -> responses.tool_param.Mcp:
+        mcp_tool = responses.tool_param.Mcp(
+            type='mcp',
+            server_label=tool.id,
+            require_approval='never',
+        )
+
+        if tool.authorization_token:  # pragma: no branch
+            mcp_tool['authorization'] = tool.authorization_token
+
+        if tool.allowed_tools is not None:  # pragma: no branch
+            mcp_tool['allowed_tools'] = tool.allowed_tools
+
+        if tool.description:  # pragma: no branch
+            mcp_tool['server_description'] = tool.description
+
+        if tool.headers:  # pragma: no branch
+            mcp_tool['headers'] = tool.headers
+
+        if tool.url.startswith(MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME + ':'):
+            _, connector_id = tool.url.split(':', maxsplit=1)
+            mcp_tool['connector_id'] = connector_id  # pyright: ignore[reportGeneralTypeIssues]
+        else:
+            mcp_tool['server_url'] = tool.url
+
+        return mcp_tool
 
     def _get_previous_response_id_and_new_messages(
         self, messages: list[ModelMessage]

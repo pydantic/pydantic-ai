@@ -197,6 +197,7 @@ class CodeExecutionTool(AbstractBuiltinTool):
     Supported by:
 
     * Anthropic (requires files uploaded via Files API beta)
+    * OpenAI Responses (requires files uploaded via Files API with purpose='assistants')
     """
 
     kind: str = 'code_execution'

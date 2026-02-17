@@ -237,11 +237,13 @@ assert isinstance(result.output, BinaryImage)
 
 _(This example is complete, it can be run "as is")_
 
-### File Uploads (Anthropic)
+### File Uploads
 
-With Anthropic, you can upload files via their Files API and make them available to the code execution container. This allows the agent to process data files, analyze CSVs, work with images, and more.
+You can upload files via the provider's Files API and make them available to the code execution container. This allows the agent to process data files, analyze CSVs, work with images, and more.
 
-```py {title="code_execution_with_files.py" test="skip"}
+#### Anthropic
+
+```py {title="code_execution_with_files_anthropic.py" test="skip"}
 import asyncio
 
 import anthropic
@@ -269,17 +271,52 @@ async def main():
 asyncio.run(main())
 ```
 
-Files uploaded via the Files API are:
+Files uploaded via the Anthropic Files API are:
 
 - Available in the container's `/mnt/user/uploads/` directory
 - Persisted for 30 days
 - Workspace-scoped (accessible across sessions)
 
+#### OpenAI
+
+```py {title="code_execution_with_files_openai.py" test="skip"}
+import asyncio
+
+from openai import AsyncOpenAI
+
+from pydantic_ai import Agent, CodeExecutionTool
+
+
+async def main():
+    # Upload a file via the OpenAI Files API
+    client = AsyncOpenAI()
+    with open('data.csv', 'rb') as f:
+        file = await client.files.create(file=f, purpose='assistants')
+
+    # Create an agent with CodeExecutionTool that has access to the uploaded file
+    agent = Agent(
+        'openai:gpt-4o',
+        builtin_tools=[CodeExecutionTool(file_ids=[file.id])],
+    )
+
+    result = await agent.run('Analyze the data.csv file and summarize the key statistics.')
+    print(result.output)
+    #> The CSV file contains 1000 rows with columns: name, age, salary...
+
+
+asyncio.run(main())
+```
+
+Files uploaded via the OpenAI Files API are:
+
+- Automatically mounted in newly created containers
+- Containers expire after 20 minutes of inactivity, but files persist and can be reused with new containers
+
 #### Provider Support
 
 | Parameter | Anthropic | OpenAI | Google | xAI |
 |-----------|-----------|--------|--------|-----|
-| `file_ids` | ✅ | ❌ | ❌ | ❌ |
+| `file_ids` | ✅ | ✅ | ❌ | ❌ |
 
 ## Image Generation Tool
 

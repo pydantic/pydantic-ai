@@ -4405,3 +4405,55 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
     # Final usage should be from the last chunk (15 output tokens)
     # NOT the sum of all chunks (5+10+15+15 = 45 output tokens)
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
+
+
+def test_openai_code_execution_tool_with_file_ids():
+    """Test that CodeExecutionTool with file_ids passes them to the code_interpreter container."""
+    from pydantic_ai.builtin_tools import CodeExecutionTool
+
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    # Create CodeExecutionTool with file_ids
+    code_exec_tool = CodeExecutionTool(file_ids=['file_123', 'file_456'])
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[code_exec_tool],
+        output_tools=[],
+        output_mode='text',
+    )
+
+    # Call _get_builtin_tools to see the generated tool config
+    tools = m._get_builtin_tools(model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+
+    # Should have one code_interpreter tool
+    assert len(tools) == 1
+    code_interpreter = tools[0]
+    assert code_interpreter['type'] == 'code_interpreter'
+    assert code_interpreter['container'] == {'type': 'auto', 'file_ids': ['file_123', 'file_456']}
+
+
+def test_openai_code_execution_tool_without_file_ids():
+    """Test that CodeExecutionTool without file_ids doesn't include file_ids in container."""
+    from pydantic_ai.builtin_tools import CodeExecutionTool
+
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    # Create CodeExecutionTool without file_ids
+    code_exec_tool = CodeExecutionTool()
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[code_exec_tool],
+        output_tools=[],
+        output_mode='text',
+    )
+
+    # Call _get_builtin_tools to see the generated tool config
+    tools = m._get_builtin_tools(model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+
+    # Should have one code_interpreter tool without file_ids
+    assert len(tools) == 1
+    code_interpreter = tools[0]
+    assert code_interpreter['type'] == 'code_interpreter'
+    assert code_interpreter['container'] == {'type': 'auto'}
