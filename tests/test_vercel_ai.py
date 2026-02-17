@@ -5225,7 +5225,7 @@ class TestSdkVersion:
     ],
 )
 def test_tool_return_output_edge_cases(model_response_str: str, files: list[BinaryContent], expected: str):
-    """Test _tool_return_output branches unreachable through normal tool execution flows."""
+    """Test `_tool_return_output` with files and various `model_response_str` values."""
     request = SubmitMessage(
         id='test',
         messages=[UIMessage(id='test', role='user', parts=[TextUIPart(text='Test')])],

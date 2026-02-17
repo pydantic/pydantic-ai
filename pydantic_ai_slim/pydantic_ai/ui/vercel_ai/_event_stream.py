@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import KW_ONLY, dataclass
 from typing import Any, Literal
@@ -263,10 +264,15 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             for chunk in iter_metadata_chunks(part):
                 yield chunk
 
-    def _tool_return_output(self, part: BaseToolReturnPart) -> str:
+    def _tool_return_output(self, part: BaseToolReturnPart) -> Any:
         output = part.model_response_str()
         if file_descriptions := [describe_file(f) for f in part.files]:
             if output:
                 return output + '\n' + '\n'.join(file_descriptions)
             return '\n'.join(file_descriptions)
-        return output
+        if not output:
+            return output
+        try:
+            return json.loads(output)
+        except (json.JSONDecodeError, ValueError):
+            return output

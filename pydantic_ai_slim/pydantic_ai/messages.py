@@ -685,13 +685,7 @@ UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
 @dataclass(repr=False)
 class ToolReturn:
-    """A structured return value for tools that need to provide both a return value and custom content to the model.
-
-    This class allows tools to return complex responses that include:
-    - A `return_value` for the actual tool return
-    - Custom `content` (including multi-modal content) to be sent to the model as a `UserPromptPart`
-    - Optional `metadata` for application use
-    """
+    """A structured tool return that separates the tool result from additional content sent to the model."""
 
     return_value: ToolReturnContent
     """The return value to be used in the tool response."""
@@ -699,10 +693,10 @@ class ToolReturn:
     _: KW_ONLY
 
     content: str | Sequence[UserContent] | None = None
-    """The content to be sent to the model as a `UserPromptPart`."""
+    """Content sent to the model as a separate `UserPromptPart`."""
 
     metadata: Any = None
-    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+    """Additional data accessible by the application but not sent to the LLM."""
 
     kind: Literal['tool-return'] = 'tool-return'
 
@@ -877,10 +871,10 @@ class BaseToolReturnPart:
     """Base class for tool return parts."""
 
     tool_name: str
-    """The name of the "tool" was called."""
+    """The name of the tool that was called."""
 
     content: ToolReturnContent
-    """The return value."""
+    """The tool return content, which may include multimodal files."""
 
     tool_call_id: str = field(default_factory=_generate_tool_call_id)
     """The tool call identifier, this is used by some models including OpenAI.
@@ -891,7 +885,7 @@ class BaseToolReturnPart:
     _: KW_ONLY
 
     metadata: Any = None
-    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+    """Additional data accessible by the application but not sent to the LLM."""
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
@@ -913,14 +907,7 @@ class BaseToolReturnPart:
 
     @property
     def files(self) -> list[MultiModalContent]:
-        """The multimodal file parts from `content`.
-
-        Returns only `MultiModalContent` objects (`ImageUrl`, `AudioUrl`, `DocumentUrl`,
-        `VideoUrl`, `BinaryContent`), filtering out any text/json parts.
-
-        This allows model implementations to handle files separately from data, sending
-        files natively where supported or as separate user messages when needed.
-        """
+        """The multimodal file parts from `content` (`ImageUrl`, `AudioUrl`, `DocumentUrl`, `VideoUrl`, `BinaryContent`)."""
         return self._split_content()[1]
 
     @property
@@ -978,7 +965,7 @@ class BaseToolReturnPart:
     def model_response_object(self) -> dict[str, Any]:
         """Return a dictionary representation of the data content, wrapping non-dict types appropriately.
 
-        This excludes multimodal files - use `files` to get those separately.
+        This excludes multimodal files - use `.files` to get those separately.
         Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
         """
         data = self._non_file_content

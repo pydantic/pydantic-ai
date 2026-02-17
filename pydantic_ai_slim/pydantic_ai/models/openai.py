@@ -1548,7 +1548,7 @@ class OpenAIResponsesModel(Model):
                 pass
 
         finish_reason: FinishReason | None = None
-        provider_details: dict[str, Any] = {}
+        provider_details = {}
         raw_finish_reason = details.reason if (details := response.incomplete_details) else response.status
         if raw_finish_reason:
             provider_details['finish_reason'] = raw_finish_reason
@@ -2153,11 +2153,11 @@ class OpenAIResponsesModel(Model):
         else:
             content = []
             for item in part.content:
+                detail: Literal['auto', 'low', 'high'] = 'auto'
                 if isinstance(item, str):
                     content.append(responses.ResponseInputTextParam(text=item, type='input_text'))
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
-                        detail: Literal['auto', 'low', 'high'] = 'auto'
                         if metadata := item.vendor_metadata:
                             detail = metadata.get('detail', 'auto')
                         content.append(
@@ -2185,7 +2185,6 @@ class OpenAIResponsesModel(Model):
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, ImageUrl):
-                    detail: Literal['auto', 'low', 'high'] = 'auto'
                     image_url = item.url
                     if metadata := item.vendor_metadata:
                         detail = metadata.get('detail', 'auto')
@@ -2264,7 +2263,7 @@ class OpenAIResponsesModel(Model):
                 else:
                     raise NotImplementedError(f'Unsupported binary content type: {item.media_type}')
             elif isinstance(item, ImageUrl):
-                detail: Literal['auto', 'low', 'high'] = 'auto'
+                detail = 'auto'
                 image_url = item.url
                 if metadata := item.vendor_metadata:
                     detail = metadata.get('detail', 'auto')
