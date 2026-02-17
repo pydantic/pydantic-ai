@@ -77,6 +77,12 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     assert profile_air.openai_chat_thinking_field == 'reasoning_content'
     assert profile_air.openai_chat_send_back_thinking_parts == 'field'
 
+    profile_vision = provider.model_profile('glm-4.6v')
+    zai_model_profile_mock.assert_called_with('glm-4.6v')
+    assert profile_vision is not None
+    assert isinstance(profile_vision, OpenAIModelProfile)
+    assert profile_vision.openai_chat_thinking_field is None
+
 
 def test_infer_zai_model(env: TestEnv):
     env.set('ZAI_API_KEY', 'test-api-key')
