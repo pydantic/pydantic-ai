@@ -53,6 +53,7 @@ async def test_generated_signatures_are_valid_python():
     # `...` and `pass` are not valid for Monty/ty type checking — ty is intentionally
     # stricter than pyright here. See https://github.com/astral-sh/ty/issues/1922
     assert prefix == snapshot('''\
+import asyncio
 from typing import Any, TypedDict, NotRequired, Literal
 
 async def add(*, x: int, y: int) -> int:
@@ -286,7 +287,7 @@ async def test_build_type_check_prefix_empty_lists():
     """Empty signatures/types produces just the typing import line."""
     runtime = MontyRuntime()
     prefix = runtime._build_type_check_prefix([], [])  # pyright: ignore[reportPrivateUsage]
-    assert prefix == 'from typing import Any, TypedDict, NotRequired, Literal'
+    assert prefix == 'import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal'
 
 
 # --- Sequential tool tests ---

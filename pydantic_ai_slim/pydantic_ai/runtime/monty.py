@@ -36,7 +36,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-_TYPING_IMPORTS = 'from typing import Any, TypedDict, NotRequired, Literal'
+_TYPING_IMPORTS = 'import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal'
 
 
 class MontyRuntime(CodeRuntime):
