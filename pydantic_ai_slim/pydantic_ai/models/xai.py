@@ -504,6 +504,9 @@ class XaiModel(Model):
         Returns:
             Tuple of (tool_result_text, file_content_for_user_message)
         """
+        if not part.files:
+            return part.model_response_str(), []
+
         tool_content_parts: list[str] = []
         file_content: list[UserContent] = []
 

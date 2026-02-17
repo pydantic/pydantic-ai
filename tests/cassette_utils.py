@@ -10,7 +10,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
@@ -26,6 +26,27 @@ def _get_cassette_request_bodies(cassette: Cassette) -> list[str]:
             bodies.append(body)  # pyright: ignore[reportUnknownArgumentType]
         elif getattr(request, 'parsed_body', None):  # pyright: ignore[reportUnknownArgumentType]  # pragma: no cover
             bodies.append(json.dumps(request.parsed_body))  # pyright: ignore[reportUnknownMemberType]
+    return bodies
+
+
+def _get_cassette_bodies_from_yaml(path: Path) -> list[str]:
+    """Read request bodies from a VCR cassette YAML file on disk.
+
+    Used as fallback when the VCR cassette object is not available (e.g. CI playback).
+    """
+    import yaml
+
+    data: dict[str, Any] = yaml.safe_load(path.read_text(encoding='utf-8'))
+    bodies: list[str] = []
+    for interaction in data.get('interactions', []):
+        request = interaction.get('request', {})
+        parsed_body = request.get('parsed_body') or request.get('body')
+        if parsed_body is None:
+            continue
+        if isinstance(parsed_body, dict | list):
+            bodies.append(json.dumps(parsed_body))
+        elif isinstance(parsed_body, str) and parsed_body:
+            bodies.append(parsed_body)
     return bodies
 
 
@@ -63,17 +84,6 @@ def _sanitize_cassette_filename(name: str, max_length: int = 240) -> str:
     return sanitized[:max_length]
 
 
-def _get_xai_cassette_path(test_name: str, test_module: str) -> Path:
-    """Construct XAI cassette path following the same pattern as conftest.py.
-
-    Args:
-        test_name: The test function name with parameters.
-        test_module: The test module name (without .py extension).
-    """
-    cassette_name = _sanitize_cassette_filename(test_name, 240)
-    return Path(__file__).parent / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
-
-
 def _pattern_in_bodies(pattern: str, bodies: list[str]) -> bool:
     """Check if pattern exists in any of the request bodies."""
     return any(pattern in body for body in bodies)
@@ -91,17 +101,31 @@ class CassetteContext:
     vcr: Cassette | None
     test_name: str
     test_module: str
+    test_dir: Path
+
+    def _vcr_cassette_path(self) -> Path:
+        return self.test_dir / 'cassettes' / self.test_module / f'{_sanitize_cassette_filename(self.test_name)}.yaml'
+
+    def _xai_cassette_path(self) -> Path:
+        return (
+            self.test_dir / 'cassettes' / self.test_module / f'{_sanitize_cassette_filename(self.test_name)}.xai.yaml'
+        )
 
     def _get_bodies(self) -> list[str]:
         """Get request/response bodies from the appropriate cassette format."""
         if self.provider == 'xai':
-            cassette_path = _get_xai_cassette_path(self.test_name, self.test_module)
-            if cassette_path.exists():  # pragma: no cover
-                return _get_xai_cassette_request_bodies(cassette_path)
+            path = self._xai_cassette_path()
+            if path.exists():  # pragma: no cover
+                return _get_xai_cassette_request_bodies(path)
             return []
         if self.vcr is not None:
-            return _get_cassette_request_bodies(self.vcr)
-        return []  # pragma: no cover
+            bodies = _get_cassette_request_bodies(self.vcr)
+            if bodies:
+                return bodies
+        path = self._vcr_cassette_path()
+        if path.exists():
+            return _get_cassette_bodies_from_yaml(path)
+        return []
 
     def verify_contains(self, *patterns: str | tuple[str, ...]) -> None:
         """Verify that all patterns appear in cassette request/response bodies.
@@ -115,7 +139,6 @@ class CassetteContext:
         """
         bodies = self._get_bodies()
         if not bodies:
-            # Skip verification if no bodies found (e.g., cassette doesn't exist yet during recording)
             return
 
         for pattern in patterns:

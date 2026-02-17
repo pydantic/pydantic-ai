@@ -1986,13 +1986,11 @@ async def test_run_stream_tool_return_files_only():
     ]
 
     tool_output = next(e for e in events if is_str_dict(e) and e.get('type') == 'tool-output-available')
-    # When content is a single BinaryContent, model_response_object returns {} (empty dict),
-    # so _tool_return_output goes through the dict branch, returning {'files': [...]}
     assert tool_output == snapshot(
         {
             'type': 'tool-output-available',
             'toolCallId': 'file_1',
-            'output': [{}, ['[File: audio/wav]']],
+            'output': '[File: audio/wav]',
         }
     )
 
@@ -2037,12 +2035,11 @@ async def test_run_stream_tool_return_with_file_url():
     ]
 
     tool_output = next(e for e in events if is_str_dict(e) and e.get('type') == 'tool-output-available')
-    # FileUrl goes through _describe_file's FileUrl branch, returning the URL
     assert tool_output == snapshot(
         {
             'type': 'tool-output-available',
             'toolCallId': 'url_1',
-            'output': [{}, ['[File: https://example.com/image.png]']],
+            'output': '[File: https://example.com/image.png]',
         }
     )
 
@@ -5205,38 +5202,29 @@ class TestSdkVersion:
 
 
 @pytest.mark.parametrize(
-    'model_response,files,expected',
+    'model_response_str,files,expected',
     [
         pytest.param(
-            {'return_value': 'hello'},
+            'hello',
             [BinaryContent(data=b'x', media_type='image/png')],
             snapshot('hello\n[File: image/png]'),
             id='string_with_files',
         ),
         pytest.param(
-            {'return_value': None},
+            '',
             [BinaryContent(data=b'x', media_type='audio/wav')],
             snapshot('[File: audio/wav]'),
-            id='falsy_with_files',
+            id='empty_with_files',
         ),
         pytest.param(
-            {'return_value': 42},
-            [BinaryContent(data=b'x', media_type='video/mp4')],
-            snapshot("""\
-42
-[File: video/mp4]\
-"""),
-            id='truthy_non_container_with_files',
-        ),
-        pytest.param(
-            {'return_value': [1, 2]},
+            '[1, 2]',
             [BinaryContent(data=b'x', media_type='image/png')],
-            snapshot([1, 2, '[File: image/png]']),
-            id='list_with_files',
+            snapshot('[1, 2]\n[File: image/png]'),
+            id='list_str_with_files',
         ),
     ],
 )
-def test_tool_return_output_edge_cases(model_response: dict[str, Any], files: list[BinaryContent], expected: Any):
+def test_tool_return_output_edge_cases(model_response_str: str, files: list[BinaryContent], expected: str):
     """Test _tool_return_output branches unreachable through normal tool execution flows."""
     request = SubmitMessage(
         id='test',
@@ -5244,7 +5232,7 @@ def test_tool_return_output_edge_cases(model_response: dict[str, Any], files: li
     )
     stream = VercelAIEventStream(run_input=request)
     mock_part = Mock()
-    mock_part.model_response_object.return_value = model_response
+    mock_part.model_response_str.return_value = model_response_str
     mock_part.files = files
 
     result = stream._tool_return_output(mock_part)  # pyright: ignore[reportPrivateUsage]

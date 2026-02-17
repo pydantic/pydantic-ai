@@ -17,15 +17,10 @@ import os
 from dataclasses import dataclass
 from itertools import count
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 from typing_extensions import assert_never
-
-from tests.cassette_utils import CassetteContext
-
-if TYPE_CHECKING:
-    from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, BinaryContent, BinaryImage
 from pydantic_ai.exceptions import ModelHTTPError
@@ -42,6 +37,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
+from tests.cassette_utils import CassetteContext
 
 from ..conftest import iter_message_parts, try_import
 
@@ -493,7 +489,7 @@ async def test_multimodal_tool_return_matrix(
     vertex_provider: Any,
     binary_contents: dict[FileType, BinaryImage | BinaryContent],
     allow_model_requests: None,
-    cassette_ctx: CassetteContext | None,
+    cassette_ctx: CassetteContext,
     disable_ssrf_protection_for_vcr: None,
 ):
     if not is_provider_available(provider):  # pragma: no cover
@@ -521,9 +517,9 @@ async def test_multimodal_tool_return_matrix(
         result = await agent.run(prompt, usage_limits=UsageLimits(output_tokens_limit=100000))
         assert result.output, 'Expected non-empty response from model'
         assert_multimodal_result(result.all_messages(), file_type, return_style)
-        if cassette_ctx and (pattern := get_cassette_pattern(provider, file_type, content_source)):  # pragma: no branch
+        if pattern := get_cassette_pattern(provider, file_type, content_source):
             cassette_ctx.verify_contains(pattern)
-        if SUPPORT_MATRIX[(provider, file_type)] == 'as_user_content' and return_style == 'direct' and cassette_ctx:
+        if SUPPORT_MATRIX[(provider, file_type)] == 'as_user_content' and return_style == 'direct':
             cassette_ctx.verify_contains('See file')
 
 
@@ -536,7 +532,7 @@ async def test_mixed_content_ordering(
     vertex_provider: Any,
     image_content: BinaryImage,
     allow_model_requests: None,
-    cassette_ctx: CassetteContext | None,
+    cassette_ctx: CassetteContext,
 ):
     """Test that [text, image, dict] are sent to the API in the correct order.
 
@@ -565,18 +561,17 @@ async def test_mixed_content_ordering(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert result.output, 'Expected non-empty response from model'
-    if cassette_ctx:  # pragma: no branch
-        if image_support == 'in_tool_result':
-            if provider in ('google_2_5', 'google_gemini3', 'google_vertex'):
-                # Google Gemini 3 serializes function_response.parts (in_tool_result image) before
-                # function_response.response (text/dict), so image data appears first.
-                cassette_ctx.verify_ordering(('/9j/', '_9j_'), 'Here is the image:', 'pydantic_ai_marker')
-            else:
-                cassette_ctx.verify_ordering('Here is the image:', ('/9j/', '_9j_'), 'pydantic_ai_marker')
+    if image_support == 'in_tool_result':
+        if provider in ('google_2_5', 'google_gemini3', 'google_vertex'):
+            # Google Gemini 3 serializes function_response.parts (in_tool_result image) before
+            # function_response.response (text/dict), so image data appears first.
+            cassette_ctx.verify_ordering(('/9j/', '_9j_'), 'Here is the image:', 'pydantic_ai_marker')
         else:
-            cassette_ctx.verify_ordering('Here is the image:', 'pydantic_ai_marker')
-            cassette_ctx.verify_contains(('/9j/', '_9j_'))
-            cassette_ctx.verify_contains('See file')
+            cassette_ctx.verify_ordering('Here is the image:', ('/9j/', '_9j_'), 'pydantic_ai_marker')
+    else:
+        cassette_ctx.verify_ordering('Here is the image:', 'pydantic_ai_marker')
+        cassette_ctx.verify_contains(('/9j/', '_9j_'))
+        cassette_ctx.verify_contains('See file')
 
 
 @pytest.mark.parametrize('provider', PROVIDERS)
@@ -588,7 +583,7 @@ async def test_model_sees_multiple_images(
     vertex_provider: Any,
     image_content: BinaryImage,
     allow_model_requests: None,
-    cassette_ctx: CassetteContext | None,
+    cassette_ctx: CassetteContext,
     disable_ssrf_protection_for_vcr: None,
 ):
     """Verify the model processes multiple images by identifying both.
@@ -622,11 +617,10 @@ async def test_model_sees_multiple_images(
     )
     assert 'kiwi' in result.output.lower(), f'Model should identify kiwi fruit, got: {result.output}'
     image_support = SUPPORT_MATRIX[(provider, 'image')]
-    if cassette_ctx:  # pragma: no branch
-        cassette_ctx.verify_contains(('/9j/', '_9j_'))
-        cassette_ctx.verify_contains(('UklGR', 'iVBOR', IMAGE_URL))
-        if image_support == 'as_user_content':
-            cassette_ctx.verify_contains('See file')
+    cassette_ctx.verify_contains(('/9j/', '_9j_'))
+    cassette_ctx.verify_contains(('UklGR', 'iVBOR', IMAGE_URL))
+    if image_support == 'as_user_content':
+        cassette_ctx.verify_contains('See file')
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai dependencies not installed')
@@ -634,7 +628,7 @@ async def test_vendor_metadata_detail(
     openai_api_key: str,
     assets_path: Path,
     allow_model_requests: None,
-    vcr: Cassette | None,
+    cassette_ctx: CassetteContext,
 ):
     """Test that vendor_metadata with detail setting is handled correctly."""
     model = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key=openai_api_key))
@@ -659,17 +653,14 @@ async def test_vendor_metadata_detail(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert result.output, 'Expected non-empty response from model'
-    if vcr:  # pragma: no branch
-        # Can't use cassette_ctx fixture here: it requires a 'provider' parametrize arg
-        ctx = CassetteContext('openai_responses', vcr, 'test_vendor_metadata_detail', 'test_multimodal_tool_returns')
-        ctx.verify_contains('"detail": "high"', '"detail": "low"')
+    cassette_ctx.verify_contains('"detail": "high"', '"detail": "low"')
 
 
 async def test_text_plain_document_anthropic(
     anthropic_api_key: str,
     assets_path: Path,
     allow_model_requests: None,
-    vcr: Cassette | None,
+    cassette_ctx: CassetteContext,
 ):
     """Test that text/plain documents are handled correctly by Anthropic."""
     if not anthropic_available():
@@ -690,9 +681,7 @@ async def test_text_plain_document_anthropic(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert result.output, 'Expected non-empty response from model'
-    # Can't use cassette_ctx fixture here: it requires a 'provider' parametrize arg
-    ctx = CassetteContext('anthropic', vcr, 'test_text_plain_document_anthropic', 'test_multimodal_tool_returns')
-    ctx.verify_contains('Dummy TXT file')
+    cassette_ctx.verify_contains('Dummy TXT file')
 
 
 @pytest.mark.skipif(not mistral_available(), reason='mistral dependencies not installed')
