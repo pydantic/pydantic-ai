@@ -73,7 +73,7 @@ async def test_agent_single_tool_call():
 
     agent = Agent(
         FunctionModel(model_function),
-        toolsets=[CodeExecutionToolset(_make_toolset())],
+        toolsets=[CodeExecutionToolset(toolset=_make_toolset())],
     )
     result = await agent.run('What is the weather in Paris?')
     assert result.output == 'The weather in Paris is sunny at 20 degrees.'
@@ -93,7 +93,7 @@ total = await add(x=w["temp"], y=5)
 
     agent = Agent(
         FunctionModel(model_function),
-        toolsets=[CodeExecutionToolset(_make_toolset())],
+        toolsets=[CodeExecutionToolset(toolset=_make_toolset())],
     )
     result = await agent.run('Adjusted temp for London?')
     assert result.output == 'London is 25 degrees adjusted.'
@@ -115,7 +115,7 @@ r2 = await f2
 
     agent = Agent(
         FunctionModel(model_function),
-        toolsets=[CodeExecutionToolset(_make_toolset())],
+        toolsets=[CodeExecutionToolset(toolset=_make_toolset())],
     )
     result = await agent.run('Weather in Paris and Tokyo?')
     assert result.output == 'Got weather for both cities.'
@@ -139,7 +139,7 @@ async def test_agent_code_error_triggers_retry():
 
     agent = Agent(
         FunctionModel(model_function),
-        toolsets=[CodeExecutionToolset(_make_toolset())],
+        toolsets=[CodeExecutionToolset(toolset=_make_toolset())],
     )
     result = await agent.run('Add 1 and 2')
     assert result.output == 'The answer is 3.'
@@ -159,7 +159,7 @@ async def test_concurrent_agent_runs_on_shared_toolset():
     toolset.add_function(add, takes_ctx=False)
     toolset.add_function(mul, takes_ctx=False)
 
-    shared_toolset = CodeExecutionToolset(toolset)
+    shared_toolset = CodeExecutionToolset(toolset=toolset)
 
     def add_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if not any(isinstance(m, ModelResponse) for m in messages):

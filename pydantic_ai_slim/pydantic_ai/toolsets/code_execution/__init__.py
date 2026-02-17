@@ -192,10 +192,10 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
     execution context. When no ``toolset`` is provided, it acts as a pure code execution environment.
 
     Args:
-        toolset: Optional underlying toolset to wrap. When provided, its tools are exposed as
-            callable Python functions in the code execution context.
         runtime: The code execution runtime. Can be a runtime instance or a string shorthand
             (``'monty'`` or ``'docker'``). Defaults to ``'monty'``.
+        toolset: Optional underlying toolset to wrap. When provided, its tools are exposed as
+            callable Python functions in the code execution context.
         description: Custom tool description. Can be a string (used as the preamble text
             with the default structure) or a `DescriptionFunc` callback for full control.
             Defaults to `build_default_description`.
@@ -203,19 +203,19 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
             Defaults to 3. Increase for complex code generation tasks or less capable models.
     """
 
-    toolset: AbstractToolset[AgentDepsT] | None
+    runtime: CodeRuntime
 
     _: KW_ONLY
 
-    runtime: CodeRuntime
+    toolset: AbstractToolset[AgentDepsT] | None
     description: str | DescriptionFunc
     max_retries: int = 3
 
     def __init__(
         self,
-        toolset: AbstractToolset[AgentDepsT] | None = None,
-        *,
         runtime: CodeRuntime | RuntimeName = 'monty',
+        *,
+        toolset: AbstractToolset[AgentDepsT] | None = None,
         description: str | DescriptionFunc = build_default_description,
         max_retries: int = 3,
     ) -> None:

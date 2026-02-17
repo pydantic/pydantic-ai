@@ -164,7 +164,7 @@ async def test_agent_auto_lifecycle():
 
     agent = Agent(
         FunctionModel(model_function),
-        toolsets=[CodeExecutionToolset(tools, runtime=runtime)],
+        toolsets=[CodeExecutionToolset(runtime, toolset=tools)],
     )
 
     # Runtime has no container before the run

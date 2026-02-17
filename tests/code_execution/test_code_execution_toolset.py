@@ -51,7 +51,7 @@ async def test_description_custom_string():
     """A custom string replaces the default preamble."""
     ts: FunctionToolset[None] = FunctionToolset()
     ts.add_function(_add, takes_ctx=False)
-    cm = CodeExecutionToolset(ts, runtime=StubRuntime(), description='My preamble')
+    cm = CodeExecutionToolset(StubRuntime(), toolset=ts, description='My preamble')
     tools = await cm.get_tools(build_run_context())
     assert 'My preamble' in (tools['run_code'].tool_def.description or '')
 
@@ -64,7 +64,7 @@ async def test_description_custom_callback():
 
     ts: FunctionToolset[None] = FunctionToolset()
     ts.add_function(_add, takes_ctx=False)
-    cm = CodeExecutionToolset(ts, runtime=StubRuntime(), description=my_desc)
+    cm = CodeExecutionToolset(StubRuntime(), toolset=ts, description=my_desc)
     tools = await cm.get_tools(build_run_context())
     assert tools['run_code'].tool_def.description == '1 tools'
 
@@ -73,7 +73,7 @@ async def test_deferred_tools_raise_user_error():
     """Wrapping a tool with requires_approval=True triggers UserError in get_tools()."""
     ts: FunctionToolset[None] = FunctionToolset()
     ts.add_function(_add, takes_ctx=False, requires_approval=True)
-    cm = CodeExecutionToolset(ts, runtime=StubRuntime())
+    cm = CodeExecutionToolset(StubRuntime(), toolset=ts)
     with pytest.raises(UserError, match='approval and deferral are not yet supported'):
         await cm.get_tools(build_run_context())
 
@@ -91,7 +91,7 @@ async def test_name_collision_counter():
     ts.add_function(my_tool, name='my-tool', takes_ctx=False)
     ts.add_function(my_tool, name='my.tool', takes_ctx=False)
     ts.add_function(my_tool, name='my tool', takes_ctx=False)
-    cm = CodeExecutionToolset(ts, runtime=StubRuntime())
+    cm = CodeExecutionToolset(StubRuntime(), toolset=ts)
     tools = await cm.get_tools(build_run_context())
     description = tools['run_code'].tool_def.description or ''
     assert 'async def my_tool(' in description
@@ -163,7 +163,7 @@ async def test_aenter_cleanup_on_wrapped_failure():
     failing = FailingToolset()
     assert failing.id is None  # verify the property works
 
-    cm = CodeExecutionToolset(failing, runtime=TrackingRuntime())
+    cm = CodeExecutionToolset(TrackingRuntime(), toolset=failing)
     with pytest.raises(RuntimeError, match='wrapped failed'):
         await cm.__aenter__()
     assert enter_count == 1
@@ -189,7 +189,7 @@ async def test_call_deferred_during_execution(monkeypatch: pytest.MonkeyPatch):
 
     ts: FunctionToolset[None] = FunctionToolset()
     ts.add_function(_add, takes_ctx=False)
-    cm = CodeExecutionToolset(ts, runtime=ExecutingRuntime())
+    cm = CodeExecutionToolset(ExecutingRuntime(), toolset=ts)
     ctx = build_run_context()
     tools = await cm.get_tools(ctx)
     tool = tools['run_code']

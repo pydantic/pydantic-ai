@@ -3325,7 +3325,7 @@ def code_execution_mcp_model_function(messages: list[ModelMessage], info: AgentI
 code_execution_mcp_agent = Agent(
     FunctionModel(code_execution_mcp_model_function),
     toolsets=[
-        CodeExecutionToolset(MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp')),
+        CodeExecutionToolset(toolset=MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp')),
     ],
     name='code_execution_mcp_agent',
 )

@@ -102,9 +102,9 @@ def create_code_mode_agent(github: MCPServerStreamableHTTP) -> Agent[None, str]:
     """Create agent with CodeMode (tools as Python functions)."""
     runtime = MontyRuntime()
     code_toolset: CodeExecutionToolset[None] = CodeExecutionToolset(
-        github,
+        runtime,
+        toolset=github,
         max_retries=MAX_RETRIES,
-        runtime=runtime,
     )
     return Agent(MODEL, toolsets=[code_toolset], system_prompt=SYSTEM_PROMPT)
 

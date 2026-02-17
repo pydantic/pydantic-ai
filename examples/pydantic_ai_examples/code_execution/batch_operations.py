@@ -99,9 +99,9 @@ def create_code_execution_agent(toolset: FunctionToolset[None]) -> Agent[None, s
     """Create agent with code execution (tools as Python functions)."""
     runtime = MontyRuntime()
     code_toolset: CodeExecutionToolset[None] = CodeExecutionToolset(
-        toolset,
+        runtime,
+        toolset=toolset,
         max_retries=MAX_RETRIES,
-        runtime=runtime,
     )
     return Agent(
         MODEL,

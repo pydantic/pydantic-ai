@@ -80,7 +80,7 @@ async def build_code_execution_toolset(
         else:
             func, takes_ctx = tool
             toolset.add_function(func, takes_ctx=takes_ctx)
-    code_execution = CodeExecutionToolset(toolset, runtime=runtime)
+    code_execution = CodeExecutionToolset(runtime, toolset=toolset)
     ctx = build_run_context()
     tool_defs = await code_execution.get_tools(ctx)
     return code_execution, tool_defs

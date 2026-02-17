@@ -58,7 +58,7 @@ tools = FunctionToolset(tools=[get_weather, convert_temp])  # (1)!
 
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    toolsets=[CodeExecutionToolset(tools)],  # (2)!
+    toolsets=[CodeExecutionToolset(toolset=tools)],  # (2)!
 )
 
 result = agent.run_sync("What's the weather in Paris and Tokyo, in Celsius?")
@@ -153,7 +153,7 @@ server = MCPServerStdio('uv', args=['run', 'my-mcp-server'])
 
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    toolsets=[CodeExecutionToolset(server)],
+    toolsets=[CodeExecutionToolset(toolset=server)],
 )
 ```
 
@@ -163,8 +163,8 @@ Code execution uses a pluggable runtime to execute generated code. You can pass 
 
 ```python {test="skip" lint="skip"}
 # These are equivalent:
-CodeExecutionToolset(tools, runtime='monty')
-CodeExecutionToolset(tools, runtime=MontyRuntime())
+CodeExecutionToolset('monty', toolset=tools)
+CodeExecutionToolset(MontyRuntime(), toolset=tools)
 ```
 
 The runtime you choose determines the execution environment, security boundaries, and available Python features.
@@ -183,10 +183,10 @@ from pydantic_ai.runtime import MontyRuntime
 from pydantic_ai.toolsets import CodeExecutionToolset, FunctionToolset
 
 tools = FunctionToolset(tools=[...])
-toolset = CodeExecutionToolset(tools, runtime=MontyRuntime())  # (1)!
+toolset = CodeExecutionToolset(MontyRuntime(), toolset=tools)  # (1)!
 ```
 
-1. Equivalent to `CodeExecutionToolset(tools)` or `CodeExecutionToolset(tools, runtime='monty')`, since Monty is the default.
+1. Equivalent to `CodeExecutionToolset(toolset=tools)` or `CodeExecutionToolset('monty', toolset=tools)`, since Monty is the default.
 
 Monty type-checks generated code (via [ty](https://github.com/astral-sh/ty)) before execution, catching errors early and giving the model precise feedback to fix its code. It can also freeze and restore its full interpreter state via snapshot-based checkpointing, enabling efficient resume without re-executing code from scratch.
 
@@ -208,7 +208,7 @@ from pydantic_ai.toolsets import CodeExecutionToolset, FunctionToolset
 tools = FunctionToolset(tools=[...])
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    toolsets=[CodeExecutionToolset(tools, runtime=DockerRuntime())],  # (1)!
+    toolsets=[CodeExecutionToolset(DockerRuntime(), toolset=tools)],  # (1)!
 )
 
 result = await agent.run('...')  # (2)!
@@ -275,7 +275,7 @@ tools = FunctionToolset(tools=[...])
 
 # Pass a string to customize the preamble while keeping the default structure:
 code_toolset = CodeExecutionToolset(
-    tools,
+    toolset=tools,
     description='Use this tool to run Python code that calls the available functions.',
 )
 ```
@@ -296,7 +296,7 @@ def my_description_func(
 
 tools = FunctionToolset(tools=[...])
 code_toolset = CodeExecutionToolset(
-    tools,
+    toolset=tools,
     description=my_description_func,
 )
 ```
