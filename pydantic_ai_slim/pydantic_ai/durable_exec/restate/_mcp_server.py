@@ -33,7 +33,7 @@ class RestateMCPServer(WrapperToolset[Any]):
         return cast(MCPServer, self.wrapped)
 
     @property
-    def id(self) -> str | None:  # pragma: no cover
+    def id(self) -> str | None:
         return self.wrapped.id
 
     async def __aenter__(self) -> Self:

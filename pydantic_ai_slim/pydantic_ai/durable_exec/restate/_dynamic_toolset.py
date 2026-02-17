@@ -64,7 +64,7 @@ class RestateDynamicToolset(WrapperToolset[AgentDepsT]):
         return cast(DynamicToolset[AgentDepsT], self.wrapped)
 
     @property
-    def id(self) -> str | None:  # pragma: no cover
+    def id(self) -> str | None:
         return self._dynamic_toolset.id
 
     async def __aenter__(self) -> Self:

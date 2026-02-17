@@ -33,7 +33,7 @@ class RestateFastMCPToolset(WrapperToolset[AgentDepsT]):
         return cast(FastMCPToolset[AgentDepsT], self.wrapped)
 
     @property
-    def id(self) -> str | None:  # pragma: no cover
+    def id(self) -> str | None:
         return self._fastmcp_toolset.id
 
     async def __aenter__(self) -> Self:
