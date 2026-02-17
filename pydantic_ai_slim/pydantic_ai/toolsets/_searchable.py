@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any, cast
 
 from pydantic_core import SchemaValidator, core_schema
 
 from .._run_context import AgentDepsT, RunContext
-from ..exceptions import UserError
-from ..messages import ModelRequest, ToolReturnPart
+from ..exceptions import ModelRetry, UserError
+from ..messages import ModelRequest, ToolReturn, ToolReturnPart
 from ..tools import ToolDefinition
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
@@ -21,6 +20,21 @@ _SEARCH_TOOLS_VALIDATOR = SchemaValidator(
             'query': core_schema.typed_dict_field(core_schema.str_schema(), required=True),
         }
     )
+)
+
+_SEARCH_TOOL_DEF = ToolDefinition(
+    name=SEARCH_TOOLS_NAME,
+    description='Search for available tools by keyword. Returns matching tool names and descriptions.',
+    parameters_json_schema={
+        'type': 'object',
+        'properties': {
+            'query': {
+                'type': 'string',
+                'description': 'The search query to match against tool names and descriptions.',
+            }
+        },
+        'required': ['query'],
+    },
 )
 
 
@@ -39,27 +53,16 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
     """Maximum number of tools to return from a search query."""
 
     _search_tool: ToolsetTool[AgentDepsT] = field(init=False, repr=False)
+    _deferred_tools: dict[str, ToolsetTool[AgentDepsT]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._search_tool = ToolsetTool(
             toolset=self,
-            tool_def=ToolDefinition(
-                name=SEARCH_TOOLS_NAME,
-                description='Search for available tools by keyword. Returns matching tool names and descriptions.',
-                parameters_json_schema={
-                    'type': 'object',
-                    'properties': {
-                        'query': {
-                            'type': 'string',
-                            'description': 'The search query to match against tool names and descriptions.',
-                        }
-                    },
-                    'required': ['query'],
-                },
-            ),
+            tool_def=_SEARCH_TOOL_DEF,
             max_retries=1,
             args_validator=_SEARCH_TOOLS_VALIDATOR,
         )
+        self._deferred_tools = {}
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
@@ -76,6 +79,8 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
                 deferred[name] = tool
             else:
                 non_deferred[name] = tool
+
+        self._deferred_tools = deferred
 
         if not deferred:
             return all_tools
@@ -97,15 +102,11 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
             if isinstance(msg, ModelRequest):
                 for part in msg.parts:
                     if isinstance(part, ToolReturnPart) and part.tool_name == SEARCH_TOOLS_NAME:
-                        content = part.model_response_object()
-                        if isinstance(content, dict) and 'tools' in content:
-                            tools_list = content['tools']
-                            if isinstance(tools_list, list):
-                                for tool_info in cast(list[dict[str, Any]], tools_list):
-                                    if isinstance(tool_info, dict) and 'name' in tool_info:
-                                        tool_name = tool_info['name']
-                                        if isinstance(tool_name, str):
-                                            discovered.add(tool_name)
+                        metadata = part.metadata
+                        if isinstance(metadata, list):
+                            for item in cast(list[Any], metadata):
+                                if isinstance(item, str):
+                                    discovered.add(item)
         return discovered
 
     async def call_tool(
@@ -115,26 +116,27 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
             return await self._search_tools(tool_args, ctx)
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
-    async def _search_tools(self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> dict[str, Any]:
+    async def _search_tools(self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> ToolReturn:
         """Search for tools matching the query."""
         query = tool_args.get('query', '')
         if not query:
-            return {'message': 'Please provide a search query.', 'tools': []}
+            raise ModelRetry('Please provide a search query.')
 
-        all_tools = await self.wrapped.get_tools(ctx)
-
-        deferred_tools = [(name, tool) for name, tool in all_tools.items() if tool.tool_def.defer_loading]
+        deferred_tools = self._deferred_tools
 
         if not deferred_tools:
-            return {'message': 'No searchable tools available.', 'tools': []}
+            return ToolReturn(
+                return_value={'message': 'No searchable tools available.', 'tools': []},
+                metadata=[],
+            )
 
-        pattern = re.compile(re.escape(query), re.IGNORECASE)
+        query_lower = query.lower()
 
         matches: list[dict[str, str | None]] = []
-        for name, tool in deferred_tools:
+        for name, tool in deferred_tools.items():
             tool_def = tool.tool_def
-            name_match = pattern.search(name)
-            desc_match = pattern.search(tool_def.description) if tool_def.description else None
+            name_match = query_lower in name.lower()
+            desc_match = query_lower in tool_def.description.lower() if tool_def.description else False
 
             if name_match or desc_match:
                 matches.append(
@@ -151,4 +153,9 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
         else:
             message = f"No tools found matching '{query}'"
 
-        return {'message': message, 'tools': matches}
+        tool_names = [m['name'] for m in matches if isinstance(m.get('name'), str)]
+
+        return ToolReturn(
+            return_value={'message': message, 'tools': matches},
+            metadata=tool_names,
+        )

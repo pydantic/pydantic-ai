@@ -97,6 +97,3 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
         return replace(self, toolsets=[toolset.visit_and_replace(visitor) for toolset in self.toolsets])
-
-    def has_deferred_tools(self) -> bool:
-        return any(toolset.has_deferred_tools() for toolset in self.toolsets)

@@ -189,14 +189,3 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         from .approval_required import ApprovalRequiredToolset
 
         return ApprovalRequiredToolset(self, approval_required_func)
-
-    def has_deferred_tools(self) -> bool:
-        """Returns True if this toolset has any tools with `defer_loading=True`.
-
-        Custom toolsets that support deferred tools must override this method to return `True`
-        when appropriate. This is a synchronous heuristic that does not receive a `RunContext`,
-        so it may not reflect decisions that depend on runtime context.
-
-        The default implementation returns `False`.
-        """
-        return False

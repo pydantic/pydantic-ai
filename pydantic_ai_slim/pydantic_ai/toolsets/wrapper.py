@@ -49,6 +49,3 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
         return replace(self, wrapped=self.wrapped.visit_and_replace(visitor))
-
-    def has_deferred_tools(self) -> bool:
-        return self.wrapped.has_deferred_tools()

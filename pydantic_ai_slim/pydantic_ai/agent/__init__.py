@@ -1548,11 +1548,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         toolset = toolset.visit_and_replace(copy_dynamic_toolsets)
 
-        if toolset.has_deferred_tools():
-            toolset = SearchableToolset(wrapped=toolset)
-
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
+
+        toolset = SearchableToolset(wrapped=toolset)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:

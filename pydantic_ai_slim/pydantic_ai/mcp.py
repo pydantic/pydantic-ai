@@ -609,9 +609,6 @@ class MCPServer(AbstractToolset[Any], ABC):
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
-    def has_deferred_tools(self) -> bool:
-        return self.defer_loading is True or (isinstance(self.defer_loading, list) and len(self.defer_loading) > 0)
-
     async def list_resources(self) -> list[Resource]:
         """Retrieve resources that are currently present on the server.
 

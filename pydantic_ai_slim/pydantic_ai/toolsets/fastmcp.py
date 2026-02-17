@@ -187,9 +187,6 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
-    def has_deferred_tools(self) -> bool:
-        return self.defer_loading is True or (isinstance(self.defer_loading, list) and len(self.defer_loading) > 0)
-
 
 def _map_fastmcp_tool_results(parts: list[ContentBlock]) -> list[FastMCPToolResult] | FastMCPToolResult:
     """Map FastMCP tool results to toolset tool results."""

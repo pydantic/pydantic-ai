@@ -397,8 +397,3 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 raise ModelRetry(f'Timed out after {timeout} seconds.') from None
         else:
             return await tool.call_func(tool_args, ctx)
-
-    def has_deferred_tools(self) -> bool:
-        if self.defer_loading:
-            return True
-        return any(tool.defer_loading for tool in self.tools.values())
