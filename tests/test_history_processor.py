@@ -1541,10 +1541,8 @@ async def test_history_processor_replace_resumed_request_falls_through(
 ):
     """
     When a history processor replaces the resumed request with completely
-    different content (breaking both identity and content equality),
-    _first_new_message_index's reverse scan finds no match and falls
-    through to _first_run_id_index. This also covers _is_same_request
-    returning False for non-ModelRequest messages (ModelResponse).
+    different content, new_messages() falls back to run_id-based detection
+    to determine which messages belong to the current run.
     """
 
     def replace_all_requests(messages: list[ModelMessage]) -> list[ModelMessage]:

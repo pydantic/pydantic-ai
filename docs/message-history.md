@@ -356,8 +356,7 @@ the message history before each model request.
 
     - Preserve `run_id` on existing messages.
     - When creating new messages in a processor that should be part of the current run, use a
-      [context-aware processor](#runcontext-parameter) and set `run_id` to the current run's ID
-      via the `RunContext` parameter.
+      [context-aware processor](#runcontext-parameter) and set `run_id=ctx.run_id` on the new message.
     - Reordering or removing messages may shift the boundary between "old" and "new" messages, test
       with [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] to verify the behavior
       matches your expectations.
