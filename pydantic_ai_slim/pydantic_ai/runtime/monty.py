@@ -111,7 +111,19 @@ class MontyRuntime(CodeRuntime):
 
             The last expression evaluated is the return value.
 
-            You can `await` async functions, and use `asyncio.gather` to await multiple async functions at the same time.
+            Parallelism: use `asyncio.gather` to fire multiple calls at the same time instead of awaiting each one sequentially:
+
+                # GOOD — parallel (all calls fire at once):
+                results = await asyncio.gather(
+                    get_data(id=1),
+                    get_data(id=2),
+                    get_data(id=3),
+                )
+
+                # BAD — sequential (each call waits before the next starts):
+                r1 = await get_data(id=1)
+                r2 = await get_data(id=2)
+                r3 = await get_data(id=3)
             """
         )
 

@@ -36,6 +36,17 @@ async def test_parallel_execution(code_runtime: CodeRuntime):
     assert result == ['done:a', 'done:b']
 
 
+async def test_parallel_execution_gather(code_runtime: CodeRuntime):
+    """asyncio.gather runs tools in parallel."""
+
+    def slow_op(name: str) -> str:
+        return f'done:{name}'
+
+    code = 'import asyncio\nresults = await asyncio.gather(slow_op(name="a"), slow_op(name="b"))\nlist(results)'
+    result = await run_code_with_tools(code, code_runtime, (slow_op, False))
+    assert result == ['done:a', 'done:b']
+
+
 async def test_no_function_calls(code_runtime: CodeRuntime):
     """Code without function calls executes locally and returns result."""
     result = await run_code_with_tools('1 + 2', code_runtime)
