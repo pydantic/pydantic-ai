@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import sys
 import warnings
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
+from warnings import catch_warnings, simplefilter
 
 if TYPE_CHECKING:
     from inline_snapshot import (
@@ -24,12 +27,14 @@ if TYPE_CHECKING:
         customize_repr as customize_repr,  # pyright: ignore[reportUnknownVariableType]
         snapshot as snapshot,
     )
+    from inline_snapshot.extra import raises as raises, warns as warns
 elif any(arg.startswith('--inline-snapshot') or arg.startswith('--snap') for arg in sys.argv):
     from inline_snapshot import (
         Is as Is,
         customize_repr as customize_repr,  # pyright: ignore[reportUnknownVariableType]
         snapshot as snapshot,
     )
+    from inline_snapshot.extra import raises as raises, warns as warns
 else:
 
     class _SnapshotProxy:
@@ -72,3 +77,29 @@ else:
 
     def customize_repr(func: Any) -> Any:
         return func
+
+    @contextmanager
+    def warns(expected_warnings: Any, /, include_line: bool = False, include_file: bool = False) -> Iterator[None]:
+        with catch_warnings(record=True) as caught:
+            simplefilter('always')
+            yield
+        formatted: list[str] = []
+        for w in caught:
+            parts: list[str] = []
+            if include_file:
+                parts.append(w.filename)
+            if include_line:
+                parts.append(str(w.lineno))
+            parts.append(f'{w.category.__name__}: {w.message}')
+            formatted.append(', '.join(parts) if len(parts) > 1 else parts[0])
+        assert formatted == expected_warnings
+
+    @contextmanager
+    def raises(exception: Any) -> Iterator[None]:
+        try:
+            yield
+        except Exception as e:
+            actual = f'{type(e).__name__}: {e}'
+        else:
+            actual = '<no exception>'
+        assert actual == exception
