@@ -91,12 +91,10 @@ jobs:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     # Use Depot 4-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
     # Use 'ci:slow' label to force standard GitHub runners (e.g. during Depot outages)
-    # 3.13 on standard runners is already as fast as 3.10 on Depot, so not worth the cost
     runs-on: >-
       ${{
         !contains(github.event.pull_request.labels.*.name, 'ci:slow')
         && matrix.install.name == 'all-extras'
-        && matrix.python-version != '3.13'
         && (
           github.event.pull_request.head.repo.full_name == github.repository
           || contains(github.event.pull_request.labels.*.name, 'ci:fast')
@@ -155,11 +153,9 @@ jobs:
     name: test on ${{ matrix.python-version }} (lowest-versions)
     # Use Depot 4-core runners for maintainers or opted in via 'ci:fast' label
     # Use 'ci:slow' label to force standard GitHub runners (e.g. during Depot outages)
-    # 3.13 on standard runners is already as fast as 3.10 on Depot, so not worth the cost
     runs-on: >-
       ${{
         !contains(github.event.pull_request.labels.*.name, 'ci:slow')
-        && matrix.python-version != '3.13'
         && (
           github.event.pull_request.head.repo.full_name == github.repository
           || contains(github.event.pull_request.labels.*.name, 'ci:fast')
