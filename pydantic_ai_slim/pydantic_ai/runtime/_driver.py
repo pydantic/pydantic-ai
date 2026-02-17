@@ -244,6 +244,6 @@ if __name__ == '__main__':
     os.close(_devnull)
 
     _proto_stdin = os.fdopen(_proto_stdin_fd, 'rb', buffering=0)
-    _real_stdout = os.fdopen(_proto_stdout_fd, 'w', buffering=1)  # noqa: F811
+    _real_stdout = os.fdopen(_proto_stdout_fd, 'w', buffering=1)
 
     asyncio.run(_main(_proto_stdin))

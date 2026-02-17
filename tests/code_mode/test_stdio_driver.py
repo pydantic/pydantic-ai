@@ -474,7 +474,6 @@ async def test_main_error_paths():
 # =============================================================================
 
 
-
 def test_transform_last_expr_assignment():
     """Code ending in assignment has no return added."""
     result = _transform_last_expr('x = 42')

@@ -71,7 +71,9 @@ def create_github_mcp() -> MCPServerStreamableHTTP:
     """Create GitHub MCP server connection."""
     token = os.environ.get('GITHUB_PERSONAL_ACCESS_TOKEN')
     if not token:
-        raise ValueError('GITHUB_PERSONAL_ACCESS_TOKEN environment variable is required')
+        raise ValueError(
+            'GITHUB_PERSONAL_ACCESS_TOKEN environment variable is required'
+        )
 
     return MCPServerStreamableHTTP(
         url='https://api.githubcopilot.com/mcp/',
