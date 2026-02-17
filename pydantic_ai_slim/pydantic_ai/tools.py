@@ -237,12 +237,11 @@ A = TypeVar('A')
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
     def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
-        """Override to ensure typed `extras_schema` (e.g. **kwargs: int) produces typed `additionalProperties`.
+        """Override to produce typed `additionalProperties` for typed `**kwargs` (e.g. `**kwargs: int`).
 
-        Pydantic 2.12's base implementation only checks `extras_schema` when top-level `extra_behavior`
-        is set, but pydantic-ai sets `extra_fields_behavior` in config instead (_function_schema.py:188),
-        so the base class falls through to `additionalProperties: true`.
-        See https://github.com/pydantic/pydantic/issues/12123
+        The base class handles config `extra_fields_behavior` for `forbid` and basic `allow`,
+        but ignores `extras_schema` when going through the config path — always sets `True`.
+        See https://github.com/pydantic/pydantic/issues/12809
         """
         json_schema = super().typed_dict_schema(schema)
         extras_schema = schema.get('extras_schema', None)
