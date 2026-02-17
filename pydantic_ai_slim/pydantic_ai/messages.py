@@ -742,7 +742,7 @@ class UploadedFile:
     def media_type(self) -> str:
         """Return the media type of the file, inferred from `file_id` if not explicitly provided.
 
-        Note: Automatic inference only works if `file_id` is a URL or path with a recognizable file extension.
+        Note: Inference relies on the file extension in `file_id`.
         For opaque file IDs (e.g., `'file-abc123'`), the media type will default to `'application/octet-stream'`.
         Inference relies on Python's `mimetypes` module, whose results may vary across platforms.
 
