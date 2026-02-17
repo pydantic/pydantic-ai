@@ -1,0 +1,76 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '131'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: false
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '743'
+      content-type:
+      - application/json; charset=UTF-8
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 is 4.
+          reasoning_content: |-
+            1.  **Identify the user's core question:** The user is asking "What is 2 + 2?".
+            2.  **Determine the mathematical operation:** The operation is addition.
+            3.  **Perform the calculation:** 2 plus 2 equals 4.
+            4.  **Formulate the answer:** The answer is simply "4".
+          role: assistant
+      created: 1771301447
+      id: 20260217121046a63c959132c74f7c
+      model: glm-4.7
+      object: chat.completion
+      request_id: 20260217121046a63c959132c74f7c
+      usage:
+        completion_tokens: 84
+        completion_tokens_details:
+          reasoning_tokens: 74
+        prompt_tokens: 13
+        prompt_tokens_details:
+          cached_tokens: 4
+        total_tokens: 97
+    status:
+      code: 200
+      message: OK
+version: 1
