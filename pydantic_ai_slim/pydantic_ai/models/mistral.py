@@ -15,6 +15,7 @@ from .._run_context import RunContext
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..exceptions import ModelAPIError
 from ..messages import (
+    AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -621,7 +622,7 @@ class MistralModel(Model):
                     elif item.media_type == 'application/pdf':
                         content.append(MistralDocumentURLChunk(document_url=item.data_uri, type='document_url'))
                     else:
-                        raise RuntimeError('BinaryContent other than image or PDF is not supported in Mistral.')
+                        raise NotImplementedError('BinaryContent other than image or PDF is not supported in Mistral.')
                 elif isinstance(item, DocumentUrl):
                     if item.media_type == 'application/pdf':
                         if item.force_download:
@@ -632,9 +633,11 @@ class MistralModel(Model):
                         else:
                             content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
                     else:
-                        raise RuntimeError('DocumentUrl other than PDF is not supported in Mistral.')
+                        raise NotImplementedError('DocumentUrl other than PDF is not supported in Mistral.')
+                elif isinstance(item, AudioUrl):
+                    raise NotImplementedError('AudioUrl is not supported in Mistral.')
                 elif isinstance(item, VideoUrl):
-                    raise RuntimeError('VideoUrl is not supported in Mistral.')
+                    raise NotImplementedError('VideoUrl is not supported in Mistral.')
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
         return MistralUserMessage(content=content)

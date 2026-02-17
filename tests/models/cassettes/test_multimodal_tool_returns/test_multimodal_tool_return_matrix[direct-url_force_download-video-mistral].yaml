@@ -41,11 +41,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '438'
+      - '460'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019c486c-e42d-7f6e-b84a-3c423b146efc
+      - 019c69e4-f6d3-7177-bd7a-be5e84371788
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -61,92 +61,17 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: o3y1UrQsg
+            id: PO2sD0KPX
             index: 0
-      created: 1770741621
-      id: 31e72962c5e04dcbb3d682afdb53dfeb
+      created: 1771303139
+      id: 384614580a8f4d3b82f1dc20cfe7330c
       model: mistral-medium-latest
       object: chat.completion
       usage:
         completion_tokens: 6
-        num_cached_tokens: 32
         prompt_tokens: 64
-        total_tokens: 70
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '376'
-      content-type:
-      - application/json
-      host:
-      - api.mistral.ai
-    method: POST
-    parsed_body:
-      messages:
-      - content: Use the get_file tool now to retrieve a video file, then describe what you received.
-        role: user
-      model: mistral-medium-latest
-      n: 1
-      stream: false
-      tool_choice: auto
-      tools:
-      - function:
-          description: ''
-          name: get_file
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-      top_p: 1.0
-    uri: https://api.mistral.ai/v1/chat/completions
-  response:
-    headers:
-      access-control-allow-origin:
-      - '*'
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '438'
-      content-type:
-      - application/json
-      mistral-correlation-id:
-      - 019c48b1-6f6c-71cb-9e2e-a7886e84607d
-      strict-transport-security:
-      - max-age=15552000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      choices:
-      - finish_reason: tool_calls
-        index: 0
-        message:
-          content: ''
-          role: assistant
-          tool_calls:
-          - function:
-              arguments: '{}'
-              name: get_file
-            id: WYotbsi6e
-            index: 0
-      created: 1770746113
-      id: 58c91bcd0a2248d8b23fa3408f3ee68e
-      model: mistral-medium-latest
-      object: chat.completion
-      usage:
-        completion_tokens: 6
-        num_cached_tokens: 32
-        prompt_tokens: 64
+        prompt_tokens_details:
+          cached_tokens: 0
         total_tokens: 70
     status:
       code: 200

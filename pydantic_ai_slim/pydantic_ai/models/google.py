@@ -784,17 +784,27 @@ class GoogleModel(Model):
             assert_never(file)
 
     async def _map_file_to_function_response_part(self, file: FileUrl | BinaryContent) -> FunctionResponsePartDict:
-        """Map a multimodal file to FunctionResponsePartDict for Gemini 3+ native tool returns.
+        """Map a multimodal file to `FunctionResponsePartDict` for Gemini 3+ native tool returns.
 
-        This format is simpler than PartDict - only inline_data or file_data, no video_metadata.
+        This format is simpler than `PartDict` - only inline_data or file_data, no video_metadata.
+
+        Note: `FunctionResponseBlobDict`/`FunctionResponseFileDataDict` declare `display_name` but
+        the google-genai SDK's `_live_converters.py` rejects it at runtime. We omit it until the
+        SDK supports it, at which point we could also add `$ref` identifiers in the response dict.
         """
         if isinstance(file, BinaryContent):
-            blob_dict: FunctionResponseBlobDict = {'data': file.data, 'mime_type': file.media_type}
+            blob_dict: FunctionResponseBlobDict = {
+                'data': file.data,
+                'mime_type': file.media_type,
+            }
             return FunctionResponsePartDict(inline_data=blob_dict)
         elif isinstance(file, VideoUrl) and (
             file.is_youtube or (file.url.startswith('gs://') and self.system == 'google-vertex')
         ):
-            file_data_dict: FunctionResponseFileDataDict = {'file_uri': file.url, 'mime_type': file.media_type}
+            file_data_dict: FunctionResponseFileDataDict = {
+                'file_uri': file.url,
+                'mime_type': file.media_type,
+            }
             return FunctionResponsePartDict(file_data=file_data_dict)
         elif isinstance(file, FileUrl):
             if file.force_download or (
@@ -808,7 +818,10 @@ class GoogleModel(Model):
                 }
                 return FunctionResponsePartDict(inline_data=blob_dict)
             else:
-                file_data_dict: FunctionResponseFileDataDict = {'file_uri': file.url, 'mime_type': file.media_type}
+                file_data_dict: FunctionResponseFileDataDict = {
+                    'file_uri': file.url,
+                    'mime_type': file.media_type,
+                }
                 return FunctionResponsePartDict(file_data=file_data_dict)  # pragma: lax no cover
         else:
             assert_never(file)

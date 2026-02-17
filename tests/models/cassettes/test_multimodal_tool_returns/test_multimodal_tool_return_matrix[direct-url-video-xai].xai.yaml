@@ -21,21 +21,21 @@ interactions:
       cHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
   response_sample:
     json:
-      id: 2c3d29ad-2884-8d09-e4db-d7c772d2234d
+      id: 99a99ae3-69eb-e2ca-bad6-e3bd950932c6
       outputs:
       - finish_reason: REASON_TOOL_CALLS
         message:
           role: ROLE_ASSISTANT
           tool_calls:
-          - id: call_94944131
+          - id: call_78077122
             type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
             status: TOOL_CALL_STATUS_COMPLETED
             function:
               name: get_file
               arguments: '{}'
-      created: '2026-02-09T18:43:44.019137176Z'
+      created: '2026-02-17T04:37:51.984440418Z'
       model: grok-4-1-fast-non-reasoning
-      system_fingerprint: fp_9bb3d5b553
+      system_fingerprint: fp_9df5fcbaa7
       usage:
         completion_tokens: 15
         prompt_tokens: 359
@@ -54,8 +54,8 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiQyYzNkMjlhZC0yODg0LThkMDktZTRkYi1kN2M3NzJkMjIzNGQSKwgEGicQAhojCg1jYWxsXzk0
-      OTQ0MTMxEAEYAVIOCghnZXRfZmlsZRICe30qCwjg1ajMBhCYhZAJMhtncm9rLTQtMS1mYXN0LW5v
-      bi1yZWFzb25pbmc6DWZwXzliYjNkNWI1NTNKEggPEOcCGPYCIOcCOJ4BWOD3IVpjEAEtMzMzPzoC
-      CAFCUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVy
-      dGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifU0zM3M/
+      CiQ5OWE5OWFlMy02OWViLWUyY2EtYmFkNi1lM2JkOTUwOTMyYzYSKwgEGicQAhojCg1jYWxsXzc4
+      MDc3MTIyEAEYAVIOCghnZXRfZmlsZRICe30qDAif4c/MBhDivLXVAzIbZ3Jvay00LTEtZmFzdC1u
+      b24tcmVhc29uaW5nOg1mcF85ZGY1ZmNiYWE3ShIIDxDnAhj2AiDnAjieAVjg9yFaYxABLTMzMz86
+      AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
+      cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==

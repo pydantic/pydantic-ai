@@ -1,0 +1,329 @@
+interactions:
+- request:
+    body: grant_type=%5B%27refresh_token%27%5D&client_id=%5B%27scrubbed%27%5D&client_secret=%5B%27scrubbed%27%5D&refresh_token=%5B%27scrubbed%27%5D
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '268'
+      content-type:
+      - application/x-www-form-urlencoded
+    method: POST
+    uri: https://oauth2.googleapis.com/token
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, max-age=0, must-revalidate
+      content-length:
+      - '1160'
+      content-type:
+      - application/json; charset=utf-8
+      expires:
+      - Mon, 01 Jan 1990 00:00:00 GMT
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      access_token: scrubbed
+      expires_in: 3599
+      id_token: eyJhbGciOiJSUzI1NiIsImtpZCI6ImM4MTZkMzM3YjgzNjVhMDZhODUxYWQ4MDAxNmMxNzEwOTk0OTI2MDkiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJhdWQiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJzdWIiOiIxMTgyODA0MjAxMzMxODU0NDg2MTgiLCJlbWFpbCI6ImRzZmFwcHNAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsImF0X2hhc2giOiJiQUxHaC16QTZNeGs2Tm13SUJONzR3IiwiaWF0IjoxNzcxMzAyNzM0LCJleHAiOjE3NzEzMDYzMzR9.rim0CEuOtKR0RYKmxw05tNZhU8BDmCAY1ARnaANlZQlPflcdn9yLpuY0Ehm814gmbX5hC0ZsFfIllOd-x6h9jD_2bkPwj9J8Vy_2A0d0j8tLPbhIqg2uwXhejlHPlJWuia76rqKmg3XP8LLuNva3vjrq4-m9WPP1nTja-n1XsRk_k8vmO4TJ_hg6ocuYAF_7EFMI3Rs2aLcfMsMoqh5fTG73h1HrxTEYnhVj6edlrbE7xSUQJpo7FsD1qJY--yDTBd3MyyaxoD6mtR4quD43ZUs4UETgQlpHtC39cOpKKrZnlySwY7h-ZVH0dIIhbqnsDAiNL2q_3Dia_mcSvxPWpg
+      scope: https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/sqlservice.login openid https://www.googleapis.com/auth/userinfo.email
+      token_type: Bearer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '368'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parametersJsonSchema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2268'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -18.441757590101833
+        content:
+          parts:
+          - functionCall:
+              args:
+                type: IMAGE
+              name: get_file
+            thoughtSignature: CtAJAY89a18wvS6zEsbILTyCg53Yu9vrB0fEYck5bFB1B5AX6AUugD0u6cKRqVDF4Hq0b+x3pPKtqyytxEV1JQvXidb0Ld/8+V0S7FXGEM6Dk90R8553BnKDlVi0ENtlHsX5o+medD4n8IYzrfgna4yFQC1W94L7nI7EXIpWUtyEtuLct+EIFXN6OkUqf1aJl/q4L1llFyj19VER+AxMQzqtTKjO0LCsSr7a2aONa8xhr10Lo5YGKPTeWRqkBfo7aloaHHgSW1c97h01L93qfHnD5Jrf11/PhT750jwfuhMyxGlee5rE7zhwiCqs0Yj+zYE0QKdguE1cg+oYMFZR4kszHCZ/tmsNrjRexcnOXUhjDPwFlliSvMXLcMebUCAeyFK4YXAS2RvK+bcBf0RVsMowBZjz/wixDkK5t8pXv+Mnp2jJejgvqcq1UkXCS97J7cgSQ4Eg/Z7b+N5DH4ouY+nE5PKzjGC0SUA5OFzTtezOKKgYVAachVCdMWPaUVGAZSyrddtsDf7AOuNuV9tI9BqiCS1hCOk5u68fgXWL5YpQ3M9CRZyUN+cZoa8WS95W4oTgJfVgjS7oi0qntaYtEemyqdshxR4DqN/HTF0dW96HFfrsI+VXupB6Is4G5Dw83aOkgvIxaIh1qgODl53FvW27CMs9oiuwGvB8wiY50aDOruQcZlFWcjU41F1uoKNVfsYkglF/aklornrof5yzBX48mG9K96PC2VojY8wQRc+U8IXkF8rdX8OxzQlgsWMT3ZprPXBtxc7O1busJXYLa2LF/o/VVqajCu72ksJ/BWnDdiXjjhhBLVJDwye8UiCitzoF1VY3cyt5bD2HbJl/7MVUKPC5DpWjbLCPKow24H3jrA4F0uUhnRv151iWkFlRhT5RB07QqW2EZYyeIye5AmNtwkyFbhOkTsG1DGbvHgT/Pq5NuGaLNy1bUozaXPpM3R2MIj8r4rYBw4apwcmyln6PRwtpfAjy8MLVaJyd669dMbJubM2LHnx0lZ2vdGNIsFfUDG1aWG7H9Fe1FbQYatj1N0ykyF5Voa2JKocG6WS/0uM3/HGtPZEQiCPDz4/FECHHcjSxyYswQlGsmTcRB4TGNchtW6mq95vtHDEOo0e43xlayAfXt+d2e68ANHQEFaqrjWtsqK75InydAaito9nHp1wnYeG853deCLYY18aNJfK3d+n9ADxDbNM0Z1y4rI1yX0h4i9WgLBzsIzRfMsQP9C+awANVwxn1w0XNcJx3cOCjR7pY7th6TXTxGDw6slZ03X9K3cjZHEymYNW8fjOpTfDcTDn8KlklYytz0czYN7iW+xqBpHNPyzVAgbXm9F6Oug2apMBJPD0cgkhJ5zyW5tiWezDv3CUuLYwbd0yx08c/Pe85584lhfByRjOXZsW6cRAKByOaHrw1kxelS1/U6qY2QYi+lqyljuSx8YM8Q47AfN4rlPIPBdf6fS65jI8cRgAQeYtFoCBqUbL8vrV8CNr7Xfo4z3R3DybPywX9g9pHF2E3G1dURIfL+ZGJeErx6ngqohkqp1qTaJibNNkcx2K2m4Kab3SP8i/ekmt4FbGLz3sYs4uu0HqY/LQybr1KY1TAfR07qTUPmSNzNtRQjvaGFkCrW84MwMpfsVjqZr8=
+          role: model
+        finishReason: STOP
+      createTime: '2026-02-17T04:32:14.753059Z'
+      modelVersion: gemini-3-flash-preview
+      responseId: Tu-TaaP7LdfUitUPyPqQ-AU
+      usageMetadata:
+        candidatesTokenCount: 9
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 9
+        promptTokenCount: 22
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 22
+        thoughtsTokenCount: 303
+        totalTokenCount: 334
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2572'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      - parts:
+        - function_call:
+            args:
+              type: IMAGE
+            id: pyd_ai_a2bb5e2b6b2644d9af30a398b3f3a285
+            name: get_file
+          thought_signature: CtAJAY89a18wvS6zEsbILTyCg53Yu9vrB0fEYck5bFB1B5AX6AUugD0u6cKRqVDF4Hq0b-x3pPKtqyytxEV1JQvXidb0Ld_8-V0S7FXGEM6Dk90R8553BnKDlVi0ENtlHsX5o-medD4n8IYzrfgna4yFQC1W94L7nI7EXIpWUtyEtuLct-EIFXN6OkUqf1aJl_q4L1llFyj19VER-AxMQzqtTKjO0LCsSr7a2aONa8xhr10Lo5YGKPTeWRqkBfo7aloaHHgSW1c97h01L93qfHnD5Jrf11_PhT750jwfuhMyxGlee5rE7zhwiCqs0Yj-zYE0QKdguE1cg-oYMFZR4kszHCZ_tmsNrjRexcnOXUhjDPwFlliSvMXLcMebUCAeyFK4YXAS2RvK-bcBf0RVsMowBZjz_wixDkK5t8pXv-Mnp2jJejgvqcq1UkXCS97J7cgSQ4Eg_Z7b-N5DH4ouY-nE5PKzjGC0SUA5OFzTtezOKKgYVAachVCdMWPaUVGAZSyrddtsDf7AOuNuV9tI9BqiCS1hCOk5u68fgXWL5YpQ3M9CRZyUN-cZoa8WS95W4oTgJfVgjS7oi0qntaYtEemyqdshxR4DqN_HTF0dW96HFfrsI-VXupB6Is4G5Dw83aOkgvIxaIh1qgODl53FvW27CMs9oiuwGvB8wiY50aDOruQcZlFWcjU41F1uoKNVfsYkglF_aklornrof5yzBX48mG9K96PC2VojY8wQRc-U8IXkF8rdX8OxzQlgsWMT3ZprPXBtxc7O1busJXYLa2LF_o_VVqajCu72ksJ_BWnDdiXjjhhBLVJDwye8UiCitzoF1VY3cyt5bD2HbJl_7MVUKPC5DpWjbLCPKow24H3jrA4F0uUhnRv151iWkFlRhT5RB07QqW2EZYyeIye5AmNtwkyFbhOkTsG1DGbvHgT_Pq5NuGaLNy1bUozaXPpM3R2MIj8r4rYBw4apwcmyln6PRwtpfAjy8MLVaJyd669dMbJubM2LHnx0lZ2vdGNIsFfUDG1aWG7H9Fe1FbQYatj1N0ykyF5Voa2JKocG6WS_0uM3_HGtPZEQiCPDz4_FECHHcjSxyYswQlGsmTcRB4TGNchtW6mq95vtHDEOo0e43xlayAfXt-d2e68ANHQEFaqrjWtsqK75InydAaito9nHp1wnYeG853deCLYY18aNJfK3d-n9ADxDbNM0Z1y4rI1yX0h4i9WgLBzsIzRfMsQP9C-awANVwxn1w0XNcJx3cOCjR7pY7th6TXTxGDw6slZ03X9K3cjZHEymYNW8fjOpTfDcTDn8KlklYytz0czYN7iW-xqBpHNPyzVAgbXm9F6Oug2apMBJPD0cgkhJ5zyW5tiWezDv3CUuLYwbd0yx08c_Pe85584lhfByRjOXZsW6cRAKByOaHrw1kxelS1_U6qY2QYi-lqyljuSx8YM8Q47AfN4rlPIPBdf6fS65jI8cRgAQeYtFoCBqUbL8vrV8CNr7Xfo4z3R3DybPywX9g9pHF2E3G1dURIfL-ZGJeErx6ngqohkqp1qTaJibNNkcx2K2m4Kab3SP8i_ekmt4FbGLz3sYs4uu0HqY_LQybr1KY1TAfR07qTUPmSNzNtRQjvaGFkCrW84MwMpfsVjqZr8=
+        role: model
+      - parts:
+        - function_response:
+            id: pyd_ai_a2bb5e2b6b2644d9af30a398b3f3a285
+            name: get_file
+            response:
+              error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "extra_forbidden",
+                    "loc": [
+                      "type"
+                    ],
+                    "msg": "Extra inputs are not permitted",
+                    "input": "IMAGE"
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parametersJsonSchema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2278'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -4.203489430662744
+        content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_file
+            thoughtSignature: CooCAY89a1/FM0YJBNqa23CQzetLnU1fusg5g/UajVkQ13U4QuA3+YLjDmxYDC98DVWWkcDDqg/1u66lZcN/H7nJvnzJld7m4638FOmj0Gs6CkmUfqz2jhkHYJGkorgmDDCEHBJ73NvxvpMcc4p2rFPPGlUdtrJE4RqpH5Rd8O2ndlEoc9cIaAnD59C1JBaRbBlMjUjgkdQrtA4h8vSlNtVWgf3KoztJS7CoPQbz5FbL8eQb3ja1AeA9N9osc1wYWPI7eSKmf7PuoKJkPORso08q4XlKRl0tMhC3P6wyvP/nWvZKe1b54KO59iGzP9cwWyEsBlYm+/gN/75BhXXtGDsHg/bnOxHATrG/31oKKQGPPWtfLv/Uiozh2m025HA40arrTUYompYfvK9UbQdz2/ZN21eXo3CpCicBjz1rX3haHWhAILiXYXMZHAWX02mXHfoOvg1a8sfS98MEsG5gPXwKKQGPPWtfyiONvxa5CTmyqSXWJmJZDQzTOU47Ca1t20wqfrOvEhdAfKlcCvIBAY89a1/jsjxWwG2nbUzi0c9OWDS0chMfysYPMqem+XkId3UIGgd7xumcKDe39LgY7PZrrCF+OrajW0wvrEQxML2H/SCySh/EUr97A280sZCHf5LhUzkTlpVFG9HWZJZK2c9BeKQ/5CqKax+jW9UVDU2D5k29NAtjsAKXjtRaTyCkn2FnQkZ0CIxEVXlW+dVijDO4JCQUf/fb3NrLz8EubU2/178+kDqeZKuziINqYxykS1i5SxdkXp+uqzeDxGMJd4rv0xAVkcRc/XQtDi332KnuTrzOP0aZNujq8unHVuTIg7GGdtIuuthRbAkA73WruH0KKQGPPWtfUKGNSWSf0sF6RjvmiXgViMartydFnbxt6khDZ1jTLrnCFIrmCicBjz1rX9wEWJcbaV6EcrxCE7ZHeBvCeoKUkgeenV0r+uAyrbPtskcKKQGPPWtfwTFJSsac+SdQSC1uFE5rxv6QJfRVqbNWvxslFvBtRN6NreBKCrsBAY89a19NoWH3K9K/6wpFtslEhBrenHPaFZ9dm32JX2kKkGyD6CoTmJj6s25uBs2NPYD46Q+ocs3u5R0d2goVCqcqhpkmhvzSVgyQSp/AdV6BcPbgsbACyKEaxX4Wj/GCyC054UzMez7eAsp3esN3G1shbm8E0zsxMMOTRegFIZ6rb0JICPOLa1XDTnPOEx1yF8aQmAkkJovxDOx3vAaRxiMxJcKj2hNiQKjOOTsm62h36i6qlDGlLVQ1zAopAY89a18j4B34FSkUZju6RZS2hk39+zjZvT29EJ5kqzn1RHbdnG/FBowKJwGPPWtftILf8xDbteuzwIu8Q9V4xzxLuUPpB5auqx6XUzOIWmYMqgopAY89a19rOYdQlJUbiTmBn9Q9R299ZbCxMw3UtzvcBLuGqo5OOPOAUVYKpAEBjz1rX2ucmCwHi74e5ckEgw/zpkiBf9aTs3/gVY2fsW2n0Ru8TInbsoQZgaSfKXHoai5qy8XLJqFEH1K84qPfH6pwys2se4kGW365Bnr8DstTsLPq6FCP1eYOQBnTu7m5epVWfuYnxaHBdxVJecKuYfI52KMNZa/qnNtR7cye56So8sOGfb3gF4xloytg6tbXQJ+G1ujkls1T8ZWyMvWyp7psYA==
+          role: model
+        finishReason: STOP
+      createTime: '2026-02-17T04:32:17.815450Z'
+      modelVersion: gemini-3-flash-preview
+      responseId: Ue-TadriMaWSq7UPsvSeuQY
+      usageMetadata:
+        candidatesTokenCount: 7
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 7
+        promptTokenCount: 102
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 102
+        thoughtsTokenCount: 191
+        totalTokenCount: 300
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '4653'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      - parts:
+        - function_call:
+            args:
+              type: IMAGE
+            id: pyd_ai_a2bb5e2b6b2644d9af30a398b3f3a285
+            name: get_file
+          thought_signature: CtAJAY89a18wvS6zEsbILTyCg53Yu9vrB0fEYck5bFB1B5AX6AUugD0u6cKRqVDF4Hq0b-x3pPKtqyytxEV1JQvXidb0Ld_8-V0S7FXGEM6Dk90R8553BnKDlVi0ENtlHsX5o-medD4n8IYzrfgna4yFQC1W94L7nI7EXIpWUtyEtuLct-EIFXN6OkUqf1aJl_q4L1llFyj19VER-AxMQzqtTKjO0LCsSr7a2aONa8xhr10Lo5YGKPTeWRqkBfo7aloaHHgSW1c97h01L93qfHnD5Jrf11_PhT750jwfuhMyxGlee5rE7zhwiCqs0Yj-zYE0QKdguE1cg-oYMFZR4kszHCZ_tmsNrjRexcnOXUhjDPwFlliSvMXLcMebUCAeyFK4YXAS2RvK-bcBf0RVsMowBZjz_wixDkK5t8pXv-Mnp2jJejgvqcq1UkXCS97J7cgSQ4Eg_Z7b-N5DH4ouY-nE5PKzjGC0SUA5OFzTtezOKKgYVAachVCdMWPaUVGAZSyrddtsDf7AOuNuV9tI9BqiCS1hCOk5u68fgXWL5YpQ3M9CRZyUN-cZoa8WS95W4oTgJfVgjS7oi0qntaYtEemyqdshxR4DqN_HTF0dW96HFfrsI-VXupB6Is4G5Dw83aOkgvIxaIh1qgODl53FvW27CMs9oiuwGvB8wiY50aDOruQcZlFWcjU41F1uoKNVfsYkglF_aklornrof5yzBX48mG9K96PC2VojY8wQRc-U8IXkF8rdX8OxzQlgsWMT3ZprPXBtxc7O1busJXYLa2LF_o_VVqajCu72ksJ_BWnDdiXjjhhBLVJDwye8UiCitzoF1VY3cyt5bD2HbJl_7MVUKPC5DpWjbLCPKow24H3jrA4F0uUhnRv151iWkFlRhT5RB07QqW2EZYyeIye5AmNtwkyFbhOkTsG1DGbvHgT_Pq5NuGaLNy1bUozaXPpM3R2MIj8r4rYBw4apwcmyln6PRwtpfAjy8MLVaJyd669dMbJubM2LHnx0lZ2vdGNIsFfUDG1aWG7H9Fe1FbQYatj1N0ykyF5Voa2JKocG6WS_0uM3_HGtPZEQiCPDz4_FECHHcjSxyYswQlGsmTcRB4TGNchtW6mq95vtHDEOo0e43xlayAfXt-d2e68ANHQEFaqrjWtsqK75InydAaito9nHp1wnYeG853deCLYY18aNJfK3d-n9ADxDbNM0Z1y4rI1yX0h4i9WgLBzsIzRfMsQP9C-awANVwxn1w0XNcJx3cOCjR7pY7th6TXTxGDw6slZ03X9K3cjZHEymYNW8fjOpTfDcTDn8KlklYytz0czYN7iW-xqBpHNPyzVAgbXm9F6Oug2apMBJPD0cgkhJ5zyW5tiWezDv3CUuLYwbd0yx08c_Pe85584lhfByRjOXZsW6cRAKByOaHrw1kxelS1_U6qY2QYi-lqyljuSx8YM8Q47AfN4rlPIPBdf6fS65jI8cRgAQeYtFoCBqUbL8vrV8CNr7Xfo4z3R3DybPywX9g9pHF2E3G1dURIfL-ZGJeErx6ngqohkqp1qTaJibNNkcx2K2m4Kab3SP8i_ekmt4FbGLz3sYs4uu0HqY_LQybr1KY1TAfR07qTUPmSNzNtRQjvaGFkCrW84MwMpfsVjqZr8=
+        role: model
+      - parts:
+        - function_response:
+            id: pyd_ai_a2bb5e2b6b2644d9af30a398b3f3a285
+            name: get_file
+            response:
+              error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "extra_forbidden",
+                    "loc": [
+                      "type"
+                    ],
+                    "msg": "Extra inputs are not permitted",
+                    "input": "IMAGE"
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
+        role: user
+      - parts:
+        - function_call:
+            args: {}
+            id: pyd_ai_dd3a5ea3ba0c4b89934922b4e342731a
+            name: get_file
+          thought_signature: CooCAY89a1_FM0YJBNqa23CQzetLnU1fusg5g_UajVkQ13U4QuA3-YLjDmxYDC98DVWWkcDDqg_1u66lZcN_H7nJvnzJld7m4638FOmj0Gs6CkmUfqz2jhkHYJGkorgmDDCEHBJ73NvxvpMcc4p2rFPPGlUdtrJE4RqpH5Rd8O2ndlEoc9cIaAnD59C1JBaRbBlMjUjgkdQrtA4h8vSlNtVWgf3KoztJS7CoPQbz5FbL8eQb3ja1AeA9N9osc1wYWPI7eSKmf7PuoKJkPORso08q4XlKRl0tMhC3P6wyvP_nWvZKe1b54KO59iGzP9cwWyEsBlYm-_gN_75BhXXtGDsHg_bnOxHATrG_31oKKQGPPWtfLv_Uiozh2m025HA40arrTUYompYfvK9UbQdz2_ZN21eXo3CpCicBjz1rX3haHWhAILiXYXMZHAWX02mXHfoOvg1a8sfS98MEsG5gPXwKKQGPPWtfyiONvxa5CTmyqSXWJmJZDQzTOU47Ca1t20wqfrOvEhdAfKlcCvIBAY89a1_jsjxWwG2nbUzi0c9OWDS0chMfysYPMqem-XkId3UIGgd7xumcKDe39LgY7PZrrCF-OrajW0wvrEQxML2H_SCySh_EUr97A280sZCHf5LhUzkTlpVFG9HWZJZK2c9BeKQ_5CqKax-jW9UVDU2D5k29NAtjsAKXjtRaTyCkn2FnQkZ0CIxEVXlW-dVijDO4JCQUf_fb3NrLz8EubU2_178-kDqeZKuziINqYxykS1i5SxdkXp-uqzeDxGMJd4rv0xAVkcRc_XQtDi332KnuTrzOP0aZNujq8unHVuTIg7GGdtIuuthRbAkA73WruH0KKQGPPWtfUKGNSWSf0sF6RjvmiXgViMartydFnbxt6khDZ1jTLrnCFIrmCicBjz1rX9wEWJcbaV6EcrxCE7ZHeBvCeoKUkgeenV0r-uAyrbPtskcKKQGPPWtfwTFJSsac-SdQSC1uFE5rxv6QJfRVqbNWvxslFvBtRN6NreBKCrsBAY89a19NoWH3K9K_6wpFtslEhBrenHPaFZ9dm32JX2kKkGyD6CoTmJj6s25uBs2NPYD46Q-ocs3u5R0d2goVCqcqhpkmhvzSVgyQSp_AdV6BcPbgsbACyKEaxX4Wj_GCyC054UzMez7eAsp3esN3G1shbm8E0zsxMMOTRegFIZ6rb0JICPOLa1XDTnPOEx1yF8aQmAkkJovxDOx3vAaRxiMxJcKj2hNiQKjOOTsm62h36i6qlDGlLVQ1zAopAY89a18j4B34FSkUZju6RZS2hk39-zjZvT29EJ5kqzn1RHbdnG_FBowKJwGPPWtftILf8xDbteuzwIu8Q9V4xzxLuUPpB5auqx6XUzOIWmYMqgopAY89a19rOYdQlJUbiTmBn9Q9R299ZbCxMw3UtzvcBLuGqo5OOPOAUVYKpAEBjz1rX2ucmCwHi74e5ckEgw_zpkiBf9aTs3_gVY2fsW2n0Ru8TInbsoQZgaSfKXHoai5qy8XLJqFEH1K84qPfH6pwys2se4kGW365Bnr8DstTsLPq6FCP1eYOQBnTu7m5epVWfuYnxaHBdxVJecKuYfI52KMNZa_qnNtR7cye56So8sOGfb3gF4xloytg6tbXQJ-G1ujkls1T8ZWyMvWyp7psYA==
+        role: model
+      - parts:
+        - function_response:
+            id: pyd_ai_dd3a5ea3ba0c4b89934922b4e342731a
+            name: get_file
+            parts:
+            - file_data:
+                file_uri: https://www.gstatic.com/webp/gallery3/1.png
+                mime_type: image/png
+            response: {}
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parametersJsonSchema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '289'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      error:
+        code: 400
+        message: 'Cannot fetch content from the provided URL. Please ensure the URL is valid and accessible by Vertex AI.
+          Vertex AI respects robots.txt rules, so confirm the URL is allowed to be crawled. Status: URL_ROBOTED-ROBOTED_DENIED'
+        status: INVALID_ARGUMENT
+    status:
+      code: 400
+      message: Bad Request
+version: 1

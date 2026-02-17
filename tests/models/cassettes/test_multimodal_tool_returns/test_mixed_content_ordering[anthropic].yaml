@@ -38,7 +38,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '588'
+      - '652'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -51,11 +51,13 @@ interactions:
       content:
       - text: I'll call the get_mixed_content tool for you.
         type: text
-      - id: toolu_01HJC2je2fWyWjMvfkuddkuS
+      - caller:
+          type: direct
+        id: toolu_01C3Y57WiK7E1q95fLVPaaNv
         input: {}
         name: get_mixed_content
         type: tool_use
-      id: msg_01QLbH4xcbcgcUPXn5X4jkif
+      id: msg_017mABPtEidkV9hXzWc1zQ8x
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -67,6 +69,7 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
+        inference_geo: not_available
         input_tokens: 555
         output_tokens: 52
         service_tier: standard
@@ -82,7 +85,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132358'
+      - '132371'
       content-type:
       - application/json
       host:
@@ -98,7 +101,7 @@ interactions:
       - content:
         - text: I'll call the get_mixed_content tool for you.
           type: text
-        - id: toolu_01HJC2je2fWyWjMvfkuddkuS
+        - id: toolu_01C3Y57WiK7E1q95fLVPaaNv
           input: {}
           name: get_mixed_content
           type: tool_use
@@ -112,10 +115,10 @@ interactions:
               media_type: image/jpeg
               type: base64
             type: image
-          - text: '{"metadata":"test"}'
+          - text: '{"pydantic_ai_marker":"test_42"}'
             type: text
           is_error: false
-          tool_use_id: toolu_01HJC2je2fWyWjMvfkuddkuS
+          tool_use_id: toolu_01C3Y57WiK7E1q95fLVPaaNv
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -135,7 +138,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1235'
+      - '1200'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -147,22 +150,22 @@ interactions:
     parsed_body:
       content:
       - text: |-
-          The get_mixed_content tool returned a combination of different content types:
+          I received mixed content from the tool containing three different elements:
 
-          1. **Text output**: A simple text string saying "Here is the image:"
+          1. **Text output**: "Here is the image:"
 
-          2. **An image**: A beautiful cross-section photograph of a kiwi fruit. The image shows the distinctive internal structure of the kiwi with:
-             - Bright green flesh on the outer portion
-             - A lighter, pale green/white center
-             - A ring of small black seeds arranged in a radial pattern around the center
-             - The characteristic fuzzy brown skin visible around the edges
-             - The entire slice photographed against a white background
+          2. **An image**: A beautiful cross-section of a kiwi fruit, showing its distinctive features including:
+             - Bright green flesh
+             - A pale cream-colored center
+             - Dark black seeds arranged in a radial pattern around the center
+             - Brown fuzzy skin visible around the edges
+             - The characteristic star-burst pattern that kiwis are known for
 
-          3. **JSON data**: A simple metadata object containing `{"metadata":"test"}`
+          3. **JSON data**: `{"pydantic_ai_marker":"test_42"}` - appears to be some kind of test marker or identifier
 
-          So the function returned mixed content types including text, an image, and structured data - living up to its name!
+          The tool indeed returned "mixed content" as its name suggests - combining text, an image, and structured data all in one response.
         type: text
-      id: msg_016txGUcHnx1559QRjGxCLaP
+      id: msg_01WmK9iHKKXPSgCLuWXxHGze
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -174,8 +177,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 1118
-        output_tokens: 178
+        inference_geo: not_available
+        input_tokens: 1126
+        output_tokens: 172
         service_tier: standard
     status:
       code: 200

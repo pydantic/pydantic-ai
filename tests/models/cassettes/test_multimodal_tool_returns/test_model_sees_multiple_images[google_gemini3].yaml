@@ -36,11 +36,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1165'
+      - '1061'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1756
+      - gfet4t7; dur=1509
       transfer-encoding:
       - chunked
       vary:
@@ -54,21 +54,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_images
-            thoughtSignature: EvADCu0DAb4+9vvgf1+lgKWWL9MrXe80I965JDKOBEayiHwowZUtaE/BZWbrca+1WRTfrnHI+oHapZRxgnnoNyQHXvFuEpeCk5zBOhzgsT8wiqnY/RATYMSb61nF1pDAeA2HyR+h4PQZaKgDeT05VmudJnrrsZ+dby4ANBokE3klE2SfmCL0cHBKD0HQDbDufcd2yOavEChvoreKaWrlOgXAHILk2OqEd70VG3r7hB0k3aJ2Q0vk24izK2rD2bqVvLG/bExP5PLch/oND6lD6sJXB8paX1MrHjbDUKTJ41S+buCTqrGYtkS0ienyboQ37LfvhfRINMQw9Dgc0y9fnNlNp6UGQLeluU8SApv9iu9HcIxxs0ND2N1hJ2Z92+8CAV1C6gN2YG/PciVnr552UsNqCVoCxTntcCEn6CwwmYwwVFNhqxU6V7ZCneYGcgNbPnql51br3IfAqchuv3DQHRGxsHMSGjKdKpp1WmPe9tr6S2nQF3YVE5fh//kJfisqhk2DHrJmMctgyw78UqDVdFgcCKHxw+lQ0s809QVvGgnZQNAWKat+uBoehwuK4boUGySdFYleK9av8cq1uwqj+YkEMVgqv2v4d53mFZwZG/mM/qDvLG1ROLa/Taz2683DcBW4on6+/IZfU7cx7TI9YH+vUQ==
+            thoughtSignature: EqIDCp8DAb4+9vucAg0vDjC+omUaNr5MuT1YFD5Nb4pTJl8d0R0iKvBLtSy/Wkt3szuVZX1QTD54HvlAoAgF/wm3XjoVvVgzk9Ohmjvdx8nvQm1fm/rlOTLJIPeGIOAoYvLrdsE5EKoyT2J3ogRk8N8Qnqwrda+fECEbXGbj9fiQXdfw+bXW5MEho1vzXkSS4Z9TJvhUs6d/Wrd89ewnuHLUpIp+YcD9w5b2HVCQTS7gN0zipZXFd3LanzIc6cQuRN4Q7vIPwco/2FfXOVAzUCGXhyZStGE1BHaf+USQEai/HPuG0K9xUZAa8sackuCLUxQdqQTiv5IcSQHb3iaVXq42Y1v2n8kPvlo0lM3Ax7dy1B9mVvysauSjkFMBnh9J1jtTgSLyqIpKRJTAcmk1xAoSp6I0jCTwgvFhuDEZPTe9KGsju/bNLOmi1sC8r9h9WXQtahM0rwi9os6UI8ZyN/BoNcciQ7R1Cq5B+aWzA/OYj9tk4ZI+PJNse52ip4Lx7Bb7jkKp9DkZ7Sv/rsmiccpMBg9yvueBsHsT7r/wdUbP9YBsAw==
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: US6Kab2JLZTjz7IPzKKnqQY
+      responseId: iuCTaZa9A8mjqtsPxs282A0
       usageMetadata:
         candidatesTokenCount: 10
         promptTokenCount: 40
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 40
-        thoughtsTokenCount: 123
-        totalTokenCount: 173
+        thoughtsTokenCount: 101
+        totalTokenCount: 151
     status:
       code: 200
       message: OK
@@ -2081,7 +2081,7 @@ interactions:
       accept-ranges:
       - bytes
       age:
-      - '7642'
+      - '2086'
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
@@ -2097,7 +2097,7 @@ interactions:
       cross-origin-resource-policy:
       - cross-origin
       expires:
-      - Tue, 09 Feb 2027 16:51:03 GMT
+      - Wed, 17 Feb 2027 02:54:28 GMT
       last-modified:
       - Fri, 23 Apr 2021 09:38:00 GMT
       report-to:
@@ -2116,7 +2116,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '284021'
+      - '283917'
       content-type:
       - application/json
       host:
@@ -2130,13 +2130,13 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_1655ba563ef34ec7bde401fbb313db80
+            id: pyd_ai_bc3b7058a8e1447291338512ccfa093c
             name: get_images
-          thoughtSignature: EvADCu0DAb4-9vvgf1-lgKWWL9MrXe80I965JDKOBEayiHwowZUtaE_BZWbrca-1WRTfrnHI-oHapZRxgnnoNyQHXvFuEpeCk5zBOhzgsT8wiqnY_RATYMSb61nF1pDAeA2HyR-h4PQZaKgDeT05VmudJnrrsZ-dby4ANBokE3klE2SfmCL0cHBKD0HQDbDufcd2yOavEChvoreKaWrlOgXAHILk2OqEd70VG3r7hB0k3aJ2Q0vk24izK2rD2bqVvLG_bExP5PLch_oND6lD6sJXB8paX1MrHjbDUKTJ41S-buCTqrGYtkS0ienyboQ37LfvhfRINMQw9Dgc0y9fnNlNp6UGQLeluU8SApv9iu9HcIxxs0ND2N1hJ2Z92-8CAV1C6gN2YG_PciVnr552UsNqCVoCxTntcCEn6CwwmYwwVFNhqxU6V7ZCneYGcgNbPnql51br3IfAqchuv3DQHRGxsHMSGjKdKpp1WmPe9tr6S2nQF3YVE5fh__kJfisqhk2DHrJmMctgyw78UqDVdFgcCKHxw-lQ0s809QVvGgnZQNAWKat-uBoehwuK4boUGySdFYleK9av8cq1uwqj-YkEMVgqv2v4d53mFZwZG_mM_qDvLG1ROLa_Taz2683DcBW4on6-_IZfU7cx7TI9YH-vUQ==
+          thoughtSignature: EqIDCp8DAb4-9vucAg0vDjC-omUaNr5MuT1YFD5Nb4pTJl8d0R0iKvBLtSy_Wkt3szuVZX1QTD54HvlAoAgF_wm3XjoVvVgzk9Ohmjvdx8nvQm1fm_rlOTLJIPeGIOAoYvLrdsE5EKoyT2J3ogRk8N8Qnqwrda-fECEbXGbj9fiQXdfw-bXW5MEho1vzXkSS4Z9TJvhUs6d_Wrd89ewnuHLUpIp-YcD9w5b2HVCQTS7gN0zipZXFd3LanzIc6cQuRN4Q7vIPwco_2FfXOVAzUCGXhyZStGE1BHaf-USQEai_HPuG0K9xUZAa8sackuCLUxQdqQTiv5IcSQHb3iaVXq42Y1v2n8kPvlo0lM3Ax7dy1B9mVvysauSjkFMBnh9J1jtTgSLyqIpKRJTAcmk1xAoSp6I0jCTwgvFhuDEZPTe9KGsju_bNLOmi1sC8r9h9WXQtahM0rwi9os6UI8ZyN_BoNcciQ7R1Cq5B-aWzA_OYj9tk4ZI-PJNse52ip4Lx7Bb7jkKp9DkZ7Sv_rsmiccpMBg9yvueBsHsT7r_wdUbP9YBsAw==
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_1655ba563ef34ec7bde401fbb313db80
+            id: pyd_ai_bc3b7058a8e1447291338512ccfa093c
             name: get_images
             parts:
             - inline_data:
@@ -2164,11 +2164,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '864'
+      - '732'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2621
+      - gfet4t7; dur=1389
       transfer-encoding:
       - chunked
       vary:
@@ -2180,22 +2180,22 @@ interactions:
       - content:
           parts:
           - text: Kiwi
-            thoughtSignature: ErACCq0CAb4+9vsRlIg5NFxZwEslovF1dIx1XsSehLvxTL5m/vQIFivGt+OYxKdnJX5fiLhVuqgyR00WQyErdz08+cuuFVjFB+cVnpWZCaiqtNhqR+iinGsY59QUXpOKyw59w0ruheu6njXHQs3oHQB1iQjILGIQc7fyQY9WCLWnv2edi5yPcZNd7JerFwIaqUq6iKOdyytOiiPBTMQB9bZyXCf3Te8jlq2S7jD/dz9jpLmKxuPCvxdhw18cHFIPYTwGTNbK9wTD4oT4I4IR1d8+nUhVxt9H2NBz1viGiRM3PcXk/k9hhSC7qmyRLIWSyOpS/pdZAq1yoH9LOeLq9IlAWigWksBRubX62MPsSpG0xOhkIQzcVw0BInZMNptCh3IogpYg35GHxmvkiDutB/uNDQ==
+            thoughtSignature: Es0BCsoBAb4+9vuIf823TpnyAYEaQOOabIWzkD8M5NhC3db1jTs3jDHOEzXAZh2+6VG/sQ46VyFFbHC+XpqNHi27HqeIwLK7690PI77IDG6vWS5R0RcVBzKvfwp6z0HDb4bG+Hi7HHHn60D7HdPAkKpj6jb/4oO0qqw7IxVx381IsQBApXsmj0PRvb7AGkB2kEYECSkUkuM0z/IDXCkOl3nM1rUVOFZk/XMGNbrpbk4hHHwu1MCMsbfqtSIwkLeODnBpjKnPLq6/Qqr/he3YSw==
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: VC6KaZnpIt_qz7IP0Z_SyQQ
+      responseId: jOCTacX8DJDcqtsPwZiNqQ0
       usageMetadata:
         candidatesTokenCount: 2
-        promptTokenCount: 2371
+        promptTokenCount: 2349
         promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 159
         - modality: IMAGE
           tokenCount: 2190
-        - modality: TEXT
-          tokenCount: 181
-        thoughtsTokenCount: 61
-        totalTokenCount: 2434
+        thoughtsTokenCount: 36
+        totalTokenCount: 2387
     status:
       code: 200
       message: OK

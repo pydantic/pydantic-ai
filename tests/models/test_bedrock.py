@@ -2590,13 +2590,15 @@ async def test_bedrock_cache_messages_with_binary_content(
     # Should not add cache point for document content
     assert bedrock_messages[0]['content'] == snapshot(
         [
+            {'text': 'See attached document(s).'},
+            {'cachePoint': {'type': 'default'}},
             {
                 'document': {
                     'name': 'Document 1',
                     'format': 'txt',
                     'source': {'bytes': b'Test document content'},
                 }
-            }
+            },
         ]
     )
 

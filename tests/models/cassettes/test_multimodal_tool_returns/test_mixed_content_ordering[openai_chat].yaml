@@ -46,7 +46,7 @@ interactions:
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1768'
+      - '1339'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -68,10 +68,10 @@ interactions:
           - function:
               arguments: '{}'
               name: get_mixed_content
-            id: call_U6ue2e5UNX3bLunaLPbNXpYn
+            id: call_VrtIe6Ngj9pFHcIGCiIp5O0R
             type: function
-      created: 1770079416
-      id: chatcmpl-D4ynw9C2W9cAej7TXVlKnETuhz2ho
+      created: 1771296862
+      id: chatcmpl-DA5WAwZtVNWlzOvbyYNVPetxqejQt
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
@@ -100,12 +100,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132258'
+      - '132271'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=FUDlwD_Gng0bKBclFekEHa10snCF6oPMeSrPn5n5uso-1770079418-1.0.1.1-yAkg4WeGG22q8gNVMnP02u5DHTQRhHKZuc_LyLHKSkgntA49G8gSatHkKAnL3G4_eF01jZLSKxC2c_by2Ly5rUvhoUKu0Y9Lgam8.wXq6tE;
-        _cfuvid=LFq9B3E7CMyebmR80MBzTCuxi57NUczPbWvySpNNadw-1770079418180-0.0.1.1-604800000
+      - __cf_bm=5CBSRboWemS_BpszvGIEyWqCCBH1StZ5B_d8tjIlR3Y-1771296861.3626428-1.0.1.1-QZ12083e_pYui2gNVEaPteZnxo_2UdtTB0QTnZHv3rqtbaHOM6MlitqqLdU2BrBQiHG173m7RgMf.QEFxTa5zpP0I5b7SMl6fHjRi4DVALCmZ4Z5cvOJKfnuqYAsXpJz
       host:
       - api.openai.com
     method: POST
@@ -119,14 +118,14 @@ interactions:
         - function:
             arguments: '{}'
             name: get_mixed_content
-          id: call_U6ue2e5UNX3bLunaLPbNXpYn
+          id: call_VrtIe6Ngj9pFHcIGCiIp5O0R
           type: function
       - content: |-
           Here is the image:
           See file 241a70.
-          {"metadata":"test"}
+          {"pydantic_ai_marker":"test_42"}
         role: tool
-        tool_call_id: call_U6ue2e5UNX3bLunaLPbNXpYn
+        tool_call_id: call_VrtIe6Ngj9pFHcIGCiIp5O0R
       - content:
         - text: 'This is file 241a70:'
           type: text
@@ -156,13 +155,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1153'
+      - '1351'
       content-type:
       - application/json
       openai-organization:
       - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '5851'
+      - '5260'
       openai-project:
       - proj_FYsIItHHgnSPdHBVMzhNBWGa
       openai-version:
@@ -177,35 +176,33 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: |-
-            The tool returned a single image (file 241a70) plus a small metadata object. The metadata string was: {"metadata":"test"}.
-
-            Description of the image content:
-            - A close-up, well-lit photo of a halved kiwi fruit shown cut face-on.
-            - Bright green flesh with a pale creamy central core.
-            - A ring of small black seeds arranged radially around the core.
-            - Fuzzy brown skin visible around the rim with tiny hairs.
-            - Even, neutral background (white) and square crop; high detail and good contrast highlighting texture of flesh and seeds.
+          content: "I called the get_mixed_content tool and it returned an image file labeled \"241a70\" (with a small metadata
+            marker: {\"pydantic_ai_marker\":\"test_42\"}). \n\nDescription of the image:\n- A close-up cross-section of a
+            kiwi fruit, centered in the frame on a plain white background.\n- Bright green flesh with a paler, almost white
+            central core.\n- Many small black seeds arranged radially in a nearly symmetrical ring around the core.\n- Thin
+            brown, slightly fuzzy skin visible only around the rim.\n- Fine radial texture in the green flesh extending outward
+            from the core; the lighting is even and highlights the fruit's color and texture.\n\nIf you'd like, I can count
+            the seeds, crop/resize the image, or analyze colors more precisely."
           refusal: null
           role: assistant
-      created: 1770079418
-      id: chatcmpl-D4ynyHCcaIQhuE76cpFEkVQIIAezs
+      created: 1771296864
+      id: chatcmpl-DA5WChebutWvr4Pk7CPIMgaoZH2OH
       model: gpt-5-mini-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 382
+        completion_tokens: 617
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 256
+          reasoning_tokens: 448
           rejected_prediction_tokens: 0
-        prompt_tokens: 596
+        prompt_tokens: 602
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 978
+        total_tokens: 1219
     status:
       code: 200
       message: OK

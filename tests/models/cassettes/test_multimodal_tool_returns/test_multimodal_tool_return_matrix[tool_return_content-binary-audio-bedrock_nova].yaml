@@ -7,7 +7,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        ZTFhYmYzNjEtZDRlYy00ZGFmLWIxYjQtNWNiOTM3Zjc5MjQ2
+        MzMzMmNjMDktNGI1ZS00OWUxLWI4ZmMtNGJmM2I0YjU2MGEz
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -17,34 +17,32 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-pro-v1%3A0/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '498'
+      - '305'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 1041
+        latencyMs: 396
       output:
         message:
           content:
-          - text: |
-              <thinking> I need to use the get_file tool to retrieve an audio file. Since the tool does not require any specific arguments, I will call it without any parameters. </thinking>
           - toolUse:
               input: {}
               name: get_file
-              toolUseId: tooluse_iygDw8thTWCr_A8MLCutGA
+              toolUseId: tooluse_MwVLMVv6OsQlJxnqhVPNK6
           role: assistant
       stopReason: tool_use
       usage:
-        inputTokens: 396
-        outputTokens: 52
+        inputTokens: 901
+        outputTokens: 14
         serverToolUsage: {}
-        totalTokens: 448
+        totalTokens: 915
     status:
       code: 200
       message: OK

@@ -1141,6 +1141,8 @@ class OpenAIChatModel(Model):
 
                 for item in part.content_items(mode='str'):
                     if is_multi_modal_content(item):
+                        if isinstance(item, AudioUrl) or (isinstance(item, BinaryContent) and item.is_audio):
+                            raise NotImplementedError('Audio content in tool returns is not supported by OpenAI Chat.')
                         tool_content_parts.append(f'See file {item.identifier}.')
                         file_content.append(f'This is file {item.identifier}:')
                         file_content.append(item)

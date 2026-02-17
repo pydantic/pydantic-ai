@@ -532,13 +532,13 @@ class GroqModel(Model):
                         image_url = ImageURL(url=item.data_uri)
                         content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     else:
-                        raise RuntimeError('Only images are supported for binary content in Groq.')
+                        raise NotImplementedError('Only images are supported for binary content in Groq.')
                 elif isinstance(item, DocumentUrl):
-                    raise RuntimeError('DocumentUrl is not supported in Groq.')
+                    raise NotImplementedError('DocumentUrl is not supported in Groq.')
                 elif isinstance(item, AudioUrl):
-                    raise RuntimeError('AudioUrl is not supported in Groq.')
+                    raise NotImplementedError('AudioUrl is not supported in Groq.')
                 elif isinstance(item, VideoUrl):
-                    raise RuntimeError('VideoUrl is not supported in Groq.')
+                    raise NotImplementedError('VideoUrl is not supported in Groq.')
                 elif isinstance(item, CachePoint):
                     pass
                 else:

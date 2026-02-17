@@ -41,7 +41,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '750'
+      - '751'
       content-type:
       - application/json
       strict-transport-security:
@@ -61,26 +61,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_mixed_content
-            id: xjs9shmes
+            id: nxs2za2vr
             type: function
-      created: 1770074993
-      id: chatcmpl-949ad45e-95a1-430d-8f56-843fe3bb4d89
+      created: 1771296875
+      id: chatcmpl-11bf92eb-3cbd-4621-9db7-9d798c66fb44
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_217b6e6136
+      system_fingerprint: fp_992318f10a
       usage:
-        completion_time: 0.086605744
-        completion_tokens: 49
-        prompt_time: 0.528786886
+        completion_time: 0.112083403
+        completion_tokens: 54
+        prompt_time: 0.01664678
         prompt_tokens: 708
-        queue_time: 0.361229915
-        total_time: 0.61539263
-        total_tokens: 757
+        queue_time: 0.068087324
+        total_time: 0.128730183
+        total_tokens: 762
       usage_breakdown: null
       x_groq:
-        id: req_01kggb1wbqfx4v8pb69rep7pjj
-        seed: 314979383
+        id: req_01khmrarwcfa7vzcjeq3n94yhy
+        seed: 2022350660
     status:
       code: 200
       message: OK
@@ -93,11 +93,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132244'
+      - '132257'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=CO4R0.FpiN95AqZcknV9TksXu4VoIeNJWeNFkM0WG_4-1770074992.945464-1.0.1.1-oc_SzOO35oT4jkhxXaQzC2zVo7yJi7V92soqAui9fQwz.rUToZlnihLwlpJ4jSl3JCP2JJGPFg3EwYMsaGrYGJS8F49pooSxHr31zUFeLJdGUHZ0iNh9ZIe4SbNdAZ8T
+      - __cf_bm=m7QXa5JxGdJbDNJShqzTxhnvb5e2sjwLJWbLK51hsUo-1771296875.369105-1.0.1.1-VBifMDIvuIUPxNiW8w9nuRBjXtWFjqHFi15oeOxk9WF2zOfkULXW5YEDLBiAPPp8_rw.7swRkbvsnPr3kYiTKpV2xMObc_XZ66bZqUCZk30QbbAgtzCBdznImwPXhy_z
       host:
       - api.groq.com
     method: POST
@@ -110,14 +110,14 @@ interactions:
         - function:
             arguments: '{}'
             name: get_mixed_content
-          id: xjs9shmes
+          id: nxs2za2vr
           type: function
       - content: |-
           Here is the image:
           See file 241a70.
-          {"metadata":"test"}
+          {"pydantic_ai_marker":"test_42"}
         role: tool
-        tool_call_id: xjs9shmes
+        tool_call_id: nxs2za2vr
       - content:
         - text: 'This is file 241a70:'
           type: text
@@ -148,7 +148,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '794'
+      - '777'
       content-type:
       - application/json
       strict-transport-security:
@@ -164,26 +164,26 @@ interactions:
         logprobs: null
         message:
           content: The image is a cross-section of a kiwi fruit, showcasing its vibrant green flesh and black seeds arranged
-            in a circular pattern around a white center.
+            around a central white core.
           role: assistant
-      created: 1770074998
-      id: chatcmpl-b2ec61ef-f58b-49ab-82be-c38f31f72243
+      created: 1771296876
+      id: chatcmpl-c9e2b885-989a-4a5c-a59c-13042f9a9817
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_217b6e6136
+      system_fingerprint: fp_992318f10a
       usage:
-        completion_time: 0.088983836
-        completion_tokens: 31
-        prompt_time: 1.023051956
-        prompt_tokens: 1509
-        queue_time: 2.860546092
-        total_time: 1.112035792
-        total_tokens: 1540
+        completion_time: 0.204901451
+        completion_tokens: 28
+        prompt_time: 0.15597276
+        prompt_tokens: 1515
+        queue_time: 0.267793752
+        total_time: 0.360874211
+        total_tokens: 1543
       usage_breakdown: null
       x_groq:
-        id: req_01kggb1xwxf13b7atjc0pa56h6
-        seed: 1548200147
+        id: req_01khmrasgtfk3rcrmdht58raap
+        seed: 1468326886
     status:
       code: 200
       message: OK

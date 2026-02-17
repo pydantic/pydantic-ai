@@ -977,6 +977,11 @@ class BedrockConverseModel(Model):
                     _insert_cache_point_before_trailing_documents(content, raise_if_cannot_insert=True)
                 else:
                     assert_never(item)
+        # Bedrock requires a text block when documents are present in the content
+        has_document = any('document' in block for block in content)
+        has_text = any('text' in block for block in content)
+        if has_document and not has_text:
+            content.insert(0, {'text': 'See attached document(s).'})
         return [{'role': 'user', 'content': content}]
 
     @staticmethod
