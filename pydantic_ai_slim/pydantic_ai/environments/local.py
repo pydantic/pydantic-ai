@@ -79,6 +79,21 @@ class LocalEnvironmentProcess(ExecutionProcess):
         except ProcessLookupError:
             pass
         await self._proc.aclose()
+        _close_subprocess_transport(self._proc)
+
+
+def _close_subprocess_transport(proc: anyio.abc.Process) -> None:
+    """Close the underlying asyncio subprocess transport to prevent ResourceWarning on Python 3.10.
+
+    On Python 3.10, asyncio subprocess transports are not closed by
+    ``Process.wait()`` or ``Process.aclose()`` and their ``__del__``
+    emits ``ResourceWarning: unclosed transport``.  Python 3.11+ fixed
+    this, but we still support 3.10.
+    """
+    inner = getattr(proc, '_process', None)  # anyio wraps asyncio.subprocess.Process
+    transport = getattr(inner, '_transport', None)
+    if transport is not None:
+        transport.close()
 
 
 class LocalEnvironment(ExecutionEnvironment):
@@ -167,35 +182,41 @@ class LocalEnvironment(ExecutionEnvironment):
         env: dict[str, str] | None = None,
     ) -> ExecuteResult:
         """Execute a command using subprocess for simplicity and reliability."""
+        proc = await anyio.open_process(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=self._root_dir,
+            env=self._build_env(env),
+        )
         try:
+            assert proc.stdout is not None
+            chunks: list[bytes] = []
             if timeout is not None:
                 with anyio.fail_after(timeout):
-                    completed = await anyio.run_process(
-                        command,
-                        stderr=subprocess.STDOUT,
-                        cwd=self._root_dir,
-                        env=self._build_env(env),
-                        check=False,
-                    )
+                    async for chunk in proc.stdout:
+                        chunks.append(chunk)
+                    await proc.wait()
             else:
-                completed = await anyio.run_process(
-                    command,
-                    stderr=subprocess.STDOUT,
-                    cwd=self._root_dir,
-                    env=self._build_env(env),
-                    check=False,
-                )
+                async for chunk in proc.stdout:
+                    chunks.append(chunk)
+                await proc.wait()
         except TimeoutError:
+            proc.kill()
+            with anyio.CancelScope(shield=True):
+                await proc.wait()
+            _close_subprocess_transport(proc)
             return ExecuteResult(output='[Command timed out]', exit_code=-1)
 
-        stdout = completed.stdout or b''
+        _close_subprocess_transport(proc)
+        stdout = b''.join(chunks)
         output = stdout.decode('utf-8', errors='replace')
         truncated = len(output) > MAX_OUTPUT_CHARS
         if truncated:
             output = output[:MAX_OUTPUT_CHARS]
         return ExecuteResult(
             output=output,
-            exit_code=completed.returncode,
+            exit_code=proc.returncode if proc.returncode is not None else 0,
             truncated=truncated,
         )
 
