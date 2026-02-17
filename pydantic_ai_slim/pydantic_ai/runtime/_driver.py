@@ -21,46 +21,8 @@ import sys
 import traceback
 from typing import Any
 
-# Save the real stdout before redirecting — all protocol messages go here.
+# Protocol channel — overridden in __main__ with an fd-level redirect.
 _real_stdout = sys.stdout
-
-
-class _StderrRedirect:
-    """Wrapper that redirects all writes to stderr, protecting the protocol channel.
-
-    Implements common stream methods that libraries (progress bars, logging,
-    color detection) may call beyond basic write/flush.
-    """
-
-    def write(self, s: str) -> int:
-        return sys.stderr.write(s)
-
-    def flush(self) -> None:
-        sys.stderr.flush()
-
-    def fileno(self) -> int:
-        return sys.stderr.fileno()
-
-    def isatty(self) -> bool:
-        return False
-
-    def writable(self) -> bool:
-        return True
-
-    def readable(self) -> bool:
-        return False
-
-    @property
-    def encoding(self) -> str:
-        return sys.stderr.encoding
-
-    @property
-    def errors(self) -> str | None:
-        return sys.stderr.errors
-
-    @property
-    def closed(self) -> bool:
-        return False
 
 
 def _write_msg(msg: dict[str, Any]) -> None:
@@ -232,12 +194,12 @@ async def _execute(init_msg: dict[str, Any], reader: asyncio.StreamReader) -> No
             pass
 
 
-async def _main() -> None:
+async def _main(proto_stdin: Any) -> None:
     """Entry point: connect stdin, read init message, execute code."""
     loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader()
     protocol = asyncio.StreamReaderProtocol(reader)
-    await loop.connect_read_pipe(lambda: protocol, sys.stdin.buffer)
+    await loop.connect_read_pipe(lambda: protocol, proto_stdin)
 
     line = await reader.readline()
     if not line:  # pragma: lax no cover
@@ -264,5 +226,24 @@ async def _main() -> None:
 
 
 if __name__ == '__main__':
-    sys.stdout = _StderrRedirect()
-    asyncio.run(_main())
+    import os
+
+    # Flush Python-level buffers before touching the underlying fds.
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+    # Save protocol fds to new fd numbers, then redirect fd 0/1 so LLM code
+    # (os.write, os.read, subprocesses, C extensions) cannot read/corrupt
+    # the protocol channel. The duped fds survive the redirect.
+    _proto_stdin_fd = os.dup(0)
+    _proto_stdout_fd = os.dup(1)
+
+    os.dup2(2, 1)  # fd 1 → stderr
+    _devnull = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(_devnull, 0)  # fd 0 → /dev/null
+    os.close(_devnull)
+
+    _proto_stdin = os.fdopen(_proto_stdin_fd, 'rb', buffering=0)
+    _real_stdout = os.fdopen(_proto_stdout_fd, 'w', buffering=1)  # noqa: F811
+
+    asyncio.run(_main(_proto_stdin))

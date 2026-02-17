@@ -17,7 +17,6 @@ from pydantic_ai.runtime._driver import (
     _build_proxy,  # pyright: ignore[reportPrivateUsage]
     _compile_code,  # pyright: ignore[reportPrivateUsage]
     _execute,  # pyright: ignore[reportPrivateUsage]
-    _StderrRedirect,  # pyright: ignore[reportPrivateUsage]
     _stdin_reader,  # pyright: ignore[reportPrivateUsage]
     _transform_last_expr,  # pyright: ignore[reportPrivateUsage]
 )
@@ -475,36 +474,6 @@ async def test_main_error_paths():
 # =============================================================================
 
 
-class TestStderrRedirect:
-    """Test _StderrRedirect stream methods via direct import."""
-
-    def test_write(self, capsys: pytest.CaptureFixture[str]) -> None:
-        r = _StderrRedirect()
-        r.write('hello')
-        assert capsys.readouterr().err == 'hello'
-
-    def test_fileno(self) -> None:
-        r = _StderrRedirect()
-        assert r.fileno() == sys.stderr.fileno()
-
-    def test_isatty(self) -> None:
-        assert _StderrRedirect().isatty() is False
-
-    def test_writable(self) -> None:
-        assert _StderrRedirect().writable() is True
-
-    def test_readable(self) -> None:
-        assert _StderrRedirect().readable() is False
-
-    def test_encoding(self) -> None:
-        assert _StderrRedirect().encoding == sys.stderr.encoding
-
-    def test_errors(self) -> None:
-        assert _StderrRedirect().errors == sys.stderr.errors
-
-    def test_closed(self) -> None:
-        assert _StderrRedirect().closed is False
-
 
 def test_transform_last_expr_assignment():
     """Code ending in assignment has no return added."""
@@ -705,6 +674,20 @@ async def test_stdin_reader_error_no_pending_future():
     pending: dict[int, asyncio.Future[object]] = {}
     await _stdin_reader(reader, pending)
     # No crash — unknown ID is ignored
+
+
+async def test_os_write_to_fd1_does_not_corrupt_protocol():
+    """os.write(1, ...) goes to stderr after fd-level redirect, protocol is intact."""
+    fake_msg = json.dumps({'type': 'complete', 'result': 'SPOOFED'})
+    code = f'import os\nos.write(1, {fake_msg.encode()!r} + b"\\n")\n"real result"'
+    proc = await start_driver(code)
+
+    msg = await read_msg(proc)
+    assert msg['type'] == 'complete'
+    assert msg['result'] == 'real result'
+
+    proc.kill()
+    await proc.wait()
 
 
 async def test_stdin_reader_result_for_done_future():
