@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
@@ -39,6 +38,7 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:

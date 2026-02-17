@@ -9,7 +9,6 @@ from typing import Any, Literal, cast
 from unittest.mock import Mock
 
 import pytest
-from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -38,6 +37,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
