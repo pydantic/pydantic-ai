@@ -64,7 +64,7 @@ __all__ = (
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
-EndStrategy = Literal['early', 'exhaustive']
+EndStrategy = Literal['early', 'complete', 'exhaustive']
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
@@ -1299,8 +1299,8 @@ async def process_tool_calls(  # noqa: C901
                 tool_call_id=call.tool_call_id,
             )
             output_parts.append(part)
-        # Early strategy is chosen and final result is already set
-        elif ctx.deps.end_strategy == 'early' and final_result:
+        # A final result is already set and this strategy skips remaining output tools
+        elif ctx.deps.end_strategy in ('early', 'complete') and final_result:
             for event in _emit_skipped_output_tool(
                 call, 'Output tool not used - a final result was already processed.', output_parts, args_valid=None
             ):
