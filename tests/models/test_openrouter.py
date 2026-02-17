@@ -19,6 +19,7 @@ from pydantic_ai import (
     ModelResponse,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RunUsage,
     TextPart,
     ThinkingPart,
@@ -31,7 +32,7 @@ from pydantic_ai import (
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
 
-from ..conftest import try_import
+from ..conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
     from openai.types.chat import ChatCompletion
@@ -864,4 +865,90 @@ async def test_openrouter_document_url_no_force_download(
             },
             'type': 'file',
         }
+    )
+
+
+async def test_openrouter_kimi_k2_5(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('moonshotai/kimi-k2.5', provider=provider)
+    response = await model_request(model, [ModelRequest.user_text_prompt('What is 2+2? Answer with just the number.')])
+    assert response == snapshot(
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content="""\
+The user is asking for the answer to 2+2. They want just the number as the answer, nothing else.
+
+2+2 = 4
+
+I should respond with just "4" and nothing else.\
+""",
+                    provider_name='openrouter',
+                    provider_details={'format': 'unknown', 'index': 0, 'type': 'reasoning.text'},
+                ),
+                TextPart(content='4'),
+            ],
+            usage=RequestUsage(
+                input_tokens=20, output_tokens=48, details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 42}
+            ),
+            model_name='moonshotai/kimi-k2.5',
+            timestamp=IsDatetime(),
+            provider_name='openrouter',
+            provider_url='https://openrouter.ai/api/v1',
+            provider_details={
+                'finish_reason': 'stop',
+                'downstream_provider': 'Moonshot AI',
+                'cost': 0.000156,
+                'upstream_inference_cost': 0.000156,
+                'is_byok': False,
+                'timestamp': IsDatetime(),
+            },
+            provider_response_id='gen-1769543798-64AJb7vkawnjeUZTXlLA',
+            finish_reason='stop',
+        )
+    )
+
+
+async def test_openrouter_qwen3_235b(allow_model_requests: None, openrouter_api_key: str) -> None:
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('qwen/qwen3-235b-a22b', provider=provider)
+    response = await model_request(model, [ModelRequest.user_text_prompt('What is 2+2? Answer with just the number.')])
+    assert response == snapshot(
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content="""\
+
+Okay, so the user asked, "What is 2+2? Answer with just the number." Let me think. First, this seems like a very straightforward question. Everyone knows that 2 plus 2 equals 4. But maybe there's a catch here? Sometimes people ask simple questions to test if you're a bot or something.
+
+Wait, the user specified to answer with just the number. So they don't want any explanation, just the number 4. Let me make sure there's no trickery involved. For example, in base 3, 2+2 would be 11, but that's probably overcomplicating things. The question is in English, and unless stated otherwise, we assume base 10. So 2 + 2 is definitely 4. Also, the user might be checking if I can follow instructions, so I should just answer with 4. No need to add anything else.
+
+But wait, why would someone ask such a simple question? Maybe they're testing the AI's ability to recognize when not to elaborate. The instruction says to answer with just the number, so I should stick to that. Let me confirm once more: 2 plus 2 equals 4. Yep, that's correct. Alright, I'll just put 4 as the answer.
+""",
+                    provider_name='openrouter',
+                    provider_details={'format': None, 'index': 0, 'type': 'reasoning.text'},
+                ),
+                TextPart(content='4'),
+            ],
+            usage=RequestUsage(
+                input_tokens=22,
+                cache_read_tokens=3,
+                output_tokens=275,
+                details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 274},
+            ),
+            model_name='qwen/qwen3-235b-a22b',
+            timestamp=IsDatetime(),
+            provider_name='openrouter',
+            provider_url='https://openrouter.ai/api/v1',
+            provider_details={
+                'finish_reason': 'stop',
+                'downstream_provider': 'Fireworks',
+                'cost': 0.00024651,
+                'upstream_inference_cost': 0.00024651,
+                'is_byok': False,
+                'timestamp': IsDatetime(),
+            },
+            provider_response_id='gen-1769543800-EFyCVCAeRcYVWt5LhQOH',
+            finish_reason='stop',
+        )
     )

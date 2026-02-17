@@ -1,10 +1,9 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import Literal, overload
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -20,6 +19,11 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the Alibaba provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+AlibabaModelName = Literal[
+    'qwen3-235b-a22b-thinking-2507',
+    'qwen3-max-2026-01-23',
+]
 
 
 class AlibabaProvider(Provider[AsyncOpenAI]):
@@ -40,8 +44,11 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
     def model_profile(self, model_name: str) -> ModelProfile | None:
         base_profile = qwen_model_profile(model_name)
 
-        # Wrap/merge into OpenAIModelProfile
-        openai_profile = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(base_profile)
+        openai_profile = OpenAIModelProfile(
+            json_schema_transformer=OpenAIJsonSchemaTransformer,
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='field',
+        ).update(base_profile)
 
         # For Qwen Omni models, force URI audio input encoding
         if 'omni' in model_name.lower():

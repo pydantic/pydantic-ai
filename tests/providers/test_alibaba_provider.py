@@ -92,3 +92,11 @@ def test_alibaba_provider_custom_base_url():
     provider = AlibabaProvider(api_key='test-key', base_url='https://custom.endpoint.com/v1')
     assert provider.base_url == 'https://custom.endpoint.com/v1'
     assert str(provider.client.base_url).rstrip('/') == 'https://custom.endpoint.com/v1'
+
+
+def test_alibaba_thinking_field():
+    provider = AlibabaProvider(api_key='key')
+    profile = provider.model_profile('qwen-max')
+    assert isinstance(profile, OpenAIModelProfile)
+    assert profile.openai_chat_thinking_field == 'reasoning_content'
+    assert profile.openai_chat_send_back_thinking_parts == 'field'

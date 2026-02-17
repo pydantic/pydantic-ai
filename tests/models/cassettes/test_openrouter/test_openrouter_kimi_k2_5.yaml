@@ -1,0 +1,94 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '130'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2+2? Answer with just the number.
+        role: user
+      model: moonshotai/kimi-k2.5
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-length:
+      - '1179'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '4'
+          reasoning: |-
+            The user is asking for the answer to 2+2. They want just the number as the answer, nothing else.
+
+            2+2 = 4
+
+            I should respond with just "4" and nothing else.
+          reasoning_details:
+          - format: unknown
+            index: 0
+            text: |-
+              The user is asking for the answer to 2+2. They want just the number as the answer, nothing else.
+
+              2+2 = 4
+
+              I should respond with just "4" and nothing else.
+            type: reasoning.text
+          refusal: null
+          role: assistant
+        native_finish_reason: stop
+      created: 1769543798
+      id: gen-1769543798-64AJb7vkawnjeUZTXlLA
+      model: moonshotai/kimi-k2.5
+      object: chat.completion
+      provider: Moonshot AI
+      system_fingerprint: fpv0_30fe32e5
+      usage:
+        completion_tokens: 48
+        completion_tokens_details:
+          audio_tokens: 0
+          reasoning_tokens: 42
+        cost: 0.000156
+        cost_details:
+          upstream_inference_completions_cost: 0.000144
+          upstream_inference_cost: 0.000156
+          upstream_inference_prompt_cost: 1.2e-05
+        is_byok: false
+        prompt_tokens: 20
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 68
+    status:
+      code: 200
+      message: OK
+version: 1
