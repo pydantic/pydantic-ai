@@ -329,6 +329,7 @@ Tool(foobar_plain, takes_ctx=False)
 assert_type(Tool(foobar_plain), Tool[object])
 assert_type(Tool(foobar_plain), Tool)
 
+
 # Tool constructor with args_validator: matching params
 def tool_init_validator_ok(ctx: RunContext[int], x: str, y: int) -> None:
     pass
@@ -336,19 +337,21 @@ def tool_init_validator_ok(ctx: RunContext[int], x: str, y: int) -> None:
 
 Tool(foobar_ctx, args_validator=tool_init_validator_ok)
 
+
 # Tool constructor with args_validator: wrong params
 def tool_init_validator_wrong(ctx: RunContext[int], a: float) -> None:
     pass
 
 
-Tool(foobar_ctx, args_validator=tool_init_validator_wrong)  # pyright: ignore[reportArgumentType,reportCallIssue]
+Tool(foobar_ctx, args_validator=tool_init_validator_wrong)  # type: ignore[arg-type]
+
 
 # Tool constructor with args_validator: wrong deps
 def tool_init_validator_wrong_deps(ctx: RunContext[str], x: str, y: int) -> None:
     pass
 
 
-Tool(foobar_ctx, args_validator=tool_init_validator_wrong_deps)  # pyright: ignore[reportArgumentType,reportCallIssue]
+Tool(foobar_ctx, args_validator=tool_init_validator_wrong_deps)  # type: ignore[arg-type]
 
 # unfortunately we can't type check these cases, since from a typing perspect `foobar_ctx` is valid as a plain tool
 Tool(foobar_ctx, takes_ctx=False)

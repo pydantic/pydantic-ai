@@ -3318,10 +3318,10 @@ def test_args_validator_context_retry():
 
 
 def test_args_validator_not_double_called_for_approved_tools():
-    """Test that args_validator is called exactly once for ToolApproved deferred tool calls.
+    """Test that args_validator is not double-called when re-running with ToolApproved.
 
-    When a tool requires approval and is later re-run with ToolApproved, the validator
-    should only be called once (during handle_call with approved=True), not twice.
+    The validator runs once per run: first with approved=False, then on re-run with
+    approved=True. On re-run, it should only be called in handle_call (not also upfront).
     """
     validator_calls: list[tuple[int, bool]] = []
 
