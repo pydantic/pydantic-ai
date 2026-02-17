@@ -185,7 +185,7 @@ def function_schema(  # noqa: C901
 
     core_config = config_wrapper.core_config(None)
 
-    schema, single_arg_name = _build_schema(fields, var_kwargs_schema, gen_schema, core_config)
+    schema, single_arg_name = _build_schema(fields, var_kwargs_schema, core_config)
     schema = gen_schema.clean_schema(schema)
     # noinspection PyUnresolvedReferences
     schema_validator = create_schema_validator(
@@ -267,7 +267,6 @@ def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:  # 
 def _build_schema(
     fields: dict[str, core_schema.TypedDictField],
     var_kwargs_schema: core_schema.CoreSchema | None,
-    gen_schema: _generate_schema.GenerateSchema,
     core_config: core_schema.CoreConfig,
 ) -> tuple[core_schema.CoreSchema, str | None]:
     """Generate a typed dict schema for function parameters.
@@ -275,7 +274,6 @@ def _build_schema(
     Args:
         fields: The fields to generate a typed dict schema for.
         var_kwargs_schema: The variable keyword arguments schema.
-        gen_schema: The `GenerateSchema` instance.
         core_config: The core configuration.
 
     Returns:
@@ -292,7 +290,7 @@ def _build_schema(
         fields,
         config=core_config,
         extra_behavior=extra_behavior,
-        extras_schema=gen_schema.generate_schema(var_kwargs_schema) if var_kwargs_schema else None,
+        extras_schema=var_kwargs_schema,
     )
     return td_schema, None
 
