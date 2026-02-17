@@ -1231,7 +1231,7 @@ class FilePart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@pydantic_dataclass(repr=False)
+@dataclass(repr=False)
 class BaseToolCallPart:
     """A tool call from a model."""
 
@@ -1318,7 +1318,7 @@ class BaseToolCallPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@pydantic_dataclass(repr=False)
+@dataclass(repr=False)
 class ToolCallPart(BaseToolCallPart):
     """A tool call from a model."""
 
@@ -1328,7 +1328,7 @@ class ToolCallPart(BaseToolCallPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
 
-@pydantic_dataclass(repr=False)
+@dataclass(repr=False)
 class BuiltinToolCallPart(BaseToolCallPart):
     """A tool call to a built-in tool."""
 
