@@ -65,6 +65,9 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             max_attempts: Maximum retry attempts for durable model calls. `None` uses the Restate default.
         """
         super().__init__(wrapped)
+        if isinstance(wrapped, RestateAgent):
+            raise TerminalError('A `RestateAgent` cannot wrap another `RestateAgent`. Wrap the base `Agent` once.')
+
         if not isinstance(wrapped.model, Model):
             raise TerminalError(
                 'An agent needs to have a `model` in order to be used with Restate, it cannot be set at agent run time.'

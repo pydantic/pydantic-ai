@@ -90,6 +90,15 @@ def test_model_response_serde_round_trip():
     assert MODEL_RESPONSE_SERDE.deserialize(MODEL_RESPONSE_SERDE.serialize(response)) == response
 
 
+def test_restate_agent_cannot_wrap_restate_agent():
+    fake_ctx = FakeRestateContext()
+    agent = Agent(TestModel(call_tools=[]))
+    restate_agent = RestateAgent(agent, fake_ctx)
+
+    with pytest.raises(TerminalError, match='cannot wrap another `RestateAgent`'):
+        RestateAgent(restate_agent, fake_ctx)
+
+
 @pytest.mark.anyio
 async def test_fake_restate_context_run_typed_sync_fn():
     fake_ctx = FakeRestateContext()
