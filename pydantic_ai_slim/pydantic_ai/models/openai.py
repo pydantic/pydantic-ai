@@ -2262,9 +2262,9 @@ class OpenAIStreamedResponse(StreamedResponse):
                     self.finish_reason = self._map_finish_reason(raw_finish_reason)
 
             if provider_details := self._map_provider_details(chunk):  # pragma: no branch
+                if self._has_refusal:
+                    provider_details.pop('finish_reason', None)
                 self.provider_details = {**(self.provider_details or {}), **provider_details}
-            if self._has_refusal and self.provider_details:
-                self.provider_details.pop('finish_reason', None)
 
             for event in self._map_part_delta(choice):
                 yield event

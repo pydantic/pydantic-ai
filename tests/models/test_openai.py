@@ -4421,7 +4421,7 @@ async def test_openai_chat_refusal_non_streaming(allow_model_requests: None):
 
     with pytest.raises(
         ContentFilterError,
-        match=re.escape("Content filter triggered. Finish reason: 'I'm sorry, I can't help with that.'"),
+        match=re.escape('Content filter triggered. Refusal: "I\'m sorry, I can\'t help with that."'),
     ) as exc_info:
         await agent.run('harmful prompt')
 

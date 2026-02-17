@@ -85,11 +85,14 @@ with try_import() as imports_successful:
         BlockedReason,
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
+        GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
         HarmBlockThreshold,
         HarmCategory,
+        HarmProbability,
         MediaModality,
         ModalityTokenCount,
+        SafetyRating,
     )
 
     from pydantic_ai.models.google import (
@@ -5729,24 +5732,22 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
     )
 
 
-def _mock_prompt_feedback(mocker: MockerFixture, *, with_details: bool) -> Any:
-    """Create a mock prompt_feedback with block_reason, optionally with message and safety_ratings."""
+def _make_prompt_feedback(*, with_details: bool) -> GenerateContentResponsePromptFeedback:
+    """Create a prompt_feedback with block_reason, optionally with message and safety_ratings."""
     if with_details:
-        safety_rating = mocker.Mock(category='HARM_CATEGORY_DANGEROUS_CONTENT', probability='HIGH', blocked=True)
-        safety_rating.model_dump.return_value = {
-            'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
-            'probability': 'HIGH',
-            'blocked': True,
-        }
-        return mocker.Mock(
+        return GenerateContentResponsePromptFeedback(
             block_reason=BlockedReason.PROHIBITED_CONTENT,
             block_reason_message='The prompt was blocked.',
-            safety_ratings=[safety_rating],
+            safety_ratings=[
+                SafetyRating(
+                    category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    probability=HarmProbability.HIGH,
+                    blocked=True,
+                )
+            ],
         )
-    return mocker.Mock(
+    return GenerateContentResponsePromptFeedback(
         block_reason=BlockedReason.PROHIBITED_CONTENT,
-        block_reason_message=None,
-        safety_ratings=None,
     )
 
 
@@ -5758,12 +5759,11 @@ async def test_google_prompt_feedback_non_streaming(
     model_name = 'gemini-2.5-flash'
     model = GoogleModel(model_name, provider=google_provider)
 
-    response = mocker.Mock(
+    response = GenerateContentResponse(
         candidates=[],
-        prompt_feedback=_mock_prompt_feedback(mocker, with_details=with_details),
+        prompt_feedback=_make_prompt_feedback(with_details=with_details),
         response_id='resp_123',
         model_version=model_name,
-        usage_metadata=None,
         create_time=datetime.datetime.now(),
     )
 
@@ -5772,7 +5772,7 @@ async def test_google_prompt_feedback_non_streaming(
     agent = Agent(model=model)
 
     with pytest.raises(
-        ContentFilterError, match="Content filter triggered. Finish reason: 'PROHIBITED_CONTENT'"
+        ContentFilterError, match="Content filter triggered. Block reason: 'PROHIBITED_CONTENT'"
     ) as exc_info:
         await agent.run('prohibited content')
 
@@ -5784,9 +5784,9 @@ async def test_google_prompt_feedback_non_streaming(
     assert response_msg['provider_details']['block_reason'] == 'PROHIBITED_CONTENT'
     if with_details:
         assert response_msg['provider_details']['block_reason_message'] == 'The prompt was blocked.'
-        assert response_msg['provider_details']['safety_ratings'] == [
-            {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'probability': 'HIGH', 'blocked': True}
-        ]
+        assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
+        assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
+        assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True
 
 
 @pytest.mark.parametrize('with_details', [True, False])
@@ -5797,29 +5797,25 @@ async def test_google_prompt_feedback_streaming(
     model_name = 'gemini-2.5-flash'
     model = GoogleModel(model_name, provider=google_provider)
 
-    chunks: list[Any] = []
+    chunks: list[GenerateContentResponse] = []
 
     if not with_details:
         # Include a chunk with no candidates and no block_reason to cover that branch
         chunks.append(
-            mocker.Mock(
+            GenerateContentResponse(
                 candidates=[],
                 model_version=model_name,
-                usage_metadata=None,
-                create_time=datetime.datetime.now(),
                 response_id='resp_123',
-                prompt_feedback=mocker.Mock(block_reason=None),
+                prompt_feedback=GenerateContentResponsePromptFeedback(),
             )
         )
 
     chunks.append(
-        mocker.Mock(
+        GenerateContentResponse(
             candidates=[],
             model_version=model_name,
-            usage_metadata=None,
-            create_time=datetime.datetime.now(),
             response_id='resp_123',
-            prompt_feedback=_mock_prompt_feedback(mocker, with_details=with_details),
+            prompt_feedback=_make_prompt_feedback(with_details=with_details),
         )
     )
 
@@ -5832,7 +5828,7 @@ async def test_google_prompt_feedback_streaming(
     agent = Agent(model=model)
 
     with pytest.raises(
-        ContentFilterError, match="Content filter triggered. Finish reason: 'PROHIBITED_CONTENT'"
+        ContentFilterError, match="Content filter triggered. Block reason: 'PROHIBITED_CONTENT'"
     ) as exc_info:
         async with agent.run_stream('prohibited content'):
             pass
@@ -5845,6 +5841,6 @@ async def test_google_prompt_feedback_streaming(
     assert response_msg['provider_details']['block_reason'] == 'PROHIBITED_CONTENT'
     if with_details:
         assert response_msg['provider_details']['block_reason_message'] == 'The prompt was blocked.'
-        assert response_msg['provider_details']['safety_ratings'] == [
-            {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'probability': 'HIGH', 'blocked': True}
-        ]
+        assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
+        assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
+        assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True
