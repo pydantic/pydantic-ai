@@ -615,7 +615,7 @@ class GoogleModel(Model):
         logprob_results = candidate.logprobs_result if candidate else None
         if logprob_results and candidate:
             vendor_details['logprobs'] = logprob_results.model_dump(mode='json', by_alias=True)
-            vendor_details['logprobs']['avg_logprobs'] = candidate.avg_logprobs
+            vendor_details['avgLogprobs'] = candidate.avg_logprobs
 
         usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
         grounding_metadata = candidate.grounding_metadata if candidate else None

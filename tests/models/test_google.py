@@ -87,6 +87,9 @@ with try_import() as imports_successful:
         GenerateContentResponseUsageMetadata,
         HarmBlockThreshold,
         HarmCategory,
+        LogprobsResult,
+        LogprobsResultCandidate,
+        LogprobsResultTopCandidates,
         MediaModality,
         ModalityTokenCount,
     )
@@ -5794,8 +5797,8 @@ async def test_google_vertex_logprobs(allow_model_requests: None, vertex_provide
                         ]
                     },
                 ],
-                'avg_logprobs': -1.0858495576041085,
             },
+            'avgLogprobs': -1.0858495576041085,
         }
     )
 
@@ -5827,8 +5830,8 @@ async def test_google_vertex_logprobs_without_top_logprobs(allow_model_requests:
                     {'logProbability': -4.529893e-06, 'token': '4', 'tokenId': 236812},
                 ],
                 'topCandidates': None,
-                'avg_logprobs': -0.7161864553179059,
             },
+            'avgLogprobs': -0.7161864553179059,
         }
     )
 
@@ -5863,7 +5866,37 @@ async def test_google_vertex_logprobs_structure(
                         ]
                     }
                 ],
-                'avg_logprobs': -11.512689590454102,
             },
+            'avgLogprobs': -11.512689590454102,
         }
+    )
+
+
+async def test_google_vertex_logprobs_from_provider_details(
+    allow_model_requests: None,
+    vertex_provider: GoogleProvider,
+):
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_logprobs=True, google_top_logprobs=2)
+    result = await agent.run('Answer only with "Hello"', model_settings=settings)
+
+    messages = result.all_messages()
+    response = cast(ModelResponse, messages[-1])
+
+    assert response.provider_details is not None
+    logprobs = LogprobsResult(**response.provider_details['logprobs'])
+    assert logprobs == snapshot(
+        LogprobsResult(
+            chosen_candidates=[LogprobsResultCandidate(log_probability=-6.7947026e-06, token='Hello', token_id=9259)],
+            top_candidates=[
+                LogprobsResultTopCandidates(
+                    candidates=[
+                        LogprobsResultCandidate(log_probability=-6.7947026e-06, token='Hello', token_id=9259),
+                        LogprobsResultCandidate(log_probability=-12.196156, token='"', token_id=236775),
+                    ]
+                )
+            ],
+        )
     )
