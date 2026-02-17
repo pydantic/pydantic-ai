@@ -2865,17 +2865,14 @@ wheels = [
 [[package]]
 name = "inline-snapshot"
 version = "0.31.1"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/15r10nk/inline-snapshot.git?rev=customize#c3953c90bcbee699d148005c7190e70138cbc3b0" }
 dependencies = [
     { name = "asttokens" },
     { name = "executing" },
     { name = "pytest" },
     { name = "rich" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/b1/52b5ee59f73ed31d5fe21b10881bf2d121d07d54b23c0b6b74186792e620/inline_snapshot-0.31.1.tar.gz", hash = "sha256:4ea5ed70aa1d652713bbfd750606b94bd8a42483f7d3680433b3e92994495f64", size = 2606338, upload-time = "2025-11-07T07:36:18.932Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ba/52/945db420380efbda8c69a7a4a16c53df9d7ac50d8217286b9d41e5d825ff/inline_snapshot-0.31.1-py3-none-any.whl", hash = "sha256:7875a73c986a03388c7e758fb5cb8a43d2c3a20328aa1d851bfb4ed536c4496f", size = 71965, upload-time = "2025-11-07T07:36:16.836Z" },
+    { name = "typing-extensions" },
 ]
 
 [[package]]
@@ -6320,7 +6317,7 @@ dev = [
     { name = "duckduckgo-search", specifier = ">=7.0.0" },
     { name = "exa-py", specifier = ">=2.0.0" },
     { name = "genai-prices", specifier = ">=0.0.28" },
-    { name = "inline-snapshot", specifier = ">=0.19.3" },
+    { name = "inline-snapshot", git = "https://github.com/15r10nk/inline-snapshot.git?rev=customize" },
     { name = "mcp-run-python", specifier = ">=0.0.20" },
     { name = "pip", specifier = ">=25.2" },
     { name = "pytest", specifier = ">=9.0.0" },
