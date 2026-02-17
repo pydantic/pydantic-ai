@@ -7,6 +7,7 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import json
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
@@ -724,6 +725,15 @@ class Model(ABC):
 
         params = self.customize_request_parameters(model_request_parameters)
 
+        # For models that don't natively support tool return schemas,
+        # inject the return schema as JSON text into the tool description as a fallback
+        if any(t.return_schema is not None for t in params.function_tools):
+            if not self.profile.supports_tool_return_schema:
+                params = replace(
+                    params,
+                    function_tools=[_inject_return_schema_in_description(t) for t in params.function_tools],
+                )
+
         if builtin_tools := params.builtin_tools:
             # Deduplicate builtin tools
             params = replace(
@@ -1353,6 +1363,7 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: Tool
     """
     schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
     parameters_json_schema = schema_transformer.walk()
+
     return replace(
         tool_def,
         parameters_json_schema=parameters_json_schema,
@@ -1368,6 +1379,23 @@ def _customize_output_object(transformer: type[JsonSchemaTransformer], output_ob
         json_schema=json_schema,
         strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
+
+
+def _inject_return_schema_in_description(tool_def: ToolDefinition) -> ToolDefinition:
+    """Inject the return schema as JSON text into the tool description.
+
+    This is a fallback for models that don't natively support tool return schemas.
+    """
+    if tool_def.return_schema is None:
+        return tool_def
+
+    parts: list[str] = []
+    if tool_def.description:
+        parts.append(tool_def.description)
+    parts.append('Return schema:')
+    parts.append(json.dumps(tool_def.return_schema, indent=2))
+    description = '\n\n'.join(parts)
+    return replace(tool_def, description=description, return_schema=None)
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:

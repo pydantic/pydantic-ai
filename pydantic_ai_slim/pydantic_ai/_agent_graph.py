@@ -1234,7 +1234,7 @@ async def _call_tool(
         return e.tool_retry, None
 
     if isinstance(tool_result, _messages.ToolReturn):
-        tool_return = tool_result
+        tool_return = cast(_messages.ToolReturn[Any], tool_result)
     else:
         result_is_list = isinstance(tool_result, list)
         contents = cast(list[Any], tool_result) if result_is_list else [tool_result]

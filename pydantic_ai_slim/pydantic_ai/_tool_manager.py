@@ -79,10 +79,12 @@ class ToolManager(Generic[AgentDepsT]):
             }
             ctx = replace(ctx, retries=retries)
 
+        tools = await self.toolset.get_tools(ctx)
+
         return self.__class__(
             toolset=self.toolset,
             ctx=ctx,
-            tools=await self.toolset.get_tools(ctx),
+            tools=tools,
             default_max_retries=self.default_max_retries,
         )
 

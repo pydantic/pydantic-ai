@@ -4,10 +4,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, Literal
 
+import pydantic
 import pydantic_core
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
+from pydantic import BaseModel, Field, FileUrl, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
@@ -32,10 +33,19 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.messages import AudioUrl, BinaryContent, BinaryImage, DocumentUrl, ImageUrl, VideoUrl
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.tools import (
+    DeferredToolRequests,
+    DeferredToolResult,
+    DeferredToolResults,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
@@ -151,6 +161,8 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -186,6 +198,8 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -229,6 +243,8 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -272,6 +288,8 @@ def test_google_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -313,6 +331,8 @@ def test_sphinx_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -360,6 +380,8 @@ def test_numpy_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -395,6 +417,8 @@ def test_only_returns_type():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -421,6 +445,8 @@ def test_docstring_unknown():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -465,6 +491,8 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -502,6 +530,8 @@ def test_takes_just_model():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -548,6 +578,8 @@ def test_takes_model_and_int():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -914,6 +946,8 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -987,6 +1021,8 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'return_schema': None,
+                'include_return_schema': None,
             },
             {
                 'description': None,
@@ -1003,6 +1039,8 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'return_schema': None,
+                'include_return_schema': None,
             },
         ]
     )
@@ -1092,6 +1130,8 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'return_schema': None,
+                'include_return_schema': None,
             },
             {
                 'description': None,
@@ -1106,6 +1146,8 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
+                'return_schema': None,
+                'include_return_schema': None,
             },
         ]
     )
@@ -1144,6 +1186,8 @@ def test_tool_parameters_with_attribute_docstrings():
             'sequential': False,
             'metadata': None,
             'timeout': None,
+            'return_schema': None,
+            'include_return_schema': None,
         }
     )
 
@@ -2779,6 +2823,1071 @@ def test_agent_tool_timeout_passed_to_toolset():
     assert agent._function_toolset.timeout == 30.0
 
 
+def test_tool_return_schema():
+    """Test that the return schema is properly set on ToolDefinition."""
+    agent = Agent(
+        FunctionModel(
+            get_json_schema,
+            profile=ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+                supports_tool_return_schema=True,
+            ),
+        ),
+        include_tool_return_schema=True,
+    )
+
+    @agent.tool_plain
+    def tool_with_return_schema() -> FileUrl:  # pragma: no cover
+        return FileUrl('https://example.com/file.txt')
+
+    @agent.tool_plain
+    def tool_with_return_schema_binary_content() -> BinaryContent:  # pragma: no cover
+        return BinaryContent(data=b'hello', media_type='text/plain')
+
+    class MyBaseModel(BaseModel):
+        x: int = pydantic.Field(description='The x value')
+
+    @agent.tool_plain
+    def tool_with_return_schema_base_model() -> MyBaseModel:  # pragma: no cover
+        return MyBaseModel(x=1)
+
+    @dataclass
+    class MyDataclass:
+        x: int
+
+    @agent.tool_plain
+    def tool_with_return_schema_dataclass() -> MyDataclass:  # pragma: no cover
+        return MyDataclass(x=1)
+
+    @agent.tool_plain
+    def tool_with_return_binary_image() -> BinaryImage:  # pragma: no cover
+        return BinaryImage(data=b'hello', media_type='image/jpeg')
+
+    @agent.tool_plain
+    def tool_with_return_document_url() -> DocumentUrl:  # pragma: no cover
+        return DocumentUrl(url='https://example.com/document.pdf')
+
+    @agent.tool_plain
+    def tool_with_return_video_url() -> VideoUrl:  # pragma: no cover
+        return VideoUrl(url='https://example.com/video.mp4')
+
+    @agent.tool_plain
+    def tool_with_return_audio_url() -> AudioUrl:  # pragma: no cover
+        return AudioUrl(url='https://example.com/audio.mp3')
+
+    @agent.tool_plain
+    def tool_with_return_image_url() -> ImageUrl:  # pragma: no cover
+        return ImageUrl(url='https://example.com/image.jpg')
+
+    @agent.tool_plain
+    def tool_with_return_tool_return() -> ToolReturn:  # pragma: no cover
+        return ToolReturn(return_value='hello', content=[ImageUrl(url='https://example.com/image.jpg')])
+
+    @agent.tool_plain
+    def tool_with_return_tool_return_any() -> ToolReturn[Any]:  # pragma: no cover
+        return ToolReturn(return_value='hello')
+
+    @agent.tool_plain
+    def tool_with_deferred_return() -> DeferredToolResult:  # pragma: no cover
+        return ToolApproved()
+
+    @agent.tool_plain(include_return_schema=False)
+    def tool_with_return_schema_opted_out() -> int:  # pragma: no cover
+        return 42
+
+    with pytest.warns(UserWarning, match=r"Tool 'tool_with_return_tool_return.*' has `include_return_schema` enabled"):
+        result = agent.run_sync('Hello')
+    json_schema = json.loads(result.output)
+    assert json_schema == snapshot(
+        [
+            {
+                'name': 'tool_with_return_schema',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {'format': 'uri', 'minLength': 1, 'type': 'string'},
+                'include_return_schema': True,
+            },
+            {
+                'name': 'tool_with_return_schema_binary_content',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'Binary content, e.g. an audio or image file.',
+                    'properties': {
+                        'data': {'format': 'base64url', 'type': 'string'},
+                        'media_type': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'audio/wav',
+                                        'audio/mpeg',
+                                        'audio/ogg',
+                                        'audio/flac',
+                                        'audio/aiff',
+                                        'audio/aac',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                                {
+                                    'enum': [
+                                        'application/pdf',
+                                        'text/plain',
+                                        'text/csv',
+                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                        'text/html',
+                                        'text/markdown',
+                                        'application/msword',
+                                        'application/vnd.ms-excel',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ]
+                        },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'identifier': {
+                            'description': """\
+Identifier for the binary content, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
+
+This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool.
+If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `BinaryContent`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                            'readOnly': True,
+                            'type': 'string',
+                        },
+                        'kind': {'const': 'binary', 'default': 'binary', 'type': 'string'},
+                    },
+                    'required': ['data', 'media_type', 'identifier'],
+                    'title': 'BinaryContent',
+                    'type': 'object',
+                },
+                'include_return_schema': True,
+            },
+            {
+                'name': 'tool_with_return_schema_base_model',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'properties': {'x': {'description': 'The x value', 'type': 'integer'}},
+                    'required': ['x'],
+                    'title': 'MyBaseModel',
+                    'type': 'object',
+                },
+                'include_return_schema': True,
+            },
+            {
+                'name': 'tool_with_return_schema_dataclass',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'properties': {'x': {'type': 'integer'}},
+                    'required': ['x'],
+                    'title': 'MyDataclass',
+                    'type': 'object',
+                },
+                'include_return_schema': True,
+            },
+            {
+                'name': 'tool_with_return_binary_image',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': "Binary content that's guaranteed to be an image.",
+                    'properties': {
+                        'data': {'format': 'base64url', 'type': 'string'},
+                        'media_type': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'audio/wav',
+                                        'audio/mpeg',
+                                        'audio/ogg',
+                                        'audio/flac',
+                                        'audio/aiff',
+                                        'audio/aac',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], 'type': 'string'},
+                                {
+                                    'enum': [
+                                        'application/pdf',
+                                        'text/plain',
+                                        'text/csv',
+                                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                        'text/html',
+                                        'text/markdown',
+                                        'application/msword',
+                                        'application/vnd.ms-excel',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                            ]
+                        },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'identifier': {
+                            'description': """\
+Identifier for the binary content, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
+
+This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool.
+If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `BinaryContent`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                            'readOnly': True,
+                            'type': 'string',
+                        },
+                        'kind': {'const': 'binary', 'default': 'binary', 'type': 'string'},
+                    },
+                    'required': ['data', 'media_type', 'identifier'],
+                    'title': 'BinaryImage',
+                    'type': 'object',
+                },
+                'include_return_schema': True,
+            },
+            {
+                'name': 'tool_with_return_document_url',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'The URL of the document.',
+                    'properties': {
+                        'url': {'type': 'string'},
+                        'force_download': {
+                            'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                            'default': False,
+                        },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'media_type': {
+                            'description': 'Return the media type of the file, based on the URL or the provided `media_type`.',
+                            'readOnly': True,
+                            'type': 'string',
+                        },
+                        'identifier': {
+                            'description': """\
+The identifier of the file, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
+
+This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
+If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `FileUrl`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                            'readOnly': True,
+                            'type': 'string',
+                        },
+                        'kind': {'const': 'document-url', 'default': 'document-url', 'type': 'string'},
+                    },
+                    'required': ['url', 'media_type', 'identifier'],
+                    'title': 'DocumentUrl',
+                    'type': 'object',
+                },
+                'include_return_schema': True,
+            },
+            {
+                'name': 'tool_with_return_video_url',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'A URL to a video.',
+                    'properties': {
+                        'url': {'type': 'string'},
+                        'force_download': {
+                            'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                            'default': False,
+                        },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'media_type': {
+                            'description': 'Return the media type of the file, based on the URL or the provided `media_type`.',
+                            'readOnly': True,
+                            'type': 'string',
+                        },
+                        'identifier': {
+                            'description': """\
+The identifier of the file, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
+
+This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
+If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `FileUrl`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                            'readOnly': True,
+                            'type': 'string',
+                        },
+                        'kind': {'const': 'video-url', 'default': 'video-url', 'type': 'string'},
+                    },
+                    'required': ['url', 'media_type', 'identifier'],
+                    'title': 'VideoUrl',
+                    'type': 'object',
+                },
+                'include_return_schema': True,
+            },
+            {
+                'name': 'tool_with_return_audio_url',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'A URL to an audio file.',
+                    'properties': {
+                        'url': {'type': 'string'},
+                        'force_download': {
+                            'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                            'default': False,
+                        },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'media_type': {
+                            'description': 'Return the media type of the file, based on the URL or the provided `media_type`.',
+                            'readOnly': True,
+                            'type': 'string',
+                        },
+                        'identifier': {
+                            'description': """\
+The identifier of the file, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
+
+This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
+If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `FileUrl`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                            'readOnly': True,
+                            'type': 'string',
+                        },
+                        'kind': {'const': 'audio-url', 'default': 'audio-url', 'type': 'string'},
+                    },
+                    'required': ['url', 'media_type', 'identifier'],
+                    'title': 'AudioUrl',
+                    'type': 'object',
+                },
+                'include_return_schema': True,
+            },
+            {
+                'name': 'tool_with_return_image_url',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    'description': 'A URL to an image.',
+                    'properties': {
+                        'url': {'type': 'string'},
+                        'force_download': {
+                            'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                            'default': False,
+                        },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                        },
+                        'media_type': {
+                            'description': 'Return the media type of the file, based on the URL or the provided `media_type`.',
+                            'readOnly': True,
+                            'type': 'string',
+                        },
+                        'identifier': {
+                            'description': """\
+The identifier of the file, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
+
+This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
+If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `FileUrl`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                            'readOnly': True,
+                            'type': 'string',
+                        },
+                        'kind': {'const': 'image-url', 'default': 'image-url', 'type': 'string'},
+                    },
+                    'required': ['url', 'media_type', 'identifier'],
+                    'title': 'ImageUrl',
+                    'type': 'object',
+                },
+                'include_return_schema': True,
+            },
+            {
+                'name': 'tool_with_return_tool_return',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': None,
+                'include_return_schema': True,
+            },
+            {
+                'name': 'tool_with_return_tool_return_any',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': None,
+                'include_return_schema': True,
+            },
+            {
+                'name': 'tool_with_deferred_return',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': {
+                    '$defs': {
+                        'AudioUrl': {
+                            'description': 'A URL to an audio file.',
+                            'properties': {
+                                'url': {'type': 'string'},
+                                'force_download': {
+                                    'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                                    'default': False,
+                                },
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                },
+                                'media_type': {
+                                    'description': 'Return the media type of the file, based on the URL or the provided `media_type`.',
+                                    'readOnly': True,
+                                    'type': 'string',
+                                },
+                                'identifier': {
+                                    'description': """\
+The identifier of the file, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
+
+This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
+If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `FileUrl`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                                    'readOnly': True,
+                                    'type': 'string',
+                                },
+                                'kind': {'const': 'audio-url', 'default': 'audio-url', 'type': 'string'},
+                            },
+                            'required': ['url', 'media_type', 'identifier'],
+                            'title': 'AudioUrl',
+                            'type': 'object',
+                        },
+                        'BinaryContent': {
+                            'description': 'Binary content, e.g. an audio or image file.',
+                            'properties': {
+                                'data': {'format': 'base64url', 'type': 'string'},
+                                'media_type': {
+                                    'anyOf': [
+                                        {
+                                            'enum': [
+                                                'audio/wav',
+                                                'audio/mpeg',
+                                                'audio/ogg',
+                                                'audio/flac',
+                                                'audio/aiff',
+                                                'audio/aac',
+                                            ],
+                                            'type': 'string',
+                                        },
+                                        {
+                                            'enum': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+                                            'type': 'string',
+                                        },
+                                        {
+                                            'enum': [
+                                                'application/pdf',
+                                                'text/plain',
+                                                'text/csv',
+                                                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                                'text/html',
+                                                'text/markdown',
+                                                'application/msword',
+                                                'application/vnd.ms-excel',
+                                            ],
+                                            'type': 'string',
+                                        },
+                                        {'type': 'string'},
+                                    ]
+                                },
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                },
+                                'identifier': {
+                                    'description': """\
+Identifier for the binary content, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
+
+This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool.
+If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `BinaryContent`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                                    'readOnly': True,
+                                    'type': 'string',
+                                },
+                                'kind': {'const': 'binary', 'default': 'binary', 'type': 'string'},
+                            },
+                            'required': ['data', 'media_type', 'identifier'],
+                            'title': 'BinaryContent',
+                            'type': 'object',
+                        },
+                        'CachePoint': {
+                            'properties': {
+                                'kind': {'const': 'cache-point', 'default': 'cache-point', 'type': 'string'},
+                                'ttl': {'default': '5m', 'enum': ['5m', '1h'], 'type': 'string'},
+                            },
+                            'title': 'CachePoint',
+                            'type': 'object',
+                        },
+                        'DocumentUrl': {
+                            'description': 'The URL of the document.',
+                            'properties': {
+                                'url': {'type': 'string'},
+                                'force_download': {
+                                    'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                                    'default': False,
+                                },
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                },
+                                'media_type': {
+                                    'description': 'Return the media type of the file, based on the URL or the provided `media_type`.',
+                                    'readOnly': True,
+                                    'type': 'string',
+                                },
+                                'identifier': {
+                                    'description': """\
+The identifier of the file, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
+
+This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
+If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `FileUrl`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                                    'readOnly': True,
+                                    'type': 'string',
+                                },
+                                'kind': {'const': 'document-url', 'default': 'document-url', 'type': 'string'},
+                            },
+                            'required': ['url', 'media_type', 'identifier'],
+                            'title': 'DocumentUrl',
+                            'type': 'object',
+                        },
+                        'ErrorDetails': {
+                            'properties': {
+                                'type': {'type': 'string'},
+                                'loc': {'items': {'anyOf': [{'type': 'integer'}, {'type': 'string'}]}, 'type': 'array'},
+                                'msg': {'type': 'string'},
+                                'input': {},
+                                'ctx': {'additionalProperties': True, 'type': 'object'},
+                                'url': {'type': 'string'},
+                            },
+                            'required': ['type', 'loc', 'msg', 'input'],
+                            'title': 'ErrorDetails',
+                            'type': 'object',
+                        },
+                        'ImageUrl': {
+                            'description': 'A URL to an image.',
+                            'properties': {
+                                'url': {'type': 'string'},
+                                'force_download': {
+                                    'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                                    'default': False,
+                                },
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                },
+                                'media_type': {
+                                    'description': 'Return the media type of the file, based on the URL or the provided `media_type`.',
+                                    'readOnly': True,
+                                    'type': 'string',
+                                },
+                                'identifier': {
+                                    'description': """\
+The identifier of the file, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
+
+This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
+If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `FileUrl`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                                    'readOnly': True,
+                                    'type': 'string',
+                                },
+                                'kind': {'const': 'image-url', 'default': 'image-url', 'type': 'string'},
+                            },
+                            'required': ['url', 'media_type', 'identifier'],
+                            'title': 'ImageUrl',
+                            'type': 'object',
+                        },
+                        'RetryPromptPart': {
+                            'description': """\
+A message back to a model asking it to try again.
+
+This can be sent for a number of reasons:
+
+* Pydantic validation of tool arguments failed, here content is derived from a Pydantic
+  [`ValidationError`][pydantic_core.ValidationError]
+* a tool raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
+* no tool was found for the tool name
+* the model returned plain text when a structured response was expected
+* Pydantic validation of a structured response failed, here content is derived from a Pydantic
+  [`ValidationError`][pydantic_core.ValidationError]
+* an output validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception\
+""",
+                            'properties': {
+                                'content': {
+                                    'anyOf': [
+                                        {'items': {'$ref': '#/$defs/ErrorDetails'}, 'type': 'array'},
+                                        {'type': 'string'},
+                                    ]
+                                },
+                                'tool_name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None},
+                                'tool_call_id': {'type': 'string'},
+                                'timestamp': {'format': 'date-time', 'type': 'string'},
+                                'part_kind': {'const': 'retry-prompt', 'default': 'retry-prompt', 'type': 'string'},
+                            },
+                            'required': ['content'],
+                            'title': 'RetryPromptPart',
+                            'type': 'object',
+                        },
+                        'ToolApproved': {
+                            'properties': {
+                                'override_args': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                },
+                                'kind': {'const': 'tool-approved', 'default': 'tool-approved', 'type': 'string'},
+                            },
+                            'title': 'ToolApproved',
+                            'type': 'object',
+                        },
+                        'ToolDenied': {
+                            'description': 'Indicates that a tool call has been denied and that a denial message should be returned to the model.',
+                            'properties': {
+                                'message': {'default': 'The tool call was denied.', 'type': 'string'},
+                                'kind': {'const': 'tool-denied', 'default': 'tool-denied', 'type': 'string'},
+                            },
+                            'title': 'ToolDenied',
+                            'type': 'object',
+                        },
+                        'ToolReturn': {
+                            'description': """\
+A structured return value for tools that need to provide both a return value and custom content to the model.
+
+This class allows tools to return complex responses that include:
+- A return value for actual tool return
+- Custom content (including multi-modal content) to be sent to the model as a UserPromptPart
+- Optional metadata for application use\
+""",
+                            'properties': {
+                                'return_value': {'$ref': '#/$defs/ToolReturnContent'},
+                                'content': {
+                                    'anyOf': [
+                                        {'type': 'string'},
+                                        {
+                                            'items': {
+                                                'anyOf': [
+                                                    {'type': 'string'},
+                                                    {
+                                                        'discriminator': {
+                                                            'mapping': {
+                                                                'audio-url': '#/$defs/AudioUrl',
+                                                                'binary': '#/$defs/BinaryContent',
+                                                                'document-url': '#/$defs/DocumentUrl',
+                                                                'image-url': '#/$defs/ImageUrl',
+                                                                'video-url': '#/$defs/VideoUrl',
+                                                            },
+                                                            'propertyName': 'kind',
+                                                        },
+                                                        'oneOf': [
+                                                            {'$ref': '#/$defs/ImageUrl'},
+                                                            {'$ref': '#/$defs/AudioUrl'},
+                                                            {'$ref': '#/$defs/DocumentUrl'},
+                                                            {'$ref': '#/$defs/VideoUrl'},
+                                                            {'$ref': '#/$defs/BinaryContent'},
+                                                        ],
+                                                    },
+                                                    {'$ref': '#/$defs/CachePoint'},
+                                                ]
+                                            },
+                                            'type': 'array',
+                                        },
+                                        {'type': 'null'},
+                                    ],
+                                    'default': None,
+                                },
+                                'metadata': {'default': None},
+                                'kind': {'const': 'tool-return', 'default': 'tool-return', 'type': 'string'},
+                            },
+                            'required': ['return_value'],
+                            'title': 'ToolReturn',
+                            'type': 'object',
+                        },
+                        'ToolReturnContent': {
+                            'anyOf': [
+                                {
+                                    'discriminator': {
+                                        'mapping': {
+                                            'audio-url': '#/$defs/AudioUrl',
+                                            'binary': '#/$defs/BinaryContent',
+                                            'document-url': '#/$defs/DocumentUrl',
+                                            'image-url': '#/$defs/ImageUrl',
+                                            'video-url': '#/$defs/VideoUrl',
+                                        },
+                                        'propertyName': 'kind',
+                                    },
+                                    'oneOf': [
+                                        {'$ref': '#/$defs/ImageUrl'},
+                                        {'$ref': '#/$defs/AudioUrl'},
+                                        {'$ref': '#/$defs/DocumentUrl'},
+                                        {'$ref': '#/$defs/VideoUrl'},
+                                        {'$ref': '#/$defs/BinaryContent'},
+                                    ],
+                                },
+                                {'items': {'$ref': '#/$defs/ToolReturnContent'}, 'type': 'array'},
+                                {'additionalProperties': {'$ref': '#/$defs/ToolReturnContent'}, 'type': 'object'},
+                                {},
+                            ]
+                        },
+                        'VideoUrl': {
+                            'description': 'A URL to a video.',
+                            'properties': {
+                                'url': {'type': 'string'},
+                                'force_download': {
+                                    'anyOf': [{'type': 'boolean'}, {'const': 'allow-local', 'type': 'string'}],
+                                    'default': False,
+                                },
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                },
+                                'media_type': {
+                                    'description': 'Return the media type of the file, based on the URL or the provided `media_type`.',
+                                    'readOnly': True,
+                                    'type': 'string',
+                                },
+                                'identifier': {
+                                    'description': """\
+The identifier of the file, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
+
+This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
+If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `FileUrl`.
+
+It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+distinguish multiple files.\
+""",
+                                    'readOnly': True,
+                                    'type': 'string',
+                                },
+                                'kind': {'const': 'video-url', 'default': 'video-url', 'type': 'string'},
+                            },
+                            'required': ['url', 'media_type', 'identifier'],
+                            'title': 'VideoUrl',
+                            'type': 'object',
+                        },
+                    },
+                    'anyOf': [
+                        {
+                            'discriminator': {
+                                'mapping': {
+                                    'tool-approved': '#/$defs/ToolApproved',
+                                    'tool-denied': '#/$defs/ToolDenied',
+                                },
+                                'propertyName': 'kind',
+                            },
+                            'oneOf': [{'$ref': '#/$defs/ToolApproved'}, {'$ref': '#/$defs/ToolDenied'}],
+                        },
+                        {
+                            'oneOf': [
+                                {'$ref': '#/$defs/ToolReturn'},
+                                {
+                                    'properties': {
+                                        'message': {'type': 'string'},
+                                        'kind': {'const': 'model-retry', 'type': 'string'},
+                                    },
+                                    'required': ['message', 'kind'],
+                                    'type': 'object',
+                                },
+                                {'$ref': '#/$defs/RetryPromptPart'},
+                            ]
+                        },
+                    ],
+                },
+                'include_return_schema': True,
+            },
+            {
+                'name': 'tool_with_return_schema_opted_out',
+                'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'description': None,
+                'outer_typed_dict_key': None,
+                'strict': None,
+                'sequential': False,
+                'kind': 'function',
+                'metadata': None,
+                'timeout': None,
+                'return_schema': None,
+                'include_return_schema': False,
+            },
+        ]
+    )
+
+
+def test_tool_return_schema_with_docstring_description():
+    """Test that ToolReturn[T] picks up the return description from docstrings."""
+    agent = Agent(
+        FunctionModel(
+            get_json_schema,
+            profile=ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+                supports_tool_return_schema=True,
+            ),
+        ),
+        include_tool_return_schema=True,
+    )
+
+    @agent.tool_plain
+    def my_tool() -> ToolReturn[int]:  # pragma: no cover
+        """Do something.
+
+        Returns:
+            The result value.
+        """
+        return ToolReturn(return_value=42)
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.output)
+    assert json_schema['return_schema'] == snapshot({'type': 'integer'})
+
+
+def test_tool_none_return_annotation_no_schema():
+    """Test that tools with -> None return annotation don't generate a return schema."""
+    agent = Agent(
+        FunctionModel(
+            get_json_schema,
+            profile=ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+                supports_tool_return_schema=True,
+            ),
+        ),
+        include_tool_return_schema=True,
+    )
+
+    @agent.tool_plain
+    def tool_with_none_return() -> None:
+        """A tool that returns None."""
+        pass  # pragma: no cover
+
+    with pytest.warns(UserWarning, match=r"Tool 'tool_with_none_return' has `include_return_schema` enabled"):
+        result = agent.run_sync('Hello')
+    json_schema = json.loads(result.output)
+    assert json_schema['return_schema'] is None
+
+
+def test_return_schema_e2e():
+    """E2E: return schema flows correctly for native and non-native models."""
+
+    # --- Non-native model (e.g. OpenAI): description injection fallback ---
+    non_native_agent = Agent(
+        FunctionModel(
+            get_json_schema,
+            profile=ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+                supports_tool_return_schema=False,
+            ),
+        ),
+        include_tool_return_schema=True,
+    )
+
+    @non_native_agent.tool_plain
+    def get_value() -> int:
+        """Get a value."""
+        return 42  # pragma: no cover
+
+    @non_native_agent.tool_plain
+    def get_value_no_docstring() -> int:
+        return 42  # pragma: no cover
+
+    result = non_native_agent.run_sync('Hello')
+    tool_defs = json.loads(result.output)
+
+    tool_def = next(t for t in tool_defs if t['name'] == 'get_value')
+    # return_schema is cleared after injection into description for non-native models
+    assert tool_def['return_schema'] is None
+    # description has return schema injected as fallback text
+    assert 'Return schema:' in tool_def['description']
+    assert '"type": "integer"' in tool_def['description']
+    assert tool_def['description'].startswith('Get a value.')
+
+    # Tool with no docstring: description is just the return schema
+    tool_def_no_doc = next(t for t in tool_defs if t['name'] == 'get_value_no_docstring')
+    assert tool_def_no_doc['return_schema'] is None
+    assert tool_def_no_doc['description'] == 'Return schema:\n\n{\n  "type": "integer"\n}'
+
+    # --- Native model (e.g. Google): return_schema preserved, description untouched ---
+    native_agent = Agent(
+        FunctionModel(
+            get_json_schema,
+            profile=ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+                supports_tool_return_schema=True,
+            ),
+        ),
+        include_tool_return_schema=True,
+    )
+
+    @native_agent.tool_plain
+    def get_value_native() -> int:
+        """Get a value."""
+        return 42  # pragma: no cover
+
+    result = native_agent.run_sync('Hello')
+    tool_def = json.loads(result.output)
+
+    # return_schema is preserved
+    assert tool_def['return_schema'] == {'type': 'integer'}
+    # description is NOT modified (no injection)
+    assert tool_def['description'] == 'Get a value.'
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize('is_stream', [True, False])
 async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
@@ -2983,3 +4092,107 @@ def test_tool_call_metadata_not_available_for_unapproved_calls():
     # For regular tool calls (not via ToolApproved), metadata should be None
     assert len(received_metadata) == 1
     assert received_metadata[0] is None
+
+
+def test_per_tool_return_schema_opt_in():
+    """Per-tool include_return_schema=True enables return schema even when agent-level default is off."""
+    agent = Agent(
+        FunctionModel(
+            get_json_schema,
+            profile=ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+                supports_tool_return_schema=True,
+            ),
+        ),
+    )
+
+    @agent.tool(include_return_schema=True)
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        """Get a value.
+
+        Args:
+            x: An integer value.
+        """
+        return x  # pragma: no cover
+
+    result = agent.run_sync('Hello')
+    tool_def = json.loads(result.output)
+    assert tool_def['return_schema'] == snapshot({'type': 'integer'})
+    assert tool_def['include_return_schema'] is True
+
+
+def test_per_tool_return_schema_opt_out():
+    """Per-tool include_return_schema=False disables return schema even when agent-level default is on."""
+    agent = Agent(
+        FunctionModel(
+            get_json_schema,
+            profile=ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+                supports_tool_return_schema=True,
+            ),
+        ),
+        include_tool_return_schema=True,
+    )
+
+    @agent.tool_plain(include_return_schema=False)
+    def my_tool(x: int) -> int:
+        """Get a value.
+
+        Args:
+            x: An integer value.
+        """
+        return x  # pragma: no cover
+
+    result = agent.run_sync('Hello')
+    tool_def = json.loads(result.output)
+    assert tool_def['return_schema'] is None
+    assert tool_def['include_return_schema'] is False
+
+
+def test_include_return_schema_warning_when_no_return_schema():
+    """Warning is emitted when include_return_schema is enabled but no return schema was generated."""
+    agent = Agent(
+        FunctionModel(
+            get_json_schema,
+            profile=ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+                supports_tool_return_schema=True,
+            ),
+        ),
+        include_tool_return_schema=True,
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int):
+        """Get a value.
+
+        Args:
+            x: An integer value.
+        """
+        return x  # pragma: no cover
+
+    with pytest.warns(UserWarning, match=r"Tool 'my_tool' has `include_return_schema` enabled but no return schema"):
+        agent.run_sync('Hello')
+
+
+def test_include_return_schema_warning_on_schema_generation_error():
+    """Warning with error details is emitted when include_return_schema=True on a Tool but schema generation fails."""
+
+    class CustomObj:
+        """A type that Pydantic cannot generate a schema for."""
+
+        x: int
+
+    def my_tool(x: int) -> CustomObj:
+        """Get a value.
+
+        Args:
+            x: An integer value.
+        """
+        return CustomObj()  # pragma: no cover
+
+    with pytest.warns(UserWarning, match=r"Failed to generate return schema for '.*my_tool'"):
+        Tool(my_tool, include_return_schema=True)

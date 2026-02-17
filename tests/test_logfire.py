@@ -557,6 +557,8 @@ def test_logfire(
                                 'kind': 'function',
                                 'metadata': None,
                                 'timeout': None,
+                                'return_schema': None,
+                                'include_return_schema': None,
                             }
                         ],
                         'builtin_tools': [],
@@ -1041,6 +1043,8 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'kind': 'output',
                                 'metadata': None,
                                 'timeout': None,
+                                'return_schema': None,
+                                'include_return_schema': None,
                             }
                         ],
                         'prompted_output_template': None,

@@ -74,6 +74,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
@@ -3963,9 +3964,32 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
     }
 
 
-async def test_google_vertexai_image_generation(
-    allow_model_requests: None, vertex_provider: GoogleProvider
-):  # pragma: lax no cover
+async def test_google_function_tool_with_return_schema(google_provider: GoogleProvider) -> None:
+    """Test that _function_declaration_from_tool includes response_json_schema when return_schema is set."""
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    tool = ToolDefinition(
+        name='get_value',
+        description='Get a value',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        return_schema={'type': 'integer'},
+    )
+    params = ModelRequestParameters(function_tools=[tool])
+    tools, _ = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools == [
+        {
+            'function_declarations': [
+                {
+                    'name': 'get_value',
+                    'description': 'Get a value',
+                    'parameters_json_schema': {'type': 'object', 'properties': {}},
+                    'response_json_schema': {'type': 'integer'},
+                }
+            ]
+        }
+    ]
+
+
+async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
 
     agent = Agent(model, output_type=BinaryImage)

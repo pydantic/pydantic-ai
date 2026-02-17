@@ -82,7 +82,7 @@ from pydantic_ai import ToolReturn, BinaryContent
 agent = Agent('openai:gpt-5.2')
 
 @agent.tool_plain
-def click_and_capture(x: int, y: int) -> ToolReturn:
+def click_and_capture(x: int, y: int) -> ToolReturn[str]:
     """Click at coordinates and show before/after screenshots."""
     # Take screenshot before action
     before_screenshot = capture_screen()
@@ -123,6 +123,58 @@ print(result.output)
 - **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature "artifacts".
 
 This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic.
+
+!!! tip "Specify the generic type for return schemas"
+    To enable [return schema generation](#including-return-schemas) for models that support it, always specify the generic type parameter in your return annotation (e.g., `-> ToolReturn[str]`). Without the generic type, no return schema will be generated.
+
+### Including Return Schemas {#including-return-schemas}
+
+Pydantic AI can include tool return schemas alongside tool definitions, helping LLMs understand what data a tool returns. This enables better planning for multi-step operations and tool chaining.
+
+When tools return complex types like Pydantic models or dataclasses, Pydantic AI automatically infers the return schema from the function's return type annotation. By including this schema, the LLM can:
+
+- Plan sequences of tool calls where one tool's output feeds into another
+- Determine upfront if a requested data point is available
+- Understand the semantic meaning of each field in complex return types
+
+The return schema can be controlled at multiple levels:
+
+- **Tool-level**: Individual tools can opt-in via `include_return_schema` on [`Tool`][pydantic_ai.tools.Tool] or [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]. This can also be modified using a [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset].
+- **Toolset-level**: Set `include_return_schema=True` on [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] or MCP toolsets to enable return schemas for all tools in that toolset.
+- **Agent-level**: Set `include_tool_return_schema=True` on the [`Agent`][pydantic_ai.agent.Agent] constructor to enable return schemas for all tools (defaults to `False`). This serves as the default when a tool's `include_return_schema` is `None`.
+
+```python {title="include_return_schema.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+
+
+class UserDetails(BaseModel):
+    """Details about a user."""
+
+    id: int
+    name: str
+    email: str
+
+
+agent = Agent('openai:gpt-4o', include_tool_return_schema=True)
+
+
+@agent.tool_plain
+def get_user(user_id: int) -> UserDetails:
+    """Get user details by ID."""
+    return UserDetails(id=user_id, name='Alice', email='alice@example.com')
+```
+
+The return schema is automatically generated from the function's return type annotation using Pydantic's JSON schema generation. The schema's `description` field comes from the return type's own docstring (e.g. `"""Details about a user."""` on `UserDetails` above), not from the function's `Returns:` docstring section.
+
+When a tool returns [`ToolReturn[T]`][pydantic_ai.messages.ToolReturn], the return schema is inferred from the inner type `T` rather than `ToolReturn` itself. For example, a tool annotated `-> ToolReturn[UserDetails]` will have its return schema derived from `UserDetails`.
+
+!!! note "Model support"
+    Models that natively support return schemas (currently Google Gemini) receive the schema as a structured field in the tool definition. For all other models, the return schema is automatically appended to the tool's description as JSON text, so the LLM still has access to the information regardless of the provider.
+
+!!! note "MCP tools"
+    [MCP](mcp/client.md) tools populate return schemas from the server's `outputSchema` when available. To include these schemas in tool definitions sent to the model, opt in via `include_return_schema=True` on the MCP toolset or at the agent level.
 
 ## Custom Tool Schema
 
