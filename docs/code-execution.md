@@ -1,9 +1,19 @@
-# Code Mode
+# Code Execution
 
 !!! warning "Experimental"
-    Code mode is an experimental feature under active development. The API may change in future releases.
+    Code execution is an experimental feature under active development. The API may change in future releases.
 
-Code mode is a [toolset](toolsets.md) that replaces individual [tool](tools.md) calls with a single `run_code_with_tools` tool, allowing the model to write and execute Python code that orchestrates multiple tools at once — with loops, conditionals, variables, and parallel execution.
+[`CodeExecutionToolset`][pydantic_ai.toolsets.code_execution.CodeExecutionToolset] is a [toolset](toolsets.md) that gives the model a `run_code` tool to write and execute Python code. It can be used standalone for general code execution, or it can wrap another toolset to enable **code mode** — where individual [tool](tools.md) calls are replaced by a single `run_code` tool that lets the model orchestrate multiple tools at once with loops, conditionals, variables, and parallel execution.
+
+## Installation
+
+Code execution requires a runtime to execute the generated code. For the recommended [Monty](#monty-runtime) runtime:
+
+```bash
+pip/uv-add "pydantic-ai-slim[monty]"
+```
+
+## Code Mode
 
 With standard tool calling, each tool invocation is a separate round-trip to the model. If an agent needs to fetch 10 items and look up details for each one, that's 11 model calls. With code mode, the model writes a script that does it all in one step:
 
@@ -25,21 +35,13 @@ Code mode wraps any existing toolset — including [`FunctionToolset`][pydantic_
     - [Anthropic: Tool use via code](https://www.anthropic.com/engineering/code-execution-with-mcp)
     - [Cloudflare: Code mode in production](https://blog.cloudflare.com/code-mode/)
 
-## Installation
+### Quick Start
 
-Code mode requires a runtime to execute the generated code. For the recommended [Monty](#monty-runtime) runtime:
+To use code mode, pass an existing toolset to [`CodeExecutionToolset`][pydantic_ai.toolsets.code_execution.CodeExecutionToolset], which exposes its tools as callable Python functions to the model:
 
-```bash
-pip/uv-add "pydantic-ai-slim[monty]"
-```
-
-## Quick Start
-
-[`CodeModeToolset`][pydantic_ai.toolsets.code_mode.CodeModeToolset] wraps an existing toolset and exposes its tools as callable Python functions to the model:
-
-```python {title="code_mode_example.py" test="skip" lint="skip"}
+```python {title="code_execution_example.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.toolsets import CodeModeToolset, FunctionToolset
+from pydantic_ai.toolsets import CodeExecutionToolset, FunctionToolset
 
 
 def get_weather(city: str) -> dict:
@@ -56,7 +58,7 @@ tools = FunctionToolset(tools=[get_weather, convert_temp])  # (1)!
 
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    toolsets=[CodeModeToolset(tools)],  # (2)!
+    toolsets=[CodeExecutionToolset(tools)],  # (2)!
 )
 
 result = agent.run_sync("What's the weather in Paris and Tokyo, in Celsius?")
@@ -64,7 +66,7 @@ print(result.output)
 ```
 
 1. Define tools using a standard [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]. Any [toolset](toolsets.md) works here.
-2. Wrap the toolset with [`CodeModeToolset`][pydantic_ai.toolsets.code_mode.CodeModeToolset]. The model now sees a single `run_code_with_tools` tool instead of individual `get_weather` and `convert_temp` tools. The default runtime is [Monty](#monty-runtime).
+2. Wrap the toolset with [`CodeExecutionToolset`][pydantic_ai.toolsets.code_execution.CodeExecutionToolset]. The model now sees a single `run_code` tool instead of individual `get_weather` and `convert_temp` tools. The default runtime is [Monty](#monty-runtime).
 
 The model sees `get_weather` and `convert_temp` as callable Python functions inside the sandbox, and writes code like:
 
@@ -82,9 +84,9 @@ tokyo_c = await convert_temp(fahrenheit=tokyo["temp_f"])
 
 Both cities are looked up in parallel, then both temperatures are converted — all in a single model call.
 
-## How It Works
+### How It Works
 
-When the model calls `run_code_with_tools`, the [`CodeModeToolset`][pydantic_ai.toolsets.code_mode.CodeModeToolset]:
+When the model calls `run_code`, the [`CodeExecutionToolset`][pydantic_ai.toolsets.code_execution.CodeExecutionToolset]:
 
 1. Generates Python function signatures from the wrapped tools so the model knows what's available
 2. Builds a [prompt](#customizing-the-prompt) describing the execution model (fire-then-await parallelism, keyword-only arguments, etc.)
@@ -94,7 +96,7 @@ When the model calls `run_code_with_tools`, the [`CodeModeToolset`][pydantic_ai.
 
 The execution model exposed to the model works as follows:
 
-- Each `run_code_with_tools` call runs in an isolated environment — variables don't persist between calls
+- Each `run_code` call runs in an isolated environment — variables don't persist between calls
 - Functions are async — call with `await`, e.g. `result = await get_items()`
 - To run independent calls concurrently, fire them first (which starts them immediately), then `await` the results
 - The last expression evaluated is the return value
@@ -109,11 +111,11 @@ sequenceDiagram
     participant Runtime
 
     Note over Agent: Send instructions + tool definitions
-    Agent ->> LLM: Instructions + run_code_with_tools tool
+    Agent ->> LLM: Instructions + run_code tool
     activate LLM
     Note over LLM: Model writes Python code
 
-    LLM ->> Agent: run_code_with_tools(code="...")
+    LLM ->> Agent: run_code(code="...")
     deactivate LLM
     activate Agent
     Agent ->> Runtime: Execute code in sandbox
@@ -138,21 +140,38 @@ sequenceDiagram
     deactivate LLM
 ```
 
+### MCP and Other Toolsets
+
+Code mode works with any [toolset](toolsets.md), including [MCP servers](mcp/client.md). Tool names that aren't valid Python identifiers (e.g. `search-records`) are automatically sanitized (to `search_records`) so the model can call them naturally from code.
+
+```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+from pydantic_ai.toolsets import CodeExecutionToolset
+
+server = MCPServerStdio('uv', args=['run', 'my-mcp-server'])
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-5',
+    toolsets=[CodeExecutionToolset(server)],
+)
+```
+
 ## Runtimes
 
-Code mode uses a pluggable runtime to execute generated code. You can pass a runtime instance or a string shorthand (`'monty'` or `'docker'`) to [`CodeModeToolset`][pydantic_ai.toolsets.code_mode.CodeModeToolset]:
+Code execution uses a pluggable runtime to execute generated code. You can pass a runtime instance or a string shorthand (`'monty'` or `'docker'`) to [`CodeExecutionToolset`][pydantic_ai.toolsets.code_execution.CodeExecutionToolset]:
 
 ```python {test="skip" lint="skip"}
 # These are equivalent:
-CodeModeToolset(tools, runtime='monty')
-CodeModeToolset(tools, runtime=MontyRuntime())
+CodeExecutionToolset(tools, runtime='monty')
+CodeExecutionToolset(tools, runtime=MontyRuntime())
 ```
 
 The runtime you choose determines the execution environment, security boundaries, and available Python features.
 
 ### Monty Runtime
 
-[Monty](https://github.com/pydantic/monty) is a minimal, secure Python interpreter built by the Pydantic team specifically for code mode. It is the default runtime.
+[Monty](https://github.com/pydantic/monty) is a minimal, secure Python interpreter built by the Pydantic team specifically for code execution. It is the default runtime.
 
 !!! danger "Early Stage — Not for Untrusted Prompts"
     Monty is under active development. **Do not use it in production systems where untrusted user prompts are passed directly to the model** — the model could be manipulated into generating malicious code. While Monty is designed for safe sandboxed execution, it has not yet undergone the level of hardening required for adversarial inputs. This restriction will be relaxed as Monty matures.
@@ -161,13 +180,13 @@ The runtime you choose determines the execution environment, security boundaries
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.runtime import MontyRuntime
-from pydantic_ai.toolsets import CodeModeToolset, FunctionToolset
+from pydantic_ai.toolsets import CodeExecutionToolset, FunctionToolset
 
 tools = FunctionToolset(tools=[...])
-toolset = CodeModeToolset(tools, runtime=MontyRuntime())  # (1)!
+toolset = CodeExecutionToolset(tools, runtime=MontyRuntime())  # (1)!
 ```
 
-1. Equivalent to `CodeModeToolset(tools)` or `CodeModeToolset(tools, runtime='monty')`, since Monty is the default.
+1. Equivalent to `CodeExecutionToolset(tools)` or `CodeExecutionToolset(tools, runtime='monty')`, since Monty is the default.
 
 Monty type-checks generated code (via [ty](https://github.com/astral-sh/ty)) before execution, catching errors early and giving the model precise feedback to fix its code. It can also freeze and restore its full interpreter state via snapshot-based checkpointing, enabling efficient resume without re-executing code from scratch.
 
@@ -175,7 +194,7 @@ Because Monty runs a restricted Python subset, the runtime automatically instruc
 
 ### Driver-Based Runtimes
 
-For environments that need full CPython compatibility (arbitrary imports, C extensions) or stronger isolation guarantees, the [`DriverBasedRuntime`][pydantic_ai.runtime.DriverBasedRuntime] base class supports executing code in any sandbox that can run a Python process. It uses a lightweight [driver script](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/runtime/_driver.py) that communicates over stdin/stdout.
+For environments that need full CPython compatibility (arbitrary imports, C extensions) or stronger isolation guarantees, the [`DriverBasedRuntime`][pydantic_ai.runtime.DriverBasedRuntime] base class supports executing code in any sandbox that can run a Python process. It uses a lightweight [driver script](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/toolsets/code_execution/_driver.py) that communicates over stdin/stdout.
 
 #### Docker
 
@@ -184,12 +203,12 @@ For environments that need full CPython compatibility (arbitrary imports, C exte
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.runtime import DockerRuntime
-from pydantic_ai.toolsets import CodeModeToolset, FunctionToolset
+from pydantic_ai.toolsets import CodeExecutionToolset, FunctionToolset
 
 tools = FunctionToolset(tools=[...])
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    toolsets=[CodeModeToolset(tools, runtime=DockerRuntime())],  # (1)!
+    toolsets=[CodeExecutionToolset(tools, runtime=DockerRuntime())],  # (1)!
 )
 
 result = await agent.run('...')  # (2)!
@@ -245,34 +264,17 @@ class MyTransport(DriverTransport):
 
 Then subclass [`DriverBasedRuntime`][pydantic_ai.runtime.DriverBasedRuntime] and implement `_start_driver()` to launch your sandbox and return the transport. All protocol handling, tool dispatch, and checkpoint/resume logic is inherited.
 
-## MCP and Other Toolsets
-
-Code mode works with any [toolset](toolsets.md), including [MCP servers](mcp/client.md). Tool names that aren't valid Python identifiers (e.g. `search-records`) are automatically sanitized (to `search_records`) so the model can call them naturally from code.
-
-```python {test="skip" lint="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerStdio
-from pydantic_ai.toolsets import CodeModeToolset
-
-server = MCPServerStdio('uv', args=['run', 'my-mcp-server'])
-
-agent = Agent(
-    'anthropic:claude-sonnet-4-5',
-    toolsets=[CodeModeToolset(server)],
-)
-```
-
 ## Customizing the Prompt
 
-The tool description that explains available functions and the execution model to the model is generated by [`build_default_code_mode_description`][pydantic_ai.toolsets.code_mode.build_default_code_mode_description]. You can customize it by passing a `description` to [`CodeModeToolset`][pydantic_ai.toolsets.code_mode.CodeModeToolset] — either a string to replace just the preamble text, or a [`DescriptionFunc`][pydantic_ai.toolsets.code_mode.DescriptionFunc] callback for full control:
+The tool description that explains available functions and the execution model to the model is generated by [`build_default_description`][pydantic_ai.toolsets.code_execution.build_default_description]. You can customize it by passing a `description` to [`CodeExecutionToolset`][pydantic_ai.toolsets.code_execution.CodeExecutionToolset] — either a string to replace just the preamble text, or a [`DescriptionFunc`][pydantic_ai.toolsets.code_execution.DescriptionFunc] callback for full control:
 
 ```python {test="skip" lint="skip"}
-from pydantic_ai.toolsets import CodeModeToolset, FunctionToolset
+from pydantic_ai.toolsets import CodeExecutionToolset, FunctionToolset
 
 tools = FunctionToolset(tools=[...])
 
 # Pass a string to customize the preamble while keeping the default structure:
-code_toolset = CodeModeToolset(
+code_toolset = CodeExecutionToolset(
     tools,
     description='Use this tool to run Python code that calls the available functions.',
 )
@@ -280,7 +282,7 @@ code_toolset = CodeModeToolset(
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai._python_signature import FunctionSignature, TypeSignature
-from pydantic_ai.toolsets import CodeModeToolset, FunctionToolset
+from pydantic_ai.toolsets import CodeExecutionToolset, FunctionToolset
 
 
 def my_description_func(
@@ -293,7 +295,7 @@ def my_description_func(
 
 
 tools = FunctionToolset(tools=[...])
-code_toolset = CodeModeToolset(
+code_toolset = CodeExecutionToolset(
     tools,
     description=my_description_func,
 )
@@ -302,7 +304,7 @@ code_toolset = CodeModeToolset(
 ## Known Limitations
 
 - **Tool approval and deferral** — [deferred tools](deferred-tools.md) (tools that require approval or external execution) are not yet supported in code mode.
-- **Streaming** — code mode does not currently support streaming partial results.
+- **Streaming** — code execution does not currently support streaming partial results.
 - **Monty's restricted Python** — Monty runs a subset of Python: no imports, no classes, no decorators. The model is instructed about these restrictions, but complex code may need a [driver-based runtime](#driver-based-runtimes) with full CPython.
 
 ## See Also
@@ -311,4 +313,4 @@ code_toolset = CodeModeToolset(
 - [Function Tools](tools.md) — defining the tools that code mode wraps
 - [MCP Client](mcp/client.md) — using MCP servers as toolsets with code mode
 - [Dependencies](dependencies.md) — dependency injection, which works through code mode's tool pipeline
-- [Logfire](logfire.md) — tracing and debugging agent runs, including code mode tool calls
+- [Logfire](logfire.md) — tracing and debugging agent runs, including code execution tool calls

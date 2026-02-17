@@ -1559,9 +1559,9 @@ class ModelResponse:
                 if isinstance(part, BuiltinToolCallPart):
                     call_part['builtin'] = True
                 if part.otel_metadata:
-                    if code_arg_name := part.otel_metadata.get('code_arg_name'):
+                    if code_arg_name := part.otel_metadata.get('code_arg_name'):  # pragma: no branch
                         call_part['code_arg_name'] = code_arg_name
-                    if code_arg_language := part.otel_metadata.get('code_arg_language'):
+                    if code_arg_language := part.otel_metadata.get('code_arg_language'):  # pragma: no branch
                         call_part['code_arg_language'] = code_arg_language
                 if settings.include_content and part.args is not None:
                     from .models.instrumented import InstrumentedModel

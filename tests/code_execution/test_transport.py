@@ -9,12 +9,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from pydantic_ai.runtime._transport import (
+from pydantic_ai.toolsets.code_execution._abstract import CodeRuntimeError
+from pydantic_ai.toolsets.code_execution._transport import (
     DriverBasedRuntime,
     DriverTransport,
     _StdoutSignal,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.runtime.abstract import CodeRuntimeError
 
 pytestmark = pytest.mark.anyio
 

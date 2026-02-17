@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai.runtime._driver import (
+from pydantic_ai.toolsets.code_execution._driver import (
     _build_proxy,  # pyright: ignore[reportPrivateUsage]
     _compile_code,  # pyright: ignore[reportPrivateUsage]
     _execute,  # pyright: ignore[reportPrivateUsage]
@@ -21,7 +21,9 @@ from pydantic_ai.runtime._driver import (
     _transform_last_expr,  # pyright: ignore[reportPrivateUsage]
 )
 
-DRIVER_PATH = Path(__file__).parents[2] / 'pydantic_ai_slim' / 'pydantic_ai' / 'runtime' / '_driver.py'
+DRIVER_PATH = (
+    Path(__file__).parents[2] / 'pydantic_ai_slim' / 'pydantic_ai' / 'toolsets' / 'code_execution' / '_driver.py'
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -483,7 +485,7 @@ def test_transform_last_expr_assignment():
 def test_compile_code_syntax_error(monkeypatch: pytest.MonkeyPatch):
     """_compile_code with invalid code sends error and returns None."""
     messages: list[dict[str, object]] = []
-    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+    monkeypatch.setattr('pydantic_ai.toolsets.code_execution._driver._write_msg', messages.append)
     result = _compile_code('def while', {})
     assert result is None
     assert messages[0]['error_type'] == 'syntax'
@@ -549,7 +551,7 @@ async def test_stdin_reader_result_message():
 async def test_execute_empty_code(monkeypatch: pytest.MonkeyPatch):
     """Empty code sends complete with None."""
     messages: list[dict[str, object]] = []
-    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+    monkeypatch.setattr('pydantic_ai.toolsets.code_execution._driver._write_msg', messages.append)
     reader = asyncio.StreamReader()
     reader.feed_eof()
     await _execute({'code': '', 'functions': []}, reader)
@@ -559,7 +561,7 @@ async def test_execute_empty_code(monkeypatch: pytest.MonkeyPatch):
 async def test_execute_syntax_error(monkeypatch: pytest.MonkeyPatch):
     """Syntax error in code sends error and returns."""
     messages: list[dict[str, object]] = []
-    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+    monkeypatch.setattr('pydantic_ai.toolsets.code_execution._driver._write_msg', messages.append)
     reader = asyncio.StreamReader()
     reader.feed_eof()
     await _execute({'code': 'def while', 'functions': []}, reader)
@@ -569,7 +571,7 @@ async def test_execute_syntax_error(monkeypatch: pytest.MonkeyPatch):
 async def test_execute_runtime_error(monkeypatch: pytest.MonkeyPatch):
     """Runtime error sends error with traceback."""
     messages: list[dict[str, object]] = []
-    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+    monkeypatch.setattr('pydantic_ai.toolsets.code_execution._driver._write_msg', messages.append)
     reader = asyncio.StreamReader()
     reader.feed_eof()
     await _execute({'code': '1 / 0', 'functions': []}, reader)
@@ -580,7 +582,7 @@ async def test_execute_runtime_error(monkeypatch: pytest.MonkeyPatch):
 async def test_execute_runtime_syntax_error(monkeypatch: pytest.MonkeyPatch):
     """SyntaxError at runtime (e.g. eval) is reported as syntax."""
     messages: list[dict[str, object]] = []
-    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+    monkeypatch.setattr('pydantic_ai.toolsets.code_execution._driver._write_msg', messages.append)
     reader = asyncio.StreamReader()
     reader.feed_eof()
     await _execute({'code': 'eval("def while")', 'functions': []}, reader)
@@ -590,7 +592,7 @@ async def test_execute_runtime_syntax_error(monkeypatch: pytest.MonkeyPatch):
 async def test_build_proxy_normal_call(monkeypatch: pytest.MonkeyPatch):
     """Proxy without cache hit creates a pending future and writes call + calls_ready messages."""
     messages: list[dict[str, object]] = []
-    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+    monkeypatch.setattr('pydantic_ai.toolsets.code_execution._driver._write_msg', messages.append)
 
     loop = asyncio.get_running_loop()
     call_counter: list[int] = [0]
@@ -621,7 +623,7 @@ async def test_build_proxy_normal_call(monkeypatch: pytest.MonkeyPatch):
 async def test_build_proxy_batched_calls(monkeypatch: pytest.MonkeyPatch):
     """Two proxy calls without awaiting cancel the first calls_ready handle, emitting only one."""
     messages: list[dict[str, object]] = []
-    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+    monkeypatch.setattr('pydantic_ai.toolsets.code_execution._driver._write_msg', messages.append)
 
     loop = asyncio.get_running_loop()
     call_counter: list[int] = [0]
@@ -705,7 +707,7 @@ async def test_stdin_reader_result_for_done_future():
 async def test_execute_with_function_call(monkeypatch: pytest.MonkeyPatch):
     """_execute with functions builds proxies, calls them, and completes successfully."""
     messages: list[dict[str, object]] = []
-    monkeypatch.setattr('pydantic_ai.runtime._driver._write_msg', messages.append)
+    monkeypatch.setattr('pydantic_ai.toolsets.code_execution._driver._write_msg', messages.append)
 
     reader = asyncio.StreamReader()
 

@@ -17,8 +17,8 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.runtime.docker import DockerRuntime
-from pydantic_ai.toolsets import CodeModeToolset, FunctionToolset
+from pydantic_ai.toolsets import CodeExecutionToolset, FunctionToolset
+from pydantic_ai.toolsets.code_execution.docker import DockerRuntime
 
 from .conftest import _docker_is_available, run_code_with_tools  # pyright: ignore[reportPrivateUsage]
 
@@ -148,7 +148,7 @@ async def test_reference_counting():
 
 
 async def test_agent_auto_lifecycle():
-    """Agent manages DockerRuntime lifecycle through CodeModeToolset."""
+    """Agent manages DockerRuntime lifecycle through CodeExecutionToolset."""
 
     def add(a: int, b: int) -> int:
         """Add two numbers."""
@@ -156,9 +156,7 @@ async def test_agent_auto_lifecycle():
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if not any(isinstance(m, ModelResponse) for m in messages):
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': 'await add(a=2, b=3)'})]
-            )
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'await add(a=2, b=3)'})])
         return ModelResponse(parts=[TextPart('5')])
 
     tools = FunctionToolset(tools=[add])
@@ -166,7 +164,7 @@ async def test_agent_auto_lifecycle():
 
     agent = Agent(
         FunctionModel(model_function),
-        toolsets=[CodeModeToolset(tools, runtime=runtime)],
+        toolsets=[CodeExecutionToolset(tools, runtime=runtime)],
     )
 
     # Runtime has no container before the run

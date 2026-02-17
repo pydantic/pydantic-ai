@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai.runtime.docker import DockerRuntime, DockerSecuritySettings
+from pydantic_ai.toolsets.code_execution.docker import DockerRuntime, DockerSecuritySettings
 
 pytestmark = pytest.mark.anyio
 
@@ -304,7 +304,7 @@ async def test_unmanaged_copy_failure_no_remove(monkeypatch: pytest.MonkeyPatch)
 
 async def test_async_subprocess_driver_read_stderr():
     """_AsyncSubprocessDriver.read_stderr reads from the process stderr pipe."""
-    from pydantic_ai.runtime.docker import _AsyncSubprocessDriver  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.toolsets.code_execution.docker import _AsyncSubprocessDriver  # pyright: ignore[reportPrivateUsage]
 
     proc = AsyncMock()
     proc.stderr = AsyncMock()

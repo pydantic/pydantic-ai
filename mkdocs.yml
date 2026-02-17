@@ -47,7 +47,7 @@ nav:
           - common-tools.md
           - third-party-tools.md
       - Advanced Features:
-          - Code Mode: code-mode.md
+          - Code Execution: code-execution.md
           - input.md
           - thinking.md
           - retries.md

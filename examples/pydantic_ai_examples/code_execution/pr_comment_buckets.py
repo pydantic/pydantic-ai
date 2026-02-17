@@ -14,7 +14,7 @@ Requires:
     GITHUB_PERSONAL_ACCESS_TOKEN environment variable.
 
 Run:
-    uv run -m pydantic_ai_examples.code_mode.pr_comment_buckets
+    uv run -m pydantic_ai_examples.code_execution.pr_comment_buckets
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 from pydantic_ai.messages import ModelResponse, RetryPromptPart
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.runtime.monty import MontyRuntime
-from pydantic_ai.toolsets.code_mode import CodeModeToolset
+from pydantic_ai.toolsets.code_execution import CodeExecutionToolset
+from pydantic_ai.toolsets.code_execution.monty import MontyRuntime
 
 # =============================================================================
 # Configuration
@@ -101,8 +101,8 @@ def create_tool_calling_agent(github: MCPServerStreamableHTTP) -> Agent[None, st
 def create_code_mode_agent(github: MCPServerStreamableHTTP) -> Agent[None, str]:
     """Create agent with CodeMode (tools as Python functions)."""
     runtime = MontyRuntime()
-    code_toolset: CodeModeToolset[None] = CodeModeToolset(
-        wrapped=github,
+    code_toolset: CodeExecutionToolset[None] = CodeExecutionToolset(
+        github,
         max_retries=MAX_RETRIES,
         runtime=runtime,
     )

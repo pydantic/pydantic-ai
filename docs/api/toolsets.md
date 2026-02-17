@@ -14,12 +14,12 @@
         - PreparedToolset
         - WrapperToolset
         - ToolsetFunc
-        - CodeModeToolset
+        - CodeExecutionToolset
 
-::: pydantic_ai.toolsets.code_mode
+::: pydantic_ai.toolsets.code_execution
     options:
         members:
         - DescriptionFunc
-        - build_default_code_mode_description
+        - build_default_description
 
 ::: pydantic_ai.toolsets.fastmcp

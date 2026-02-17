@@ -1,7 +1,7 @@
-"""End-to-end integration tests: Agent + CodeModeToolset + FunctionModel.
+"""End-to-end integration tests: Agent + CodeExecutionToolset + FunctionModel.
 
 Validates the full pipeline including how the agent loop interacts with
-code mode tool routing, tool execution, and result handling.
+code execution tool routing, tool execution, and result handling.
 """
 
 from __future__ import annotations
@@ -26,10 +26,10 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
 try:
-    from pydantic_ai.runtime import monty  # pyright: ignore[reportUnusedImport] # noqa: F401
+    from pydantic_ai.toolsets.code_execution import monty as _monty  # pyright: ignore[reportUnusedImport] # noqa: F401
 except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic-monty is not installed', allow_module_level=True)
-from pydantic_ai.toolsets.code_mode import CodeModeToolset
+from pydantic_ai.toolsets.code_execution import CodeExecutionToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 
 from ..conftest import IsDatetime, IsStr
@@ -63,7 +63,7 @@ async def test_agent_single_tool_call():
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='run_code_with_tools',
+                        tool_name='run_code',
                         args={'code': 'await get_weather(city="Paris")'},
                     )
                 ]
@@ -73,7 +73,7 @@ async def test_agent_single_tool_call():
 
     agent = Agent(
         FunctionModel(model_function),
-        toolsets=[CodeModeToolset(_make_toolset())],
+        toolsets=[CodeExecutionToolset(_make_toolset())],
     )
     result = await agent.run('What is the weather in Paris?')
     assert result.output == 'The weather in Paris is sunny at 20 degrees.'
@@ -88,12 +88,12 @@ async def test_agent_multiple_tool_calls():
 w = await get_weather(city="London")
 total = await add(x=w["temp"], y=5)
 {"adjusted_temp": total, "city": w["city"]}"""
-            return ModelResponse(parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': code})])
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code})])
         return ModelResponse(parts=[TextPart('London is 25 degrees adjusted.')])
 
     agent = Agent(
         FunctionModel(model_function),
-        toolsets=[CodeModeToolset(_make_toolset())],
+        toolsets=[CodeExecutionToolset(_make_toolset())],
     )
     result = await agent.run('Adjusted temp for London?')
     assert result.output == 'London is 25 degrees adjusted.'
@@ -110,12 +110,12 @@ f2 = get_weather(city="Tokyo")
 r1 = await f1
 r2 = await f2
 [r1["city"], r2["city"]]"""
-            return ModelResponse(parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': code})])
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code})])
         return ModelResponse(parts=[TextPart('Got weather for both cities.')])
 
     agent = Agent(
         FunctionModel(model_function),
-        toolsets=[CodeModeToolset(_make_toolset())],
+        toolsets=[CodeExecutionToolset(_make_toolset())],
     )
     result = await agent.run('Weather in Paris and Tokyo?')
     assert result.output == 'Got weather for both cities.'
@@ -130,18 +130,16 @@ async def test_agent_code_error_triggers_retry():
         call_count += 1
         if call_count == 1:
             # First attempt: bad code
-            return ModelResponse(parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': '1 / 0'})])
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': '1 / 0'})])
         if call_count == 2:
             # Second attempt after retry: good code
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': 'await add(x=1, y=2)'})]
-            )
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'await add(x=1, y=2)'})])
         # Final: return text
         return ModelResponse(parts=[TextPart('The answer is 3.')])
 
     agent = Agent(
         FunctionModel(model_function),
-        toolsets=[CodeModeToolset(_make_toolset())],
+        toolsets=[CodeExecutionToolset(_make_toolset())],
     )
     result = await agent.run('Add 1 and 2')
     assert result.output == 'The answer is 3.'
@@ -149,7 +147,7 @@ async def test_agent_code_error_triggers_retry():
 
 
 async def test_concurrent_agent_runs_on_shared_toolset():
-    """Two concurrent agent.run() calls sharing a CodeModeToolset produce correct independent results."""
+    """Two concurrent agent.run() calls sharing a CodeExecutionToolset produce correct independent results."""
 
     def add(x: int, y: int) -> int:
         return x + y
@@ -161,20 +159,16 @@ async def test_concurrent_agent_runs_on_shared_toolset():
     toolset.add_function(add, takes_ctx=False)
     toolset.add_function(mul, takes_ctx=False)
 
-    shared_toolset = CodeModeToolset(toolset)
+    shared_toolset = CodeExecutionToolset(toolset)
 
     def add_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if not any(isinstance(m, ModelResponse) for m in messages):
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': 'await add(x=1, y=2)'})]
-            )
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'await add(x=1, y=2)'})])
         return ModelResponse(parts=[TextPart('3')])
 
     def mul_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if not any(isinstance(m, ModelResponse) for m in messages):
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name='run_code_with_tools', args={'code': 'await mul(x=3, y=4)'})]
-            )
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'await mul(x=3, y=4)'})])
         return ModelResponse(parts=[TextPart('12')])
 
     agent_add = Agent(FunctionModel(add_model), toolsets=[shared_toolset])
@@ -196,7 +190,7 @@ async def test_concurrent_agent_runs_on_shared_toolset():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='run_code_with_tools',
+                        tool_name='run_code',
                         args={'code': 'await add(x=1, y=2)'},
                         tool_call_id=IsStr(),
                     )
@@ -209,7 +203,7 @@ async def test_concurrent_agent_runs_on_shared_toolset():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='run_code_with_tools',
+                        tool_name='run_code',
                         content=3,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -237,7 +231,7 @@ async def test_concurrent_agent_runs_on_shared_toolset():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='run_code_with_tools',
+                        tool_name='run_code',
                         args={'code': 'await mul(x=3, y=4)'},
                         tool_call_id=IsStr(),
                     )
@@ -250,7 +244,7 @@ async def test_concurrent_agent_runs_on_shared_toolset():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
-                        tool_name='run_code_with_tools',
+                        tool_name='run_code',
                         content=12,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -268,3 +262,19 @@ async def test_concurrent_agent_runs_on_shared_toolset():
             ),
         ]
     )
+
+
+async def test_agent_no_toolset_pure_code_execution():
+    """Agent with CodeExecutionToolset() and no wrapped toolset executes pure Python."""
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(m, ModelResponse) for m in messages):
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': '2 ** 10'})])
+        return ModelResponse(parts=[TextPart('1024')])
+
+    agent = Agent(
+        FunctionModel(model_function),
+        toolsets=[CodeExecutionToolset()],
+    )
+    result = await agent.run('What is 2^10?')
+    assert result.output == '1024'

@@ -1,29 +1,33 @@
+"""Backward-compatible re-exports — use `pydantic_ai.toolsets.code_execution` instead."""
+
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
-
-from typing_extensions import assert_never
-
-from ._transport import DriverBasedRuntime, DriverTransport
-from .abstract import (
+from pydantic_ai.toolsets.code_execution import (
     CodeExecutionError,
     CodeExecutionTimeout,
     CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
     CodeTypingError,
+    DockerRuntime,
+    DockerSecuritySettings,
+    DriverBasedRuntime,
+    DriverTransport,
     FunctionCall,
+    RuntimeName,
     ToolCallback,
+    get_runtime,
 )
-from .docker import DockerRuntime, DockerSecuritySettings
 
 try:
-    from .monty import MontyRuntime
+    from pydantic_ai.toolsets.code_execution.monty import MontyRuntime
 except ImportError:
     pass
 
+from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
-    from .monty import MontyRuntime
+    from pydantic_ai.toolsets.code_execution.monty import MontyRuntime
 
 __all__ = (
     'CodeExecutionError',
@@ -38,19 +42,7 @@ __all__ = (
     'DriverTransport',
     'FunctionCall',
     'MontyRuntime',
+    'RuntimeName',
     'ToolCallback',
+    'get_runtime',
 )
-
-
-RuntimeName = Literal['monty', 'docker']
-
-
-def get_runtime(name: RuntimeName) -> CodeRuntime:
-    if name == 'monty':
-        from .monty import MontyRuntime
-
-        return MontyRuntime()
-    elif name == 'docker':
-        return DockerRuntime()
-    else:
-        assert_never(name)

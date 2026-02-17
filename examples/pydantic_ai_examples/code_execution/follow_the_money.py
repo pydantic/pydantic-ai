@@ -1,6 +1,6 @@
-"""CodeMode Example: Fraud Ring Detection via Transaction Graph Traversal.
+"""Code Execution Example: Fraud Ring Detection via Transaction Graph Traversal.
 
-This example demonstrates where code mode doesn't just reduce roundtrips — it makes
+This example demonstrates where code execution doesn't just reduce roundtrips — it makes
 the task qualitatively easier to solve correctly. The scenario: given a flagged account,
 trace money flows through a layered transaction network, identify convergence points
 (accounts receiving funds from multiple upstream sources), and rank suspects.
@@ -19,11 +19,11 @@ With traditional tool calling, the LLM must:
 - Mentally track visited accounts, running totals, and source sets across ~100 calls
 - All of this correctly across 3 hops, ~15 accounts, and ~45 transactions
 
-With code mode, the LLM writes a BFS loop with a while-page loop inside, does
+With code execution, the LLM writes a BFS loop with a while-page loop inside, does
 `amount * rate` inline, expands batches in a for-loop, and returns a summary.
 
 Run:
-    uv run -m pydantic_ai_examples.code_mode.follow_the_money
+    uv run -m pydantic_ai_examples.code_execution.follow_the_money
 """
 
 from __future__ import annotations
@@ -37,9 +37,9 @@ import logfire
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, RetryPromptPart
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.runtime.monty import MontyRuntime
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.toolsets.code_mode import CodeModeToolset
+from pydantic_ai.toolsets.code_execution import CodeExecutionToolset
+from pydantic_ai.toolsets.code_execution.monty import MontyRuntime
 
 # =============================================================================
 # Configuration
@@ -1434,11 +1434,11 @@ def create_tool_calling_agent(toolset: FunctionToolset[None]) -> Agent[None, str
     return Agent(MODEL, toolsets=[toolset], system_prompt=SYSTEM_PROMPT)
 
 
-def create_code_mode_agent(toolset: FunctionToolset[None]) -> Agent[None, str]:
-    """Create agent with CodeMode (tools as Python functions)."""
+def create_code_execution_agent(toolset: FunctionToolset[None]) -> Agent[None, str]:
+    """Create agent with code execution (tools as Python functions)."""
     runtime = MontyRuntime()
-    code_toolset: CodeModeToolset[None] = CodeModeToolset(
-        wrapped=toolset,
+    code_toolset: CodeExecutionToolset[None] = CodeExecutionToolset(
+        toolset,
         max_retries=MAX_RETRIES,
         runtime=runtime,
     )
@@ -1509,17 +1509,17 @@ async def run_tool_calling(toolset: FunctionToolset[None]) -> RunMetrics:
     return extract_metrics(result, 'tool_calling')
 
 
-async def run_code_mode(toolset: FunctionToolset[None]) -> RunMetrics:
-    """Run with CodeMode tool calling."""
+async def run_code_execution(toolset: FunctionToolset[None]) -> RunMetrics:
+    """Run with code execution tool calling."""
     global _flagged_accounts
     _flagged_accounts = []
 
-    with logfire.span('code_mode_tool_calling'):
-        agent = create_code_mode_agent(toolset)
+    with logfire.span('code_execution_tool_calling'):
+        agent = create_code_execution_agent(toolset)
         code_toolset = agent.toolsets[0]
         async with code_toolset:
             result = await agent.run(PROMPT)
-    return extract_metrics(result, 'code_mode')
+    return extract_metrics(result, 'code_execution')
 
 
 # =============================================================================
@@ -1573,7 +1573,7 @@ def log_metrics(metrics: RunMetrics) -> None:
 
 
 async def main() -> None:
-    logfire.configure(service_name='code-mode-follow-the-money')
+    logfire.configure(service_name='code-execution-follow-the-money')
     logfire.instrument_pydantic_ai()
 
     toolset = create_toolset()
@@ -1589,10 +1589,10 @@ async def main() -> None:
     # log_metrics(trad)
     # verify_results('tool_calling')
 
-    with logfire.span('demo_code_mode'):
-        code = await run_code_mode(toolset)
+    with logfire.span('demo_code_execution'):
+        code = await run_code_execution(toolset)
     log_metrics(code)
-    verify_results('code_mode')
+    verify_results('code_execution')
 
     print('View traces: https://logfire.pydantic.dev')
 
