@@ -5222,6 +5222,12 @@ class TestSdkVersion:
             snapshot('[1, 2]\n[File: image/png]'),
             id='list_str_with_files',
         ),
+        pytest.param(
+            '',
+            [],
+            snapshot(''),
+            id='empty_no_files',
+        ),
     ],
 )
 def test_tool_return_output_edge_cases(model_response_str: str, files: list[BinaryContent], expected: str):

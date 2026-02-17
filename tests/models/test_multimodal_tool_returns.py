@@ -517,7 +517,7 @@ async def test_multimodal_tool_return_matrix(
         result = await agent.run(prompt, usage_limits=UsageLimits(output_tokens_limit=100000))
         assert result.output, 'Expected non-empty response from model'
         assert_multimodal_result(result.all_messages(), file_type, return_style)
-        if pattern := get_cassette_pattern(provider, file_type, content_source):
+        if pattern := get_cassette_pattern(provider, file_type, content_source):  # pragma: no branch
             cassette_ctx.verify_contains(pattern)
         if SUPPORT_MATRIX[(provider, file_type)] == 'as_user_content' and return_style == 'direct':
             cassette_ctx.verify_contains('See file')
