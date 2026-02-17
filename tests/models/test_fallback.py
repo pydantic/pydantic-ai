@@ -1522,7 +1522,7 @@ async def test_fallback_streaming_rewind_without_trailing_request() -> None:
             parts=[TextPart('paused')],
             state='suspended',
             finish_reason='incomplete',
-            provider_details={'fallback_model_name': 'primary'},
+            metadata={'__pydantic_ai__': {'fallback_model_name': 'primary'}},
         ),
     ]
 
@@ -1564,7 +1564,7 @@ async def test_fallback_streaming_rewind_with_extra_trailing_request() -> None:
             parts=[TextPart('paused')],
             state='suspended',
             finish_reason='incomplete',
-            provider_details={'fallback_model_name': 'primary'},
+            metadata={'__pydantic_ai__': {'fallback_model_name': 'primary'}},
         ),
         ModelRequest(parts=[]),
         ModelRequest(parts=[]),
@@ -1581,7 +1581,7 @@ async def test_fallback_streaming_rewind_with_extra_trailing_request() -> None:
 
 
 async def test_fallback_continuation_without_stamp_falls_through() -> None:
-    """When state='suspended' but provider_details lacks fallback_model_name,
+    """When state='suspended' but metadata lacks fallback_model_name,
     normal fallback chain is used (no pinning)."""
     call_count = 0
 
@@ -1593,7 +1593,7 @@ async def test_fallback_continuation_without_stamp_falls_through() -> None:
     primary_model = FunctionModel(primary, model_name='primary')
     model = FallbackModel(primary_model)
 
-    # Manually construct messages with state but no fallback_model_name stamp
+    # Manually construct messages with state but no fallback_model_name in metadata
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='test')]),
         ModelResponse(parts=[TextPart('incomplete')], state='suspended'),
@@ -1624,7 +1624,7 @@ async def test_fallback_continuation_with_unknown_model_falls_through() -> None:
         ModelResponse(
             parts=[TextPart('incomplete')],
             state='suspended',
-            provider_details={'fallback_model_name': 'nonexistent-model'},
+            metadata={'__pydantic_ai__': {'fallback_model_name': 'nonexistent-model'}},
         ),
         ModelRequest(parts=[]),
     ]
@@ -1634,8 +1634,8 @@ async def test_fallback_continuation_with_unknown_model_falls_through() -> None:
     assert result.parts[0].content == 'primary response'  # type: ignore[union-attr]
 
 
-def test_fallback_stamp_with_existing_provider_details() -> None:
-    """When model response already has provider_details, the stamp merges into existing dict."""
+def test_fallback_stamp_with_existing_metadata() -> None:
+    """When model response already has provider_details, the stamp is stored in metadata, not provider_details."""
     call_count = 0
 
     def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1657,15 +1657,15 @@ def test_fallback_stamp_with_existing_provider_details() -> None:
     result = agent.run_sync('test')
     assert result.output == 'pauseddone'
     assert call_count == 2
-    # The merged response uses fields from the final (non-continuation) response,
-    # which has no provider_details
+    # The merged response uses fields from the final (non-continuation) response.
+    # provider_details should not contain fallback routing state.
     continuation_msg = result.all_messages()[1]
     assert isinstance(continuation_msg, ModelResponse)
     assert continuation_msg.provider_details is None
 
 
-async def test_fallback_stream_stamp_with_existing_provider_details() -> None:
-    """When streamed response already has provider_details, the stamp merges into existing dict."""
+async def test_fallback_stream_stamp_with_existing_metadata() -> None:
+    """When streamed response already has provider_details, the stamp goes into metadata, not provider_details."""
 
     async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         yield 'hello'
@@ -1685,6 +1685,6 @@ async def test_fallback_stream_stamp_with_existing_provider_details() -> None:
             pass
 
     assert streamed_response.state == 'suspended'
-    assert streamed_response.provider_details == snapshot(
-        {'existing_key': 'existing_value', 'fallback_model_name': 'primary'}
-    )
+    # Fallback routing info goes in metadata, not provider_details
+    assert streamed_response.provider_details == snapshot({'existing_key': 'existing_value'})
+    assert streamed_response.metadata == snapshot({'__pydantic_ai__': {'fallback_model_name': 'primary'}})

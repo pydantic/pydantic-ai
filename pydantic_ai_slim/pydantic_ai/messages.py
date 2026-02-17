@@ -117,14 +117,16 @@ indicating the response content is not final. Whether the agent should automatic
 is determined by `ModelResponse.state`, not by this field.
 """
 
-ModelResponseState: TypeAlias = Literal['complete', 'suspended', 'interrupted', 'incomplete']
+ModelResponseState: TypeAlias = Literal['complete', 'suspended']
 """The state of a model response, indicating whether the response is final or requires further action.
 
 - `'complete'` — The response is done. This is the default state.
 - `'suspended'` — The model paused mid-turn and expects a continuation request.
   Used by Anthropic `pause_turn` and OpenAI background mode.
-- `'interrupted'` — Reserved for future use: user-initiated cancellation.
-- `'incomplete'` — Reserved for future use: model-side truncation.
+
+Additional states may be added in the future, e.g.:
+- User-initiated cancellation (see https://github.com/pydantic/pydantic-ai/issues/3268)
+- Model-side truncation (see https://github.com/pydantic/pydantic-ai/issues/3268)
 """
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
@@ -1365,11 +1367,6 @@ class ModelResponse:
       The agent graph will automatically send a continuation request.
       Set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
       or return background/async responses (e.g. OpenAI background mode).
-    - `'interrupted'` — Reserved for future use: user-initiated cancellation.
-    - `'incomplete'` — Reserved for future use: model-side truncation.
-
-    Note: `finish_reason='incomplete'` is informational only — it indicates the
-    response content is not final, but does NOT by itself trigger continuation.
     """
 
     run_id: str | None = None

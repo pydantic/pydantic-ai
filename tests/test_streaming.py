@@ -2369,7 +2369,7 @@ async def test_iter_stream_output():
 @pytest.mark.filterwarnings(
     'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
 )
-async def test_continuation_node_cached_run_reused_with_builtin_events() -> None:
+async def test_continue_request_node_cached_run_reused() -> None:
     request_calls = 0
 
     def continuation_with_builtin_events(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -2379,7 +2379,9 @@ async def test_continuation_node_cached_run_reused_with_builtin_events() -> None
             return ModelResponse(parts=[TextPart('paused')], state='suspended', finish_reason='incomplete')
         if request_calls == 2:
             return ModelResponse(
-                parts=[BuiltinToolCallPart(tool_name='web_search', args={'query': 'latest weather'}, tool_call_id='w_1')],
+                parts=[
+                    BuiltinToolCallPart(tool_name='web_search', args={'query': 'latest weather'}, tool_call_id='w_1')
+                ],
                 state='suspended',
                 finish_reason='incomplete',
             )
@@ -2389,7 +2391,8 @@ async def test_continuation_node_cached_run_reused_with_builtin_events() -> None
 
     async with agent.iter('test continuation cache') as run:
         node = run.next_node
-        while not Agent.is_continuation_node(node):
+        while not Agent.is_continue_request_node(node):
+            assert not Agent.is_end_node(node)
             node = await run.next(node)
 
         primed_next_node = await node.run(run.ctx)

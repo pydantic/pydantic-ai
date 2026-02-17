@@ -51,7 +51,7 @@ __all__ = (
     'UserPromptNode',
     'ModelRequestNode',
     'CallToolsNode',
-    'ContinuationNode',
+    'ContinueRequestNode',
     'build_run_context',
     'capture_run_messages',
     'HistoryProcessor',
@@ -63,7 +63,7 @@ S = TypeVar('S')
 NoneType = type(None)
 EndStrategy = Literal['early', 'exhaustive']
 
-MAX_CONTINUATIONS = 50
+_MAX_CONTINUATIONS = 50
 """Maximum number of continuations allowed for incomplete responses (e.g., Anthropic pause_turn)."""
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -84,17 +84,6 @@ HistoryProcessor = (
 
 Can optionally accept a `RunContext` as a parameter.
 """
-
-
-def _builtin_tool_events(
-    parts: Sequence[_messages.ModelResponsePart],
-) -> Iterator[_messages.HandleResponseEvent]:
-    """Yield builtin tool call/result events from response parts."""
-    for part in parts:
-        if isinstance(part, _messages.BuiltinToolCallPart):
-            yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
-        elif isinstance(part, _messages.BuiltinToolReturnPart):
-            yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -601,7 +590,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     _events_iterator: AsyncIterator[_messages.HandleResponseEvent] | None = field(default=None, init=False, repr=False)
     _next_node: (
         ModelRequestNode[DepsT, NodeRunEndT]
-        | ContinuationNode[DepsT, NodeRunEndT]
+        | ContinueRequestNode[DepsT, NodeRunEndT]
         | End[result.FinalResult[NodeRunEndT]]
         | None
     ) = field(default=None, init=False, repr=False)
@@ -610,7 +599,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> (
         ModelRequestNode[DepsT, NodeRunEndT]
-        | ContinuationNode[DepsT, NodeRunEndT]
+        | ContinueRequestNode[DepsT, NodeRunEndT]
         | End[result.FinalResult[NodeRunEndT]]
     ):
         async with self.stream(ctx):
@@ -642,12 +631,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 if self.model_response.state == 'suspended':
                     # Some providers (e.g. Anthropic pause_turn, OpenAI background mode) pause mid-turn
                     # and expect us to continue.
-                    # Yield events for any builtin tool calls/results already in the response,
-                    # so stream consumers (UI, logging) can observe server-side tool activity.
-                    for event in _builtin_tool_events(self.model_response.parts):
-                        yield event
-
-                    self._next_node = ContinuationNode[DepsT, NodeRunEndT](self.model_response)
+                    self._next_node = ContinueRequestNode[DepsT, NodeRunEndT](self.model_response)
                     return
 
                 if not self.model_response.parts:
@@ -874,7 +858,7 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
 
 
 @dataclasses.dataclass
-class ContinuationNode(AgentNode[DepsT, NodeRunEndT]):
+class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """A node that polls the model for continuation responses until the response is complete.
 
     This handles providers that pause mid-turn (e.g. Anthropic `pause_turn`, OpenAI background mode)
@@ -916,22 +900,21 @@ class ContinuationNode(AgentNode[DepsT, NodeRunEndT]):
 
         while True:
             ctx.state.continuations += 1
-            if ctx.state.continuations > MAX_CONTINUATIONS:
+            if ctx.state.continuations > _MAX_CONTINUATIONS:
                 raise exceptions.UnexpectedModelBehavior(
-                    f'Exceeded maximum continuations ({MAX_CONTINUATIONS}) for incomplete responses'
+                    f'Exceeded maximum continuations ({_MAX_CONTINUATIONS}) for incomplete responses'
                 )
-
-            # Build temporary message list: current history + empty request for the model
-            # The empty request is NOT stored in state.message_history
-            temp_messages: list[_messages.ModelMessage] = [*ctx.state.message_history, _messages.ModelRequest(parts=[])]
-            temp_messages = _clean_message_history(temp_messages)
 
             model_request_parameters = await _prepare_request_parameters(ctx)
             model_settings = ctx.deps.model_settings
             run_context = build_run_context(ctx)
 
+            # Continuations always use non-streaming request(), even when the original run used run_stream().
+            # Streaming continuations could be added in the future if needed.
             with set_current_run_context(run_context):
-                new_response = await ctx.deps.model.request(temp_messages, model_settings, model_request_parameters)
+                new_response = await ctx.deps.model.request(
+                    ctx.state.message_history, model_settings, model_request_parameters
+                )
             ctx.state.usage.requests += 1
 
             # Track usage
@@ -943,18 +926,18 @@ class ContinuationNode(AgentNode[DepsT, NodeRunEndT]):
             merged_response = self._merge_response(merged_response, new_response)
             merged_response.run_id = merged_response.run_id or ctx.state.run_id
 
-            # Replace state.message_history[-1] with the merged response
+            # Intentionally replace the last message in-place: the suspended ModelResponse in message_history
+            # is progressively updated as continuation responses are merged, so users inspecting
+            # message_history after the run see the final merged response rather than each intermediate one.
             ctx.state.message_history[-1] = merged_response
 
             # If the new response no longer expects continuation, we're done
             if new_response.state != 'suspended':
                 break
 
-            # Yield builtin tool events for intermediate responses
-            for event in _builtin_tool_events(new_response.parts):
-                yield event
-
         self._result = CallToolsNode(merged_response)
+        return
+        yield  # pragma: no cover — makes Python treat this as an async generator
 
     @staticmethod
     def _merge_response(existing: _messages.ModelResponse, new: _messages.ModelResponse) -> _messages.ModelResponse:
@@ -971,7 +954,9 @@ class ContinuationNode(AgentNode[DepsT, NodeRunEndT]):
         ):
             return new
 
-        # Different model → replace (accumulating parts from different models is always wrong)
+        # Different model → replace (accumulating parts from different models is always wrong).
+        # When either model_name is None/empty, we fall through to accumulation — this is intentional
+        # because providers may not always populate model_name on continuation responses.
         if existing.model_name and new.model_name and existing.model_name != new.model_name:
             return new
 
@@ -1507,7 +1492,7 @@ def build_agent_graph(
         g.node(UserPromptNode[DepsT, OutputT]),
         g.node(ModelRequestNode[DepsT, OutputT]),
         g.node(CallToolsNode[DepsT, OutputT]),
-        g.node(ContinuationNode[DepsT, OutputT]),
+        g.node(ContinueRequestNode[DepsT, OutputT]),
         g.node(
             SetFinalResult[DepsT, OutputT],
         ),

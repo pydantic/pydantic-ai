@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..messages import ModelMessage
     from ..settings import ModelSettings
 
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 _FALLBACK_MODEL_NAME_KEY = 'fallback_model_name'
 
 
@@ -198,14 +199,15 @@ class FallbackModel(Model):
         """Find the model that should handle continuation from message history.
 
         When a model returns `state='suspended'`, its `model_name` is stamped into
-        the response's `provider_details`. On the next request, we extract that name and
-        match it back to the correct model in `self.models`.
+        the response's `metadata` (under a `__pydantic_ai__` key). On the next request,
+        we extract that name and match it back to the correct model in `self.models`.
         """
         for message in reversed(messages):
             if isinstance(message, ModelResponse):
                 if message.state != 'suspended':
                     return None
-                name = (message.provider_details or {}).get(_FALLBACK_MODEL_NAME_KEY)
+                pydantic_ai_meta = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY, {})
+                name = pydantic_ai_meta.get(_FALLBACK_MODEL_NAME_KEY)
                 if name:
                     for model in self.models:
                         if model.model_name == name:
@@ -228,10 +230,15 @@ class FallbackModel(Model):
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:
-    """Stamp the model's name into provider_details for stateless continuation routing."""
-    if response.provider_details is None:
-        response.provider_details = {}
-    response.provider_details[_FALLBACK_MODEL_NAME_KEY] = model.model_name
+    """Stamp the model's name into metadata for stateless continuation routing.
+
+    Uses `metadata['__pydantic_ai__']` to avoid conflating framework-level routing state
+    with provider-specific data in `provider_details`.
+    """
+    if response.metadata is None:
+        response.metadata = {}
+    pydantic_ai_meta = response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})
+    pydantic_ai_meta[_FALLBACK_MODEL_NAME_KEY] = model.model_name
 
 
 def _rewind_messages(messages: list[ModelMessage]) -> list[ModelMessage]:

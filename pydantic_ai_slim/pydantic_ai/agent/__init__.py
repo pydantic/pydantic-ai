@@ -30,7 +30,7 @@ from .. import (
 )
 from .._agent_graph import (
     CallToolsNode,
-    ContinuationNode,
+    ContinueRequestNode,
     EndStrategy,
     HistoryProcessor,
     ModelRequestNode,
@@ -87,7 +87,7 @@ __all__ = (
     'capture_run_messages',
     'EndStrategy',
     'CallToolsNode',
-    'ContinuationNode',
+    'ContinueRequestNode',
     'ModelRequestNode',
     'UserPromptNode',
     'InstrumentationSettings',

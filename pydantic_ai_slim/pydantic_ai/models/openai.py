@@ -474,10 +474,11 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     openai_background: bool
     """Enable background mode for long-running requests.
 
-    When enabled, passes `background=True` to the Responses API. If the response
-    status is `'queued'` or `'in_progress'`, it maps to `finish_reason='incomplete'`
-    and sets `state='suspended'`, triggering the agent's continuation loop
-    which polls via `retrieve()`.
+    When enabled, this setting both passes `background=True` to the Responses API
+    **and** opts into automatic polling for completion. If the response status is
+    `'queued'` or `'in_progress'`, it maps to `finish_reason='incomplete'` and sets
+    `state='suspended'`, triggering the agent's `ContinueRequestNode` loop which
+    polls via `retrieve()`.
     """
 
     openai_background_poll_interval: float
@@ -1383,7 +1384,10 @@ class OpenAIResponsesModel(Model):
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
-        # Background mode continuation: retrieve the pending response instead of creating a new one
+        # Background mode continuation: retrieve the pending response instead of creating a new one.
+        # Polling is done at the graph level (via ContinueRequestNode) rather than in a tight loop here,
+        # so that each poll round-trip is visible to the agent graph lifecycle (usage tracking, durable
+        # execution checkpoints, etc.).
         if response_id := self._get_continuation_response_id(messages, settings):
             poll_interval = settings.get('openai_background_poll_interval', 1.0)
             await asyncio.sleep(poll_interval)
@@ -1412,7 +1416,10 @@ class OpenAIResponsesModel(Model):
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
-        # Background mode continuation: retrieve the pending response instead of creating a new one
+        # Background mode continuation: retrieve the pending response instead of creating a new one.
+        # Polling is done at the graph level (via ContinueRequestNode) rather than in a tight loop here,
+        # so that each poll round-trip is visible to the agent graph lifecycle (usage tracking, durable
+        # execution checkpoints, etc.).
         if response_id := self._get_continuation_response_id(messages, settings):
             poll_interval = settings.get('openai_background_poll_interval', 1.0)
             await asyncio.sleep(poll_interval)

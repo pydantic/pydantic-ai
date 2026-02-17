@@ -357,7 +357,7 @@ async def test_pause_turn_web_search_vcr(allow_model_requests: None, anthropic_a
 
     result = await agent.run(prompt)
 
-    # With ContinuationNode, pause_turn responses are merged into the final response
+    # With ContinueRequestNode, pause_turn responses are merged into the final response
     # and no longer appear as separate messages in the history.
     # Verify the agent completed successfully (which exercises the continuation path).
     assert result.output

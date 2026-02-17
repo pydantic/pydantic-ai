@@ -159,7 +159,7 @@ _(This example is complete, it can be run "as is")_
 !!! note "Anthropic Pause Turn"
     When using server-side tools like web search or skills, Anthropic may pause mid-turn and return
     a `pause_turn` stop reason. Pydantic AI handles this automatically by continuing the conversation
-    with a follow-up request (up to 5 times per run). See the
+    with follow-up requests (up to 50 continuations per run). See the
     [Anthropic provider docs](models/anthropic.md#pause-turn-handling) for details.
 
 ## Code Execution Tool
