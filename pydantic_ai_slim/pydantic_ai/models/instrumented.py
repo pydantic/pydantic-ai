@@ -26,6 +26,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from .. import _otel_messages
 from .._run_context import RunContext
 from ..messages import (
+    BaseToolCallPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -353,6 +354,27 @@ GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
 GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
 
 
+def _annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:
+    """Copy OTel-relevant metadata from tool definitions onto matching tool call parts.
+
+    This allows tool definition metadata (e.g. code language hints set by CodeModeToolset)
+    to flow through to OTel events on both the model request span and the agent run span.
+    """
+    tool_defs = parameters.tool_defs
+    if not tool_defs:
+        return
+    for part in response.parts:
+        if isinstance(part, BaseToolCallPart) and (tool_def := tool_defs.get(part.tool_name)):
+            if tool_def.metadata:
+                otel_metadata: _otel_messages.ToolCallPartOtelMetadata = {}
+                if code_arg_name := tool_def.metadata.get('code_arg_name'):
+                    otel_metadata['code_arg_name'] = code_arg_name
+                if code_arg_language := tool_def.metadata.get('code_arg_language'):
+                    otel_metadata['code_arg_language'] = code_arg_language
+                if otel_metadata:
+                    part.otel_metadata = otel_metadata
+
+
 def _build_tool_definitions(model_request_parameters: ModelRequestParameters) -> list[dict[str, Any]]:
     """Build OTel-compliant tool definitions from model request parameters.
 
@@ -406,6 +428,7 @@ class InstrumentedModel(WrapperModel):
         )
         with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
             response = await self.wrapped.request(messages, model_settings, model_request_parameters)
+            _annotate_tool_call_otel_metadata(response, prepared_parameters)
             finish(response, prepared_parameters)
             return response
 
@@ -430,7 +453,9 @@ class InstrumentedModel(WrapperModel):
                     yield response_stream
             finally:
                 if response_stream:  # pragma: no branch
-                    finish(response_stream.get(), prepared_parameters)
+                    response = response_stream.get()
+                    _annotate_tool_call_otel_metadata(response, prepared_parameters)
+                    finish(response, prepared_parameters)
 
     @contextmanager
     def _instrument(

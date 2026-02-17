@@ -240,6 +240,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     name=_CODE_MODE_TOOL_NAME,
                     parameters_json_schema=_CODE_JSON_SCHEMA,
                     description=tool_description,
+                    metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
                 ),
                 max_retries=self.max_retries,
                 args_validator=cast(SchemaValidatorProt, _CODE_VALIDATOR),
