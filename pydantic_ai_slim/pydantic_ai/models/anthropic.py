@@ -386,6 +386,14 @@ class AnthropicModel(Model):
             thinking_config = self._resolve_thinking_config(merged_settings)
             if thinking_config is not None:
                 merged_settings['anthropic_thinking'] = thinking_config
+                # For adaptive models, map unified thinking_effort → anthropic_effort
+                # so _build_output_config doesn't need to re-resolve thinking.
+                if (
+                    thinking_config.get('type') == 'adaptive'
+                    and 'anthropic_effort' not in merged_settings
+                    and (effort := merged_settings.get('thinking_effort'))
+                ):
+                    merged_settings['anthropic_effort'] = effort
 
         thinking_config = merged_settings.get('anthropic_thinking')
         if (
@@ -1189,12 +1197,6 @@ class AnthropicModel(Model):
             output_format = {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
 
         effort = model_settings.get('anthropic_effort')
-
-        # For adaptive models, map unified thinking_effort to output_config.effort
-        if effort is None and AnthropicModelProfile.from_profile(self.profile).anthropic_supports_adaptive_thinking:
-            resolved = resolve_with_profile(model_settings, self.profile)
-            if resolved and resolved.enabled and resolved.effort:
-                effort = resolved.effort
 
         if output_format is None and effort is None:
             return None

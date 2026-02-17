@@ -1293,6 +1293,60 @@ class TestMergeModelSettingsThinking:
         assert result is None
 
 
+class TestMergeModelSettingsDictMerge:
+    """Tests for merge_model_settings shallow dict-merge behavior.
+
+    Our PR changed merge_model_settings from simple `base | overrides` to a
+    shallow merge for nested dict values (e.g. extra_headers), so that override
+    fields are applied on top of base fields rather than replacing entirely.
+    """
+
+    def test_extra_headers_merge(self):
+        """Nested dicts are shallow-merged, not replaced."""
+        from pydantic_ai.settings import ModelSettings, merge_model_settings
+
+        base = ModelSettings(extra_headers={'X-A': '1', 'X-B': '2'})
+        overrides = ModelSettings(extra_headers={'X-C': '3'})
+
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('extra_headers') == {'X-A': '1', 'X-B': '2', 'X-C': '3'}
+
+    def test_extra_headers_override_key(self):
+        """Override dict keys replace base dict keys."""
+        from pydantic_ai.settings import ModelSettings, merge_model_settings
+
+        base = ModelSettings(extra_headers={'X-A': '1'})
+        overrides = ModelSettings(extra_headers={'X-A': 'override'})
+
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('extra_headers') == {'X-A': 'override'}
+
+    def test_non_dict_values_override(self):
+        """Non-dict values are replaced, not merged."""
+        from pydantic_ai.settings import ModelSettings, merge_model_settings
+
+        base = ModelSettings(temperature=0.5)
+        overrides = ModelSettings(temperature=0.8)
+
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('temperature') == 0.8
+
+    def test_dict_override_on_missing_base(self):
+        """Dict override when base doesn't have the key."""
+        from pydantic_ai.settings import ModelSettings, merge_model_settings
+
+        base = ModelSettings(temperature=0.5)
+        overrides = ModelSettings(extra_headers={'X-A': '1'})
+
+        result = merge_model_settings(base, overrides)
+        assert result is not None
+        assert result.get('extra_headers') == {'X-A': '1'}
+        assert result.get('temperature') == 0.5
+
+
 # ============================================================================
 # Integration tests — full Agent → Model → API client pipeline
 # ============================================================================

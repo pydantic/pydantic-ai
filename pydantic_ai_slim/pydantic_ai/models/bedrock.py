@@ -378,10 +378,14 @@ class BedrockConverseModel(Model):
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
         merged_settings = cast(BedrockModelSettings, merged_settings or {})
 
-        # Only inject unified thinking for Claude models.
-        # Other Bedrock families (Meta, Cohere, Mistral) use different
-        # additionalModelRequestFields formats — use
-        # bedrock_additional_model_requests_fields for those.
+        # Only inject unified thinking for Claude models on Bedrock.
+        # Claude uses additionalModelRequestFields.thinking with
+        # {'type': 'enabled', 'budget_tokens': N} or {'type': 'disabled'}.
+        #
+        # Non-Claude models (e.g. Meta Llama, DeepSeek) may support reasoning
+        # via different additionalModelRequestFields keys (e.g. reasoning_config).
+        # Use bedrock_additional_model_requests_fields for those.
+        # The profile's supports_thinking flag is only set for Claude models.
         if 'anthropic' in self.model_name:
             additional = dict(merged_settings.get('bedrock_additional_model_requests_fields') or {})
             if 'thinking' not in additional:
