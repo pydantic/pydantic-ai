@@ -23,7 +23,7 @@ node_modules/
 .claude/*
 !.claude/skills/
 .claude/skills/*
-!.claude/skills/address-pr-review
+!.claude/skills/address-feedback
 !.claude/skills/pre-push-review
 .github/.review-context/
 /.cursor/
