@@ -25,6 +25,7 @@ class Case:
 
 
 def _create_model(case: Case) -> Model:
+    # Pin model versions here so VCR cassettes stay valid across runs
     try:
         if case.model_name.startswith('openai:'):
             from pydantic_ai.models.openai import OpenAIChatModel

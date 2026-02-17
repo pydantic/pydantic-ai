@@ -13,7 +13,11 @@ from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturn, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets._searchable import SEARCH_TOOLS_NAME, SearchableToolset
+from pydantic_ai.toolsets._searchable import (
+    SEARCH_TOOLS_NAME,
+    SearchableToolset,
+    _SearchToolsetTool,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
@@ -84,7 +88,6 @@ async def test_searchable_toolset_search_returns_matching_tools():
     searchable = SearchableToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
-    # Need to call get_tools first to populate _deferred_tools
     tools = await searchable.get_tools(ctx)
     search_tool = tools[SEARCH_TOOLS_NAME]
 
@@ -160,9 +163,9 @@ async def test_searchable_toolset_search_empty_query():
 
 
 async def test_searchable_toolset_max_results():
-    """Test that max_results limits the number of results."""
+    """Test that results are capped at `_MAX_SEARCH_RESULTS`."""
     toolset = create_function_toolset()
-    searchable = SearchableToolset(wrapped=toolset, max_results=1)
+    searchable = SearchableToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
@@ -171,7 +174,7 @@ async def test_searchable_toolset_max_results():
     result = await searchable.call_tool(SEARCH_TOOLS_NAME, {'query': 'price'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     rv: dict[str, Any] = result.return_value  # pyright: ignore[reportAssignmentType]
-    assert len(rv['tools']) == 1
+    assert len(rv['tools']) == 2
 
 
 async def test_searchable_toolset_discovered_tools_available():
@@ -203,13 +206,18 @@ async def test_searchable_toolset_discovered_tools_available():
 
 
 async def test_searchable_toolset_reserved_name_collision():
-    """Test that UserError is raised if a tool is named 'search_tools'."""
+    """Test that `UserError` is raised if a tool is named 'search_tools' and deferred tools exist."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool
     def search_tools(query: str) -> str:  # pragma: no cover
         """Search for tools."""
         return 'search result'
+
+    @toolset.tool(defer_loading=True)
+    def deferred_tool() -> str:  # pragma: no cover
+        """A deferred tool to trigger search injection."""
+        return 'deferred'
 
     searchable = SearchableToolset(wrapped=toolset)
     ctx = build_run_context(None)
@@ -385,11 +393,7 @@ async def test_searchable_toolset_search_no_deferred_tools():
         return 'normal'
 
     searchable = SearchableToolset(wrapped=toolset)
-    ctx = build_run_context(None)
-
-    # Call get_tools first to populate _deferred_tools
-    await searchable.get_tools(ctx)
-    result = await searchable._search_tools({'query': 'anything'}, ctx)  # pyright: ignore[reportPrivateUsage]
+    result = await searchable._search_tools({'query': 'anything'}, {})  # pyright: ignore[reportPrivateUsage]
     assert isinstance(result, ToolReturn)
     assert result.return_value == snapshot({'message': 'No searchable tools available.', 'tools': []})
 
@@ -425,3 +429,31 @@ async def test_searchable_toolset_ignores_non_metadata_history():
     assert 'calculate_mortgage' in tools
     assert 'stock_price' not in tools
     assert 'crypto_price' not in tools
+
+
+async def test_call_tool_returns_tool_return_with_metadata():
+    """Test that call_tool for search_tools returns a ToolReturn with deferred tools stored on the tool."""
+    toolset = create_function_toolset()
+    searchable = SearchableToolset(wrapped=toolset)
+    ctx = build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[SEARCH_TOOLS_NAME]
+
+    assert isinstance(search_tool, _SearchToolsetTool)
+    assert 'calculate_mortgage' in search_tool.deferred_tools
+    assert 'stock_price' in search_tool.deferred_tools
+    assert 'crypto_price' in search_tool.deferred_tools
+
+    result = await searchable.call_tool(SEARCH_TOOLS_NAME, {'query': 'mortgage'}, ctx, search_tool)
+    assert result == snapshot(
+        ToolReturn(
+            return_value={
+                'message': "Found 1 tool(s) matching 'mortgage'",
+                'tools': [
+                    {'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}
+                ],
+            },
+            metadata=['calculate_mortgage'],
+        )
+    )

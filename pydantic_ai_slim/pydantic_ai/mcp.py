@@ -393,8 +393,8 @@ class MCPServer(AbstractToolset[Any], ABC):
         elicitation_callback: ElicitationFnT | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
-        defer_loading: bool | list[str] = False,
         *,
+        defer_loading: bool | list[str] = False,
         id: str | None = None,
         client_info: mcp_types.Implementation | None = None,
     ):
@@ -947,7 +947,7 @@ class MCPServerStdio(MCPServer):
             elicitation_callback,
             cache_tools,
             cache_resources,
-            defer_loading,
+            defer_loading=defer_loading,
             id=id,
             client_info=client_info,
         )

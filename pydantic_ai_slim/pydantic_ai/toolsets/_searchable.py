@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, cast
 
 from pydantic_core import SchemaValidator, core_schema
@@ -13,6 +13,8 @@ from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
 SEARCH_TOOLS_NAME = 'search_tools'
+
+_MAX_SEARCH_RESULTS = 10
 
 _SEARCH_TOOLS_VALIDATOR = SchemaValidator(
     schema=core_schema.typed_dict_schema(
@@ -38,6 +40,11 @@ _SEARCH_TOOL_DEF = ToolDefinition(
 )
 
 
+@dataclass(kw_only=True)
+class _SearchToolsetTool(ToolsetTool[AgentDepsT]):
+    deferred_tools: dict[str, ToolsetTool[AgentDepsT]]
+
+
 @dataclass
 class SearchableToolset(WrapperToolset[AgentDepsT]):
     """A toolset that enables tool discovery for large toolsets.
@@ -49,28 +56,8 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
     Instead, they become available after the model discovers them via the search tool.
     """
 
-    max_results: int = 5
-    """Maximum number of tools to return from a search query."""
-
-    _search_tool: ToolsetTool[AgentDepsT] = field(init=False, repr=False)
-    _deferred_tools: dict[str, ToolsetTool[AgentDepsT]] = field(init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        self._search_tool = ToolsetTool(
-            toolset=self,
-            tool_def=_SEARCH_TOOL_DEF,
-            max_retries=1,
-            args_validator=_SEARCH_TOOLS_VALIDATOR,
-        )
-        self._deferred_tools = {}
-
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
-
-        if SEARCH_TOOLS_NAME in all_tools:
-            raise UserError(
-                f"Tool name '{SEARCH_TOOLS_NAME}' is reserved for tool search. Rename your tool to avoid conflicts."
-            )
 
         deferred: dict[str, ToolsetTool[AgentDepsT]] = {}
         non_deferred: dict[str, ToolsetTool[AgentDepsT]] = {}
@@ -80,14 +67,25 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
             else:
                 non_deferred[name] = tool
 
-        self._deferred_tools = deferred
-
         if not deferred:
             return all_tools
 
+        if SEARCH_TOOLS_NAME in all_tools:
+            raise UserError(
+                f"Tool name '{SEARCH_TOOLS_NAME}' is reserved for tool search. Rename your tool to avoid conflicts."
+            )
+
         discovered = self._parse_discovered_tools(ctx)
 
-        result: dict[str, ToolsetTool[AgentDepsT]] = {SEARCH_TOOLS_NAME: self._search_tool}
+        search_tool = _SearchToolsetTool(
+            toolset=self,
+            tool_def=_SEARCH_TOOL_DEF,
+            max_retries=1,
+            args_validator=_SEARCH_TOOLS_VALIDATOR,
+            deferred_tools=deferred,
+        )
+
+        result: dict[str, ToolsetTool[AgentDepsT]] = {SEARCH_TOOLS_NAME: search_tool}
         result.update(non_deferred)
         for name, tool in deferred.items():
             if name in discovered:
@@ -113,16 +111,17 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         if name == SEARCH_TOOLS_NAME:
-            return await self._search_tools(tool_args, ctx)
+            search_tool = cast(_SearchToolsetTool[AgentDepsT], tool)
+            return await self._search_tools(tool_args, search_tool.deferred_tools)
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
-    async def _search_tools(self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> ToolReturn:
+    async def _search_tools(
+        self, tool_args: dict[str, Any], deferred_tools: dict[str, ToolsetTool[AgentDepsT]]
+    ) -> ToolReturn:
         """Search for tools matching the query."""
         query = tool_args.get('query', '')
         if not query:
             raise ModelRetry('Please provide a search query.')
-
-        deferred_tools = self._deferred_tools
 
         if not deferred_tools:
             return ToolReturn(
@@ -146,14 +145,14 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
                     }
                 )
 
-        matches = matches[: self.max_results]
+        matches = matches[:_MAX_SEARCH_RESULTS]
 
         if matches:
             message = f"Found {len(matches)} tool(s) matching '{query}'"
         else:
             message = f"No tools found matching '{query}'"
 
-        tool_names = [m['name'] for m in matches if isinstance(m.get('name'), str)]
+        tool_names = [m['name'] for m in matches]
 
         return ToolReturn(
             return_value={'message': message, 'tools': matches},
