@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, cast
+from typing import Literal
 
 from httpx import Timeout
 from typing_extensions import TypedDict
@@ -243,33 +243,13 @@ class ModelSettings(TypedDict, total=False):
     """
 
 
-_SHALLOW_MERGE_KEYS: frozenset[str] = frozenset({'extra_headers'})
-"""Keys whose dict values should be shallow-merged (additive) instead of replaced.
-
-Only `extra_headers` uses additive semantics because HTTP headers from different
-layers (agent, run) should combine. All other dict-typed fields (e.g.,
-`anthropic_thinking`, `google_thinking_config`, `logit_bias`) represent complete
-configuration objects where the override should fully replace the base value.
-"""
-
-
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
     """Merge two sets of model settings, preferring the overrides.
 
     A common use case is: merge_model_settings(<agent settings>, <run settings>)
-
-    For `extra_headers`, performs a shallow merge so that override headers are applied
-    on top of base headers. All other fields (including dict-typed provider configs)
-    are fully replaced by the override value.
     """
+    # Note: we may want merge recursively if/when we add non-primitive values
     if base and overrides:
-        result = dict(base)
-        for key, override_value in overrides.items():
-            base_value = result.get(key)
-            if key in _SHALLOW_MERGE_KEYS and isinstance(base_value, dict) and isinstance(override_value, dict):
-                result[key] = base_value | override_value
-            else:
-                result[key] = override_value
-        return cast(ModelSettings, result)
+        return base | overrides
     else:
         return base or overrides

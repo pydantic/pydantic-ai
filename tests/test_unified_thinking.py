@@ -1675,15 +1675,14 @@ class TestMergeModelSettingsThinking:
 
 
 class TestMergeModelSettingsDictMerge:
-    """Tests for merge_model_settings shallow dict-merge behavior.
+    """Tests for merge_model_settings dict field behavior.
 
-    Our PR changed merge_model_settings from simple `base | overrides` to a
-    shallow merge for nested dict values (e.g. extra_headers), so that override
-    fields are applied on top of base fields rather than replacing entirely.
+    merge_model_settings uses `base | overrides` — all fields, including
+    dict-valued ones, are fully replaced by the override value.
     """
 
-    def test_extra_headers_merge(self):
-        """Nested dicts are shallow-merged, not replaced."""
+    def test_extra_headers_full_replace(self):
+        """extra_headers override fully replaces base (not additive)."""
         from pydantic_ai.settings import ModelSettings, merge_model_settings
 
         base = ModelSettings(extra_headers={'X-A': '1', 'X-B': '2'})
@@ -1691,21 +1690,10 @@ class TestMergeModelSettingsDictMerge:
 
         result = merge_model_settings(base, overrides)
         assert result is not None
-        assert result.get('extra_headers') == {'X-A': '1', 'X-B': '2', 'X-C': '3'}
-
-    def test_extra_headers_override_key(self):
-        """Override dict keys replace base dict keys."""
-        from pydantic_ai.settings import ModelSettings, merge_model_settings
-
-        base = ModelSettings(extra_headers={'X-A': '1'})
-        overrides = ModelSettings(extra_headers={'X-A': 'override'})
-
-        result = merge_model_settings(base, overrides)
-        assert result is not None
-        assert result.get('extra_headers') == {'X-A': 'override'}
+        assert result.get('extra_headers') == {'X-C': '3'}
 
     def test_non_dict_values_override(self):
-        """Non-dict values are replaced, not merged."""
+        """Non-dict values are replaced."""
         from pydantic_ai.settings import ModelSettings, merge_model_settings
 
         base = ModelSettings(temperature=0.5)
@@ -1715,8 +1703,8 @@ class TestMergeModelSettingsDictMerge:
         assert result is not None
         assert result.get('temperature') == 0.8
 
-    def test_dict_override_on_missing_base(self):
-        """Dict override when base doesn't have the key."""
+    def test_base_keys_preserved_when_no_override(self):
+        """Base keys not in overrides are preserved."""
         from pydantic_ai.settings import ModelSettings, merge_model_settings
 
         base = ModelSettings(temperature=0.5)
