@@ -3635,8 +3635,8 @@ async def test_event_ordering_call_before_result():
     assert result_ids_seen
 
 
-async def test_args_valid_none_for_presupplied_tool_approved():
-    """Test that args_valid=None when re-running with ToolApproved (validation deferred to execution)."""
+async def test_args_valid_true_for_presupplied_tool_approved():
+    """Test that args_valid=True when re-running with ToolApproved (validation runs upfront with approval context)."""
 
     def my_validator(ctx: RunContext[int], x: int) -> None:
         pass
@@ -3668,10 +3668,10 @@ async def test_args_valid_none_for_presupplied_tool_approved():
     ):
         events.append(event)
 
-    # The FunctionToolCallEvent for the pre-supplied result should have args_valid=None
+    # The FunctionToolCallEvent for the pre-supplied result should have args_valid=True
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
     assert tool_call_events
-    assert tool_call_events[0].args_valid is None
+    assert tool_call_events[0].args_valid is True
 
 
 async def test_args_valid_none_for_tool_denied():

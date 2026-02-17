@@ -1142,15 +1142,25 @@ async def _call_tools(  # noqa: C901
         projected_usage.tool_calls += len(tool_calls)
         usage_limits.check_before_tool_call(projected_usage)
 
-    # Validate upfront and cache results; skip calls with deferred results as those
-    # will be validated in _call_tool via handle_call with the correct approval context.
+    # Validate upfront and cache results. For ToolApproved deferred results, validate
+    # with the approval context so the event reflects the actual validation outcome.
+    # Other deferred result types (ToolDenied, ModelRetry, etc.) skip validation since
+    # the tool won't actually execute.
     validated_calls: dict[str, ToolCallValidation[DepsT]] = {}
     for call in tool_calls:
-        if call.tool_call_id in tool_call_results:
+        deferred_result = tool_call_results.get(call.tool_call_id)
+        if deferred_result is not None and not isinstance(deferred_result, ToolApproved):
             yield _messages.FunctionToolCallEvent(call)
             continue
         try:
-            validated = await tool_manager.validate_tool_call(call)
+            if isinstance(deferred_result, ToolApproved):
+                validate_call = call
+                if deferred_result.override_args is not None:
+                    validate_call = dataclasses.replace(call, args=deferred_result.override_args)
+                metadata = tool_call_metadata.get(call.tool_call_id) if tool_call_metadata else None
+                validated = await tool_manager.validate_tool_call(validate_call, approved=True, metadata=metadata)
+            else:
+                validated = await tool_manager.validate_tool_call(call)
         except exceptions.UnexpectedModelBehavior:
             yield _messages.FunctionToolCallEvent(call, args_valid=False)
             raise
@@ -1284,16 +1294,11 @@ async def _call_tool(
     validated: ToolCallValidation[DepsT] | None = None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
     try:
-        if tool_call_result is None:
+        if tool_call_result is None or isinstance(tool_call_result, ToolApproved):
             if validated is not None:
                 tool_result = await tool_manager.execute_tool_call(validated)
             else:
                 raise RuntimeError('Expected validated tool call')  # pragma: no cover
-        elif isinstance(tool_call_result, ToolApproved):
-            if tool_call_result.override_args is not None:
-                tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
-            metadata = tool_call_metadata.get(tool_call.tool_call_id) if tool_call_metadata else None
-            tool_result = await tool_manager.handle_call(tool_call, approved=True, metadata=metadata)
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
                 tool_name=tool_call.tool_name,
