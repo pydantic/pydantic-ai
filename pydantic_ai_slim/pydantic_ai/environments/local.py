@@ -173,7 +173,10 @@ class LocalEnvironment(ExecutionEnvironment):
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             else:
                 stdout, _ = await proc.communicate()
-        except TimeoutError:
+        except (
+            TimeoutError,
+            asyncio.TimeoutError,
+        ):  # asyncio.TimeoutError is not a subclass of TimeoutError on Python 3.10
             proc.kill()
             await proc.wait()
             return ExecuteResult(output='[Command timed out]', exit_code=-1)
