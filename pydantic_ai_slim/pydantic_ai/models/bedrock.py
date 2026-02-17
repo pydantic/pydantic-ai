@@ -739,12 +739,6 @@ class BedrockConverseModel(Model):
                             else:
                                 tool_result_content.append({'json': item})
 
-                        if not tool_result_content:
-                            if profile.bedrock_tool_result_format == 'text':
-                                tool_result_content.append({'text': ''})
-                            else:  # pragma: no cover
-                                tool_result_content.append({'json': {}})
-
                         user_content: list[ContentBlockUnionTypeDef] = [
                             {
                                 'toolResult': {

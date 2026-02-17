@@ -260,7 +260,7 @@ def create_model(
         return BedrockConverseModel(model_name, provider=bedrock_provider)
     elif provider in ('google', 'google_gemini3'):
         return GoogleModel(model_name, provider=GoogleProvider(api_key=api_keys['google']))
-    elif provider == 'google_vertex':
+    elif provider == 'google_vertex':  # pragma: no cover
         assert vertex_provider is not None
         return GoogleModel(model_name, provider=vertex_provider)
     elif provider == 'openai_chat':
@@ -490,8 +490,8 @@ def vertex_provider(request: pytest.FixtureRequest, vertex_provider_auth: None) 
     project = os.getenv('GOOGLE_CLOUD_PROJECT', os.getenv('GOOGLE_PROJECT'))
     if not project:  # pragma: no cover
         pytest.skip('GOOGLE_CLOUD_PROJECT not set')
-    location = os.getenv('GOOGLE_LOCATION', 'global')
-    return GoogleProvider(project=project, location=cast(VertexAILocation, location))
+    location = os.getenv('GOOGLE_LOCATION', 'global')  # pragma: no cover
+    return GoogleProvider(project=project, location=cast(VertexAILocation, location))  # pragma: no cover
 
 
 @pytest.fixture

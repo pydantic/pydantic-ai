@@ -5228,6 +5228,12 @@ class TestSdkVersion:
 """),
             id='truthy_non_container_with_files',
         ),
+        pytest.param(
+            {'return_value': [1, 2]},
+            [BinaryContent(data=b'x', media_type='image/png')],
+            snapshot([1, 2, '[File: image/png]']),
+            id='list_with_files',
+        ),
     ],
 )
 def test_tool_return_output_edge_cases(model_response: dict[str, Any], files: list[BinaryContent], expected: Any):
