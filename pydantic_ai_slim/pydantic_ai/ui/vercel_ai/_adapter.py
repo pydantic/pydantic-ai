@@ -80,8 +80,7 @@ def _generate_message_id(msg: ModelRequest | ModelResponse, role: str, output_in
         return msg.provider_response_id
     if msg.run_id:
         return f'{msg.run_id}-{output_index}'
-    ts = getattr(msg, 'timestamp', None)
-    ts_str = ts.isoformat() if ts else ''
+    ts_str = msg.timestamp.isoformat() if msg.timestamp else ''
     return str(uuid.uuid5(uuid.NAMESPACE_OID, f'{ts_str}-{msg.kind}-{role}-{output_index}'))
 
 
