@@ -49,14 +49,17 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._tool_choice import resolve_tool_choice
 
 try:
     from mistralai import (
         UNSET,
+        AudioChunk as MistralAudioChunk,
         CompletionChunk as MistralCompletionChunk,
         Content as MistralContent,
         ContentChunk as MistralContentChunk,
         DocumentURLChunk as MistralDocumentURLChunk,
+        FileChunk as MistralFileChunk,
         FunctionCall as MistralFunctionCall,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
@@ -225,13 +228,15 @@ class MistralModel(Model):
         """Make a non-streaming request to the model."""
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
+        tools, tool_choice = self._get_tool_choice(model_request_parameters, model_settings)
+
         try:
             response = await self.client.chat.complete_async(
                 model=str(self._model_name),
                 messages=await self._map_messages(messages, model_request_parameters),
                 n=1,
-                tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
-                tool_choice=self._get_tool_choice(model_request_parameters),
+                tools=tools or UNSET,
+                tool_choice=tool_choice,
                 stream=False,
                 max_tokens=model_settings.get('max_tokens', UNSET),
                 temperature=model_settings.get('temperature', UNSET),
@@ -261,14 +266,16 @@ class MistralModel(Model):
 
         # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
         # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
-        if model_request_parameters.function_tools:
-            # Function Calling
+        tools, tool_choice = self._get_tool_choice(model_request_parameters, model_settings)
+
+        if tools:
+            # Function Calling mode (with filtered tools)
             response = await self.client.chat.stream_async(
                 model=str(self._model_name),
                 messages=mistral_messages,
                 n=1,
-                tools=self._map_function_and_output_tools_definition(model_request_parameters) or UNSET,
-                tool_choice=self._get_tool_choice(model_request_parameters),
+                tools=tools,
+                tool_choice=tool_choice,
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
                 max_tokens=model_settings.get('max_tokens', UNSET),
@@ -279,9 +286,11 @@ class MistralModel(Model):
                 http_headers={'User-Agent': get_user_agent()},
             )
 
-        elif model_request_parameters.output_tools:
+        elif model_request_parameters.output_tools:  # pragma: no cover
+            # this branch is dead code (output tool is being handled above)
+            # leaving it in for the TODO (support NativeOutput properly)
             # TODO: Port to native "manual JSON" mode
-            # Json Mode
+            # Json Mode (only output tools, no function tools filtered in)
             parameters_json_schemas = [tool.parameters_json_schema for tool in model_request_parameters.output_tools]
             user_output_format_message = self._generate_user_output_format(parameters_json_schemas)
             mistral_messages.append(user_output_format_message)
@@ -304,7 +313,7 @@ class MistralModel(Model):
             )
 
         else:
-            # Stream Mode
+            # Stream Mode (no tools at all)
             response = await self.client.chat.stream_async(
                 model=str(self._model_name),
                 messages=mistral_messages,
@@ -314,37 +323,53 @@ class MistralModel(Model):
         assert response, 'A unexpected empty response from Mistral.'
         return response
 
-    def _get_tool_choice(self, model_request_parameters: ModelRequestParameters) -> MistralToolChoiceEnum | None:
-        """Get tool choice for the model.
+    def _get_tool_choice(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: MistralModelSettings,
+    ) -> tuple[list[MistralTool] | None, MistralToolChoiceEnum | None]:
+        """Get tools and tool choice for the model.
 
+        Returns a tuple of (tools, tool_choice):
+        - tools: List of MistralTool definitions to send, or None if no tools
+        - tool_choice: "auto", "any", "none", "required", or None
+
+        Tool choice semantics:
         - "auto": Default mode. Model decides if it uses the tool or not.
         - "any": Select any tool.
         - "none": Prevents tool use.
         - "required": Forces tool use.
         """
-        if not model_request_parameters.function_tools and not model_request_parameters.output_tools:
-            return None
-        elif not model_request_parameters.allow_text_output:
-            return 'required'
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
+
+        tool_choice: MistralToolChoiceEnum
+        if resolved_tool_choice == 'auto':
+            tool_choice = 'auto'
+        elif resolved_tool_choice == 'required':
+            tool_choice = 'any'
+        elif resolved_tool_choice == 'none':
+            # Mistral returns garbled responses when tool_choice='none' with tools present.
+            # Don't send tools at all.
+            return None, None
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            # Breaks caching, but Mistral doesn't support limiting tools via API arg
+            tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+            tool_choice = 'auto' if tool_choice_mode == 'auto' else 'any'
         else:
-            return 'auto'
+            assert_never(resolved_tool_choice)
 
-    def _map_function_and_output_tools_definition(
-        self, model_request_parameters: ModelRequestParameters
-    ) -> list[MistralTool] | None:
-        """Map function and output tools to MistralTool format.
+        if not tool_defs:
+            return None, None
 
-        Returns None if both function_tools and output_tools are empty.
-        """
-        tools = [
-            MistralTool(
-                function=MistralFunction(
-                    name=r.name, parameters=r.parameters_json_schema, description=r.description or ''
-                )
-            )
-            for r in model_request_parameters.tool_defs.values()
+        _tool_functions = [
+            MistralFunction(name=r.name, parameters=r.parameters_json_schema, description=r.description or '')
+            for r in tool_defs.values()
         ]
-        return tools or None
+        tools = [MistralTool(function=f) for f in _tool_functions]
+
+        return tools, tool_choice
 
     def _process_response(self, response: MistralChatCompletionResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -792,11 +817,16 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str 
                     if thought.type == 'text':  # pragma: no branch
                         thinking.append(thought.text)
             elif isinstance(chunk, MistralReferenceChunk):
-                pass  # Reference chunks are not yet supported, skip silently
-            else:
+                # References are not yet supported
+                pass
+            elif isinstance(
+                chunk, MistralImageURLChunk | MistralDocumentURLChunk | MistralFileChunk | MistralAudioChunk
+            ):  # pragma: no cover
                 assert False, (  # pragma: no cover
                     f'Other data types like (Image) are not yet supported, got {type(chunk)}'
                 )
+            else:
+                assert_never(chunk)
     elif isinstance(content, str):
         text = content
 

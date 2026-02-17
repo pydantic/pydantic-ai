@@ -1,0 +1,64 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What's the weather in Paris?
+        role: ROLE_USER
+      model: grok-3-fast
+      tools:
+      - function:
+          name: get_weather
+          description: Get weather for a city
+          parameters: '{"type": "object", "properties": {"city": {"type": "string"}},
+            "required": ["city"]}'
+      tool_choice:
+        mode: TOOL_MODE_REQUIRED
+    raw: !!binary |
+      CiIKHgocV2hhdCdzIHRoZSB3ZWF0aGVyIGluIFBhcmlzPxABEgtncm9rLTMtZmFzdIoBfQp7Cgtn
+      ZXRfd2VhdGhlchIWR2V0IHdlYXRoZXIgZm9yIGEgY2l0eSJUeyJ0eXBlIjogIm9iamVjdCIsICJw
+      cm9wZXJ0aWVzIjogeyJjaXR5IjogeyJ0eXBlIjogInN0cmluZyJ9fSwgInJlcXVpcmVkIjogWyJj
+      aXR5Il19kgECCAM=
+  response_sample:
+    json:
+      id: 10ac554c-7fa3-fad6-a49a-36e0d28c6f1d
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_68560709
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_weather
+              arguments: '{"city":"Paris"}'
+      created: '2026-01-29T21:33:21.999869890Z'
+      model: grok-3
+      system_fingerprint: fp_a50f881eb7
+      usage:
+        completion_tokens: 26
+        prompt_tokens: 136
+        total_tokens: 162
+        prompt_text_tokens: 136
+        cached_prompt_text_tokens: 135
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_REQUIRED
+        tools:
+        - function:
+            name: get_weather
+            description: Get weather for a city
+            parameters: '{"type": "object", "properties": {"city": {"type": "string"}},
+              "required": ["city"]}'
+        top_p: 0.95
+    raw: !!binary |
+      CiQxMGFjNTU0Yy03ZmEzLWZhZDYtYTQ5YS0zNmUwZDI4YzZmMWQSPAgEGjgQAho0Cg1jYWxsXzY4
+      NTYwNzA5EAEYAVIfCgtnZXRfd2VhdGhlchIQeyJjaXR5IjoiUGFyaXMifSoMCKGk78sGEMKb49wD
+      MgZncm9rLTM6DWZwX2E1MGY4ODFlYjdKEwgaEIgBGKIBIIgBOIcBWKTVrQJajwEQAS0zMzM/OgII
+      A0J9CnsKC2dldF93ZWF0aGVyEhZHZXQgd2VhdGhlciBmb3IgYSBjaXR5IlR7InR5cGUiOiAib2Jq
+      ZWN0IiwgInByb3BlcnRpZXMiOiB7ImNpdHkiOiB7InR5cGUiOiAic3RyaW5nIn19LCAicmVxdWly
+      ZWQiOiBbImNpdHkiXX1NMzNzPw==

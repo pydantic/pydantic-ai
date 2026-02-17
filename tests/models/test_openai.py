@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import re
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -4327,6 +4328,30 @@ async def test_openai_chat_audio_url_uri_encoding(allow_model_requests: None):
     # Expect Data URI with correct MIME type for mp3
     assert audio_part['input_audio']['data'] == data_uri
     assert audio_part['input_audio']['format'] == 'mp3'
+
+
+async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_requests: None):
+    """Test error when tool_choice='required' is set on a model that doesn't support it."""
+    c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+
+    # Create profile that doesn't support tool_choice='required'
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    model = OpenAIChatModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    def get_weather(city: str) -> str:
+        return f'Weather in {city}'  # pragma: no cover
+
+    agent = Agent(model, tools=[get_weather])
+
+    settings: ModelSettings = {'tool_choice': 'required'}
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "`tool_choice='required'` prevents the agent from producing a final response because output tools are excluded. Use `ToolOrOutput` to combine specific tools with output capability, or use `model.request()` for direct model calls."
+        ),
+    ):
+        await agent.run('What is the weather?', model_settings=settings)
 
 
 def test_transformer_adds_properties_to_object_schemas():

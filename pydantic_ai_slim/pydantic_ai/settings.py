@@ -1,14 +1,41 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Literal
+
 from httpx import Timeout
 from typing_extensions import TypedDict
+
+ToolChoiceScalar = Literal['none', 'required', 'auto']
+
+
+@dataclass
+class ToolOrOutput:
+    """Restricts function tools while keeping output tools and direct text/image output available.
+
+    Use this when you want to control which function tools the model can use
+    in an agent run while still allowing the agent to complete with structured output,
+    text, or images.
+
+    See the [Tool Choice guide](TODO fill this out in https://github.com/dsfaccini/pydantic-ai/pull/2 i.e. prepare_model_settings hook PR)
+    for examples.
+    """
+
+    function_tools: list[str]
+    """The names of function tools available to the model."""
+
+
+ToolChoice = ToolChoiceScalar | list[str] | ToolOrOutput | None
+"""Type alias for all valid tool_choice values."""
 
 
 class ModelSettings(TypedDict, total=False):
     """Settings to configure an LLM.
 
-    Here we include only settings which apply to multiple models / model providers,
+    Includes only settings which apply to multiple models / model providers,
     though not all of these settings are supported by all models.
+
+    All types must be serializable using Pydantic.
     """
 
     max_tokens: int
@@ -90,6 +117,38 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI (some models, not o1)
     * Groq
     * Anthropic
+    * xAI
+    """
+
+    tool_choice: ToolChoice
+    """Control which function tools the model can use.
+
+    See the [Tool Choice guide](tool-choice.md) for detailed documentation
+    and examples.
+
+    * `None` (default): Defaults to `'auto'` behavior
+    * `'auto'`: All tools available, model decides whether to use them
+    * `'none'`: Disables function tools; model responds with text only (output tools remain for structured output)
+    * `'required'`: Forces tool use; excludes output tools so agent cannot complete (use with `model.request()` only)
+    * `list[str]`: Only specified tools; excludes output tools so agent cannot complete (use with `model.request()` only)
+    * [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]: Specified function tools plus output tools/text/image
+
+    Note: `'required'` and `list[str]` raise an error in `agent.run()` because they prevent the agent from
+    producing a final response. Use [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput] to combine specific
+    function tools with output capability, or use [direct model requests](direct.md) for single API calls.
+
+    TODO(prepare_model_settings): Update this to note that the hook CAN return 'required' or list[str]
+    for per-step control since the hook applies to individual model requests, not the entire run.
+
+    Supported by:
+
+    * OpenAI
+    * Anthropic (`'required'` and specific tools not supported with thinking enabled)
+    * Google
+    * Groq
+    * Mistral
+    * HuggingFace
+    * Bedrock
     * xAI
     """
 

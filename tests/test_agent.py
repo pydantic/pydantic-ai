@@ -7724,6 +7724,27 @@ async def test_dynamic_tool_in_run_call():
     assert tool.user_location.get('city') == 'Berlin'
 
 
+@pytest.mark.parametrize(
+    'tool_choice',
+    [
+        pytest.param('required', id='required'),
+        pytest.param(['get_weather'], id='list'),
+    ],
+)
+async def test_tool_choice_required_or_list_rejected_in_agent_run(tool_choice: Any):
+    """Verify that tool_choice='required' or list[str] raises UserError in agent.run().
+
+    These settings exclude output tools, which would prevent the agent from ever
+    producing a final response. Users should use ToolOrOutput or model.request() instead.
+    """
+    model = TestModel()
+    agent = Agent(model)
+
+    settings: ModelSettings = {'tool_choice': tool_choice}
+    with pytest.raises(UserError, match='prevents the agent from producing a final response'):
+        await agent.run('Hello', model_settings=settings)
+
+
 async def test_central_content_filter_handling():
     """
     Test that the agent graph correctly raises ContentFilterError

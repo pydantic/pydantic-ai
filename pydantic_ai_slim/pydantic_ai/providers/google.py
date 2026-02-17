@@ -152,7 +152,7 @@ class GoogleProvider(Provider[Client]):
                     http_options=http_options,
                 )
         else:
-            self._client = client  # pragma: no cover
+            self._client = client
 
 
 VertexAILocation = Literal[
