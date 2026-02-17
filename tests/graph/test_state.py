@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import timezone
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_graph import (
     BaseNode,
@@ -16,6 +15,7 @@ from pydantic_graph import (
     NodeSnapshot,
 )
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsFloat, IsNow
 
 pytestmark = pytest.mark.anyio
