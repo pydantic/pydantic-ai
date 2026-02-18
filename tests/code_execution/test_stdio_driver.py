@@ -616,8 +616,8 @@ async def test_build_proxy_normal_call(monkeypatch: pytest.MonkeyPatch):
     assert messages[1] == {'type': 'calls_ready'}
 
     # Clean up: cancel the handle
-    if handle[0] is not None:
-        handle[0].cancel()
+    assert handle[0] is not None
+    handle[0].cancel()
 
 
 async def test_build_proxy_batched_calls(monkeypatch: pytest.MonkeyPatch):
@@ -643,8 +643,8 @@ async def test_build_proxy_batched_calls(monkeypatch: pytest.MonkeyPatch):
         {'type': 'calls_ready'},
     ]
 
-    if handle[0] is not None:
-        handle[0].cancel()
+    assert handle[0] is not None
+    handle[0].cancel()
 
 
 async def test_stdin_reader_result_no_pending_future():

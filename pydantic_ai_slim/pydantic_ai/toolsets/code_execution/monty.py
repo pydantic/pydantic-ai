@@ -79,8 +79,6 @@ class MontyRuntime(CodeRuntime):
             monty.type_check(self._build_type_check_prefix(list(functions.values()), referenced_types))
         except MontyTypingError as e:
             raise CodeTypingError(e.display(format='concise')) from e
-        except MontyRuntimeError as e:
-            raise CodeRuntimeError(e.display()) from e
         except MontySyntaxError as e:
             raise CodeSyntaxError(e.display()) from e
 

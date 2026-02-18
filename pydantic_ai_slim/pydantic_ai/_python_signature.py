@@ -461,12 +461,7 @@ def schema_to_signature(
         final_description = final_description.strip()
 
     # Merge referenced types — dedup_referenced_types handles collisions later
-    all_referenced = list(param_referenced.values())
-    seen_ids = {id(ts) for ts in all_referenced}
-    for ts in return_referenced.values():
-        if id(ts) not in seen_ids:
-            all_referenced.append(ts)
-            seen_ids.add(id(ts))
+    all_referenced = list(param_referenced.values()) + list(return_referenced.values())
 
     return FunctionSignature(
         name=name,
