@@ -70,7 +70,7 @@ options:
   -l, --list-models     List all available models and exit
   --version             Show version and exit
   -m MODEL, --model MODEL
-                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "openai:gpt-5".
+                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-6". Defaults to "openai:gpt-5".
   -a AGENT, --agent AGENT
                         Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"
   -t CODE_THEME, --code-theme CODE_THEME

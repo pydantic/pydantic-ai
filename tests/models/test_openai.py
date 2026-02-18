@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict
 
@@ -50,6 +49,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import (
     MockOpenAI,
