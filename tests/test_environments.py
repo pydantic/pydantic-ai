@@ -1,4 +1,4 @@
-"""Tests for pydantic_ai.environments — ExecutionEnvironment, ExecutionToolset, LocalEnvironment, and MemoryEnvironment."""
+"""Tests for pydantic_ai.environments — ExecutionEnvironment, ExecutionEnvironmentToolset, LocalEnvironment, and MemoryEnvironment."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import ToolCallPart
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
-from pydantic_ai.environments import ExecuteResult, ExecutionToolset, FileInfo
+from pydantic_ai.environments import ExecuteResult, ExecutionEnvironmentToolset, FileInfo
 from pydantic_ai.environments._base import (
     apply_edit,
     build_glob_cmd,
@@ -38,8 +38,8 @@ try:
     from docker.errors import NotFound as DockerNotFound
 
     from pydantic_ai.environments.docker import (
-        DockerSandbox,
-        DockerSandboxProcess,
+        DockerEnvironment,
+        DockerEnvironmentProcess,
         ImageNotFound,
         _build_dockerfile,
         _config_hash,
@@ -51,7 +51,7 @@ else:
     docker_installed = True
 
 try:
-    from pydantic_ai.environments.e2b import E2BSandbox, E2BSandboxProcess
+    from pydantic_ai.environments.e2b import E2BEnvironment, E2BEnvironmentProcess
 except ImportError:  # pragma: lax no cover
     e2b_installed = False
 else:
@@ -107,27 +107,27 @@ def test_file_info_directory():
 
 async def test_local_execute_basic(tmp_path: Path):
     async with LocalEnvironment(tmp_path) as env:
-        result = await env.execute('echo hello')
+        result = await env.shell('echo hello')
         assert result.exit_code == 0
         assert 'hello' in result.output
 
 
 async def test_local_execute_exit_code(tmp_path: Path):
     async with LocalEnvironment(tmp_path) as env:
-        result = await env.execute('exit 42')
+        result = await env.shell('exit 42')
         assert result.exit_code == 42
 
 
 async def test_local_execute_timeout(tmp_path: Path):
     async with LocalEnvironment(tmp_path) as env:
-        result = await env.execute('sleep 10', timeout=0.5)
+        result = await env.shell('sleep 10', timeout=0.5)
         assert result.exit_code == -1
         assert 'timed out' in result.output.lower()
 
 
 async def test_local_execute_stderr(tmp_path: Path):
     async with LocalEnvironment(tmp_path) as env:
-        result = await env.execute('echo error >&2')
+        result = await env.shell('echo error >&2')
         assert 'error' in result.output
 
 
@@ -136,26 +136,26 @@ async def test_local_execute_stderr(tmp_path: Path):
 
 async def test_local_env_vars_baseline(tmp_path: Path):
     async with LocalEnvironment(tmp_path, env_vars={'MY_VAR': 'baseline'}) as env:
-        result = await env.execute('echo $MY_VAR')
+        result = await env.shell('echo $MY_VAR')
         assert 'baseline' in result.output
 
 
 async def test_local_env_vars_per_call(tmp_path: Path):
     async with LocalEnvironment(tmp_path) as env:
-        result = await env.execute('echo $CALL_VAR', env={'CALL_VAR': 'per_call'})
+        result = await env.shell('echo $CALL_VAR', env={'CALL_VAR': 'per_call'})
         assert 'per_call' in result.output
 
 
 async def test_local_env_vars_merged(tmp_path: Path):
     async with LocalEnvironment(tmp_path, env_vars={'BASE': 'one'}) as env:
-        result = await env.execute('echo $BASE $EXTRA', env={'EXTRA': 'two'})
+        result = await env.shell('echo $BASE $EXTRA', env={'EXTRA': 'two'})
         assert 'one' in result.output
         assert 'two' in result.output
 
 
 async def test_local_env_vars_per_call_overrides_baseline(tmp_path: Path):
     async with LocalEnvironment(tmp_path, env_vars={'VAR': 'old'}) as env:
-        result = await env.execute('echo $VAR', env={'VAR': 'new'})
+        result = await env.shell('echo $VAR', env={'VAR': 'new'})
         assert 'new' in result.output
         assert 'old' not in result.output
 
@@ -164,7 +164,7 @@ async def test_local_inherit_env_true(tmp_path: Path):
     os.environ['_TEST_INHERIT_CHECK'] = 'inherited'
     try:
         async with LocalEnvironment(tmp_path, inherit_env=True) as env:
-            result = await env.execute('echo $_TEST_INHERIT_CHECK')
+            result = await env.shell('echo $_TEST_INHERIT_CHECK')
             assert 'inherited' in result.output
     finally:
         del os.environ['_TEST_INHERIT_CHECK']
@@ -174,7 +174,7 @@ async def test_local_inherit_env_false(tmp_path: Path):
     os.environ['_TEST_INHERIT_CHECK'] = 'should_not_see'
     try:
         async with LocalEnvironment(tmp_path, inherit_env=False) as env:
-            result = await env.execute('echo x${_TEST_INHERIT_CHECK}x')
+            result = await env.shell('echo x${_TEST_INHERIT_CHECK}x')
             assert result.output.strip() == 'xx'
     finally:
         del os.environ['_TEST_INHERIT_CHECK']
@@ -182,7 +182,7 @@ async def test_local_inherit_env_false(tmp_path: Path):
 
 async def test_local_inherit_env_false_with_explicit_vars(tmp_path: Path):
     async with LocalEnvironment(tmp_path, env_vars={'ONLY_THIS': 'yes'}, inherit_env=False) as env:
-        result = await env.execute('/bin/echo $ONLY_THIS')
+        result = await env.shell('/bin/echo $ONLY_THIS')
         assert 'yes' in result.output
 
 
@@ -283,7 +283,7 @@ async def test_local_read_file_bytes(tmp_path: Path):
     )
     async with LocalEnvironment(tmp_path) as env:
         await env.write_file('image.png', png_data)
-        result = await env.read_file_bytes('image.png')
+        result = await env.read_file('image.png')
         assert isinstance(result, bytes)
         assert result == png_data
 
@@ -294,7 +294,7 @@ async def test_local_read_file_bytes(tmp_path: Path):
 async def test_local_edit_single_replacement(tmp_path: Path):
     async with LocalEnvironment(tmp_path) as env:
         await env.write_file('edit.txt', 'foo bar baz')
-        count = await env.edit_file('edit.txt', 'bar', 'BAR')
+        count = await env.replace_str('edit.txt', 'bar', 'BAR')
         assert count == 1
         content = (tmp_path / 'edit.txt').read_text()
         assert content == 'foo BAR baz'
@@ -303,7 +303,7 @@ async def test_local_edit_single_replacement(tmp_path: Path):
 async def test_local_edit_replace_all(tmp_path: Path):
     async with LocalEnvironment(tmp_path) as env:
         await env.write_file('edit.txt', 'aaa bbb aaa')
-        count = await env.edit_file('edit.txt', 'aaa', 'xxx', replace_all=True)
+        count = await env.replace_str('edit.txt', 'aaa', 'xxx', replace_all=True)
         assert count == 2
         content = (tmp_path / 'edit.txt').read_text()
         assert content == 'xxx bbb xxx'
@@ -313,26 +313,26 @@ async def test_local_edit_not_found(tmp_path: Path):
     async with LocalEnvironment(tmp_path) as env:
         await env.write_file('edit.txt', 'hello world')
         with pytest.raises(ValueError, match='not found'):
-            await env.edit_file('edit.txt', 'missing', 'replacement')
+            await env.replace_str('edit.txt', 'missing', 'replacement')
 
 
 async def test_local_edit_ambiguous_without_replace_all(tmp_path: Path):
     async with LocalEnvironment(tmp_path) as env:
         await env.write_file('edit.txt', 'dup dup dup')
         with pytest.raises(ValueError, match='3 times'):
-            await env.edit_file('edit.txt', 'dup', 'unique')
+            await env.replace_str('edit.txt', 'dup', 'unique')
 
 
 async def test_local_edit_nonexistent_file(tmp_path: Path):
     async with LocalEnvironment(tmp_path) as env:
         with pytest.raises(FileNotFoundError):
-            await env.edit_file('missing.txt', 'old', 'new')
+            await env.replace_str('missing.txt', 'old', 'new')
 
 
 async def test_local_edit_multiline(tmp_path: Path):
     async with LocalEnvironment(tmp_path) as env:
         await env.write_file('code.py', 'def foo():\n    return "old"\n\nprint("test")\n')
-        count = await env.edit_file('code.py', 'def foo():\n    return "old"', 'def foo():\n    return "new"')
+        count = await env.replace_str('code.py', 'def foo():\n    return "old"', 'def foo():\n    return "new"')
         assert count == 1
         content = (tmp_path / 'code.py').read_text()
         assert 'return "new"' in content
@@ -510,47 +510,43 @@ async def test_local_creates_root_dir(tmp_path: Path):
     assert not root.exists()
     async with LocalEnvironment(root) as env:
         assert root.exists()
-        result = await env.execute('echo works')
+        result = await env.shell('echo works')
         assert 'works' in result.output
 
 
-# --- ExecutionToolset ---
+# --- ExecutionEnvironmentToolset ---
 
 
 async def test_toolset_tool_names():
-    toolset = ExecutionToolset(LocalEnvironment('.'))
+    toolset = ExecutionEnvironmentToolset(LocalEnvironment('.'))
     tool_names = sorted(toolset.tools.keys())
-    assert tool_names == snapshot(['bash', 'edit_file', 'glob', 'grep', 'read_file', 'write_file'])
+    assert tool_names == snapshot(['glob', 'grep', 'ls', 'read_file', 'replace_str', 'shell', 'write_file'])
 
 
 async def test_toolset_include_flags():
-    toolset = ExecutionToolset(
+    toolset = ExecutionEnvironmentToolset(
         LocalEnvironment('.'),
-        include_bash=False,
-        include_file_tools=False,
-        include_search_tools=False,
+        include=frozenset(),
     )
     assert toolset.tools == {}
 
 
-async def test_toolset_include_bash_only():
-    toolset = ExecutionToolset(
+async def test_toolset_include_shell_only():
+    toolset = ExecutionEnvironmentToolset(
         LocalEnvironment('.'),
-        include_bash=True,
-        include_file_tools=False,
-        include_search_tools=False,
+        include=frozenset({'shell'}),
     )
-    assert sorted(toolset.tools.keys()) == ['bash']
+    assert sorted(toolset.tools.keys()) == ['shell']
 
 
 async def test_toolset_bash_tool(tmp_path: Path):
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
     async with env:
-        result = await manager.handle_call(ToolCallPart(tool_name='bash', args={'command': 'echo hello'}))
+        result = await manager.handle_call(ToolCallPart(tool_name='shell', args={'command': 'echo hello'}))
         assert result == snapshot("""\
 hello
 
@@ -560,7 +556,7 @@ Exit code: 0\
 
 async def test_toolset_read_write_tools(tmp_path: Path):
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -578,7 +574,7 @@ async def test_toolset_read_write_tools(tmp_path: Path):
 
 async def test_toolset_edit_retry_on_error(tmp_path: Path):
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env, max_retries=0)
+    toolset = ExecutionEnvironmentToolset(env, max_retries=0)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -590,15 +586,15 @@ async def test_toolset_edit_retry_on_error(tmp_path: Path):
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
             await manager.handle_call(
                 ToolCallPart(
-                    tool_name='edit_file',
-                    args={'path': 'test.txt', 'old_string': 'nonexistent', 'new_string': 'replacement'},
+                    tool_name='replace_str',
+                    args={'path': 'test.txt', 'old': 'nonexistent', 'new': 'replacement'},
                 )
             )
 
 
 async def test_toolset_glob_tool(tmp_path: Path):
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -615,7 +611,7 @@ b.py\
 
 async def test_toolset_grep_tool(tmp_path: Path):
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -626,13 +622,13 @@ async def test_toolset_grep_tool(tmp_path: Path):
         assert result == snapshot('search.py:1:def find_me():')
 
 
-# --- ExecutionToolset: error handling ---
+# --- ExecutionEnvironmentToolset: error handling ---
 
 
 async def test_toolset_read_nonexistent_returns_error(tmp_path: Path):
     """read_file on a nonexistent file returns an error string instead of crashing."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -644,7 +640,7 @@ async def test_toolset_read_nonexistent_returns_error(tmp_path: Path):
 async def test_toolset_read_path_traversal_returns_error(tmp_path: Path):
     """read_file with path traversal returns an error string."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -656,7 +652,7 @@ async def test_toolset_read_path_traversal_returns_error(tmp_path: Path):
 async def test_toolset_write_path_traversal_returns_error(tmp_path: Path):
     """write_file with path traversal returns an error string."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -670,7 +666,7 @@ async def test_toolset_write_path_traversal_returns_error(tmp_path: Path):
 async def test_toolset_glob_path_traversal_returns_error(tmp_path: Path):
     """glob with path traversal returns an error string."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -684,7 +680,7 @@ async def test_toolset_glob_path_traversal_returns_error(tmp_path: Path):
 async def test_toolset_grep_invalid_regex_returns_error(tmp_path: Path):
     """grep with invalid regex returns an error string."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -698,7 +694,7 @@ async def test_toolset_grep_invalid_regex_returns_error(tmp_path: Path):
 async def test_toolset_read_offset_out_of_bounds_returns_error(tmp_path: Path):
     """read_file with offset past EOF returns an error string."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -715,7 +711,7 @@ async def test_toolset_read_offset_out_of_bounds_returns_error(tmp_path: Path):
 async def test_toolset_read_continuation_hint(tmp_path: Path):
     """read_file includes continuation hint when there are more lines."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -736,26 +732,26 @@ async def test_toolset_read_continuation_hint(tmp_path: Path):
 """)
 
 
-# --- ExecutionToolset: approval flags ---
+# --- ExecutionEnvironmentToolset: approval flags ---
 
 
-async def test_toolset_require_bash_approval():
-    """require_bash_approval sets requires_approval on the bash tool."""
-    toolset = ExecutionToolset(require_bash_approval=True)
+async def test_toolset_require_shell_approval():
+    """require_shell_approval sets requires_approval on the shell tool."""
+    toolset = ExecutionEnvironmentToolset(require_shell_approval=True)
     ctx = build_run_context(None)
     tools = await toolset.get_tools(ctx)
-    assert tools['bash'].tool_def.kind == 'unapproved'
+    assert tools['shell'].tool_def.kind == 'unapproved'
     # Other tools should be normal
     assert tools['read_file'].tool_def.kind == 'function'
 
 
 async def test_toolset_require_write_approval():
-    """require_write_approval sets requires_approval on write_file and edit_file."""
-    toolset = ExecutionToolset(require_write_approval=True)
+    """require_write_approval sets requires_approval on write_file and replace_str."""
+    toolset = ExecutionEnvironmentToolset(require_write_approval=True)
     ctx = build_run_context(None)
     tools = await toolset.get_tools(ctx)
     assert tools['write_file'].tool_def.kind == 'unapproved'
-    assert tools['edit_file'].tool_def.kind == 'unapproved'
+    assert tools['replace_str'].tool_def.kind == 'unapproved'
     # read_file and search tools should NOT require approval
     assert tools['read_file'].tool_def.kind == 'function'
     assert tools['glob'].tool_def.kind == 'function'
@@ -764,30 +760,30 @@ async def test_toolset_require_write_approval():
 
 async def test_toolset_default_no_approval():
     """By default, no tools require approval."""
-    toolset = ExecutionToolset()
+    toolset = ExecutionEnvironmentToolset()
     ctx = build_run_context(None)
     tools = await toolset.get_tools(ctx)
     for tool in tools.values():
         assert tool.tool_def.kind == 'function'
 
 
-# --- ExecutionToolset: environment management ---
+# --- ExecutionEnvironmentToolset: environment management ---
 
 
 async def test_toolset_environment_property():
     env = LocalEnvironment('.')
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     assert toolset.environment is env
     assert toolset.required_environment is env
 
 
 async def test_toolset_no_environment_returns_none():
-    toolset = ExecutionToolset()
+    toolset = ExecutionEnvironmentToolset()
     assert toolset.environment is None
 
 
 async def test_toolset_no_environment_required_raises():
-    toolset = ExecutionToolset()
+    toolset = ExecutionEnvironmentToolset()
     with pytest.raises(RuntimeError, match='No execution environment configured'):
         _ = toolset.required_environment
 
@@ -795,7 +791,7 @@ async def test_toolset_no_environment_required_raises():
 async def test_toolset_use_environment():
     env1 = LocalEnvironment('/tmp/env1')
     env2 = LocalEnvironment('/tmp/env2')
-    toolset = ExecutionToolset(env1)
+    toolset = ExecutionEnvironmentToolset(env1)
 
     assert toolset.environment is env1
     with toolset.use_environment(env2):
@@ -805,7 +801,7 @@ async def test_toolset_use_environment():
 
 async def test_toolset_use_environment_no_default():
     env = LocalEnvironment('.')
-    toolset = ExecutionToolset()
+    toolset = ExecutionEnvironmentToolset()
 
     assert toolset.environment is None
 
@@ -815,37 +811,37 @@ async def test_toolset_use_environment_no_default():
     assert toolset.environment is None
 
 
-async def test_toolset_system_prompt():
-    toolset = ExecutionToolset(LocalEnvironment('.'))
-    prompt = toolset.system_prompt
-    assert 'bash' in prompt
-    assert 'read_file' in prompt
-    assert 'write_file' in prompt
+async def test_toolset_tool_description():
+    """Environment tool_description is accessible for each tool."""
+    env = LocalEnvironment('.')
+    # LocalEnvironment returns None for all tool descriptions by default
+    assert env.tool_description('shell') is None
+    assert env.tool_description('read_file') is None
 
 
 async def test_toolset_tool_name_conflict_hint():
-    toolset = ExecutionToolset(LocalEnvironment('.'))
+    toolset = ExecutionEnvironmentToolset(LocalEnvironment('.'))
     assert 'PrefixedToolset' in toolset.tool_name_conflict_hint
 
 
-# --- ExecutionToolset: lifecycle ---
+# --- ExecutionEnvironmentToolset: lifecycle ---
 
 
 async def test_toolset_lifecycle(tmp_path: Path):
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
 
     async with toolset:
-        result = await env.execute('echo lifecycle')
+        result = await env.shell('echo lifecycle')
         assert 'lifecycle' in result.output
 
 
-# --- ExecutionToolset: image support ---
+# --- ExecutionEnvironmentToolset: image support ---
 
 
 async def test_toolset_image_support_disabled(tmp_path: Path):
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env, image_support=False)
+    toolset = ExecutionEnvironmentToolset(env, image_support=False)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -918,7 +914,7 @@ async def test_local_grep_binary_detection_first_8kb(tmp_path: Path):
 
 async def test_toolset_grep_files_with_matches(tmp_path: Path):
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -934,7 +930,7 @@ async def test_toolset_grep_files_with_matches(tmp_path: Path):
 
 async def test_toolset_grep_count(tmp_path: Path):
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -1015,7 +1011,7 @@ async def test_memory_read_offset_out_of_bounds():
 async def test_memory_edit_file():
     env = MemoryEnvironment(files={'code.py': 'old_value = 1'})
     async with env:
-        count = await env.edit_file('code.py', 'old_value', 'new_value')
+        count = await env.replace_str('code.py', 'old_value', 'new_value')
         assert count == 1
         content = await env.read_file('code.py')
         assert isinstance(content, str)
@@ -1026,27 +1022,27 @@ async def test_memory_edit_file():
 async def test_memory_edit_file_not_found():
     async with MemoryEnvironment() as env:
         with pytest.raises(FileNotFoundError):
-            await env.edit_file('nope.txt', 'a', 'b')
+            await env.replace_str('nope.txt', 'a', 'b')
 
 
 async def test_memory_edit_string_not_found():
     env = MemoryEnvironment(files={'f.txt': 'hello'})
     async with env:
         with pytest.raises(ValueError, match='not found'):
-            await env.edit_file('f.txt', 'missing', 'replacement')
+            await env.replace_str('f.txt', 'missing', 'replacement')
 
 
 async def test_memory_edit_ambiguous():
     env = MemoryEnvironment(files={'f.txt': 'dup dup dup'})
     async with env:
         with pytest.raises(ValueError, match='3 times'):
-            await env.edit_file('f.txt', 'dup', 'x')
+            await env.replace_str('f.txt', 'dup', 'x')
 
 
 async def test_memory_edit_replace_all():
     env = MemoryEnvironment(files={'f.txt': 'aaa bbb aaa'})
     async with env:
-        count = await env.edit_file('f.txt', 'aaa', 'xxx', replace_all=True)
+        count = await env.replace_str('f.txt', 'aaa', 'xxx', replace_all=True)
         assert count == 2
         content = await env.read_file('f.txt')
         assert isinstance(content, str)
@@ -1190,7 +1186,7 @@ async def test_memory_execute_with_handler():
         return ExecuteResult(output=f'ran: {cmd}\n', exit_code=0)
 
     async with MemoryEnvironment(command_handler=handler) as env:
-        result = await env.execute('echo hello')
+        result = await env.shell('echo hello')
         assert result.output == 'ran: echo hello\n'
         assert result.exit_code == 0
 
@@ -1198,7 +1194,7 @@ async def test_memory_execute_with_handler():
 async def test_memory_execute_no_handler():
     async with MemoryEnvironment() as env:
         with pytest.raises(RuntimeError, match='no command_handler'):
-            await env.execute('echo hello')
+            await env.shell('echo hello')
 
 
 async def test_memory_create_process_not_supported():
@@ -1210,29 +1206,27 @@ async def test_memory_create_process_not_supported():
 async def test_memory_write_binary():
     async with MemoryEnvironment() as env:
         await env.write_file('data.bin', b'\x00\x01\x02')
-        # read_file returns text; read_file_bytes returns raw bytes
+        # Non-image binary files are returned as text (decoded)
         content = await env.read_file('data.bin')
         assert isinstance(content, str)
-        raw = await env.read_file_bytes('data.bin')
-        assert raw == b'\x00\x01\x02'
 
 
 async def test_memory_read_file_bytes():
     png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR'
     env = MemoryEnvironment(files={'img.png': png_data})
     async with env:
-        result = await env.read_file_bytes('img.png')
+        result = await env.read_file('img.png')
         assert isinstance(result, bytes)
         assert result == png_data
 
 
-# --- MemoryEnvironment with ExecutionToolset ---
+# --- MemoryEnvironment with ExecutionEnvironmentToolset ---
 
 
 async def test_memory_toolset_integration():
-    """MemoryEnvironment works with ExecutionToolset for full agent testing."""
+    """MemoryEnvironment works with ExecutionEnvironmentToolset for full agent testing."""
     env = MemoryEnvironment(files={'main.py': 'print("hello")\n'})
-    toolset = ExecutionToolset(env, include_bash=False)
+    toolset = ExecutionEnvironmentToolset(env, exclude=frozenset({'shell', 'run_code'}))
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -1264,13 +1258,13 @@ new.py\
 
 @docker_skip
 def test_docker_sandbox_instantiation():
-    """DockerSandbox can be constructed without starting Docker."""
+    """DockerEnvironment can be constructed without starting Docker."""
 
     # Verify construction succeeds with default and custom settings
-    sandbox = DockerSandbox(image='python:3.12-slim')
-    assert isinstance(sandbox, DockerSandbox)
+    sandbox = DockerEnvironment(image='python:3.12-slim')
+    assert isinstance(sandbox, DockerEnvironment)
 
-    sandbox_with_opts = DockerSandbox(
+    sandbox_with_opts = DockerEnvironment(
         image='node:20-slim',
         packages=['express'],
         package_manager='npm',
@@ -1278,10 +1272,10 @@ def test_docker_sandbox_instantiation():
         cpu_limit=1.0,
         network_disabled=True,
     )
-    assert isinstance(sandbox_with_opts, DockerSandbox)
+    assert isinstance(sandbox_with_opts, DockerEnvironment)
 
     # Verify security hardening parameters are accepted
-    sandbox_hardened = DockerSandbox(
+    sandbox_hardened = DockerEnvironment(
         image='python:3.12-slim',
         network_disabled=True,
         read_only=True,
@@ -1292,29 +1286,29 @@ def test_docker_sandbox_instantiation():
         tmpfs={'/tmp': 'noexec,nosuid,size=64m'},
         init=True,
     )
-    assert isinstance(sandbox_hardened, DockerSandbox)
+    assert isinstance(sandbox_hardened, DockerEnvironment)
 
 
 @e2b_skip
 def test_e2b_sandbox_instantiation():
-    """E2BSandbox can be constructed without connecting to E2B."""
+    """E2BEnvironment can be constructed without connecting to E2B."""
 
-    sandbox = E2BSandbox(template='base', api_key='test-key', timeout=60)
-    assert isinstance(sandbox, E2BSandbox)
+    sandbox = E2BEnvironment(template='base', api_key='test-key', timeout=60)
+    assert isinstance(sandbox, E2BEnvironment)
 
 
 # --- Agent-level integration test ---
 
 
 async def test_agent_with_execution_toolset():
-    """Agent with ExecutionToolset runs end-to-end using TestModel and MemoryEnvironment."""
+    """Agent with ExecutionEnvironmentToolset runs end-to-end using TestModel and MemoryEnvironment."""
     from pydantic_ai import Agent
 
     env = MemoryEnvironment(
         files={'data.txt': 'hello world\n'},
         command_handler=lambda cmd: ExecuteResult(output=f'executed: {cmd}\n', exit_code=0),
     )
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
 
     agent = Agent('test', toolsets=[toolset])
 
@@ -1508,7 +1502,7 @@ def test_apply_edit_ambiguous():
 async def test_local_execute_no_timeout(tmp_path: Path):
     """execute() with timeout=None completes without timeout."""
     async with LocalEnvironment(tmp_path) as env:
-        result = await env.execute('echo no_timeout', timeout=None)
+        result = await env.shell('echo no_timeout', timeout=None)
         assert result.exit_code == 0
         assert 'no_timeout' in result.output
 
@@ -1518,14 +1512,14 @@ async def test_local_read_file_bytes_directory(tmp_path: Path):
     async with LocalEnvironment(tmp_path) as env:
         (tmp_path / 'adir').mkdir()
         with pytest.raises(FileNotFoundError, match='is a directory'):
-            await env.read_file_bytes('adir')
+            await env.read_file('adir')
 
 
 async def test_local_read_file_bytes_nonexistent(tmp_path: Path):
     """read_file_bytes on a nonexistent file raises FileNotFoundError."""
     async with LocalEnvironment(tmp_path) as env:
         with pytest.raises(FileNotFoundError):
-            await env.read_file_bytes('nope.bin')
+            await env.read_file('nope.bin')
 
 
 async def test_local_grep_specific_file(tmp_path: Path):
@@ -1547,6 +1541,7 @@ async def test_memory_normalize_paths():
     async with MemoryEnvironment() as env:
         await env.write_file('./test.txt', 'content')
         content = await env.read_file('test.txt')
+        assert isinstance(content, str)
         assert 'content' in content
 
 
@@ -1555,29 +1550,31 @@ async def test_memory_normalize_leading_slash():
     async with MemoryEnvironment() as env:
         await env.write_file('/test.txt', 'content')
         content = await env.read_file('test.txt')
+        assert isinstance(content, str)
         assert 'content' in content
 
 
-async def test_memory_read_file_bytes_text():
-    """read_file_bytes on text file returns encoded bytes."""
+async def test_memory_read_file_text():
+    """read_file on text file returns formatted string."""
     env = MemoryEnvironment(files={'text.txt': 'hello'})
     async with env:
-        result = await env.read_file_bytes('text.txt')
-        assert result == b'hello'
+        result = await env.read_file('text.txt')
+        assert isinstance(result, str)
+        assert 'hello' in result
 
 
-async def test_memory_read_file_bytes_not_found():
-    """read_file_bytes on missing file raises FileNotFoundError."""
+async def test_memory_read_file_not_found():
+    """read_file on missing file raises FileNotFoundError."""
     async with MemoryEnvironment() as env:
         with pytest.raises(FileNotFoundError):
-            await env.read_file_bytes('missing.txt')
+            await env.read_file('missing.txt')
 
 
 async def test_memory_edit_binary():
     """edit_file works on binary content."""
     env = MemoryEnvironment(files={'data.txt': b'hello world'})
     async with env:
-        count = await env.edit_file('data.txt', 'world', 'earth')
+        count = await env.replace_str('data.txt', 'world', 'earth')
         assert count == 1
 
 
@@ -1643,20 +1640,20 @@ async def test_memory_ls_with_bytes():
         assert entries[0].is_dir is False
 
 
-# --- ExecutionToolset: additional coverage ---
+# --- ExecutionEnvironmentToolset: additional coverage ---
 
 
 async def test_toolset_bash_truncated(tmp_path: Path):
     """bash tool truncation message when output exceeds limit."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
     async with env:
         # Generate output longer than MAX_OUTPUT_CHARS (100_000)
         result = await manager.handle_call(
-            ToolCallPart(tool_name='bash', args={'command': 'python3 -c "print(\'x\' * 200000)"'})
+            ToolCallPart(tool_name='shell', args={'command': 'python3 -c "print(\'x\' * 200000)"'})
         )
         assert '[output truncated]' in str(result)
         assert 'Exit code: 0' in str(result)
@@ -1665,7 +1662,7 @@ async def test_toolset_bash_truncated(tmp_path: Path):
 async def test_toolset_image_too_large(tmp_path: Path):
     """read_file on an image that's too large returns error string."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env, max_image_bytes=10)  # Very small limit
+    toolset = ExecutionEnvironmentToolset(env, max_image_bytes=10)  # Very small limit
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -1681,7 +1678,7 @@ async def test_toolset_image_read(tmp_path: Path):
     from pydantic_ai.messages import BinaryContent
 
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -1701,7 +1698,7 @@ async def test_toolset_image_read(tmp_path: Path):
 async def test_toolset_grep_no_matches(tmp_path: Path):
     """grep with no matches returns 'No matches found.'."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -1714,7 +1711,7 @@ async def test_toolset_grep_no_matches(tmp_path: Path):
 async def test_toolset_glob_no_matches(tmp_path: Path):
     """glob with no matches returns 'No files found.'."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -1726,7 +1723,7 @@ async def test_toolset_glob_no_matches(tmp_path: Path):
 async def test_toolset_edit_success(tmp_path: Path):
     """edit_file tool returns success message."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -1734,50 +1731,43 @@ async def test_toolset_edit_success(tmp_path: Path):
         await env.write_file('code.py', 'old_value = 1\n')
         result = await manager.handle_call(
             ToolCallPart(
-                tool_name='edit_file',
-                args={'path': 'code.py', 'old_string': 'old_value', 'new_string': 'new_value'},
+                tool_name='replace_str',
+                args={'path': 'code.py', 'old': 'old_value', 'new': 'new_value'},
             )
         )
         assert result == snapshot('Replaced 1 occurrence in code.py.')
 
 
-async def test_toolset_system_prompt_with_env_prompt():
-    """system_prompt includes environment-specific additions."""
+async def test_toolset_with_custom_env_tool_description():
+    """Environment tool_description is used per-tool."""
 
     class CustomEnv(MemoryEnvironment):
-        @property
-        def system_prompt(self) -> str:
-            return 'Custom environment note.\n'
+        def tool_description(self, tool: str) -> str | None:
+            if tool == 'grep':
+                return 'Custom grep description.'
+            return None
 
-    toolset = ExecutionToolset(CustomEnv())
-    prompt = toolset.system_prompt
-    assert 'bash' in prompt
-    assert 'Custom environment note.' in prompt
-
-
-async def test_toolset_system_prompt_no_env():
-    """system_prompt without environment."""
-    toolset = ExecutionToolset()
-    prompt = toolset.system_prompt
-    assert 'bash' in prompt
+    env = CustomEnv()
+    assert env.tool_description('grep') == 'Custom grep description.'
+    assert env.tool_description('read_file') is None
 
 
 async def test_toolset_lifecycle_ref_counting(tmp_path: Path):
     """Multiple context manager entries share the environment."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
 
     async with toolset:
         async with toolset:
             # Both entries active
-            result = await env.execute('echo shared')
+            result = await env.shell('echo shared')
             assert 'shared' in result.output
         # Still alive after one exit
-        result = await env.execute('echo still_alive')
+        result = await env.shell('echo still_alive')
         assert 'still_alive' in result.output
 
 
-# --- DockerSandbox: mocked tests ---
+# --- DockerEnvironment: mocked tests ---
 
 
 def _make_tar(filename: str, data: bytes) -> bytes:
@@ -1901,101 +1891,102 @@ def mock_container() -> MockContainer:
 
 @pytest.fixture
 def mock_docker_sandbox(mock_container: MockContainer) -> Any:
-    """Create a DockerSandbox with a mock container."""
+    """Create a DockerEnvironment with a mock container."""
     if not docker_installed:
         pytest.skip('docker package not installed')
 
-    sandbox = DockerSandbox(image='python:3.12-slim')
+    sandbox = DockerEnvironment(image='python:3.12-slim')
     sandbox._container = mock_container  # type: ignore[assignment]
     sandbox._client = MagicMock()
     return sandbox
 
 
 async def test_docker_execute(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox.execute runs commands in container."""
-    result = await mock_docker_sandbox.execute('echo hello')
+    """DockerEnvironment.execute runs commands in container."""
+    result = await mock_docker_sandbox.shell('echo hello')
     assert result.exit_code == 0
     assert isinstance(result.output, str)
 
 
 async def test_docker_execute_timeout(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox.execute wraps command with timeout."""
-    result = await mock_docker_sandbox.execute('echo test', timeout=30)
+    """DockerEnvironment.execute wraps command with timeout."""
+    result = await mock_docker_sandbox.shell('echo test', timeout=30)
     assert result.exit_code == 0
 
 
 async def test_docker_execute_no_timeout(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox.execute with timeout=None."""
-    result = await mock_docker_sandbox.execute('echo test', timeout=None)
+    """DockerEnvironment.execute with timeout=None."""
+    result = await mock_docker_sandbox.shell('echo test', timeout=None)
     assert result.exit_code == 0
 
 
 async def test_docker_execute_with_env(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox.execute passes env vars."""
-    result = await mock_docker_sandbox.execute('echo test', env={'KEY': 'value'})
+    """DockerEnvironment.execute passes env vars."""
+    result = await mock_docker_sandbox.shell('echo test', env={'KEY': 'value'})
     assert result.exit_code == 0
 
 
 async def test_docker_write_read_file(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox write and read files."""
+    """DockerEnvironment write and read files."""
     await mock_docker_sandbox.write_file('test.txt', 'hello world\n')
     content = await mock_docker_sandbox.read_file('test.txt')
     assert isinstance(content, str)
 
 
 async def test_docker_write_file_binary(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox write binary file."""
+    """DockerEnvironment write binary file."""
     await mock_docker_sandbox.write_file('data.bin', b'\x00\x01\x02')
 
 
 async def test_docker_read_file_not_found(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox.read_file on missing file raises FileNotFoundError."""
+    """DockerEnvironment.read_file on missing file raises FileNotFoundError."""
     with pytest.raises(FileNotFoundError):
         await mock_docker_sandbox.read_file('nonexistent.txt')
 
 
-async def test_docker_read_file_bytes(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerSandbox.read_file_bytes returns raw bytes."""
-    mock_container._files['/workspace/test.txt'] = b'raw content'
-    result = await mock_docker_sandbox.read_file_bytes('test.txt')
+async def test_docker_read_file_image(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerEnvironment.read_file returns raw bytes for image files."""
+    png_data = b'\x89PNG\r\n\x1a\n'
+    mock_container._files['/workspace/image.png'] = png_data
+    result = await mock_docker_sandbox.read_file('image.png')
     assert isinstance(result, bytes)
-    assert result == b'raw content'
+    assert result == png_data
 
 
 async def test_docker_edit_file(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerSandbox.edit_file replaces text."""
+    """DockerEnvironment.edit_file replaces text."""
     mock_container._files['/workspace/code.py'] = b'old_value = 1'
-    count = await mock_docker_sandbox.edit_file('code.py', 'old_value', 'new_value')
+    count = await mock_docker_sandbox.replace_str('code.py', 'old_value', 'new_value')
     assert count == 1
 
 
 async def test_docker_ls(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerSandbox.ls returns file entries."""
+    """DockerEnvironment.ls returns file entries."""
     mock_container._files['test.txt'] = b'hello'
     entries = await mock_docker_sandbox.ls('.')
     assert isinstance(entries, list)
 
 
 async def test_docker_glob(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox.glob returns matching paths."""
+    """DockerEnvironment.glob returns matching paths."""
     matches = await mock_docker_sandbox.glob('*.py')
     assert isinstance(matches, list)
 
 
 async def test_docker_grep(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox.grep returns matches."""
+    """DockerEnvironment.grep returns matches."""
     result = await mock_docker_sandbox.grep('pattern')
     assert isinstance(result, str)
 
 
 async def test_docker_grep_with_options(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox.grep with output_mode and glob_pattern."""
+    """DockerEnvironment.grep with output_mode and glob_pattern."""
     result = await mock_docker_sandbox.grep('pattern', glob_pattern='*.py', output_mode='files_with_matches')
     assert isinstance(result, str)
 
 
 async def test_docker_grep_count(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerSandbox.grep count mode filters zero-count results."""
+    """DockerEnvironment.grep count mode filters zero-count results."""
     # Override exec_run to return count-style output
     original_exec_run = mock_container.exec_run
 
@@ -2013,43 +2004,43 @@ async def test_docker_grep_count(mock_docker_sandbox: Any, mock_container: MockC
 
 @docker_skip
 async def test_docker_container_property(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox.container raises when not started."""
+    """DockerEnvironment.container raises when not started."""
 
-    sandbox = DockerSandbox()
+    sandbox = DockerEnvironment()
     with pytest.raises(RuntimeError, match='not started'):
         _ = sandbox.container
 
 
 async def test_docker_create_process(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox.create_process returns a DockerSandboxProcess."""
+    """DockerEnvironment.create_process returns a DockerEnvironmentProcess."""
     proc = await mock_docker_sandbox.create_process('echo test')
     assert proc is not None
 
 
-async def test_docker_system_prompt(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox.system_prompt describes Docker environment."""
-    prompt = mock_docker_sandbox.system_prompt
-    assert 'Docker' in prompt
-    assert 'POSIX' in prompt
+async def test_docker_tool_description(mock_docker_sandbox: Any) -> None:
+    """DockerEnvironment.tool_description provides per-tool descriptions."""
+    grep_desc = mock_docker_sandbox.tool_description('grep')
+    assert grep_desc is not None
+    assert 'POSIX' in grep_desc
 
 
 async def test_docker_is_alive(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox.is_alive checks container status."""
+    """DockerEnvironment.is_alive checks container status."""
     result = await mock_docker_sandbox.is_alive()
     assert result is True
 
 
 @docker_skip
 async def test_docker_is_alive_not_started() -> None:
-    """DockerSandbox.is_alive returns False when not started."""
+    """DockerEnvironment.is_alive returns False when not started."""
 
-    sandbox = DockerSandbox()
+    sandbox = DockerEnvironment()
     result = await sandbox.is_alive()
     assert result is False
 
 
 async def test_docker_resolve_path(mock_docker_sandbox: Any) -> None:
-    """DockerSandbox._resolve_path resolves relative paths."""
+    """DockerEnvironment._resolve_path resolves relative paths."""
     assert mock_docker_sandbox._resolve_path('test.txt') == '/workspace/test.txt'
     assert mock_docker_sandbox._resolve_path('/abs/path') == '/abs/path'
     assert mock_docker_sandbox._resolve_path('sub/dir/file.py') == '/workspace/sub/dir/file.py'
@@ -2114,10 +2105,10 @@ def test_docker_put_file() -> None:
 
 @docker_skip
 def test_docker_sandbox_process_read_frame() -> None:
-    """DockerSandboxProcess._read_frame parses multiplexed stream frames."""
+    """DockerEnvironmentProcess._read_frame parses multiplexed stream frames."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
 
     # Create a mock socket with a multiplexed frame
     stdout_data = b'hello from stdout'
@@ -2134,10 +2125,10 @@ def test_docker_sandbox_process_read_frame() -> None:
 
 @docker_skip
 def test_docker_sandbox_process_read_frame_stderr() -> None:
-    """DockerSandboxProcess._read_frame handles stderr frames."""
+    """DockerEnvironmentProcess._read_frame handles stderr frames."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
 
     stderr_data = b'error output'
     header = struct.pack('>BxxxI', 2, len(stderr_data))  # stream_type=2 (stderr)
@@ -2153,10 +2144,10 @@ def test_docker_sandbox_process_read_frame_stderr() -> None:
 
 @docker_skip
 def test_docker_sandbox_process_read_frame_eof() -> None:
-    """DockerSandboxProcess._read_frame returns empty on EOF."""
+    """DockerEnvironmentProcess._read_frame returns empty on EOF."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
 
     mock_socket = MagicMock()
     mock_socket.recv.return_value = b''  # EOF
@@ -2170,10 +2161,10 @@ def test_docker_sandbox_process_read_frame_eof() -> None:
 
 @docker_skip
 def test_docker_sandbox_process_read_frame_zero_size() -> None:
-    """DockerSandboxProcess._read_frame handles zero-size frames."""
+    """DockerEnvironmentProcess._read_frame handles zero-size frames."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
 
     header = struct.pack('>BxxxI', 1, 0)  # zero size
 
@@ -2188,10 +2179,10 @@ def test_docker_sandbox_process_read_frame_zero_size() -> None:
 
 @docker_skip
 def test_docker_sandbox_process_already_eof() -> None:
-    """DockerSandboxProcess._read_frame returns empty when already at EOF."""
+    """DockerEnvironmentProcess._read_frame returns empty when already at EOF."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     proc._eof = True
 
     stream_type, data = proc._read_frame()
@@ -2199,7 +2190,7 @@ def test_docker_sandbox_process_already_eof() -> None:
     assert data == b''
 
 
-# --- E2BSandbox: mocked tests ---
+# --- E2BEnvironment: mocked tests ---
 
 
 def _make_mock_e2b_sandbox() -> Any:
@@ -2232,50 +2223,50 @@ def _make_mock_e2b_sandbox() -> Any:
 
 @pytest.fixture
 def mock_e2b_sandbox() -> Any:
-    """Create an E2BSandbox with mocked internals."""
+    """Create an E2BEnvironment with mocked internals."""
     if not e2b_installed:
         pytest.skip('e2b-code-interpreter package not installed')
 
-    sandbox = E2BSandbox(template='base', api_key='test-key')
+    sandbox = E2BEnvironment(template='base', api_key='test-key')
     sandbox._sandbox = _make_mock_e2b_sandbox()
     return sandbox
 
 
 async def test_e2b_execute(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.execute runs commands."""
-    result = await mock_e2b_sandbox.execute('echo hello')
+    """E2BEnvironment.execute runs commands."""
+    result = await mock_e2b_sandbox.shell('echo hello')
     assert result.exit_code == 0
     assert isinstance(result.output, str)
 
 
 async def test_e2b_execute_with_env(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.execute passes merged env vars."""
-    result = await mock_e2b_sandbox.execute('echo test', env={'KEY': 'val'})
+    """E2BEnvironment.execute passes merged env vars."""
+    result = await mock_e2b_sandbox.shell('echo test', env={'KEY': 'val'})
     assert result.exit_code == 0
 
 
 async def test_e2b_execute_truncation(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.execute truncates long output."""
+    """E2BEnvironment.execute truncates long output."""
     mock_result = MagicMock()
     mock_result.stdout = 'x' * 200_000
     mock_result.stderr = ''
     mock_result.exit_code = 0
     mock_e2b_sandbox.sandbox.commands.run.return_value = mock_result
 
-    result = await mock_e2b_sandbox.execute('long command')
+    result = await mock_e2b_sandbox.shell('long command')
     assert result.truncated is True
     assert len(result.output) == 100_000
 
 
 async def test_e2b_read_file(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.read_file returns content."""
+    """E2BEnvironment.read_file returns content."""
     # The mock commands.run returns mock_result with stdout
     content = await mock_e2b_sandbox.read_file('test.txt')
     assert isinstance(content, str)
 
 
 async def test_e2b_read_file_not_found(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.read_file raises on missing files."""
+    """E2BEnvironment.read_file raises on missing files."""
     mock_result = MagicMock()
     mock_result.exit_code = 1
     mock_result.stdout = ''
@@ -2285,49 +2276,51 @@ async def test_e2b_read_file_not_found(mock_e2b_sandbox: Any) -> None:
         await mock_e2b_sandbox.read_file('missing.txt')
 
 
-async def test_e2b_read_file_bytes(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.read_file_bytes returns raw bytes."""
-    mock_e2b_sandbox.sandbox.files.read.return_value = b'raw bytes'
-    result = await mock_e2b_sandbox.read_file_bytes('data.bin')
-    assert result == b'raw bytes'
+async def test_e2b_read_file_image(mock_e2b_sandbox: Any) -> None:
+    """E2BEnvironment.read_file returns raw bytes for image files."""
+    png_data = b'\x89PNG\r\n\x1a\n'
+    mock_e2b_sandbox.sandbox.files.read.return_value = png_data
+    result = await mock_e2b_sandbox.read_file('image.png')
+    assert isinstance(result, bytes)
+    assert result == png_data
 
 
 async def test_e2b_write_file(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.write_file creates files."""
+    """E2BEnvironment.write_file creates files."""
     await mock_e2b_sandbox.write_file('test.txt', 'content')
     mock_e2b_sandbox.sandbox.files.write.assert_called()
 
 
 async def test_e2b_write_file_binary(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.write_file handles binary content."""
+    """E2BEnvironment.write_file handles binary content."""
     await mock_e2b_sandbox.write_file('data.bin', b'\x00\x01\x02')
     mock_e2b_sandbox.sandbox.files.write.assert_called()
 
 
 async def test_e2b_write_file_with_parent_dir(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.write_file creates parent directories."""
+    """E2BEnvironment.write_file creates parent directories."""
     await mock_e2b_sandbox.write_file('sub/dir/file.txt', 'content')
     # Should have run mkdir -p for the parent
     mock_e2b_sandbox.sandbox.commands.run.assert_called()
 
 
 async def test_e2b_edit_file(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.edit_file replaces text."""
+    """E2BEnvironment.edit_file replaces text."""
     mock_e2b_sandbox.sandbox.files.read.return_value = 'old_value = 1'
-    count = await mock_e2b_sandbox.edit_file('code.py', 'old_value', 'new_value')
+    count = await mock_e2b_sandbox.replace_str('code.py', 'old_value', 'new_value')
     assert count == 1
     mock_e2b_sandbox.sandbox.files.write.assert_called()
 
 
 async def test_e2b_edit_file_bytes(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.edit_file handles bytes content."""
+    """E2BEnvironment.edit_file handles bytes content."""
     mock_e2b_sandbox.sandbox.files.read.return_value = b'old bytes data'
-    count = await mock_e2b_sandbox.edit_file('data.txt', 'old', 'new')
+    count = await mock_e2b_sandbox.replace_str('data.txt', 'old', 'new')
     assert count == 1
 
 
 async def test_e2b_ls(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.ls returns entries."""
+    """E2BEnvironment.ls returns entries."""
     mock_entry = MagicMock()
     mock_entry.name = 'test.txt'
     mock_entry.type = 'file'
@@ -2340,7 +2333,7 @@ async def test_e2b_ls(mock_e2b_sandbox: Any) -> None:
 
 
 async def test_e2b_ls_dir(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.ls handles directories."""
+    """E2BEnvironment.ls handles directories."""
     mock_entry = MagicMock()
     mock_entry.name = 'subdir'
     mock_entry.type = 'dir'
@@ -2353,7 +2346,7 @@ async def test_e2b_ls_dir(mock_e2b_sandbox: Any) -> None:
 
 
 async def test_e2b_glob(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.glob returns matches."""
+    """E2BEnvironment.glob returns matches."""
     mock_result = MagicMock()
     mock_result.stdout = 'a.py\nb.py\n'
     mock_e2b_sandbox.sandbox.commands.run.return_value = mock_result
@@ -2363,7 +2356,7 @@ async def test_e2b_glob(mock_e2b_sandbox: Any) -> None:
 
 
 async def test_e2b_grep(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.grep returns matches."""
+    """E2BEnvironment.grep returns matches."""
     mock_result = MagicMock()
     mock_result.stdout = 'file.py:1:match\n'
     mock_e2b_sandbox.sandbox.commands.run.return_value = mock_result
@@ -2373,7 +2366,7 @@ async def test_e2b_grep(mock_e2b_sandbox: Any) -> None:
 
 
 async def test_e2b_grep_count(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.grep count mode filters zeros."""
+    """E2BEnvironment.grep count mode filters zeros."""
     mock_result = MagicMock()
     mock_result.stdout = 'a.py:3\nb.py:0\n'
     mock_e2b_sandbox.sandbox.commands.run.return_value = mock_result
@@ -2383,48 +2376,48 @@ async def test_e2b_grep_count(mock_e2b_sandbox: Any) -> None:
     assert 'b.py:0' not in result
 
 
-async def test_e2b_system_prompt(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.system_prompt describes E2B environment."""
-    prompt = mock_e2b_sandbox.system_prompt
-    assert 'E2B' in prompt
-    assert 'POSIX' in prompt
+async def test_e2b_tool_description(mock_e2b_sandbox: Any) -> None:
+    """E2BEnvironment.tool_description provides per-tool descriptions."""
+    grep_desc = mock_e2b_sandbox.tool_description('grep')
+    assert grep_desc is not None
+    assert 'POSIX' in grep_desc
 
 
 @e2b_skip
 async def test_e2b_sandbox_property() -> None:
-    """E2BSandbox.sandbox raises when not started."""
+    """E2BEnvironment.sandbox raises when not started."""
 
-    sandbox = E2BSandbox(api_key='test')
+    sandbox = E2BEnvironment(api_key='test')
     with pytest.raises(RuntimeError, match='not started'):
         _ = sandbox.sandbox
 
 
 async def test_e2b_merge_env(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox._merge_env merges baseline and per-call env."""
+    """E2BEnvironment._merge_env merges baseline and per-call env."""
     mock_e2b_sandbox._env_vars = {'BASE': 'val'}
     merged = mock_e2b_sandbox._merge_env({'EXTRA': 'extra'})
     assert merged == {'BASE': 'val', 'EXTRA': 'extra'}
 
 
 async def test_e2b_merge_env_override(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox._merge_env per-call overrides baseline."""
+    """E2BEnvironment._merge_env per-call overrides baseline."""
     mock_e2b_sandbox._env_vars = {'KEY': 'old'}
     merged = mock_e2b_sandbox._merge_env({'KEY': 'new'})
     assert merged == {'KEY': 'new'}
 
 
 async def test_e2b_merge_env_empty(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox._merge_env returns None when nothing to merge."""
+    """E2BEnvironment._merge_env returns None when nothing to merge."""
     mock_e2b_sandbox._env_vars = {}
     result = mock_e2b_sandbox._merge_env(None)
     assert result is None
 
 
 async def test_e2b_create_process(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.create_process returns an E2BSandboxProcess."""
+    """E2BEnvironment.create_process returns an E2BEnvironmentProcess."""
 
     proc = await mock_e2b_sandbox.create_process('echo test')
-    assert isinstance(proc, E2BSandboxProcess)
+    assert isinstance(proc, E2BEnvironmentProcess)
 
     # Clean up the memory streams created in __init__ to avoid ResourceWarning
     await proc._stdout_send.aclose()
@@ -2454,25 +2447,25 @@ async def test_execution_environment_aenter_aexit():
 
 
 async def test_toolset_bash_empty_output(tmp_path: Path):
-    """ExecutionToolset bash returns just exit code when no output."""
+    """ExecutionEnvironmentToolset bash returns just exit code when no output."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context()
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
     async with env:
-        result = await manager.handle_call(ToolCallPart(tool_name='bash', args={'command': 'true'}))
+        result = await manager.handle_call(ToolCallPart(tool_name='shell', args={'command': 'true'}))
         assert 'Exit code: 0' in str(result)
 
 
 async def test_toolset_glob_truncation(tmp_path: Path):
-    """ExecutionToolset glob truncates after 100 matches."""
+    """ExecutionEnvironmentToolset glob truncates after 100 matches."""
     env = LocalEnvironment(tmp_path)
     # Create 110 files
     for i in range(110):
         (tmp_path / f'file_{i:03d}.txt').write_text(f'content {i}')
 
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context()
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -2482,10 +2475,10 @@ async def test_toolset_glob_truncation(tmp_path: Path):
 
 
 async def test_toolset_grep_no_matches_returns_message(tmp_path: Path):
-    """ExecutionToolset grep returns message when no matches."""
+    """ExecutionEnvironmentToolset grep returns message when no matches."""
     (tmp_path / 'test.txt').write_text('hello world')
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context()
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -2495,14 +2488,14 @@ async def test_toolset_grep_no_matches_returns_message(tmp_path: Path):
 
 
 async def test_toolset_lifecycle_error(tmp_path: Path):
-    """ExecutionToolset handles environment startup failures."""
+    """ExecutionEnvironmentToolset handles environment startup failures."""
 
     class FailingEnv(LocalEnvironment):
         async def __aenter__(self):
             raise RuntimeError('Setup failed')
 
     env = FailingEnv(tmp_path)
-    toolset = ExecutionToolset(env)
+    toolset = ExecutionEnvironmentToolset(env)
     with pytest.raises(RuntimeError, match='Setup failed'):
         async with toolset:
             pass
@@ -2578,14 +2571,14 @@ async def test_local_read_file_bytes_directory_raises_error(tmp_path: Path):
     (tmp_path / 'subdir').mkdir()
     env = LocalEnvironment(tmp_path)
     with pytest.raises(FileNotFoundError, match='directory'):
-        await env.read_file_bytes('subdir')
+        await env.read_file('subdir')
 
 
 async def test_local_read_file_bytes_not_found(tmp_path: Path):
     """LocalEnvironment.read_file_bytes raises on missing file."""
     env = LocalEnvironment(tmp_path)
     with pytest.raises(FileNotFoundError, match='not found'):
-        await env.read_file_bytes('nonexistent.txt')
+        await env.read_file('nonexistent.txt')
 
 
 async def test_local_grep_on_file(tmp_path: Path):
@@ -2635,7 +2628,7 @@ async def test_local_execute_output_truncation(tmp_path: Path):
     script = tmp_path / 'big.py'
     script.write_text("print('x' * 200000)")
     env = LocalEnvironment(tmp_path)
-    result = await env.execute(f'python {script}')
+    result = await env.shell(f'python {script}')
     assert result.truncated is True
     assert len(result.output) == 100_000
 
@@ -2647,6 +2640,7 @@ async def test_memory_normalize_leading_slash_in_constructor():
     """MemoryEnvironment normalizes paths with leading /."""
     env = MemoryEnvironment(files={'/abs/path.txt': 'content'})
     content = await env.read_file('abs/path.txt')
+    assert isinstance(content, str)
     assert 'content' in content
 
 
@@ -2661,7 +2655,7 @@ async def test_memory_read_file_bytes_not_found_raises_error():
     """MemoryEnvironment.read_file_bytes raises on missing file."""
     env = MemoryEnvironment()
     with pytest.raises(FileNotFoundError):
-        await env.read_file_bytes('missing.txt')
+        await env.read_file('missing.txt')
 
 
 async def test_memory_ls_non_root_directory():
@@ -2718,7 +2712,7 @@ async def test_memory_glob_in_subdirectory_with_path_filter():
 
 
 async def test_docker_execute_truncation(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerSandbox.execute truncates long output."""
+    """DockerEnvironment.execute truncates long output."""
     original = mock_container.exec_run
 
     def big_output(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
@@ -2727,29 +2721,29 @@ async def test_docker_execute_truncation(mock_docker_sandbox: Any, mock_containe
         return original(cmd, **kwargs)  # pragma: no cover
 
     mock_container.exec_run = big_output  # type: ignore[assignment]
-    result = await mock_docker_sandbox.execute('echo big')
+    result = await mock_docker_sandbox.shell('echo big')
     assert result.truncated is True
     assert len(result.output) == 100_000
 
 
 async def test_docker_execute_timeout_exit_code(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerSandbox.execute handles timeout exit code 124."""
+    """DockerEnvironment.execute handles timeout exit code 124."""
 
     def timeout_result(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
         return 124, b'partial output'
 
     mock_container.exec_run = timeout_result  # type: ignore[assignment]
-    result = await mock_docker_sandbox.execute('sleep 999', timeout=1)
+    result = await mock_docker_sandbox.shell('sleep 999', timeout=1)
     assert result.exit_code == 124
     assert '[Command timed out]' in result.output
 
 
 @docker_skip
 async def test_docker_setup_teardown() -> None:
-    """DockerSandbox._setup and _teardown with mocked Docker client."""
+    """DockerEnvironment._setup and _teardown with mocked Docker client."""
     from unittest.mock import patch as mock_patch
 
-    sandbox = DockerSandbox(image='python:3.12-slim')
+    sandbox = DockerEnvironment(image='python:3.12-slim')
 
     mock_client = MagicMock()
     mock_container_obj = MagicMock()
@@ -2769,9 +2763,9 @@ async def test_docker_setup_teardown() -> None:
 
 @docker_skip
 async def test_docker_teardown_cleanup_errors() -> None:
-    """DockerSandbox._teardown handles exceptions gracefully."""
+    """DockerEnvironment._teardown handles exceptions gracefully."""
 
-    sandbox = DockerSandbox()
+    sandbox = DockerEnvironment()
     mock_container = MagicMock()
     mock_container.stop.side_effect = Exception('stop failed')
     mock_container.remove.side_effect = Exception('remove failed')
@@ -2784,9 +2778,9 @@ async def test_docker_teardown_cleanup_errors() -> None:
 
 @docker_skip
 async def test_docker_resolve_image_no_packages() -> None:
-    """DockerSandbox._resolve_image returns base image when no packages."""
+    """DockerEnvironment._resolve_image returns base image when no packages."""
 
-    sandbox = DockerSandbox(image='python:3.12-slim')
+    sandbox = DockerEnvironment(image='python:3.12-slim')
     sandbox._client = MagicMock()
     result = sandbox._resolve_image()
     assert result == 'python:3.12-slim'
@@ -2794,9 +2788,9 @@ async def test_docker_resolve_image_no_packages() -> None:
 
 @docker_skip
 async def test_docker_resolve_image_with_cache() -> None:
-    """DockerSandbox._resolve_image returns cached image if it exists."""
+    """DockerEnvironment._resolve_image returns cached image if it exists."""
 
-    sandbox = DockerSandbox(image='python:3.12-slim', packages=['numpy'])
+    sandbox = DockerEnvironment(image='python:3.12-slim', packages=['numpy'])
     mock_client = MagicMock()
     mock_client.images.get.return_value = MagicMock()  # Image exists
     sandbox._client = mock_client
@@ -2808,9 +2802,9 @@ async def test_docker_resolve_image_with_cache() -> None:
 
 @docker_skip
 async def test_docker_resolve_image_build_new() -> None:
-    """DockerSandbox._resolve_image builds when cache miss."""
+    """DockerEnvironment._resolve_image builds when cache miss."""
 
-    sandbox = DockerSandbox(image='python:3.12-slim', packages=['numpy'])
+    sandbox = DockerEnvironment(image='python:3.12-slim', packages=['numpy'])
     mock_client = MagicMock()
     mock_client.images.get.side_effect = ImageNotFound('not found')
     mock_client.images.build.return_value = (MagicMock(), [])
@@ -2823,9 +2817,9 @@ async def test_docker_resolve_image_build_new() -> None:
 
 @docker_skip
 async def test_docker_resolve_image_no_cache() -> None:
-    """DockerSandbox._resolve_image skips cache check when disabled."""
+    """DockerEnvironment._resolve_image skips cache check when disabled."""
 
-    sandbox = DockerSandbox(image='python:3.12-slim', packages=['numpy'], cache_built_image=False)
+    sandbox = DockerEnvironment(image='python:3.12-slim', packages=['numpy'], cache_built_image=False)
     mock_client = MagicMock()
     mock_client.images.build.return_value = (MagicMock(), [])
     sandbox._client = mock_client
@@ -2838,10 +2832,10 @@ async def test_docker_resolve_image_no_cache() -> None:
 
 @docker_skip
 async def test_docker_setup_with_all_options() -> None:
-    """DockerSandbox._setup passes all container options."""
+    """DockerEnvironment._setup passes all container options."""
     from unittest.mock import patch as mock_patch
 
-    sandbox = DockerSandbox(
+    sandbox = DockerEnvironment(
         image='python:3.12-slim',
         env_vars={'KEY': 'val'},
         volumes={'/host': {'bind': '/container', 'mode': 'rw'}},
@@ -2881,10 +2875,10 @@ async def test_docker_setup_with_all_options() -> None:
 
 @docker_skip
 async def test_docker_process_recv_with_buffered_data() -> None:
-    """DockerSandboxProcess.recv returns buffered stdout data first."""
+    """DockerEnvironmentProcess.recv returns buffered stdout data first."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     proc._stdout_buffer.append(b'buffered data')
 
     result = await proc.recv()
@@ -2894,10 +2888,10 @@ async def test_docker_process_recv_with_buffered_data() -> None:
 
 @docker_skip
 async def test_docker_process_recv_stderr_with_buffered_data() -> None:
-    """DockerSandboxProcess.recv_stderr returns buffered stderr data first."""
+    """DockerEnvironmentProcess.recv_stderr returns buffered stderr data first."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     proc._stderr_buffer.append(b'buffered error')
 
     result = await proc.recv_stderr()
@@ -2907,10 +2901,10 @@ async def test_docker_process_recv_stderr_with_buffered_data() -> None:
 
 @docker_skip
 async def test_docker_process_recv_stream_buffers_other() -> None:
-    """DockerSandboxProcess._recv_stream buffers frames for the other stream."""
+    """DockerEnvironmentProcess._recv_stream buffers frames for the other stream."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
 
     # First frame is stderr (type 2), second is stdout (type 1)
     stderr_data = b'error output'
@@ -2930,10 +2924,10 @@ async def test_docker_process_recv_stream_buffers_other() -> None:
 
 @docker_skip
 async def test_docker_process_recv_stream_eof() -> None:
-    """DockerSandboxProcess._recv_stream returns empty on EOF."""
+    """DockerEnvironmentProcess._recv_stream returns empty on EOF."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
 
     mock_socket = MagicMock()
     mock_socket.recv.return_value = b''  # EOF
@@ -2945,10 +2939,10 @@ async def test_docker_process_recv_stream_eof() -> None:
 
 @docker_skip
 async def test_docker_process_kill() -> None:
-    """DockerSandboxProcess.kill closes the socket."""
+    """DockerEnvironmentProcess.kill closes the socket."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     mock_socket = MagicMock()
     proc._socket = mock_socket
 
@@ -2958,10 +2952,10 @@ async def test_docker_process_kill() -> None:
 
 @docker_skip
 async def test_docker_process_kill_oserror() -> None:
-    """DockerSandboxProcess.kill handles OSError."""
+    """DockerEnvironmentProcess.kill handles OSError."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     mock_socket = MagicMock()
     mock_socket.close.side_effect = OSError('socket error')
     proc._socket = mock_socket
@@ -2972,10 +2966,10 @@ async def test_docker_process_kill_oserror() -> None:
 
 @docker_skip
 async def test_docker_process_returncode() -> None:
-    """DockerSandboxProcess.returncode checks exec status."""
+    """DockerEnvironmentProcess.returncode checks exec status."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
 
     # No exec_id means returncode is None
     assert proc.returncode is None
@@ -2988,11 +2982,11 @@ async def test_docker_process_returncode() -> None:
 
 @docker_skip
 async def test_docker_process_returncode_from_inspect() -> None:
-    """DockerSandboxProcess.returncode polls Docker API."""
+    """DockerEnvironmentProcess.returncode polls Docker API."""
 
     container = MockContainer()
     container.client.api.exec_inspect.return_value = {'ExitCode': 42, 'Running': False}
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     proc._exec_id = 'exec-123'
 
     assert proc.returncode == 42
@@ -3001,12 +2995,12 @@ async def test_docker_process_returncode_from_inspect() -> None:
 
 @docker_skip
 async def test_docker_process_returncode_still_running() -> None:
-    """DockerSandboxProcess.returncode returns None when process is running (ExitCode=0, Running=True)."""
+    """DockerEnvironmentProcess.returncode returns None when process is running (ExitCode=0, Running=True)."""
 
     container = MockContainer()
     # Docker returns ExitCode=0 + Running=True for still-running processes
     container.client.api.exec_inspect.return_value = {'ExitCode': 0, 'Running': True}
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     proc._exec_id = 'exec-123'
 
     assert proc.returncode is None
@@ -3014,11 +3008,11 @@ async def test_docker_process_returncode_still_running() -> None:
 
 @docker_skip
 async def test_docker_process_returncode_inspect_error() -> None:
-    """DockerSandboxProcess.returncode handles API errors."""
+    """DockerEnvironmentProcess.returncode handles API errors."""
 
     container = MockContainer()
     container.client.api.exec_inspect.side_effect = OSError('connection failed')
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     proc._exec_id = 'exec-123'
 
     assert proc.returncode is None
@@ -3026,10 +3020,10 @@ async def test_docker_process_returncode_inspect_error() -> None:
 
 @docker_skip
 async def test_docker_process_send() -> None:
-    """DockerSandboxProcess.send writes to socket."""
+    """DockerEnvironmentProcess.send writes to socket."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     mock_socket = MagicMock()
     proc._socket = mock_socket
 
@@ -3039,10 +3033,10 @@ async def test_docker_process_send() -> None:
 
 @docker_skip
 async def test_docker_process_recv_with_timeout() -> None:
-    """DockerSandboxProcess.recv with timeout."""
+    """DockerEnvironmentProcess.recv with timeout."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
 
     stdout_data = b'data'
     header = struct.pack('>BxxxI', 1, len(stdout_data))
@@ -3056,10 +3050,10 @@ async def test_docker_process_recv_with_timeout() -> None:
 
 @docker_skip
 async def test_docker_process_recv_stderr_with_timeout() -> None:
-    """DockerSandboxProcess.recv_stderr with timeout."""
+    """DockerEnvironmentProcess.recv_stderr with timeout."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
 
     stderr_data = b'error'
     header = struct.pack('>BxxxI', 2, len(stderr_data))
@@ -3073,10 +3067,10 @@ async def test_docker_process_recv_stderr_with_timeout() -> None:
 
 @docker_skip
 async def test_docker_read_frame_data_eof_during_read() -> None:
-    """DockerSandboxProcess._read_frame handles EOF during data read."""
+    """DockerEnvironmentProcess._read_frame handles EOF during data read."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
 
     # Header says 100 bytes but socket returns less then EOF
     header = struct.pack('>BxxxI', 1, 100)
@@ -3092,14 +3086,14 @@ async def test_docker_read_frame_data_eof_during_read() -> None:
 
 @docker_skip
 async def test_docker_process_start_with_env() -> None:
-    """DockerSandboxProcess._do_start passes env to exec_create."""
+    """DockerEnvironmentProcess._do_start passes env to exec_create."""
 
     container = MockContainer()
     container.client.api.exec_create.return_value = {'Id': 'exec-test'}
     mock_sock = MagicMock()
     container.client.api.exec_start.return_value = mock_sock
 
-    proc = DockerSandboxProcess(
+    proc = DockerEnvironmentProcess(
         container,  # type: ignore[arg-type]
         'echo test',
         '/workspace',
@@ -3114,21 +3108,21 @@ async def test_docker_process_start_with_env() -> None:
 
 @docker_skip
 async def test_docker_process_aenter() -> None:
-    """DockerSandboxProcess.__aenter__ starts the process."""
+    """DockerEnvironmentProcess.__aenter__ starts the process."""
 
     container = MockContainer()
     container.client.api.exec_create.return_value = {'Id': 'exec-aenter'}
     mock_sock = MagicMock()
     container.client.api.exec_start.return_value = mock_sock
 
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     entered = await proc.__aenter__()
     assert entered is proc
     assert proc._exec_id == 'exec-aenter'
 
 
 async def test_docker_ls_not_found(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerSandbox.ls raises NotADirectoryError on missing dirs."""
+    """DockerEnvironment.ls raises NotADirectoryError on missing dirs."""
     original = mock_container.exec_run
 
     def fail_ls(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
@@ -3142,15 +3136,15 @@ async def test_docker_ls_not_found(mock_docker_sandbox: Any, mock_container: Moc
 
 
 @docker_skip
-async def test_docker_read_file_bytes_not_found(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerSandbox.read_file_bytes raises FileNotFoundError for missing files."""
+async def test_docker_read_file_image_not_found(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerEnvironment.read_file raises DockerNotFound for missing image files."""
 
     def fail_get_archive(path: str) -> Any:
         raise DockerNotFound('File not found')
 
     mock_container.get_archive = fail_get_archive
     with pytest.raises(DockerNotFound):
-        await mock_docker_sandbox.read_file_bytes('missing.txt')
+        await mock_docker_sandbox.read_file('missing.png')
 
 
 # --- Additional E2B coverage: process methods, lifecycle ---
@@ -3158,7 +3152,7 @@ async def test_docker_read_file_bytes_not_found(mock_docker_sandbox: Any, mock_c
 
 @e2b_skip
 async def test_e2b_process_start_with_env() -> None:
-    """E2BSandboxProcess._start passes env to commands.start."""
+    """E2BEnvironmentProcess._start passes env to commands.start."""
 
     mock_sandbox = MagicMock()
     mock_proc = MagicMock()
@@ -3166,7 +3160,7 @@ async def test_e2b_process_start_with_env() -> None:
     mock_proc.kill = AsyncMock()
     mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
 
-    proc = E2BSandboxProcess(mock_sandbox, 'echo test', env={'KEY': 'val'})
+    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test', env={'KEY': 'val'})
     await proc._start()
 
     mock_sandbox.commands.start.assert_called_once()
@@ -3183,13 +3177,13 @@ async def test_e2b_process_start_with_env() -> None:
 
 @e2b_skip
 async def test_e2b_process_aenter() -> None:
-    """E2BSandboxProcess.__aenter__ starts the process."""
+    """E2BEnvironmentProcess.__aenter__ starts the process."""
 
     mock_sandbox = MagicMock()
     mock_proc = MagicMock()
     mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
 
-    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
     entered = await proc.__aenter__()
     assert entered is proc
     assert proc._proc is mock_proc
@@ -3203,14 +3197,14 @@ async def test_e2b_process_aenter() -> None:
 
 @e2b_skip
 async def test_e2b_process_send() -> None:
-    """E2BSandboxProcess.send writes to process stdin."""
+    """E2BEnvironmentProcess.send writes to process stdin."""
 
     mock_sandbox = MagicMock()
     mock_proc = MagicMock()
     mock_proc.send_stdin = AsyncMock()
     mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
 
-    proc = E2BSandboxProcess(mock_sandbox, 'cat')
+    proc = E2BEnvironmentProcess(mock_sandbox, 'cat')
     await proc._start()
     await proc.send(b'hello\n')
     mock_proc.send_stdin.assert_called_once_with('hello\n')
@@ -3224,10 +3218,10 @@ async def test_e2b_process_send() -> None:
 
 @e2b_skip
 async def test_e2b_process_recv() -> None:
-    """E2BSandboxProcess.recv reads from stdout stream."""
+    """E2BEnvironmentProcess.recv reads from stdout stream."""
 
     mock_sandbox = MagicMock()
-    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
 
     # Simulate stdout callback
     proc._stdout_send.send_nowait(b'hello\n')
@@ -3243,10 +3237,10 @@ async def test_e2b_process_recv() -> None:
 
 @e2b_skip
 async def test_e2b_process_recv_no_timeout() -> None:
-    """E2BSandboxProcess.recv without timeout."""
+    """E2BEnvironmentProcess.recv without timeout."""
 
     mock_sandbox = MagicMock()
-    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
 
     proc._stdout_send.send_nowait(b'data\n')
     data = await proc.recv()
@@ -3261,10 +3255,10 @@ async def test_e2b_process_recv_no_timeout() -> None:
 
 @e2b_skip
 async def test_e2b_process_recv_stderr() -> None:
-    """E2BSandboxProcess.recv_stderr reads from stderr stream."""
+    """E2BEnvironmentProcess.recv_stderr reads from stderr stream."""
 
     mock_sandbox = MagicMock()
-    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
 
     proc._stderr_send.send_nowait(b'error\n')
     data = await proc.recv_stderr(timeout=1.0)
@@ -3279,10 +3273,10 @@ async def test_e2b_process_recv_stderr() -> None:
 
 @e2b_skip
 async def test_e2b_process_recv_stderr_no_timeout() -> None:
-    """E2BSandboxProcess.recv_stderr without timeout."""
+    """E2BEnvironmentProcess.recv_stderr without timeout."""
 
     mock_sandbox = MagicMock()
-    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
 
     proc._stderr_send.send_nowait(b'err\n')
     data = await proc.recv_stderr()
@@ -3297,10 +3291,10 @@ async def test_e2b_process_recv_stderr_no_timeout() -> None:
 
 @e2b_skip
 async def test_e2b_process_returncode() -> None:
-    """E2BSandboxProcess.returncode reflects exit status."""
+    """E2BEnvironmentProcess.returncode reflects exit status."""
 
     mock_sandbox = MagicMock()
-    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
 
     assert proc.returncode is None
     proc._on_exit(42)
@@ -3315,10 +3309,10 @@ async def test_e2b_process_returncode() -> None:
 
 @e2b_skip
 async def test_e2b_process_wait() -> None:
-    """E2BSandboxProcess.wait returns exit code."""
+    """E2BEnvironmentProcess.wait returns exit code."""
 
     mock_sandbox = MagicMock()
-    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
 
     # Simulate immediate exit
     proc._on_exit(0)
@@ -3334,10 +3328,10 @@ async def test_e2b_process_wait() -> None:
 
 @e2b_skip
 async def test_e2b_process_wait_no_timeout() -> None:
-    """E2BSandboxProcess.wait without timeout."""
+    """E2BEnvironmentProcess.wait without timeout."""
 
     mock_sandbox = MagicMock()
-    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
 
     proc._on_exit(1)
     exit_code = await proc.wait()
@@ -3352,14 +3346,14 @@ async def test_e2b_process_wait_no_timeout() -> None:
 
 @e2b_skip
 async def test_e2b_process_kill() -> None:
-    """E2BSandboxProcess.kill terminates the process."""
+    """E2BEnvironmentProcess.kill terminates the process."""
 
     mock_sandbox = MagicMock()
     mock_proc = MagicMock()
     mock_proc.kill = AsyncMock()
     mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
 
-    proc = E2BSandboxProcess(mock_sandbox, 'sleep 60')
+    proc = E2BEnvironmentProcess(mock_sandbox, 'sleep 60')
     await proc._start()
     await proc.kill()
     mock_proc.kill.assert_called_once()
@@ -3373,10 +3367,10 @@ async def test_e2b_process_kill() -> None:
 
 @e2b_skip
 async def test_e2b_process_kill_not_started() -> None:
-    """E2BSandboxProcess.kill does nothing when process not started."""
+    """E2BEnvironmentProcess.kill does nothing when process not started."""
 
     mock_sandbox = MagicMock()
-    proc = E2BSandboxProcess(mock_sandbox, 'echo test')
+    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
     # _proc is None, should not raise
     await proc.kill()
 
@@ -3389,14 +3383,14 @@ async def test_e2b_process_kill_not_started() -> None:
 
 @e2b_skip
 async def test_e2b_process_kill_error() -> None:
-    """E2BSandboxProcess.kill handles exceptions gracefully."""
+    """E2BEnvironmentProcess.kill handles exceptions gracefully."""
 
     mock_sandbox = MagicMock()
     mock_proc = MagicMock()
     mock_proc.kill = AsyncMock(side_effect=Exception('kill failed'))
     mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
 
-    proc = E2BSandboxProcess(mock_sandbox, 'sleep 60')
+    proc = E2BEnvironmentProcess(mock_sandbox, 'sleep 60')
     await proc._start()
     # Should not raise
     await proc.kill()
@@ -3409,7 +3403,7 @@ async def test_e2b_process_kill_error() -> None:
 
 
 async def test_e2b_write_file_with_parent_creates_dir(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.write_file calls mkdir for parent directories."""
+    """E2BEnvironment.write_file calls mkdir for parent directories."""
     await mock_e2b_sandbox.write_file('deep/nested/file.txt', 'content')
     # Should have called commands.run for mkdir -p
     calls = mock_e2b_sandbox.sandbox.commands.run.call_args_list
@@ -3418,22 +3412,22 @@ async def test_e2b_write_file_with_parent_creates_dir(mock_e2b_sandbox: Any) -> 
 
 
 async def test_e2b_write_file_no_parent_dir(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.write_file skips mkdir for root-level files."""
+    """E2BEnvironment.write_file skips mkdir for root-level files."""
     await mock_e2b_sandbox.write_file('root_file.txt', 'content')
     mock_e2b_sandbox.sandbox.files.write.assert_called()
 
 
 async def test_e2b_execute_with_timeout(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.execute passes timeout to commands.run."""
-    result = await mock_e2b_sandbox.execute('echo test', timeout=30)
+    """E2BEnvironment.execute passes timeout to commands.run."""
+    result = await mock_e2b_sandbox.shell('echo test', timeout=30)
     assert result.exit_code == 0
     call_kwargs = mock_e2b_sandbox.sandbox.commands.run.call_args[1]
     assert call_kwargs['timeout'] == 30
 
 
 async def test_e2b_execute_no_timeout(mock_e2b_sandbox: Any) -> None:
-    """E2BSandbox.execute with timeout=None."""
-    result = await mock_e2b_sandbox.execute('echo test', timeout=None)
+    """E2BEnvironment.execute with timeout=None."""
+    result = await mock_e2b_sandbox.shell('echo test', timeout=None)
     assert result.exit_code == 0
     call_kwargs = mock_e2b_sandbox.sandbox.commands.run.call_args
     assert 'timeout' not in call_kwargs[1]
@@ -3444,10 +3438,10 @@ async def test_e2b_execute_no_timeout(mock_e2b_sandbox: Any) -> None:
 
 @docker_skip
 async def test_docker_process_recv_stderr_no_timeout_no_buffer() -> None:
-    """DockerSandboxProcess.recv_stderr without timeout and no buffer hits line 175."""
+    """DockerEnvironmentProcess.recv_stderr without timeout and no buffer hits line 175."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
 
     stderr_data = b'stderr output'
     header = struct.pack('>BxxxI', 2, len(stderr_data))
@@ -3462,10 +3456,10 @@ async def test_docker_process_recv_stderr_no_timeout_no_buffer() -> None:
 
 @docker_skip
 async def test_docker_process_recv_stream_buffers_stdout_for_stderr() -> None:
-    """DockerSandboxProcess._recv_stream buffers stdout when requesting stderr (line 187)."""
+    """DockerEnvironmentProcess._recv_stream buffers stdout when requesting stderr (line 187)."""
 
     container = MockContainer()
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
 
     # First frame is stdout (type 1), second is stderr (type 2)
     stdout_data = b'stdout first'
@@ -3485,11 +3479,11 @@ async def test_docker_process_recv_stream_buffers_stdout_for_stderr() -> None:
 
 @docker_skip
 async def test_docker_process_wait_with_timeout() -> None:
-    """DockerSandboxProcess.wait with timeout (lines 247-257)."""
+    """DockerEnvironmentProcess.wait with timeout (lines 247-257)."""
 
     container = MockContainer()
     container.client.api.exec_inspect.return_value = {'ExitCode': 0}
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     proc._exec_id = 'exec-wait'
 
     exit_code = await proc.wait(timeout=5.0)
@@ -3498,11 +3492,11 @@ async def test_docker_process_wait_with_timeout() -> None:
 
 @docker_skip
 async def test_docker_process_wait_no_timeout() -> None:
-    """DockerSandboxProcess.wait without timeout (line 257)."""
+    """DockerEnvironmentProcess.wait without timeout (line 257)."""
 
     container = MockContainer()
     container.client.api.exec_inspect.return_value = {'ExitCode': 1}
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     proc._exec_id = 'exec-wait-2'
 
     exit_code = await proc.wait()
@@ -3511,10 +3505,10 @@ async def test_docker_process_wait_no_timeout() -> None:
 
 @docker_skip
 async def test_docker_aenter_aexit() -> None:
-    """DockerSandbox.__aenter__ and __aexit__ (lines 355-356, 434-435)."""
+    """DockerEnvironment.__aenter__ and __aexit__ (lines 355-356, 434-435)."""
     from unittest.mock import patch as mock_patch
 
-    sandbox = DockerSandbox(image='python:3.12-slim')
+    sandbox = DockerEnvironment(image='python:3.12-slim')
 
     mock_client = MagicMock()
     mock_container_obj = MagicMock()
@@ -3528,8 +3522,8 @@ async def test_docker_aenter_aexit() -> None:
     assert sandbox._container is None
 
 
-async def test_docker_read_file_bytes_empty_tar(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerSandbox.read_file_bytes raises on empty tar (line 531)."""
+async def test_docker_read_file_image_empty_tar(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerEnvironment.read_file raises on empty tar for image files."""
     # Create an empty tar
     f = io.BytesIO()
     with tarfile.open(fileobj=f, mode='w'):
@@ -3542,11 +3536,11 @@ async def test_docker_read_file_bytes_empty_tar(mock_docker_sandbox: Any, mock_c
 
     mock_container.get_archive = empty_get_archive
     with pytest.raises(FileNotFoundError, match='not found'):
-        await mock_docker_sandbox.read_file_bytes('empty.txt')
+        await mock_docker_sandbox.read_file('empty.png')
 
 
-async def test_docker_read_file_bytes_directory_tar(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerSandbox.read_file_bytes raises when tar contains a directory (line 534)."""
+async def test_docker_read_file_image_directory_tar(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+    """DockerEnvironment.read_file raises when tar contains a directory for image files."""
     f = io.BytesIO()
     with tarfile.open(fileobj=f, mode='w') as tar:
         info = tarfile.TarInfo(name='somedir')
@@ -3560,11 +3554,11 @@ async def test_docker_read_file_bytes_directory_tar(mock_docker_sandbox: Any, mo
 
     mock_container.get_archive = dir_get_archive
     with pytest.raises(FileNotFoundError, match='Cannot read'):
-        await mock_docker_sandbox.read_file_bytes('somedir')
+        await mock_docker_sandbox.read_file('somedir.png')
 
 
 async def test_docker_ls_short_lines(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerSandbox.ls skips short lines (line 580) and handles non-numeric size (585-586)."""
+    """DockerEnvironment.ls skips short lines (line 580) and handles non-numeric size (585-586)."""
     original = mock_container.exec_run
 
     def custom_ls(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
@@ -3586,7 +3580,7 @@ async def test_docker_ls_short_lines(mock_docker_sandbox: Any, mock_container: M
 
 
 async def test_docker_is_alive_exception(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerSandbox.is_alive returns False on exception (lines 641-642)."""
+    """DockerEnvironment.is_alive returns False on exception (lines 641-642)."""
     mock_container.reload = MagicMock(side_effect=Exception('connection lost'))
     result = await mock_docker_sandbox.is_alive()
     assert result is False
@@ -3689,7 +3683,7 @@ async def test_local_process_recv_eof(tmp_path: Path):
 
 @docker_skip
 async def test_docker_process_wait_poll_loop() -> None:
-    """DockerSandboxProcess.wait poll loop (line 252)."""
+    """DockerEnvironmentProcess.wait poll loop (line 252)."""
 
     container = MockContainer()
     # First two calls return still running, third returns exited
@@ -3698,7 +3692,7 @@ async def test_docker_process_wait_poll_loop() -> None:
         {'ExitCode': 0, 'Running': True},
         {'ExitCode': 0, 'Running': False},
     ]
-    proc = DockerSandboxProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
     proc._exec_id = 'exec-poll'
 
     exit_code = await proc.wait(timeout=5.0)
@@ -3706,7 +3700,7 @@ async def test_docker_process_wait_poll_loop() -> None:
 
 
 async def test_docker_ls_size_value_error(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerSandbox.ls handles non-numeric size (lines 585-586)."""
+    """DockerEnvironment.ls handles non-numeric size (lines 585-586)."""
     original = mock_container.exec_run
 
     def custom_ls(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
@@ -3724,7 +3718,7 @@ async def test_docker_ls_size_value_error(mock_docker_sandbox: Any, mock_contain
 
 @e2b_skip
 async def test_e2b_lifecycle() -> None:
-    """E2BSandbox.__aenter__ and __aexit__ (lines 166-186)."""
+    """E2BEnvironment.__aenter__ and __aexit__ (lines 166-186)."""
     from unittest.mock import patch as mock_patch
 
     mock_sandbox_instance = MagicMock()
@@ -3733,7 +3727,7 @@ async def test_e2b_lifecycle() -> None:
     with mock_patch('pydantic_ai.environments.e2b.E2BAsyncSandbox') as MockSandboxClass:
         MockSandboxClass.create = AsyncMock(return_value=mock_sandbox_instance)
 
-        sandbox = E2BSandbox(
+        sandbox = E2BEnvironment(
             template='test', api_key='test-key', timeout=60, metadata={'env': 'test'}, env_vars={'KEY': 'val'}
         )
         async with sandbox:
@@ -3746,7 +3740,7 @@ async def test_e2b_lifecycle() -> None:
 
 @e2b_skip
 async def test_e2b_lifecycle_close_error() -> None:
-    """E2BSandbox.__aexit__ handles close errors gracefully (lines 183-185)."""
+    """E2BEnvironment.__aexit__ handles close errors gracefully (lines 183-185)."""
     from unittest.mock import patch as mock_patch
 
     mock_sandbox_instance = MagicMock()
@@ -3755,7 +3749,7 @@ async def test_e2b_lifecycle_close_error() -> None:
     with mock_patch('pydantic_ai.environments.e2b.E2BAsyncSandbox') as MockSandboxClass:
         MockSandboxClass.create = AsyncMock(return_value=mock_sandbox_instance)
 
-        sandbox = E2BSandbox(template='test', api_key='test-key')
+        sandbox = E2BEnvironment(template='test', api_key='test-key')
         async with sandbox:
             pass
         # Should not raise despite close failure
@@ -3764,12 +3758,12 @@ async def test_e2b_lifecycle_close_error() -> None:
 
 @e2b_skip
 async def test_e2b_process_wait_polls() -> None:
-    """E2BSandboxProcess.wait polls until exit code appears (line 110)."""
+    """E2BEnvironmentProcess.wait polls until exit code appears (line 110)."""
 
     import anyio
 
     mock_sandbox = MagicMock()
-    proc = E2BSandboxProcess(mock_sandbox, 'sleep 1')
+    proc = E2BEnvironmentProcess(mock_sandbox, 'sleep 1')
 
     # Simulate delayed exit: set returncode after a short delay
     async def delayed_exit():
@@ -3812,4 +3806,5 @@ async def test_memory_read_file_that_is_also_directory_prefix():
     env = MemoryEnvironment(files={'dir': 'I am a file', 'dir/child.txt': 'child content'})
     async with env:
         content = await env.read_file('dir')
+        assert isinstance(content, str)
         assert 'I am a file' in content

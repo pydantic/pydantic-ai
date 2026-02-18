@@ -1,27 +1,28 @@
-"""Execution environment abstractions for code execution.
+"""Execution environment abstractions for agents.
 
 This package provides:
 
-- `ExecutionEnvironment` — abstract base class for code execution environments
+- `ExecutionEnvironment` — abstract base class for execution environments
 - `ExecutionProcess` — interactive process handle with bidirectional I/O
-- `ExecutionToolset` — toolset exposing coding-agent-style tools backed by an environment
+- `ExecutionEnvironmentToolset` — toolset exposing coding-agent-style tools backed by an environment
 - `ExecuteResult`, `FileInfo` — result types
 
 Implementations:
 
-- `environments.docker.DockerSandbox` — Docker container-based sandbox (isolated)
+- `environments.docker.DockerEnvironment` — Docker container-based sandbox (isolated)
 - `environments.local.LocalEnvironment` — local subprocess environment (no isolation, for dev/testing)
-- `environments.e2b.E2BSandbox` — hosted sandbox via E2B (isolated)
+- `environments.e2b.E2BEnvironment` — hosted sandbox via E2B (isolated)
 - `environments.memory.MemoryEnvironment` — in-memory environment for testing
+- `environments.monty.MontyEnvironment` — Monty sandboxed interpreter for code execution
 """
 
 from ._base import ExecuteResult, ExecutionEnvironment, ExecutionProcess, FileInfo
-from ._toolset import ExecutionToolset
+from ._toolset import ExecutionEnvironmentToolset
 
 __all__ = (
     'ExecuteResult',
     'ExecutionEnvironment',
+    'ExecutionEnvironmentToolset',
     'ExecutionProcess',
-    'ExecutionToolset',
     'FileInfo',
 )

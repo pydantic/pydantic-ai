@@ -1,7 +1,7 @@
 """In-memory execution environment for testing.
 
 All file operations use an in-memory dictionary. Shell commands are handled
-by an optional callback — if not provided, `execute()` raises `RuntimeError`.
+by an optional callback — if not provided, `shell()` raises `RuntimeError`.
 """
 
 from __future__ import annotations
@@ -10,9 +10,10 @@ import fnmatch
 import posixpath
 import re
 from collections.abc import Callable
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from ._base import (
+    IMAGE_EXTENSIONS,
     ExecuteResult,
     ExecutionEnvironment,
     FileInfo,
@@ -21,6 +22,9 @@ from ._base import (
     format_lines,
     glob_match,
 )
+
+if TYPE_CHECKING:
+    from ._base import Capability, EditStrategy
 
 
 class MemoryEnvironment(ExecutionEnvironment):
@@ -55,15 +59,23 @@ class MemoryEnvironment(ExecutionEnvironment):
         Args:
             files: Initial files to populate the environment with.
                 Keys are file paths, values are file contents (str or bytes).
-            command_handler: Optional callback for `execute()` calls.
+            command_handler: Optional callback for `shell()` calls.
                 Receives the command string and returns an `ExecuteResult`.
-                If not provided, `execute()` raises `RuntimeError`.
+                If not provided, `shell()` raises `RuntimeError`.
         """
         self._files: dict[str, str | bytes] = {}
         if files:
             for path, content in files.items():
                 self._files[self._normalize(path)] = content
         self._command_handler = command_handler
+
+    @property
+    def capabilities(self) -> frozenset[Capability]:
+        return frozenset({'ls', 'read_file', 'write_file', 'edit_file', 'glob', 'grep'})
+
+    @property
+    def supported_edit_strategies(self) -> frozenset[EditStrategy]:
+        return frozenset({'replace_str'})
 
     @staticmethod
     def _normalize(path: str) -> str:
@@ -76,7 +88,7 @@ class MemoryEnvironment(ExecutionEnvironment):
             normalized = normalized[1:]
         return normalized
 
-    async def execute(
+    async def shell(
         self,
         command: str,
         *,
@@ -99,11 +111,11 @@ class MemoryEnvironment(ExecutionEnvironment):
         if self._command_handler is None:
             raise RuntimeError(
                 'MemoryEnvironment has no command_handler configured. '
-                'Pass command_handler= to the constructor to handle execute() calls.'
+                'Pass command_handler= to the constructor to handle shell() calls.'
             )
         return self._command_handler(command)
 
-    async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str:
+    async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str | bytes:
         normalized = self._normalize(path)
 
         # Check if path is a "directory" (any file starts with path/)
@@ -116,6 +128,13 @@ class MemoryEnvironment(ExecutionEnvironment):
 
         content = self._files[normalized]
 
+        # Return raw bytes for image files
+        ext = posixpath.splitext(normalized)[1].lower()
+        if ext in IMAGE_EXTENSIONS:
+            if isinstance(content, bytes):
+                return content
+            return content.encode('utf-8')
+
         # Text mode
         if isinstance(content, bytes):
             text = content.decode('utf-8', errors='replace')
@@ -124,25 +143,14 @@ class MemoryEnvironment(ExecutionEnvironment):
 
         return format_lines(text, offset, limit)
 
-    async def read_file_bytes(self, path: str) -> bytes:
-        normalized = self._normalize(path)
-
-        if normalized not in self._files:
-            raise FileNotFoundError(f'File not found: {path}')
-
-        content = self._files[normalized]
-        if isinstance(content, bytes):
-            return content
-        return content.encode('utf-8')
-
     async def write_file(self, path: str, content: str | bytes) -> None:
         self._files[self._normalize(path)] = content
 
-    async def edit_file(
+    async def replace_str(
         self,
         path: str,
-        old_string: str,
-        new_string: str,
+        old: str,
+        new: str,
         *,
         replace_all: bool = False,
     ) -> int:
@@ -152,7 +160,7 @@ class MemoryEnvironment(ExecutionEnvironment):
 
         content = self._files[normalized]
         text = content.decode('utf-8') if isinstance(content, bytes) else content
-        new_text, count = apply_edit(text, old_string, new_string, path, replace_all=replace_all)
+        new_text, count = apply_edit(text, old, new, path, replace_all=replace_all)
         self._files[normalized] = new_text
         return count
 

@@ -16,15 +16,17 @@ import anyio.abc
 from typing_extensions import Self
 
 from ._base import (
+    IMAGE_EXTENSIONS,
     MAX_OUTPUT_CHARS,
+    Capability,
     ExecuteResult,
-    ExecutionEnvironment,
     ExecutionProcess,
     FileInfo,
     apply_edit,
     collect_grep_matches,
     format_lines,
 )
+from ._driver import DriverBasedEnvironment
 
 
 class LocalEnvironmentProcess(ExecutionProcess):
@@ -96,7 +98,7 @@ def _close_subprocess_transport(proc: anyio.abc.Process) -> None:
         transport.close()
 
 
-class LocalEnvironment(ExecutionEnvironment):
+class LocalEnvironment(DriverBasedEnvironment):
     """Local subprocess-based execution environment for development and testing.
 
     Runs commands directly on the host machine within a specified root
@@ -105,10 +107,12 @@ class LocalEnvironment(ExecutionEnvironment):
     Usage:
         ```python {test="skip" lint="skip"}
         async with LocalEnvironment(root_dir='/tmp/workspace') as env:
-            result = await env.execute('python script.py')
+            result = await env.shell('python script.py')
             print(result.output)
         ```
     """
+
+    driver_script_path: str = str(Path(__file__).parents[1] / 'toolsets' / 'code_execution' / '_driver.py')
 
     def __init__(
         self,
@@ -131,6 +135,10 @@ class LocalEnvironment(ExecutionEnvironment):
         self._root_dir = Path(root_dir).resolve()
         self._env_vars = env_vars or {}
         self._inherit_env = inherit_env
+
+    @property
+    def capabilities(self) -> frozenset[Capability]:
+        return frozenset({'ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'run_code'})
 
     async def __aenter__(self) -> Self:
         self._root_dir.mkdir(parents=True, exist_ok=True)
@@ -174,7 +182,7 @@ class LocalEnvironment(ExecutionEnvironment):
         )
         return LocalEnvironmentProcess(proc)
 
-    async def execute(
+    async def shell(
         self,
         command: str,
         *,
@@ -220,23 +228,18 @@ class LocalEnvironment(ExecutionEnvironment):
             truncated=truncated,
         )
 
-    async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str:
+    async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str | bytes:
         resolved = self._resolve_path(path)
         if not resolved.is_file():
             if resolved.is_dir():
                 raise FileNotFoundError(f"'{path}' is a directory, not a file.")
             raise FileNotFoundError(f'File not found: {path}')
+
+        if resolved.suffix.lower() in IMAGE_EXTENSIONS:
+            return resolved.read_bytes()
 
         text = resolved.read_text(encoding='utf-8', errors='replace')
         return format_lines(text, offset, limit)
-
-    async def read_file_bytes(self, path: str) -> bytes:
-        resolved = self._resolve_path(path)
-        if not resolved.is_file():
-            if resolved.is_dir():
-                raise FileNotFoundError(f"'{path}' is a directory, not a file.")
-            raise FileNotFoundError(f'File not found: {path}')
-        return resolved.read_bytes()
 
     async def write_file(self, path: str, content: str | bytes) -> None:
         resolved = self._resolve_path(path)
@@ -246,11 +249,11 @@ class LocalEnvironment(ExecutionEnvironment):
         else:
             resolved.write_text(content, encoding='utf-8')
 
-    async def edit_file(
+    async def replace_str(
         self,
         path: str,
-        old_string: str,
-        new_string: str,
+        old: str,
+        new: str,
         *,
         replace_all: bool = False,
     ) -> int:
@@ -259,7 +262,7 @@ class LocalEnvironment(ExecutionEnvironment):
             raise FileNotFoundError(f'File not found: {path}')
 
         text = resolved.read_text(encoding='utf-8')
-        new_text, count = apply_edit(text, old_string, new_string, path, replace_all=replace_all)
+        new_text, count = apply_edit(text, old, new, path, replace_all=replace_all)
         resolved.write_text(new_text, encoding='utf-8')
         return count
 
@@ -338,3 +341,6 @@ class LocalEnvironment(ExecutionEnvironment):
                 break
 
         return '\n'.join(results)
+
+    async def _copy_driver(self) -> None:
+        """No-op: the driver script is accessed directly from the package path."""

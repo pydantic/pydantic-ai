@@ -1,22 +1,31 @@
+"""Monty sandboxed interpreter environment for code execution.
+
+Requires the `pydantic-monty` package: `pip install pydantic-ai-slim[monty]`
+"""
+
 from __future__ import annotations
 
 import asyncio
 import textwrap
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from typing_extensions import assert_never
 
-from pydantic_ai._python_signature import FunctionSignature, TypeSignature
-
-from ._abstract import (
+from pydantic_ai.toolsets.code_execution._abstract import (
     CodeExecutionTimeout,
-    CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
     CodeTypingError,
     FunctionCall,
-    ToolCallback,
 )
+
+from ._base import ExecutionEnvironment
+
+if TYPE_CHECKING:
+    from pydantic_ai._python_signature import FunctionSignature, TypeSignature
+    from pydantic_ai.toolsets.code_execution._abstract import ToolCallback
+
+    from ._base import Capability, Language, ToolName
 
 try:
     from pydantic_monty import (
@@ -32,7 +41,7 @@ try:
     )
 except ImportError as _import_error:
     raise ImportError(
-        'Please install `pydantic-monty` to use the Monty runtime, '
+        'Please install `pydantic-monty` to use MontyEnvironment, '
         'you can use the `monty` optional group — `pip install "pydantic-ai-slim[monty]"`'
     ) from _import_error
 
@@ -40,40 +49,84 @@ except ImportError as _import_error:
 _TYPING_IMPORTS = 'import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal'
 
 
-class MontyRuntime(CodeRuntime):
-    """CodeRuntime that delegates to the Monty sandboxed interpreter.
+class MontyEnvironment(ExecutionEnvironment):
+    """Execution environment using the Monty sandboxed interpreter.
 
     Monty provides sandboxed execution with built-in type checking. Code is
     executed in isolation and pauses at every external function call, returning
     a MontySnapshot that can be resumed once the host has computed the
     function's return value.
 
-    Tool calls are executed concurrently via asyncio tasks. When Monty
-    discovers an external call, the runtime fires a task and defers the
-    result. Monty continues discovering more calls until it needs a value,
-    at which point the runtime awaits completed tasks and provides results.
+    This environment only supports code execution (``run_code`` capability).
+    It does not provide shell, file, or search operations.
     """
 
-    async def run(
+    execution_timeout: float | None = None
+    """Optional timeout in seconds for code execution. None means no timeout."""
+
+    @property
+    def capabilities(self) -> frozenset[Capability]:
+        return frozenset({'run_code'})
+
+    @property
+    def supported_code_languages(self) -> frozenset[Language]:
+        return frozenset({'python'})
+
+    @property
+    def supports_external_functions(self) -> bool:
+        return True
+
+    def tool_description(self, tool: ToolName) -> str | None:
+        if tool == 'run_python':
+            return textwrap.dedent(
+                """
+                The runtime uses a restricted Python subset:
+                - you cannot use the standard library except builtin functions and the following modules: `sys`, `typing`, `asyncio`
+                - this means `collections`, `json`, `re`, `math`, `datetime`, `itertools`, `functools`, etc. are NOT available — use plain dicts, lists, and builtins instead
+                - you cannot use third party libraries
+                - you cannot define classes
+                - `sorted()` and `.sort()` do not support keyword arguments (`key=`, `reverse=`) and cannot sort lists of tuples — only sort flat lists of numbers or strings. If you need a custom sort order, build the output list manually (e.g. find max in a loop)
+                - chained subscript assignment like `x[a][b] = val` is NOT supported — read into a local variable, modify it, then assign back: `inner = x[a]; inner[b] = val; x[a] = inner`
+                - set operators (`|`, `&`, `-`, `^`) are not supported — use `set.update()`, `set.add()`, or loop to combine sets
+
+                The last expression evaluated is the return value.
+
+                Parallelism: use `asyncio.gather` to fire multiple calls at the same time instead of awaiting each one sequentially:
+
+                    # GOOD — parallel (all calls fire at once):
+                    results = await asyncio.gather(
+                        get_data(id=1),
+                        get_data(id=2),
+                        get_data(id=3),
+                    )
+
+                    # BAD — sequential (each call waits before the next starts):
+                    r1 = await get_data(id=1)
+                    r2 = await get_data(id=2)
+                    r3 = await get_data(id=3)
+                """
+            )
+        return None
+
+    async def run_python(
         self,
         code: str,
-        call_tool: ToolCallback,
+        call_tool: ToolCallback | None = None,
         *,
-        functions: dict[str, FunctionSignature],
-        referenced_types: list[TypeSignature],
+        functions: dict[str, FunctionSignature] | None = None,
+        referenced_types: list[TypeSignature] | None = None,
     ) -> Any:
-        """Execute code in the Monty sandbox.
+        """Execute code in the Monty sandbox."""
+        if call_tool is None:
+            raise NotImplementedError(
+                'MontyEnvironment requires call_tool for code execution. '
+                'It does not support standalone script execution.'
+            )
+        if functions is None:
+            functions = {}
+        if referenced_types is None:
+            referenced_types = []
 
-        Args:
-            code: LLM-generated Python source code.
-            call_tool: Callback invoked for each external function call.
-            functions: Mapping of function name to signature, for type checking
-                and declaring external functions.
-            referenced_types: Unique type definitions referenced by the signatures.
-
-        Returns:
-            The final output of the code execution.
-        """
         try:
             monty = Monty(code=f'import asyncio\n{code}', external_functions=list(functions))
             monty.type_check(self._build_type_check_prefix(list(functions.values()), referenced_types))
@@ -95,56 +148,10 @@ class MontyRuntime(CodeRuntime):
 
         return monty_state.output
 
-    @property
-    def instructions(self) -> str | None:
-        return textwrap.dedent(
-            """
-            The runtime uses a restricted Python subset:
-            - you cannot use the standard library except builtin functions and the following modules: `sys`, `typing`, `asyncio`
-            - this means `collections`, `json`, `re`, `math`, `datetime`, `itertools`, `functools`, etc. are NOT available — use plain dicts, lists, and builtins instead
-            - you cannot use third party libraries
-            - you cannot define classes
-            - `sorted()` and `.sort()` do not support keyword arguments (`key=`, `reverse=`) and cannot sort lists of tuples — only sort flat lists of numbers or strings. If you need a custom sort order, build the output list manually (e.g. find max in a loop)
-            - chained subscript assignment like `x[a][b] = val` is NOT supported — read into a local variable, modify it, then assign back: `inner = x[a]; inner[b] = val; x[a] = inner`
-            - set operators (`|`, `&`, `-`, `^`) are not supported — use `set.update()`, `set.add()`, or loop to combine sets
-
-            The last expression evaluated is the return value.
-
-            Parallelism: use `asyncio.gather` to fire multiple calls at the same time instead of awaiting each one sequentially:
-
-                # GOOD — parallel (all calls fire at once):
-                results = await asyncio.gather(
-                    get_data(id=1),
-                    get_data(id=2),
-                    get_data(id=3),
-                )
-
-                # BAD — sequential (each call waits before the next starts):
-                r1 = await get_data(id=1)
-                r2 = await get_data(id=2)
-                r3 = await get_data(id=3)
-            """
-        )
-
     def _build_type_check_prefix(
         self, signatures: list[FunctionSignature], referenced_types: list[TypeSignature]
     ) -> str:
-        """Build the prefix code used for Monty type checking.
-
-        Combines standard typing imports with tool signatures to create the
-        prefix that Monty uses for type-checking LLM-generated code.
-
-        Note: Signatures use `...` as the body by default, but ty/Monty requires
-        `raise NotImplementedError()` for valid function stubs. See:
-        https://github.com/astral-sh/ty/issues/1922
-
-        Args:
-            signatures: List of Python function signatures for available tools.
-            referenced_types: Unique type definitions referenced by the signatures.
-
-        Returns:
-            Complete prefix code string with imports and signatures.
-        """
+        """Build the prefix code used for Monty type checking."""
         parts = [_TYPING_IMPORTS]
         parts.extend(str(t) for t in referenced_types)
         parts.extend(sig.render('raise NotImplementedError()') for sig in signatures)
@@ -153,9 +160,6 @@ class MontyRuntime(CodeRuntime):
 
     def _raise_if_timeout(self, e: MontyRuntimeError) -> None:
         """Raise CodeExecutionTimeout if the MontyRuntimeError is a time limit violation."""
-        # Coupling: Monty surfaces time limit violations as RuntimeErrors containing
-        # 'time limit exceeded' in the display string. There is no structured error type
-        # for this yet — if Monty changes the wording, this detection will break.
         if self.execution_timeout is not None and 'time limit exceeded' in e.display():
             raise CodeExecutionTimeout(f'Code execution timed out after {self.execution_timeout} seconds') from e
 

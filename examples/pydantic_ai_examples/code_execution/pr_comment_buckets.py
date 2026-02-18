@@ -26,11 +26,11 @@ from dataclasses import dataclass
 import logfire
 
 from pydantic_ai import Agent
+from pydantic_ai.environments.monty import MontyEnvironment
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 from pydantic_ai.messages import ModelResponse, RetryPromptPart
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.toolsets.code_execution import CodeExecutionToolset
-from pydantic_ai.toolsets.code_execution.monty import MontyRuntime
 
 # =============================================================================
 # Configuration
@@ -100,9 +100,9 @@ def create_tool_calling_agent(github: MCPServerStreamableHTTP) -> Agent[None, st
 
 def create_code_mode_agent(github: MCPServerStreamableHTTP) -> Agent[None, str]:
     """Create agent with CodeMode (tools as Python functions)."""
-    runtime = MontyRuntime()
+    environment = MontyEnvironment()
     code_toolset: CodeExecutionToolset[None] = CodeExecutionToolset(
-        runtime,
+        environment,
         toolset=github,
         max_retries=MAX_RETRIES,
     )

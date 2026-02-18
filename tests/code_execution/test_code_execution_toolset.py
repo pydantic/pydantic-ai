@@ -1,6 +1,6 @@
 """Tests for CodeExecutionToolset logic (description, caching, name collisions, deferred tools).
 
-Uses StubRuntime so these tests don't require pydantic-monty or Docker.
+Uses StubEnvironment so these tests don't require pydantic-monty or Docker.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets.code_execution import CodeExecutionToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 
-from .conftest import StubRuntime, WeatherResult, build_code_execution_toolset, build_run_context, get_weather
+from .conftest import StubEnvironment, WeatherResult, build_code_execution_toolset, build_run_context, get_weather
 
 pytestmark = pytest.mark.anyio
 
@@ -31,19 +31,19 @@ def _get_weather_alias(city: str) -> WeatherResult:
 
 async def test_get_tools_produces_single_code_tool():
     """get_tools() returns exactly one tool named 'run_code'."""
-    _, tools = await build_code_execution_toolset(StubRuntime(), (_add, False))
+    _, tools = await build_code_execution_toolset(StubEnvironment(), (_add, False))
     assert list(tools.keys()) == ['run_code']
 
 
 async def test_description_default():
-    """Default description includes preamble and function signatures but no runtime instructions."""
-    _, tools = await build_code_execution_toolset(StubRuntime(), (_add, False))
+    """Default description includes preamble and function signatures but no environment instructions."""
+    _, tools = await build_code_execution_toolset(StubEnvironment(), (_add, False))
     description = tools['run_code'].tool_def.description or ''
     # Preamble present
     assert 'run Python code' in description
     # Function signature present
     assert 'async def _add' in description
-    # No runtime instructions (StubRuntime.instructions is None)
+    # No environment instructions (StubEnvironment.tool_description returns None)
     assert 'restricted Python subset' not in description
 
 
@@ -51,7 +51,7 @@ async def test_description_custom_string():
     """A custom string replaces the default preamble."""
     ts: FunctionToolset[None] = FunctionToolset()
     ts.add_function(_add, takes_ctx=False)
-    cm = CodeExecutionToolset(StubRuntime(), toolset=ts, description='My preamble')
+    cm = CodeExecutionToolset(StubEnvironment(), toolset=ts, description='My preamble')
     tools = await cm.get_tools(build_run_context())
     assert 'My preamble' in (tools['run_code'].tool_def.description or '')
 
@@ -64,7 +64,7 @@ async def test_description_custom_callback():
 
     ts: FunctionToolset[None] = FunctionToolset()
     ts.add_function(_add, takes_ctx=False)
-    cm = CodeExecutionToolset(StubRuntime(), toolset=ts, description=my_desc)
+    cm = CodeExecutionToolset(StubEnvironment(), toolset=ts, description=my_desc)
     tools = await cm.get_tools(build_run_context())
     assert tools['run_code'].tool_def.description == '1 tools'
 
@@ -73,7 +73,7 @@ async def test_deferred_tools_raise_user_error():
     """Wrapping a tool with requires_approval=True triggers UserError in get_tools()."""
     ts: FunctionToolset[None] = FunctionToolset()
     ts.add_function(_add, takes_ctx=False, requires_approval=True)
-    cm = CodeExecutionToolset(StubRuntime(), toolset=ts)
+    cm = CodeExecutionToolset(StubEnvironment(), toolset=ts)
     with pytest.raises(UserError, match='approval and deferral are not yet supported'):
         await cm.get_tools(build_run_context())
 
@@ -91,7 +91,7 @@ async def test_name_collision_counter():
     ts.add_function(my_tool, name='my-tool', takes_ctx=False)
     ts.add_function(my_tool, name='my.tool', takes_ctx=False)
     ts.add_function(my_tool, name='my tool', takes_ctx=False)
-    cm = CodeExecutionToolset(StubRuntime(), toolset=ts)
+    cm = CodeExecutionToolset(StubEnvironment(), toolset=ts)
     tools = await cm.get_tools(build_run_context())
     description = tools['run_code'].tool_def.description or ''
     assert 'async def my_tool(' in description
@@ -101,7 +101,7 @@ async def test_name_collision_counter():
 
 async def test_cached_signature_reused_across_get_tools_calls():
     """Calling get_tools() twice reuses the same cached FunctionSignature objects."""
-    code_execution, tools1 = await build_code_execution_toolset(StubRuntime(), (_add, False))
+    code_execution, tools1 = await build_code_execution_toolset(StubEnvironment(), (_add, False))
 
     ctx = build_run_context()
     tools2 = await code_execution.get_tools(ctx)
@@ -116,7 +116,7 @@ async def test_cached_signature_reused_across_get_tools_calls():
 async def test_dedup_correctness_after_cache_backed_deepcopy():
     """Multiple tools with shared types produce correct dedup after cache-backed deepcopy."""
     _code_execution, tools = await build_code_execution_toolset(
-        StubRuntime(), (get_weather, False), (_get_weather_alias, False)
+        StubEnvironment(), (get_weather, False), (_get_weather_alias, False)
     )
     tool = tools['run_code']
 
@@ -127,7 +127,7 @@ async def test_dedup_correctness_after_cache_backed_deepcopy():
 
 
 async def test_aenter_cleanup_on_wrapped_failure():
-    """If wrapped toolset's __aenter__ raises, runtime is cleaned up."""
+    """If wrapped toolset's __aenter__ raises, environment is cleaned up."""
     from pydantic_ai.toolsets.abstract import AbstractToolset
 
     class FailingToolset(AbstractToolset[None]):
@@ -150,7 +150,7 @@ async def test_aenter_cleanup_on_wrapped_failure():
     enter_count = 0
     exit_count = 0
 
-    class TrackingRuntime(StubRuntime):
+    class TrackingEnvironment(StubEnvironment):
         async def __aenter__(self) -> Any:
             nonlocal enter_count
             enter_count += 1
@@ -163,11 +163,11 @@ async def test_aenter_cleanup_on_wrapped_failure():
     failing = FailingToolset()
     assert failing.id is None  # verify the property works
 
-    cm = CodeExecutionToolset(TrackingRuntime(), toolset=failing)
+    cm = CodeExecutionToolset(TrackingEnvironment(), toolset=failing)
     with pytest.raises(RuntimeError, match='wrapped failed'):
         await cm.__aenter__()
     assert enter_count == 1
-    assert exit_count == 1  # runtime was cleaned up
+    assert exit_count == 1  # environment was cleaned up
 
 
 async def test_call_deferred_during_execution(monkeypatch: pytest.MonkeyPatch):
@@ -177,8 +177,10 @@ async def test_call_deferred_during_execution(monkeypatch: pytest.MonkeyPatch):
 
     call_made = False
 
-    class ExecutingRuntime(StubRuntime):
-        async def run(self, code: str, call_tool: Any, *, functions: Any, referenced_types: Any) -> Any:
+    class ExecutingEnvironment(StubEnvironment):
+        async def run_python(
+            self, code: str, call_tool: Any = None, *, functions: Any = None, referenced_types: Any = None
+        ) -> Any:
             nonlocal call_made
             call = FunctionCall(call_id='1', function_name='_add', args=(), kwargs={'x': 1, 'y': 2})
             try:
@@ -189,7 +191,7 @@ async def test_call_deferred_during_execution(monkeypatch: pytest.MonkeyPatch):
 
     ts: FunctionToolset[None] = FunctionToolset()
     ts.add_function(_add, takes_ctx=False)
-    cm = CodeExecutionToolset(ExecutingRuntime(), toolset=ts)
+    cm = CodeExecutionToolset(ExecutingEnvironment(), toolset=ts)
     ctx = build_run_context()
     tools = await cm.get_tools(ctx)
     tool = tools['run_code']
@@ -221,14 +223,14 @@ def test_get_weather_helper():
 
 async def test_no_toolset_produces_run_code_tool():
     """CodeExecutionToolset() with no toolset still produces a 'run_code' tool."""
-    cm = CodeExecutionToolset(runtime=StubRuntime())
+    cm = CodeExecutionToolset(StubEnvironment())
     tools = await cm.get_tools(build_run_context())
     assert list(tools.keys()) == ['run_code']
 
 
 async def test_no_toolset_description_omits_tool_calling():
     """With no toolset, the description uses the base prompt without mentioning tool calling."""
-    cm = CodeExecutionToolset(runtime=StubRuntime())
+    cm = CodeExecutionToolset(StubEnvironment())
     tools = await cm.get_tools(build_run_context())
     description = tools['run_code'].tool_def.description or ''
     # Base prompt is present

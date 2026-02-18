@@ -9,12 +9,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from pydantic_ai.toolsets.code_execution._abstract import CodeRuntimeError
-from pydantic_ai.toolsets.code_execution._transport import (
-    DriverBasedRuntime,
+from pydantic_ai.environments._driver import (
+    DriverBasedEnvironment,
     DriverTransport,
     _StdoutSignal,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai.toolsets.code_execution._abstract import CodeRuntimeError
 
 pytestmark = pytest.mark.anyio
 
@@ -46,7 +46,7 @@ async def _handle(data: bytes, *, stderr: bytes = b'') -> Any:
 
     task: asyncio.Task[bytes] = asyncio.ensure_future(_return())
     await task
-    return await DriverBasedRuntime._handle_stdout(  # pyright: ignore[reportPrivateUsage]
+    return await DriverBasedEnvironment._handle_stdout(  # pyright: ignore[reportPrivateUsage]
         task, _MockTransport(stderr=stderr), AsyncMock(), {}, {}
     )
 
@@ -91,8 +91,15 @@ class _ErrorTransport(DriverTransport):
         pass
 
 
-class _ErrorRuntime(DriverBasedRuntime):
-    """Runtime that uses _ErrorTransport."""
+class _ErrorEnvironment(DriverBasedEnvironment):
+    """Environment that uses _ErrorTransport."""
+
+    @property
+    def capabilities(self) -> frozenset[Any]:
+        return frozenset({'run_code'})
+
+    async def _copy_driver(self) -> None:
+        pass
 
     async def _start_driver(self, init_msg: dict[str, Any]) -> DriverTransport:
         return _ErrorTransport()
@@ -100,9 +107,9 @@ class _ErrorRuntime(DriverBasedRuntime):
 
 async def test_run_catches_non_standard_exception():
     """Non-standard exceptions from transport are wrapped in CodeRuntimeError."""
-    runtime = _ErrorRuntime()
+    env = _ErrorEnvironment()
     with pytest.raises(CodeRuntimeError, match='Driver communication error.*bad read'):
-        await runtime.run(
+        await env.run_python(
             'x = 1',
             AsyncMock(),
             functions={},

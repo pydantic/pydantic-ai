@@ -3,11 +3,11 @@
 ::: pydantic_ai.runtime
     options:
         members:
-        - CodeRuntime
-        - MontyRuntime
-        - DriverBasedRuntime
+        - ExecutionEnvironment
+        - MontyEnvironment
+        - DriverBasedEnvironment
         - DriverTransport
-        - DockerRuntime
+        - DockerEnvironment
         - FunctionCall
         - CodeExecutionError
         - CodeSyntaxError

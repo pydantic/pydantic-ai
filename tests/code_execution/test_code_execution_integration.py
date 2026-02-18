@@ -26,7 +26,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
 try:
-    from pydantic_ai.toolsets.code_execution import monty as _monty  # pyright: ignore[reportUnusedImport] # noqa: F401
+    from pydantic_ai.environments import monty as _monty  # pyright: ignore[reportUnusedImport] # noqa: F401
 except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 from pydantic_ai.toolsets.code_execution import CodeExecutionToolset

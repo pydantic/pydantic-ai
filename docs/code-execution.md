@@ -7,7 +7,7 @@
 
 ## Installation
 
-Code execution requires a runtime to execute the generated code. For the recommended [Monty](#monty-runtime) runtime:
+Code execution requires an environment to execute the generated code. For the recommended [Monty](#monty-environment) environment:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[monty]"
@@ -66,7 +66,7 @@ print(result.output)
 ```
 
 1. Define tools using a standard [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset]. Any [toolset](toolsets.md) works here.
-2. Wrap the toolset with [`CodeExecutionToolset`][pydantic_ai.toolsets.code_execution.CodeExecutionToolset]. The model now sees a single `run_code` tool instead of individual `get_weather` and `convert_temp` tools. The default runtime is [Monty](#monty-runtime).
+2. Wrap the toolset with [`CodeExecutionToolset`][pydantic_ai.toolsets.code_execution.CodeExecutionToolset]. The model now sees a single `run_code` tool instead of individual `get_weather` and `convert_temp` tools. The default environment is [Monty](#monty-environment).
 
 The model sees `get_weather` and `convert_temp` as callable Python functions inside the sandbox, and writes code like:
 
@@ -90,7 +90,7 @@ When the model calls `run_code`, the [`CodeExecutionToolset`][pydantic_ai.toolse
 
 1. Generates Python function signatures from the wrapped tools so the model knows what's available
 2. Builds a [prompt](#customizing-the-prompt) describing the execution model (fire-then-await parallelism, keyword-only arguments, etc.)
-3. Sends the model's code to the [runtime](#runtimes) for execution
+3. Sends the model's code to the [environment](#environments) for execution
 4. Intercepts function calls made by the code and routes them through the normal Pydantic AI tool pipeline (with validation, tracing, and dependency injection)
 5. Returns the result back to the model
 
@@ -108,7 +108,7 @@ Execution errors (syntax, type, or runtime) are automatically sent back to the m
 sequenceDiagram
     participant Agent
     participant LLM
-    participant Runtime
+    participant Environment
 
     Note over Agent: Send instructions + tool definitions
     Agent ->> LLM: Instructions + run_code tool
@@ -118,19 +118,19 @@ sequenceDiagram
     LLM ->> Agent: run_code(code="...")
     deactivate LLM
     activate Agent
-    Agent ->> Runtime: Execute code in sandbox
-    activate Runtime
-    Runtime ->> Agent: get_weather(city="Paris")
-    Agent -->> Runtime: {"city": "Paris", "temp_f": 72, ...}
-    Runtime ->> Agent: get_weather(city="Tokyo")
-    Agent -->> Runtime: {"city": "Tokyo", "temp_f": 65, ...}
-    Runtime ->> Agent: convert_temp(fahrenheit=72)
-    Agent -->> Runtime: 22.2
-    Runtime ->> Agent: convert_temp(fahrenheit=65)
-    Agent -->> Runtime: 18.3
-    Note over Runtime: Code evaluates final expression
-    Runtime ->> Agent: {"paris": 22.2, "tokyo": 18.3}
-    deactivate Runtime
+    Agent ->> Environment: Execute code in sandbox
+    activate Environment
+    Environment ->> Agent: get_weather(city="Paris")
+    Agent -->> Environment: {"city": "Paris", "temp_f": 72, ...}
+    Environment ->> Agent: get_weather(city="Tokyo")
+    Agent -->> Environment: {"city": "Tokyo", "temp_f": 65, ...}
+    Environment ->> Agent: convert_temp(fahrenheit=72)
+    Agent -->> Environment: 22.2
+    Environment ->> Agent: convert_temp(fahrenheit=65)
+    Agent -->> Environment: 18.3
+    Note over Environment: Code evaluates final expression
+    Environment ->> Agent: {"paris": 22.2, "tokyo": 18.3}
+    deactivate Environment
     Agent ->> LLM: Tool result
     deactivate Agent
     activate LLM
@@ -157,64 +157,64 @@ agent = Agent(
 )
 ```
 
-## Runtimes
+## Environments
 
-Code execution uses a pluggable runtime to execute generated code. You can pass a runtime instance or a string shorthand (`'monty'` or `'docker'`) to [`CodeExecutionToolset`][pydantic_ai.toolsets.code_execution.CodeExecutionToolset]:
+Code execution uses a pluggable environment to execute generated code. You can pass an environment instance or a string shorthand (`'monty'` or `'docker'`) to [`CodeExecutionToolset`][pydantic_ai.toolsets.code_execution.CodeExecutionToolset]:
 
 ```python {test="skip" lint="skip"}
 # These are equivalent:
 CodeExecutionToolset('monty', toolset=tools)
-CodeExecutionToolset(MontyRuntime(), toolset=tools)
+CodeExecutionToolset(MontyEnvironment(), toolset=tools)
 ```
 
-The runtime you choose determines the execution environment, security boundaries, and available Python features.
+The environment you choose determines the execution sandbox, security boundaries, and available Python features.
 
-### Monty Runtime
+### Monty Environment
 
-[Monty](https://github.com/pydantic/monty) is a minimal, secure Python interpreter built by the Pydantic team specifically for code execution. It is the default runtime.
+[Monty](https://github.com/pydantic/monty) is a minimal, secure Python interpreter built by the Pydantic team specifically for code execution. It is the default environment.
 
 !!! danger "Early Stage — Not for Untrusted Prompts"
     Monty is under active development. **Do not use it in production systems where untrusted user prompts are passed directly to the model** — the model could be manipulated into generating malicious code. While Monty is designed for safe sandboxed execution, it has not yet undergone the level of hardening required for adversarial inputs. This restriction will be relaxed as Monty matures.
 
-[`MontyRuntime`][pydantic_ai.runtime.MontyRuntime] runs a restricted Python subset directly in your process — no containers, no network, no cold starts:
+[`MontyEnvironment`][pydantic_ai.environments.MontyEnvironment] runs a restricted Python subset directly in your process — no containers, no network, no cold starts:
 
 ```python {test="skip" lint="skip"}
-from pydantic_ai.runtime import MontyRuntime
+from pydantic_ai.environments.monty import MontyEnvironment
 from pydantic_ai.toolsets import CodeExecutionToolset, FunctionToolset
 
 tools = FunctionToolset(tools=[...])
-toolset = CodeExecutionToolset(MontyRuntime(), toolset=tools)  # (1)!
+toolset = CodeExecutionToolset(MontyEnvironment(), toolset=tools)  # (1)!
 ```
 
 1. Equivalent to `CodeExecutionToolset(toolset=tools)` or `CodeExecutionToolset('monty', toolset=tools)`, since Monty is the default.
 
 Monty type-checks generated code (via [ty](https://github.com/astral-sh/ty)) before execution, catching errors early and giving the model precise feedback to fix its code. It can also freeze and restore its full interpreter state via snapshot-based checkpointing, enabling efficient resume without re-executing code from scratch.
 
-Because Monty runs a restricted Python subset, the runtime automatically instructs the model about what's not available: no imports, no classes, no decorators — only the provided functions and builtins.
+Because Monty runs a restricted Python subset, the environment automatically instructs the model about what's not available: no imports, no classes, no decorators — only the provided functions and builtins.
 
-### Driver-Based Runtimes
+### Driver-Based Environments
 
-For environments that need full CPython compatibility (arbitrary imports, C extensions) or stronger isolation guarantees, the [`DriverBasedRuntime`][pydantic_ai.runtime.DriverBasedRuntime] base class supports executing code in any sandbox that can run a Python process. It uses a lightweight [driver script](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/toolsets/code_execution/_driver.py) that communicates over stdin/stdout.
+For environments that need full CPython compatibility (arbitrary imports, C extensions) or stronger isolation guarantees, the [`DriverBasedEnvironment`][pydantic_ai.environments.DriverBasedEnvironment] base class supports executing code in any sandbox that can run a Python process. It uses a lightweight [driver script](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/toolsets/code_execution/_driver.py) that communicates over stdin/stdout.
 
 #### Docker
 
-[`DockerRuntime`][pydantic_ai.runtime.DockerRuntime] runs code inside a Docker container with hardened security defaults. The runtime manages the full container lifecycle automatically:
+[`DockerEnvironment`][pydantic_ai.environments.DockerEnvironment] runs code inside a Docker container with hardened security defaults. The environment manages the full container lifecycle automatically:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.runtime import DockerRuntime
+from pydantic_ai.environments.docker import DockerEnvironment
 from pydantic_ai.toolsets import CodeExecutionToolset, FunctionToolset
 
 tools = FunctionToolset(tools=[...])
 agent = Agent(
     'anthropic:claude-sonnet-4-5',
-    toolsets=[CodeExecutionToolset(DockerRuntime(), toolset=tools)],  # (1)!
+    toolsets=[CodeExecutionToolset(DockerEnvironment(), toolset=tools)],  # (1)!
 )
 
 result = await agent.run('...')  # (2)!
 ```
 
-1. No container ID needed — the runtime creates a security-hardened container automatically.
+1. No container ID needed — the environment creates a security-hardened container automatically.
 2. The container is created when the agent starts and removed when it finishes. No manual cleanup required.
 
 By default, managed containers run with restrictive security settings:
@@ -229,30 +229,30 @@ By default, managed containers run with restrictive security settings:
 - `--cpus 1` — CPU limit
 - `--tmpfs /tmp:noexec,nosuid,size=64m` — writable scratch space
 
-Override specific settings with [`DockerSecuritySettings`][pydantic_ai.runtime.DockerSecuritySettings]:
+Override specific settings with [`DockerSecuritySettings`][pydantic_ai.environments.docker.DockerSecuritySettings]:
 
 ```python {test="skip" lint="skip"}
-from pydantic_ai.runtime import DockerRuntime, DockerSecuritySettings
+from pydantic_ai.environments.docker import DockerEnvironment, DockerSecuritySettings
 
-runtime = DockerRuntime(
+env = DockerEnvironment(
     security=DockerSecuritySettings(network=True),  # (1)!
 )
 ```
 
 1. Allow network access while keeping all other security defaults.
 
-For pre-existing containers, pass a `container_id` to use the runtime without lifecycle management:
+For pre-existing containers, pass a `container_id` to use the environment without lifecycle management:
 
 ```python {test="skip" lint="skip"}
-runtime = DockerRuntime(container_id='my-sandbox-container')
+env = DockerEnvironment(container_id='my-sandbox-container')
 ```
 
-#### Building a Custom Runtime
+#### Building a Custom Environment
 
-To support a new sandbox environment (e.g., E2B, Firecracker, WebAssembly), implement the [`DriverTransport`][pydantic_ai.runtime.DriverTransport] protocol:
+To support a new sandbox (e.g., E2B, Firecracker, WebAssembly), implement the [`DriverTransport`][pydantic_ai.environments._driver.DriverTransport] protocol:
 
 ```python {test="skip" lint="skip"}
-from pydantic_ai.runtime import DriverTransport
+from pydantic_ai.environments._driver import DriverTransport
 
 
 class MyTransport(DriverTransport):
@@ -262,7 +262,7 @@ class MyTransport(DriverTransport):
     async def kill(self) -> None: ...
 ```
 
-Then subclass [`DriverBasedRuntime`][pydantic_ai.runtime.DriverBasedRuntime] and implement `_start_driver()` to launch your sandbox and return the transport. All protocol handling, tool dispatch, and checkpoint/resume logic is inherited.
+Then subclass [`DriverBasedEnvironment`][pydantic_ai.environments._driver.DriverBasedEnvironment] and implement `_start_driver()` to launch your sandbox and return the transport. All protocol handling, tool dispatch, and checkpoint/resume logic is inherited.
 
 ## Customizing the Prompt
 
@@ -288,7 +288,7 @@ from pydantic_ai.toolsets import CodeExecutionToolset, FunctionToolset
 def my_description_func(
     signatures: list[FunctionSignature],
     referenced_types: list[TypeSignature],
-    runtime_instructions: str | None,
+    environment_instructions: str | None,
 ) -> str:
     funcs = '\n'.join(str(sig) for sig in signatures)
     return f'Write Python code using these functions:\n\n{funcs}'
@@ -305,7 +305,7 @@ code_toolset = CodeExecutionToolset(
 
 - **Tool approval and deferral** — [deferred tools](deferred-tools.md) (tools that require approval or external execution) are not yet supported in code mode.
 - **Streaming** — code execution does not currently support streaming partial results.
-- **Monty's restricted Python** — Monty runs a subset of Python: no imports, no classes, no decorators. The model is instructed about these restrictions, but complex code may need a [driver-based runtime](#driver-based-runtimes) with full CPython.
+- **Monty's restricted Python** — Monty runs a subset of Python: no imports, no classes, no decorators. The model is instructed about these restrictions, but complex code may need a [driver-based environment](#driver-based-environments) with full CPython.
 
 ## See Also
 

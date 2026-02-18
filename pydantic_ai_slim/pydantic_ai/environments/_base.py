@@ -1,4 +1,4 @@
-"""Base abstractions for code execution environments.
+"""Base abstractions for execution environments.
 
 This module defines the core types, the `ExecutionEnvironment` ABC, and the
 `ExecutionProcess` ABC for interactive execution with bidirectional streaming I/O.
@@ -10,9 +10,46 @@ import fnmatch
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import Self
+
+if TYPE_CHECKING:
+    from pydantic_ai._python_signature import FunctionSignature, TypeSignature
+    from pydantic_ai.toolsets.code_execution._abstract import ToolCallback
+
+
+# --- Capability / Tool type aliases ---
+
+Capability = Literal['ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'run_code']
+"""High-level capability identifier used in ``capabilities``, ``include``/``exclude``."""
+
+EditStrategy = Literal['replace_str', 'apply_patch']
+"""Specific edit tool strategy. Expanded from the ``edit_file`` capability."""
+
+Language = Literal['python']
+"""Supported code execution language. Expanded from the ``run_code`` capability."""
+
+ToolName = Literal[
+    'ls',
+    'shell',
+    'read_file',
+    'write_file',
+    'replace_str',
+    'apply_patch',
+    'glob',
+    'grep',
+    'run_python',
+]
+"""Specific tool name used in ``tool_description`` and what the LLM sees.
+
+Non-dimensional capabilities (``ls``, ``shell``, etc.) are both a Capability and
+a ToolName. Dimensional capabilities (``edit_file``, ``run_code``) expand into
+specific ToolNames based on strategy/language.
+"""
+
+
+# --- Data types ---
 
 
 @dataclass
@@ -119,6 +156,8 @@ class ExecutionProcess(ABC):
             await self.kill()
 
 
+# --- Constants ---
+
 IMAGE_EXTENSIONS = frozenset(
     {
         '.png',
@@ -144,10 +183,314 @@ IMAGE_MEDIA_TYPES: dict[str, str] = {
 MAX_OUTPUT_CHARS = 100_000
 
 
+# --- ExecutionEnvironment ---
+
+
+class ExecutionEnvironment(ABC):
+    """Abstract base class for execution environments.
+
+    An execution environment provides a place where agents can execute
+    commands, read/write files, search the filesystem, and optionally
+    execute code.
+
+    Implementations range from in-memory (for testing) to local subprocess,
+    Docker containers, and cloud-hosted VMs.
+
+    The only abstract member is ``capabilities``; all tool methods raise
+    ``NotImplementedError`` by default. Concrete subclasses override the
+    methods that match their declared capabilities.
+    """
+
+    # --- Capability introspection ---
+
+    @property
+    @abstractmethod
+    def capabilities(self) -> frozenset[Capability]:
+        """Capabilities this environment supports (high-level).
+
+        Used by toolsets to decide which tools to register. Only methods
+        corresponding to declared capabilities need to be implemented.
+        """
+        ...
+
+    @property
+    def supported_edit_strategies(self) -> frozenset[EditStrategy]:
+        """Edit strategies supported. Only relevant if ``'edit_file'`` in capabilities."""
+        return frozenset()
+
+    @property
+    def supported_code_languages(self) -> frozenset[Language]:
+        """Languages for code execution. Only relevant if ``'run_code'`` in capabilities."""
+        return frozenset()
+
+    @property
+    def supports_external_functions(self) -> bool:
+        """Whether code execution supports calling external functions (code mode).
+
+        True for ``DriverBasedEnvironment`` (NDJSON protocol) and ``MontyEnvironment``.
+        False for environments that run code via simple shell execution.
+        """
+        return False
+
+    def tool_description(self, tool: ToolName) -> str | None:
+        """Per-tool description for the LLM. Takes the specific tool name, not the capability.
+
+        Override to provide environment-specific hints for the LLM, e.g.::
+
+            def tool_description(self, tool):
+                if tool == 'shell':
+                    return 'Bash in Docker container, numpy/pandas installed'
+                if tool == 'grep':
+                    return 'Uses POSIX basic regex, not Python re syntax'
+                return None
+
+        Args:
+            tool: The specific tool name (e.g. ``'shell'``, ``'run_python'``).
+
+        Returns:
+            A short description string, or None for no extra description.
+        """
+        return None
+
+    # --- Tool methods ---
+    # All raise NotImplementedError by default. Concrete subclasses override
+    # the methods that match their declared capabilities.
+
+    async def ls(self, path: str = '.') -> list[FileInfo]:
+        """List directory contents.
+
+        Args:
+            path: The directory path within the environment.
+
+        Returns:
+            A list of ``FileInfo`` entries.
+        """
+        raise NotImplementedError(f'{type(self).__name__} does not support ls.')
+
+    async def shell(
+        self,
+        command: str,
+        *,
+        timeout: float | None = 120,
+        env: dict[str, str] | None = None,
+    ) -> ExecuteResult:
+        """Execute a shell command and return the result.
+
+        Args:
+            command: The shell command to execute.
+            timeout: Maximum seconds to wait for completion.
+                Pass ``None`` to disable the timeout.
+            env: Additional environment variables for this command.
+                Merged with (and overrides) any baseline environment variables.
+
+        Returns:
+            An ``ExecuteResult`` with the command output and exit code.
+        """
+        raise NotImplementedError(f'{type(self).__name__} does not support shell.')
+
+    async def read_file(
+        self,
+        path: str,
+        *,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> str | bytes:
+        """Read a file from the environment.
+
+        For text files, returns a string with ``cat -n`` style line numbers.
+        For binary files (images), returns raw bytes.
+
+        Args:
+            path: The file path within the environment.
+            offset: The line number to start reading from (0-indexed).
+                Ignored for binary files.
+            limit: Maximum number of lines to read.
+                Ignored for binary files.
+
+        Returns:
+            Text content with line numbers (``str``), or raw bytes for binary files.
+        """
+        raise NotImplementedError(f'{type(self).__name__} does not support read_file.')
+
+    async def write_file(self, path: str, content: str | bytes) -> None:
+        """Create or overwrite a file in the environment.
+
+        Args:
+            path: The file path within the environment.
+            content: The file content (text or binary).
+        """
+        raise NotImplementedError(f'{type(self).__name__} does not support write_file.')
+
+    async def replace_str(
+        self,
+        path: str,
+        old: str,
+        new: str,
+        *,
+        replace_all: bool = False,
+    ) -> int:
+        """Edit a file by exact string replacement.
+
+        Args:
+            path: The file path within the environment.
+            old: The exact text to find.
+            new: The replacement text.
+            replace_all: If True, replace all occurrences. If False, the
+                old string must appear exactly once or an error is raised.
+
+        Returns:
+            The number of replacements made.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+            ValueError: If ``old`` is not found, or appears multiple times
+                when ``replace_all`` is False.
+        """
+        raise NotImplementedError(f'{type(self).__name__} does not support replace_str.')
+
+    async def apply_patch(self, path: str, patch: str) -> str:
+        """Apply a unified diff patch to a file.
+
+        Args:
+            path: The file path within the environment.
+            patch: The unified diff patch content.
+
+        Returns:
+            The resulting file content after applying the patch.
+        """
+        raise NotImplementedError(f'{type(self).__name__} does not support apply_patch.')
+
+    async def glob(self, pattern: str, *, path: str = '.') -> list[str]:
+        """Find files matching a glob pattern.
+
+        Args:
+            pattern: The glob pattern (e.g. ``'**/*.py'``).
+            path: The directory to search in.
+
+        Returns:
+            A list of matching file paths.
+        """
+        raise NotImplementedError(f'{type(self).__name__} does not support glob.')
+
+    async def grep(
+        self,
+        pattern: str,
+        *,
+        path: str | None = None,
+        glob_pattern: str | None = None,
+        output_mode: Literal['content', 'files_with_matches', 'count'] = 'content',
+    ) -> str:
+        """Search file contents with a regex pattern.
+
+        Args:
+            pattern: The regex pattern to search for.
+            path: The file or directory to search in.
+            glob_pattern: Optional glob to filter which files are searched.
+            output_mode: Controls output format:
+                - ``'content'`` (default): matching lines as ``file:line_number:text``
+                - ``'files_with_matches'``: only file paths containing matches
+                - ``'count'``: ``file:count`` pairs
+
+        Returns:
+            Matching lines formatted as text.
+        """
+        raise NotImplementedError(f'{type(self).__name__} does not support grep.')
+
+    async def run_python(
+        self,
+        code: str,
+        call_tool: ToolCallback | None = None,
+        *,
+        functions: dict[str, FunctionSignature] | None = None,
+        referenced_types: list[TypeSignature] | None = None,
+    ) -> Any:
+        """Execute Python code.
+
+        The default implementation writes the code to a temp file and runs
+        it via ``shell()``. It does not support external functions; subclasses
+        that support ``call_tool`` (code mode) must override this method.
+
+        Args:
+            code: The Python code to execute.
+            call_tool: Callback for external function calls. If provided and the
+                environment doesn't support it, raises ``NotImplementedError``.
+            functions: Mapping of function name to signature (for type checking).
+            referenced_types: Type definitions referenced by the signatures.
+
+        Returns:
+            The output of the code execution.
+
+        Raises:
+            NotImplementedError: If ``call_tool`` is provided but not supported.
+            CodeRuntimeError: If the code exits with a non-zero status.
+        """
+        if call_tool is not None:
+            raise NotImplementedError(f'{type(self).__name__} does not support external functions in code execution.')
+        await self.write_file('/tmp/_pydantic_ai_code.py', code)
+        result = await self.shell('python /tmp/_pydantic_ai_code.py')
+        if result.exit_code != 0:
+            from pydantic_ai.toolsets.code_execution._abstract import CodeRuntimeError
+
+            raise CodeRuntimeError(result.output)
+        return result.output
+
+    async def run_typescript(
+        self,
+        code: str,
+        call_tool: ToolCallback | None = None,
+        *,
+        functions: dict[str, FunctionSignature] | None = None,
+        referenced_types: list[TypeSignature] | None = None,
+    ) -> Any:
+        """Execute TypeScript code.
+
+        Not yet implemented. Reserved for future multi-language support.
+        """
+        raise NotImplementedError(f'{type(self).__name__} does not support run_typescript.')
+
+    # --- Internal helpers (not tools) ---
+
+    async def create_process(
+        self,
+        command: str,
+        *,
+        env: dict[str, str] | None = None,
+    ) -> ExecutionProcess:
+        r"""Create an interactive process with streaming stdin/stdout.
+
+        This is an internal helper for code execution drivers, not a tool.
+
+        Args:
+            command: The shell command to run.
+            env: Additional environment variables for this process.
+
+        Returns:
+            An ``ExecutionProcess`` handle for bidirectional I/O.
+        """
+        raise NotImplementedError(f'{type(self).__name__} does not support interactive processes.')
+
+    # --- Lifecycle ---
+
+    async def __aenter__(self) -> Self:
+        """Start the environment (e.g., create a Docker container)."""
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        """Stop the environment and clean up resources."""
+
+
+# --- Helper functions ---
+
+
+def shell_escape(s: str) -> str:
+    """Escape a string for safe use in shell commands."""
+    return "'" + s.replace("'", "'\\''") + "'"
+
+
 def format_lines(text: str, offset: int, limit: int) -> str:
     """Format text with line numbers and continuation hints.
 
-    Shared helper used by `LocalEnvironment` and `MemoryEnvironment`
+    Shared helper used by ``LocalEnvironment`` and ``MemoryEnvironment``
     to produce consistent ``cat -n`` style output.
     """
     lines = text.splitlines(keepends=True)
@@ -180,7 +523,7 @@ def collect_grep_matches(
 ) -> None:
     """Collect grep matches from a single file into ``results``.
 
-    Shared helper used by `LocalEnvironment` and `MemoryEnvironment`.
+    Shared helper used by ``LocalEnvironment`` and ``MemoryEnvironment``.
     """
     if output_mode == 'files_with_matches':
         if any(compiled.search(line) for line in text.splitlines()):
@@ -205,10 +548,6 @@ def glob_match(path: str, pattern: str) -> bool:
     if '**' not in pattern:
         return fnmatch.fnmatch(path, pattern)
 
-    # Convert glob pattern to regex:
-    # ** matches zero or more path segments (including /)
-    # * matches within a single segment (no /)
-    # ? matches any single char except /
     regex = ''
     i = 0
     while i < len(pattern):
@@ -230,232 +569,15 @@ def glob_match(path: str, pattern: str) -> bool:
     return bool(re.fullmatch(regex, path))
 
 
-class ExecutionEnvironment(ABC):
-    """Abstract base class for code execution environments.
-
-    An execution environment provides a place where agents can execute
-    commands, read/write files, and search the filesystem.
-
-    Implementations range from local subprocess (no isolation) to Docker
-    containers and cloud-hosted VMs.
-
-    Implementations must provide `execute` for command execution and
-    file/search operations. Override `create_process` for interactive use.
-    """
-
-    async def create_process(
-        self,
-        command: str,
-        *,
-        env: dict[str, str] | None = None,
-    ) -> ExecutionProcess:
-        r"""Create an interactive process with streaming stdin/stdout.
-
-        Override this for interactive use cases. The default raises
-        `NotImplementedError`.
-
-        The returned process is **not yet started** — use it as an async
-        context manager to start it and ensure cleanup::
-
-            async with await env.create_process('python worker.py') as proc:
-                await proc.send(b'hello\n')
-
-        Args:
-            command: The shell command to run.
-            env: Additional environment variables for this process.
-                Merged with (and overrides) any baseline environment variables.
-
-        Returns:
-            An `ExecutionProcess` handle for bidirectional I/O.
-        """
-        raise NotImplementedError(
-            f'{type(self).__name__} does not support interactive processes. Use execute() instead.'
-        )
-
-    @abstractmethod
-    async def execute(
-        self,
-        command: str,
-        *,
-        timeout: float | None = 120,
-        env: dict[str, str] | None = None,
-    ) -> ExecuteResult:
-        """Execute a shell command and return the result.
-
-        This is the simple fire-and-forget API. For interactive I/O,
-        use `create_process()` directly.
-
-        Args:
-            command: The shell command to execute.
-            timeout: Maximum seconds to wait for completion.
-                Pass `None` to disable the timeout. Must be a positive number
-                when set; behavior for zero or negative values is undefined.
-            env: Additional environment variables for this command.
-                Merged with (and overrides) any baseline environment variables.
-
-        Returns:
-            An `ExecuteResult` with the command output and exit code.
-        """
-
-    # --- File Operations ---
-
-    @abstractmethod
-    async def read_file(
-        self,
-        path: str,
-        *,
-        offset: int = 0,
-        limit: int = 2000,
-    ) -> str:
-        """Read a text file from the environment with line numbers.
-
-        Returns a string with ``cat -n`` style line numbers.
-        Use `read_file_bytes` for raw binary reads (e.g. images).
-
-        Args:
-            path: The file path within the environment.
-            offset: The line number to start reading from (0-indexed).
-            limit: Maximum number of lines to read.
-
-        Returns:
-            Text content with line numbers.
-        """
-
-    @abstractmethod
-    async def read_file_bytes(self, path: str) -> bytes:
-        """Read raw file content as bytes.
-
-        Used for binary files (images, etc.) where line-number
-        formatting is not appropriate.
-
-        Args:
-            path: The file path within the environment.
-
-        Returns:
-            The raw file content as bytes.
-        """
-
-    @abstractmethod
-    async def write_file(self, path: str, content: str | bytes) -> None:
-        """Create or overwrite a file in the environment.
-
-        Args:
-            path: The file path within the environment.
-            content: The file content (text or binary).
-        """
-
-    @abstractmethod
-    async def edit_file(
-        self,
-        path: str,
-        old_string: str,
-        new_string: str,
-        *,
-        replace_all: bool = False,
-    ) -> int:
-        """Edit a file by exact string replacement.
-
-        Args:
-            path: The file path within the environment.
-            old_string: The exact text to find.
-            new_string: The replacement text.
-            replace_all: If True, replace all occurrences. If False, the
-                old_string must appear exactly once or an error is raised.
-
-        Returns:
-            The number of replacements made.
-
-        Raises:
-            FileNotFoundError: If the file does not exist.
-            ValueError: If old_string is not found, or appears multiple times
-                when replace_all is False.
-        """
-
-    # --- Search ---
-
-    @abstractmethod
-    async def ls(self, path: str = '.') -> list[FileInfo]:
-        """List directory contents.
-
-        Args:
-            path: The directory path within the environment.
-
-        Returns:
-            A list of `FileInfo` entries.
-        """
-
-    @abstractmethod
-    async def glob(self, pattern: str, *, path: str = '.') -> list[str]:
-        """Find files matching a glob pattern.
-
-        Args:
-            pattern: The glob pattern (e.g. '**/*.py').
-            path: The directory to search in.
-
-        Returns:
-            A list of matching file paths.
-        """
-
-    @abstractmethod
-    async def grep(
-        self,
-        pattern: str,
-        *,
-        path: str | None = None,
-        glob_pattern: str | None = None,
-        output_mode: Literal['content', 'files_with_matches', 'count'] = 'content',
-    ) -> str:
-        """Search file contents with a regex pattern.
-
-        Args:
-            pattern: The regex pattern to search for.
-            path: The file or directory to search in.
-            glob_pattern: Optional glob to filter which files are searched.
-            output_mode: Controls output format:
-                - ``'content'`` (default): matching lines as ``file:line_number:text``
-                - ``'files_with_matches'``: only file paths containing matches
-                - ``'count'``: ``file:count`` pairs
-
-        Returns:
-            Matching lines formatted as text.
-        """
-
-    # --- System prompt ---
-
-    @property
-    def system_prompt(self) -> str | None:
-        """Optional system prompt additions describing environment-specific capabilities or limitations.
-
-        Override this to provide environment-specific instructions that will be
-        included in the toolset's system prompt. For example, a restricted sandbox
-        might describe which commands are unavailable.
-        """
-        return None
-
-    # --- Lifecycle ---
-
-    async def __aenter__(self) -> Self:
-        """Start the environment (e.g., create a Docker container)."""
-        return self
-
-    async def __aexit__(self, *args: Any) -> None:
-        """Stop the environment and clean up resources."""
-
-
-def shell_escape(s: str) -> str:
-    """Escape a string for safe use in shell commands."""
-    return "'" + s.replace("'", "'\\''") + "'"
-
-
 # --- Shell command builders for Docker/E2B environments ---
 
 
 def build_read_file_cmd(path: str, *, offset: int = 0, limit: int = 2000) -> str:
     """Build a shell command that reads a file with line numbers.
 
-    Uses `awk` for reliable line numbering that handles tabs correctly.
+    Uses ``awk`` for reliable line numbering that handles tabs correctly.
     Includes a continuation hint when more lines remain, consistent
-    with the `format_lines` helper used by Local/Memory environments.
+    with the ``format_lines`` helper used by Local/Memory environments.
     """
     escaped = shell_escape(path)
     start = offset + 1
@@ -474,7 +596,7 @@ def build_grep_cmd(
     glob_pattern: str | None = None,
     output_mode: Literal['content', 'files_with_matches', 'count'] = 'content',
 ) -> str:
-    """Build a shell `grep` command from structured arguments."""
+    """Build a shell ``grep`` command from structured arguments."""
     parts = ['grep', '-rI']  # -I skips binary files
     if output_mode == 'files_with_matches':
         parts.append('-l')
@@ -490,12 +612,12 @@ def build_grep_cmd(
 
 
 def filter_grep_count_output(text: str) -> str:
-    """Filter grep -c output to remove files with 0 matches."""
+    """Filter ``grep -c`` output to remove files with 0 matches."""
     return '\n'.join(line for line in text.splitlines() if not line.endswith(':0'))
 
 
 def build_glob_cmd(pattern: str, *, path: str = '.') -> str:
-    """Build a shell `find` command to match files by pattern."""
+    """Build a shell ``find`` command to match files by pattern."""
     return f'find {shell_escape(path)} -path {shell_escape(pattern)} -o -name {shell_escape(pattern)} 2>/dev/null | head -100'
 
 

@@ -23,6 +23,7 @@ from ..._python_signature import (
 )
 from ..._run_context import AgentDepsT, RunContext
 from ..._tool_manager import ToolManager, _parallel_execution_mode_ctx_var  # pyright: ignore[reportPrivateUsage]
+from ...environments._base import ExecutionEnvironment
 from ...exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from ...messages import ToolCallPart
 from ...tools import ToolDefinition
@@ -30,59 +31,49 @@ from ..abstract import AbstractToolset, SchemaValidatorProt, ToolsetTool
 from ._abstract import (
     CodeExecutionError,
     CodeExecutionTimeout,
-    CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
     CodeTypingError,
     FunctionCall,
     ToolCallback,
 )
-from ._transport import DriverBasedRuntime, DriverTransport
-
-try:
-    from .monty import MontyRuntime
-except ImportError:
-    pass
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .monty import MontyRuntime
-
-from .docker import DockerRuntime, DockerSecuritySettings
 
 __all__ = (
     'CodeExecutionToolset',
-    'CodeRuntime',
-    'CodeRuntimeError',
     'CodeExecutionError',
+    'CodeRuntimeError',
     'CodeSyntaxError',
     'CodeTypingError',
     'CodeExecutionTimeout',
     'DescriptionFunc',
-    'DockerRuntime',
-    'DockerSecuritySettings',
-    'DriverBasedRuntime',
-    'DriverTransport',
     'FunctionCall',
     'FunctionSignature',
-    'MontyRuntime',
     'ToolCallback',
     'TypeSignature',
     'build_default_description',
 )
 
 
-RuntimeName = Literal['monty', 'docker']
+EnvironmentName = Literal['monty', 'docker']
 
 
-def get_runtime(name: RuntimeName) -> CodeRuntime:
+def get_environment(name: EnvironmentName) -> ExecutionEnvironment:
+    """Create an execution environment by name.
+
+    Args:
+        name: The environment name (``'monty'`` or ``'docker'``).
+
+    Returns:
+        A new ``ExecutionEnvironment`` instance.
+    """
     if name == 'monty':
-        from .monty import MontyRuntime
+        from ...environments.monty import MontyEnvironment
 
-        return MontyRuntime()
+        return MontyEnvironment()
     elif name == 'docker':
-        return DockerRuntime()
+        from ...environments.docker import DockerEnvironment
+
+        return DockerEnvironment()
     else:
         assert_never(name)
 
@@ -126,14 +117,14 @@ DescriptionFunc: TypeAlias = Callable[[list[FunctionSignature], list[TypeSignatu
 """Callback type for building the code execution tool description.
 
 Receives the function signatures, their referenced types, and optional
-runtime-specific instructions. Returns the complete tool description string.
+environment-specific instructions. Returns the complete tool description string.
 """
 
 
 def build_default_description(
     signatures: list[FunctionSignature],
     referenced_types: list[TypeSignature],
-    runtime_instructions: str | None,
+    environment_instructions: str | None,
     *,
     description: str | None = None,
 ) -> str:
@@ -146,8 +137,8 @@ def build_default_description(
     Args:
         signatures: List of Python function signatures for available tools.
         referenced_types: Unique type definitions referenced by the signatures.
-        runtime_instructions: Runtime-specific text to include in the description (from
-            `CodeRuntime.instructions`). Inserted verbatim if non-empty.
+        environment_instructions: Environment-specific text to include in the description
+            (from ``environment.tool_description('run_python')``). Inserted verbatim if non-empty.
         description: Custom preamble text to use instead of the built-in default.
 
     Returns:
@@ -158,8 +149,8 @@ def build_default_description(
 
     parts = [description]
 
-    if runtime_instructions:
-        parts.append(runtime_instructions)
+    if environment_instructions:
+        parts.append(environment_instructions)
 
     if signatures:
         parts.append('```python')
@@ -192,8 +183,8 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
     execution context. When no ``toolset`` is provided, it acts as a pure code execution environment.
 
     Args:
-        runtime: The code execution runtime. Can be a runtime instance or a string shorthand
-            (``'monty'`` or ``'docker'``). Defaults to ``'monty'``.
+        environment: The code execution environment. Can be an environment instance or a string
+            shorthand (``'monty'`` or ``'docker'``). Defaults to ``'monty'``.
         toolset: Optional underlying toolset to wrap. When provided, its tools are exposed as
             callable Python functions in the code execution context.
         description: Custom tool description. Can be a string (used as the preamble text
@@ -203,7 +194,7 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
             Defaults to 3. Increase for complex code generation tasks or less capable models.
     """
 
-    runtime: CodeRuntime
+    environment: ExecutionEnvironment
 
     _: KW_ONLY
 
@@ -213,15 +204,20 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
 
     def __init__(
         self,
-        runtime: CodeRuntime | RuntimeName = 'monty',
+        environment: ExecutionEnvironment | EnvironmentName = 'monty',
         *,
         toolset: AbstractToolset[AgentDepsT] | None = None,
         description: str | DescriptionFunc = build_default_description,
         max_retries: int = 3,
     ) -> None:
-        if isinstance(runtime, str):
-            runtime = get_runtime(runtime)
-        self.runtime = runtime
+        if isinstance(environment, str):
+            environment = get_environment(environment)
+        if toolset is not None and not environment.supports_external_functions:
+            raise TypeError(
+                f'{type(environment).__name__} does not support external functions. '
+                'Cannot wrap tools for code execution.'
+            )
+        self.environment = environment
         self.toolset = toolset
         self.description = description
         self.max_retries = max_retries
@@ -237,12 +233,12 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
         return 'CodeExecutionToolset'
 
     async def __aenter__(self) -> Self:
-        await self.runtime.__aenter__()
+        await self.environment.__aenter__()
         try:
             if self.toolset is not None:
                 await self.toolset.__aenter__()
         except BaseException:
-            await self.runtime.__aexit__(None, None, None)
+            await self.environment.__aexit__(None, None, None)
             raise
         return self
 
@@ -252,7 +248,7 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
                 return await self.toolset.__aexit__(*args)
             return None
         finally:
-            await self.runtime.__aexit__(*args)
+            await self.environment.__aexit__(*args)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:  # pragma: no cover
         if self.toolset is not None:
@@ -310,12 +306,13 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
             signatures = []
             referenced_types = []
 
+        environment_instructions = self.environment.tool_description('run_python')
         if isinstance(self.description, str):
             tool_description = build_default_description(
-                signatures, referenced_types, self.runtime.instructions, description=self.description
+                signatures, referenced_types, environment_instructions, description=self.description
             )
         else:
-            tool_description = self.description(signatures, referenced_types, self.runtime.instructions)
+            tool_description = self.description(signatures, referenced_types, environment_instructions)
 
         return {
             _TOOL_NAME: _CodeExecutionTool(
@@ -378,7 +375,7 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
                 raise CodeRuntimeError(f'Call to {sanitized_name!r} failed: {e}') from e
 
         try:
-            return await self.runtime.run(
+            return await self.environment.run_python(
                 code,
                 call_tool_callback,
                 functions={sig.name: sig for sig in tool.signatures},

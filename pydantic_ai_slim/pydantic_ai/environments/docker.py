@@ -1,4 +1,4 @@
-"""Docker container-based sandbox for isolated code execution.
+"""Docker container-based environment for isolated code execution.
 
 Requires the `docker` package: `pip install pydantic-ai-slim[docker-sandbox]`
 """
@@ -8,10 +8,11 @@ from __future__ import annotations
 import hashlib
 import io
 import math
+import posixpath
 import struct
 import tarfile
 from collections.abc import Sequence
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal, cast
 
 import anyio
@@ -19,11 +20,13 @@ import anyio.to_thread
 from typing_extensions import Self
 
 from ._base import (
+    IMAGE_EXTENSIONS,
     MAX_OUTPUT_CHARS,
+    Capability,
     ExecuteResult,
-    ExecutionEnvironment,
     ExecutionProcess,
     FileInfo,
+    ToolName,
     apply_edit,
     build_glob_cmd,
     build_grep_cmd,
@@ -32,6 +35,7 @@ from ._base import (
     parse_glob_output,
     shell_escape,
 )
+from ._driver import DriverBasedEnvironment
 
 try:
     import docker
@@ -39,7 +43,7 @@ try:
     from docker.models.containers import Container
 except ImportError as _import_error:
     raise ImportError(
-        'The `docker` package is required for DockerSandbox. '
+        'The `docker` package is required for DockerEnvironment. '
         'Install it with: pip install pydantic-ai-slim[docker-sandbox]'
     ) from _import_error
 
@@ -99,7 +103,7 @@ def _put_file(container: Container, path: str, data: bytes) -> None:
     container.put_archive(parent, f)  # pyright: ignore[reportUnknownMemberType]
 
 
-class DockerSandboxProcess(ExecutionProcess):
+class DockerEnvironmentProcess(ExecutionProcess):
     """Interactive process inside a Docker container using exec with socket I/O.
 
     Docker's exec socket uses a multiplexed stream protocol where stdout and
@@ -264,19 +268,19 @@ class DockerSandboxProcess(ExecutionProcess):
             pass
 
 
-class DockerSandbox(ExecutionEnvironment):
-    """Docker container-based sandbox for isolated code execution.
+class DockerEnvironment(DriverBasedEnvironment):
+    """Docker container-based environment for isolated code execution.
 
     Provides isolated code execution with configurable runtimes,
     package installation, and persistent or ephemeral workspaces.
 
     Usage:
         ```python {test="skip" lint="skip"}
-        async with DockerSandbox(
+        async with DockerEnvironment(
             image='python:3.12-slim',
             packages=['numpy', 'opencv-python-headless'],
-        ) as sandbox:
-            result = await sandbox.execute('python -c "import numpy; print(numpy.__version__)"')
+        ) as env:
+            result = await env.shell('python -c "import numpy; print(numpy.__version__)"')
             print(result.output)
         ```
     """
@@ -303,7 +307,7 @@ class DockerSandbox(ExecutionEnvironment):
         init: bool = False,
         cache_built_image: bool = True,
     ) -> None:
-        """Create a Docker sandbox.
+        """Create a Docker environment.
 
         Args:
             image: Base Docker image to use.
@@ -350,6 +354,19 @@ class DockerSandbox(ExecutionEnvironment):
 
         self._client: docker.DockerClient | None = None
         self._container: Container | None = None
+
+    @property
+    def capabilities(self) -> frozenset[Capability]:
+        return frozenset({'ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'run_code'})
+
+    def tool_description(self, tool: ToolName) -> str | None:
+        if tool == 'grep':
+            return 'Uses POSIX basic regex, not Python `re` syntax.'
+        elif tool == 'glob':
+            return 'Uses `find` for pattern matching; `**` is not supported.'
+        elif tool == 'shell':
+            return 'Runs inside a Docker container.'
+        return None
 
     async def __aenter__(self) -> Self:
         await anyio.to_thread.run_sync(self._setup)
@@ -452,7 +469,7 @@ class DockerSandbox(ExecutionEnvironment):
     @property
     def container(self) -> Container:
         if self._container is None:
-            raise RuntimeError('DockerSandbox not started. Use `async with DockerSandbox(...) as sandbox:`')
+            raise RuntimeError('DockerEnvironment not started. Use `async with DockerEnvironment(...) as env:`')
         return self._container
 
     def _resolve_path(self, path: str) -> str:
@@ -472,9 +489,9 @@ class DockerSandbox(ExecutionEnvironment):
         *,
         env: dict[str, str] | None = None,
     ) -> ExecutionProcess:
-        return DockerSandboxProcess(self.container, command, self._work_dir, env=env)
+        return DockerEnvironmentProcess(self.container, command, self._work_dir, env=env)
 
-    async def execute(
+    async def shell(
         self,
         command: str,
         *,
@@ -507,7 +524,11 @@ class DockerSandbox(ExecutionEnvironment):
             output += '\n[Command timed out]'
         return ExecuteResult(output=output, exit_code=exit_code, truncated=truncated)
 
-    async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str:
+    async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str | bytes:
+        ext = posixpath.splitext(path)[1].lower()
+        if ext in IMAGE_EXTENSIONS:
+            return await anyio.to_thread.run_sync(self._read_file_bytes_sync, path)
+
         def _read() -> str:
             cmd = build_read_file_cmd(path, offset=offset, limit=limit)
             exit_code, output = self.container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
@@ -516,9 +537,6 @@ class DockerSandbox(ExecutionEnvironment):
             return output.decode('utf-8', errors='replace')
 
         return await anyio.to_thread.run_sync(_read)
-
-    async def read_file_bytes(self, path: str) -> bytes:
-        return await anyio.to_thread.run_sync(self._read_file_bytes_sync, path)
 
     def _read_file_bytes_sync(self, path: str) -> bytes:
         """Read raw file bytes using Docker's get_archive API."""
@@ -546,18 +564,18 @@ class DockerSandbox(ExecutionEnvironment):
 
         await anyio.to_thread.run_sync(_write)
 
-    async def edit_file(
+    async def replace_str(
         self,
         path: str,
-        old_string: str,
-        new_string: str,
+        old: str,
+        new: str,
         *,
         replace_all: bool = False,
     ) -> int:
         def _edit() -> int:
             raw = self._read_file_bytes_sync(path)
             text = raw.decode('utf-8')
-            new_text, count = apply_edit(text, old_string, new_string, path, replace_all=replace_all)
+            new_text, count = apply_edit(text, old, new, path, replace_all=replace_all)
             _put_file(self.container, self._resolve_path(path), new_text.encode('utf-8'))
             return count
 
@@ -616,13 +634,11 @@ class DockerSandbox(ExecutionEnvironment):
 
         return await anyio.to_thread.run_sync(_grep)
 
-    @property
-    def system_prompt(self) -> str:
-        return (
-            'This environment runs inside a Docker container.\n'
-            '- `grep` uses POSIX basic regex, not Python `re` syntax.\n'
-            '- `glob` uses `find` for pattern matching; `**` is not supported.\n'
-        )
+    async def _copy_driver(self) -> None:
+        """Copy the driver script into the container."""
+        driver_source = Path(__file__).parents[1] / 'toolsets' / 'code_execution' / '_driver.py'
+        content = driver_source.read_text('utf-8')
+        await self.write_file(self.driver_script_path, content)
 
     async def is_alive(self) -> bool:
         """Check if the container is running.

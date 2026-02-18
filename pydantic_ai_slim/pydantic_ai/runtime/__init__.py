@@ -1,48 +1,50 @@
-"""Backward-compatible re-exports — use `pydantic_ai.toolsets.code_execution` instead."""
+"""Backward-compatible re-exports — use `pydantic_ai.environments` and `pydantic_ai.toolsets.code_execution` instead."""
 
 from __future__ import annotations
 
+from pydantic_ai.environments._base import ExecutionEnvironment
+from pydantic_ai.environments._driver import DriverBasedEnvironment, DriverTransport
 from pydantic_ai.toolsets.code_execution import (
     CodeExecutionError,
     CodeExecutionTimeout,
-    CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
     CodeTypingError,
-    DockerRuntime,
-    DockerSecuritySettings,
-    DriverBasedRuntime,
-    DriverTransport,
+    EnvironmentName,
     FunctionCall,
-    RuntimeName,
     ToolCallback,
-    get_runtime,
+    get_environment,
 )
 
 try:
-    from pydantic_ai.toolsets.code_execution.monty import MontyRuntime
+    from pydantic_ai.environments.monty import MontyEnvironment
+except ImportError:
+    pass
+
+try:
+    from pydantic_ai.environments.docker import DockerEnvironment
 except ImportError:
     pass
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pydantic_ai.toolsets.code_execution.monty import MontyRuntime
+    from pydantic_ai.environments.docker import DockerEnvironment
+    from pydantic_ai.environments.monty import MontyEnvironment
 
 __all__ = (
     'CodeExecutionError',
     'CodeExecutionTimeout',
-    'CodeRuntime',
     'CodeRuntimeError',
     'CodeSyntaxError',
     'CodeTypingError',
-    'DockerRuntime',
-    'DockerSecuritySettings',
-    'DriverBasedRuntime',
+    'DockerEnvironment',
+    'DriverBasedEnvironment',
     'DriverTransport',
+    'EnvironmentName',
+    'ExecutionEnvironment',
     'FunctionCall',
-    'MontyRuntime',
-    'RuntimeName',
+    'MontyEnvironment',
     'ToolCallback',
-    'get_runtime',
+    'get_environment',
 )

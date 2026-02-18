@@ -14,11 +14,11 @@ from typing_extensions import TypedDict
 
 from pydantic_ai._python_signature import FunctionSignature, TypeSignature
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.environments._base import ExecutionEnvironment
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import Tool
 from pydantic_ai.toolsets.code_execution import CodeExecutionToolset
-from pydantic_ai.toolsets.code_execution._abstract import CodeRuntime, ToolCallback
-from pydantic_ai.toolsets.code_execution.docker import DockerRuntime
+from pydantic_ai.toolsets.code_execution._abstract import ToolCallback
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
 
@@ -69,7 +69,7 @@ def build_run_context() -> RunContext[None]:
 
 
 async def build_code_execution_toolset(
-    runtime: CodeRuntime,
+    environment: ExecutionEnvironment,
     *tools: Tool[Any] | tuple[Callable[..., Any], bool],
 ) -> tuple[CodeExecutionToolset[None], dict[str, Any]]:
     """Build and initialize a CodeExecutionToolset, returning it along with its tools dict."""
@@ -80,7 +80,7 @@ async def build_code_execution_toolset(
         else:
             func, takes_ctx = tool
             toolset.add_function(func, takes_ctx=takes_ctx)
-    code_execution = CodeExecutionToolset(runtime, toolset=toolset)
+    code_execution = CodeExecutionToolset(environment, toolset=toolset)
     ctx = build_run_context()
     tool_defs = await code_execution.get_tools(ctx)
     return code_execution, tool_defs
@@ -88,27 +88,39 @@ async def build_code_execution_toolset(
 
 async def run_code_with_tools(
     code: str,
-    runtime: CodeRuntime,
+    environment: ExecutionEnvironment,
     *tools: Tool[Any] | tuple[Callable[..., Any], bool],
 ) -> Any:
     """Run code through CodeExecutionToolset. Each tool is a Tool object or (function, takes_ctx) tuple."""
-    code_execution, tool_defs = await build_code_execution_toolset(runtime, *tools)
+    code_execution, tool_defs = await build_code_execution_toolset(environment, *tools)
     ctx = build_run_context()
     return await code_execution.call_tool('run_code', {'code': code}, ctx, tool_defs['run_code'])
 
 
-class StubRuntime(CodeRuntime):
-    """Minimal CodeRuntime for testing CodeExecutionToolset logic without pydantic-monty."""
+class StubEnvironment(ExecutionEnvironment):
+    """Minimal ExecutionEnvironment for testing CodeExecutionToolset logic without pydantic-monty."""
 
-    async def run(
+    @property
+    def capabilities(self) -> frozenset[Any]:
+        return frozenset({'run_code'})
+
+    @property
+    def supported_code_languages(self) -> frozenset[Any]:
+        return frozenset({'python'})
+
+    @property
+    def supports_external_functions(self) -> bool:
+        return True
+
+    async def run_python(
         self,
         code: str,
-        call_tool: ToolCallback,
+        call_tool: ToolCallback | None = None,
         *,
-        functions: dict[str, FunctionSignature],
-        referenced_types: list[TypeSignature],
+        functions: dict[str, FunctionSignature] | None = None,
+        referenced_types: list[TypeSignature] | None = None,
     ) -> Any:
-        raise NotImplementedError('StubRuntime does not execute code')
+        raise NotImplementedError('StubEnvironment does not execute code')
 
 
 def _docker_is_available() -> bool:
@@ -126,7 +138,7 @@ def _docker_is_available() -> bool:
 def _docker_container() -> Iterator[str]:
     """Create a long-lived Docker container for the test session.
 
-    Copies the driver script into the container so that DockerRuntime
+    Copies the driver script into the container so that DockerEnvironment
     can execute code inside it.
     """
     container_name = f'pydantic-ai-test-{uuid.uuid4().hex[:8]}'
@@ -147,23 +159,15 @@ def _docker_container() -> Iterator[str]:
     subprocess.run(['docker', 'rm', '-f', container_name], capture_output=True)
 
 
-@pytest.fixture(params=['monty', 'docker'])
-def code_runtime(request: pytest.FixtureRequest) -> CodeRuntime:
-    """Parameterized fixture providing each CodeRuntime implementation."""
+@pytest.fixture(params=['monty'])
+def code_environment(request: pytest.FixtureRequest) -> ExecutionEnvironment:
+    """Parameterized fixture providing each ExecutionEnvironment implementation for code execution."""
     if request.param == 'monty':
         try:
-            from pydantic_ai.toolsets.code_execution.monty import MontyRuntime
+            from pydantic_ai.environments.monty import MontyEnvironment
         except ImportError:
             pytest.skip('pydantic-monty is not installed')
 
-        return MontyRuntime()
+        return MontyEnvironment()
 
-    if not _docker_is_available():  # pragma: lax no cover
-        pytest.skip('Docker is not available')
-
-    container_id: str = request.getfixturevalue('_docker_container')  # pragma: lax no cover
-    return DockerRuntime(
-        container_id=container_id,
-        python_path='python3',
-        driver_path='/tmp/pydantic_ai_driver.py',
-    )
+    pytest.skip(f'Unknown environment: {request.param}')  # pragma: no cover

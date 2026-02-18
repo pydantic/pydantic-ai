@@ -17,11 +17,11 @@ from typing import Any
 import logfire
 
 from pydantic_ai import Agent
+from pydantic_ai.environments.monty import MontyEnvironment
 from pydantic_ai.messages import ModelResponse, RetryPromptPart
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets.code_execution import CodeExecutionToolset
-from pydantic_ai.toolsets.code_execution.monty import MontyRuntime
 
 # =============================================================================
 # Configuration
@@ -97,9 +97,9 @@ def create_tool_calling_agent(toolset: FunctionToolset[None]) -> Agent[None, str
 
 def create_code_execution_agent(toolset: FunctionToolset[None]) -> Agent[None, str]:
     """Create agent with code execution (tools as Python functions)."""
-    runtime = MontyRuntime()
+    environment = MontyEnvironment()
     code_toolset: CodeExecutionToolset[None] = CodeExecutionToolset(
-        runtime,
+        environment,
         toolset=toolset,
         max_retries=MAX_RETRIES,
     )

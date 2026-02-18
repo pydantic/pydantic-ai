@@ -157,7 +157,7 @@ async def _execute(init_msg: dict[str, Any], reader: asyncio.StreamReader) -> No
     # for them. Sequential proxies should either (a) be async coroutines that await their
     # result future inline rather than returning it eagerly, or (b) send a special
     # `sync_call` message type where the driver blocks until the result arrives before
-    # continuing code execution. See MontyRuntime._execution_loop for reference.
+    # continuing code execution. See MontyEnvironment._execution_loop for reference.
     result_cache: dict[str, Any] = init_msg.get('result_cache', {})
 
     if not code.strip():

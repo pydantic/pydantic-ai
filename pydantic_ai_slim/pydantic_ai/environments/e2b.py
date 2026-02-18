@@ -17,6 +17,8 @@ unknown member types, etc.) that cannot be worked around without pervasive casts
 
 from __future__ import annotations
 
+import pathlib
+import posixpath
 from typing import Any, Literal
 
 import anyio
@@ -24,11 +26,13 @@ from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStre
 from typing_extensions import Self
 
 from ._base import (
+    IMAGE_EXTENSIONS,
     MAX_OUTPUT_CHARS,
+    Capability,
     ExecuteResult,
-    ExecutionEnvironment,
     ExecutionProcess,
     FileInfo,
+    ToolName,
     apply_edit,
     build_glob_cmd,
     build_grep_cmd,
@@ -37,17 +41,18 @@ from ._base import (
     parse_glob_output,
     shell_escape,
 )
+from ._driver import DriverBasedEnvironment
 
 try:
     from e2b_code_interpreter import AsyncSandbox as E2BAsyncSandbox
 except ImportError as _import_error:
     raise ImportError(
-        'The `e2b-code-interpreter` package is required for E2BSandbox. '
+        'The `e2b-code-interpreter` package is required for E2BEnvironment. '
         'Install it with: pip install pydantic-ai-slim[e2b-sandbox]'
     ) from _import_error
 
 
-class E2BSandboxProcess(ExecutionProcess):
+class E2BEnvironmentProcess(ExecutionProcess):
     """Interactive process in an E2B sandbox, bridging callback-based I/O to pull-based recv()."""
 
     def __init__(self, sandbox: E2BAsyncSandbox, command: str, env: dict[str, str] | None = None) -> None:
@@ -123,7 +128,7 @@ class E2BSandboxProcess(ExecutionProcess):
                 pass
 
 
-class E2BSandbox(ExecutionEnvironment):
+class E2BEnvironment(DriverBasedEnvironment):
     """Hosted sandbox via E2B (https://e2b.dev).
 
     Runs code in a cloud-hosted micro-VM with a full Linux environment.
@@ -131,8 +136,8 @@ class E2BSandbox(ExecutionEnvironment):
 
     Usage:
         ```python {test="skip" lint="skip"}
-        async with E2BSandbox(template='base') as sandbox:
-            result = await sandbox.execute('echo hello')
+        async with E2BEnvironment(template='base') as env:
+            result = await env.shell('echo hello')
             print(result.output)
         ```
     """
@@ -146,7 +151,7 @@ class E2BSandbox(ExecutionEnvironment):
         metadata: dict[str, str] | None = None,
         env_vars: dict[str, str] | None = None,
     ) -> None:
-        """Create an E2B sandbox.
+        """Create an E2B environment.
 
         Args:
             template: The E2B sandbox template to use.
@@ -188,8 +193,19 @@ class E2BSandbox(ExecutionEnvironment):
     @property
     def sandbox(self) -> E2BAsyncSandbox:
         if self._sandbox is None:
-            raise RuntimeError('E2BSandbox not started. Use `async with E2BSandbox(...) as sandbox:`')
+            raise RuntimeError('E2BEnvironment not started. Use `async with E2BEnvironment(...) as env:`')
         return self._sandbox
+
+    @property
+    def capabilities(self) -> frozenset[Capability]:
+        return frozenset({'ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'run_code'})
+
+    def tool_description(self, tool: ToolName) -> str | None:
+        if tool == 'grep':
+            return 'Uses POSIX basic regex, not Python `re` syntax.'
+        if tool == 'glob':
+            return 'Uses `find` for pattern matching; `**` is not supported.'
+        return None
 
     def _merge_env(self, env: dict[str, str] | None) -> dict[str, str] | None:
         """Merge per-call env vars with baseline."""
@@ -206,9 +222,9 @@ class E2BSandbox(ExecutionEnvironment):
         *,
         env: dict[str, str] | None = None,
     ) -> ExecutionProcess:
-        return E2BSandboxProcess(self.sandbox, command, env=self._merge_env(env))
+        return E2BEnvironmentProcess(self.sandbox, command, env=self._merge_env(env))
 
-    async def execute(
+    async def shell(
         self,
         command: str,
         *,
@@ -232,16 +248,17 @@ class E2BSandbox(ExecutionEnvironment):
             truncated=truncated,
         )
 
-    async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str:
+    async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str | bytes:
+        ext = posixpath.splitext(path)[1].lower()
+        if ext in IMAGE_EXTENSIONS:
+            content = await self.sandbox.files.read(path, format='bytes')
+            return content  # type: ignore[return-value]
+
         cmd = build_read_file_cmd(path, offset=offset, limit=limit)
         result = await self.sandbox.commands.run(cmd)
         if result.exit_code != 0:
             raise FileNotFoundError(f'File not found or not readable: {path}')
         return result.stdout
-
-    async def read_file_bytes(self, path: str) -> bytes:
-        content = await self.sandbox.files.read(path, format='bytes')
-        return content  # type: ignore[return-value]
 
     async def write_file(self, path: str, content: str | bytes) -> None:
         # Ensure parent directory exists
@@ -254,18 +271,18 @@ class E2BSandbox(ExecutionEnvironment):
         else:
             await self.sandbox.files.write(path, content)
 
-    async def edit_file(
+    async def replace_str(
         self,
         path: str,
-        old_string: str,
-        new_string: str,
+        old: str,
+        new: str,
         *,
         replace_all: bool = False,
     ) -> int:
         raw_content = await self.sandbox.files.read(path)
         text: str = raw_content if isinstance(raw_content, str) else raw_content.decode('utf-8')
 
-        new_text, count = apply_edit(text, old_string, new_string, path, replace_all=replace_all)
+        new_text, count = apply_edit(text, old, new, path, replace_all=replace_all)
 
         await self.sandbox.files.write(path, new_text)
         return count
@@ -304,10 +321,7 @@ class E2BSandbox(ExecutionEnvironment):
             text = filter_grep_count_output(text)
         return text
 
-    @property
-    def system_prompt(self) -> str:
-        return (
-            'This environment runs inside an E2B cloud sandbox.\n'
-            '- `grep` uses POSIX basic regex, not Python `re` syntax.\n'
-            '- `glob` uses `find` for pattern matching; `**` is not supported.\n'
-        )
+    async def _copy_driver(self) -> None:
+        driver_source = pathlib.Path(__file__).parents[1] / 'toolsets' / 'code_execution' / '_driver.py'
+        content = driver_source.read_text()
+        await self.sandbox.files.write(self.driver_script_path, content)

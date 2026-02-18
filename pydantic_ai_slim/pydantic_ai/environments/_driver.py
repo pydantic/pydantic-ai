@@ -1,9 +1,8 @@
-"""Host-side ABC for driver-based code runtimes.
+"""Host-side ABC for driver-based execution environments.
 
-Provides ``DriverBasedRuntime``, an intermediate abstract base class that
-handles the NDJSON protocol, tool dispatch, and interrupt logic. Concrete
-subclasses (Docker, E2B, Modal, etc.) implement a single method:
-``_start_driver``.
+Provides ``DriverBasedEnvironment``, an intermediate abstract base class that
+extends ``ExecutionEnvironment`` with code execution via the NDJSON driver protocol.
+Concrete subclasses (Docker, E2B, Local) implement ``_start_driver`` and ``_copy_driver``.
 """
 
 from __future__ import annotations
@@ -13,18 +12,22 @@ import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from pydantic_ai._python_signature import FunctionSignature, TypeSignature
-
-from ._abstract import (
+from pydantic_ai.toolsets.code_execution._abstract import (
     CodeExecutionTimeout,
-    CodeRuntime,
     CodeRuntimeError,
     CodeSyntaxError,
     FunctionCall,
-    ToolCallback,
 )
+
+from ._base import EditStrategy, ExecutionEnvironment, Language
+
+if TYPE_CHECKING:
+    from pydantic_ai._python_signature import FunctionSignature, TypeSignature
+    from pydantic_ai.toolsets.code_execution._abstract import ToolCallback
+
+    from ._base import ExecutionProcess
 
 
 class DriverTransport(ABC):
@@ -55,6 +58,41 @@ class DriverTransport(ABC):
         ...
 
 
+class ExecutionProcessTransport(DriverTransport):
+    """Adapts an ``ExecutionProcess`` to the ``DriverTransport`` interface.
+
+    Provides line-buffered reads on top of the raw ``recv()`` interface,
+    which is what the NDJSON protocol requires.
+    """
+
+    def __init__(self, process: ExecutionProcess) -> None:
+        self._proc = process
+        self._buffer = b''
+
+    async def read_line(self) -> bytes:
+        while b'\n' not in self._buffer:
+            chunk = await self._proc.recv()
+            if not chunk:
+                remaining = self._buffer
+                self._buffer = b''
+                return remaining
+            self._buffer += chunk
+        line, self._buffer = self._buffer.split(b'\n', 1)
+        return line + b'\n'
+
+    async def write_line(self, data: bytes) -> None:
+        await self._proc.send(data)
+
+    async def read_stderr(self) -> bytes:
+        try:
+            return await self._proc.recv_stderr(timeout=1.0)
+        except Exception:
+            return b''
+
+    async def kill(self) -> None:
+        await self._proc.kill()
+
+
 class _ToolError(Exception):
     """Wrapper to distinguish tool execution errors from transport/protocol errors."""
 
@@ -72,23 +110,50 @@ class _FinalResult:
     value: Any
 
 
-@dataclass
-class DriverBasedRuntime(CodeRuntime):
-    """Abstract base for all driver-based code runtimes.
+class DriverBasedEnvironment(ExecutionEnvironment, ABC):
+    """Environment with code execution via the NDJSON driver protocol.
 
-    Subclasses implement ``_start_driver`` to launch the driver script inside
-    their specific sandbox environment. Everything else — protocol handling,
-    tool dispatch, and interrupt handling — is handled here.
+    Extends ``ExecutionEnvironment`` with ``run_python`` that launches a
+    driver script inside the environment and communicates via NDJSON over
+    stdin/stdout. The driver handles code compilation, execution, and
+    proxying of external function calls.
+
+    Subclasses must implement ``_copy_driver`` (install the driver script into
+    the environment). The default ``_start_driver`` uses ``create_process``
+    with an ``ExecutionProcessTransport`` adapter; override for custom transport.
     """
 
-    @abstractmethod
+    execution_timeout: float | None = None
+    """Optional timeout in seconds for code execution. None means no timeout."""
+
+    driver_python_path: str = 'python'
+    """Path to the Python interpreter inside the environment."""
+
+    driver_script_path: str = '/tmp/pydantic_ai_driver.py'
+    """Path where the driver script is installed inside the environment."""
+
+    _driver_copied: bool = False
+
+    @property
+    def supported_code_languages(self) -> frozenset[Language]:
+        return frozenset({'python'})
+
+    @property
+    def supports_external_functions(self) -> bool:
+        return True
+
+    @property
+    def supported_edit_strategies(self) -> frozenset[EditStrategy]:
+        return frozenset({'replace_str'})
+
+    # --- Driver protocol ---
+
     async def _start_driver(self, init_msg: dict[str, Any]) -> DriverTransport:
         """Launch the driver process and send the init message.
 
-        The implementation should:
-        1. Start a process running ``_driver.py``
-        2. Write the JSON-encoded init message as the first line to stdin
-        3. Return a ``DriverTransport`` wrapping the subprocess handles
+        The default implementation uses ``create_process`` with an
+        ``ExecutionProcessTransport`` adapter. Override for custom transport
+        (e.g. asyncio subprocess with the Docker CLI).
 
         Args:
             init_msg: The init message dict to send to the driver.
@@ -96,25 +161,48 @@ class DriverBasedRuntime(CodeRuntime):
         Returns:
             A DriverTransport for communicating with the driver.
         """
+        proc = await self.create_process(f'{self.driver_python_path} -u {self.driver_script_path}')
+        await proc.__aenter__()
+        transport = ExecutionProcessTransport(proc)
+        init_line = json.dumps(init_msg).encode() + b'\n'
+        await transport.write_line(init_line)
+        return transport
+
+    @abstractmethod
+    async def _copy_driver(self) -> None:
+        """Install the driver script into the environment.
+
+        Called once before the first ``run_python`` invocation. Implementations
+        should copy the driver script from the host to the environment
+        (e.g. via ``docker exec tee``, file API, or local file reference).
+        """
         ...
 
-    async def run(
+    async def run_python(
         self,
         code: str,
-        call_tool: ToolCallback,
+        call_tool: ToolCallback | None = None,
         *,
-        functions: dict[str, FunctionSignature],
-        referenced_types: list[TypeSignature],
+        functions: dict[str, FunctionSignature] | None = None,
+        referenced_types: list[TypeSignature] | None = None,
     ) -> Any:
-        # TODO(sequential): Include sequential function names in init_msg so the driver
-        # can build sync proxies for them. The host-side execution loop should drain
-        # pending tasks and wait for the result before sending further messages when a
-        # `sync_call` message arrives from the driver. See MontyRuntime._execution_loop
-        # for the reference implementation of drain-then-call-synchronously.
+        """Execute Python code via the NDJSON driver protocol.
+
+        When ``call_tool`` is None, falls back to the base class implementation
+        (write file + shell). When ``call_tool`` is provided, launches the driver
+        for full code mode with external function support.
+        """
+        if call_tool is None:
+            return await super().run_python(code)
+
+        if not self._driver_copied:
+            await self._copy_driver()
+            self._driver_copied = True
+
         init_msg: dict[str, Any] = {
             'type': 'init',
             'code': code,
-            'functions': list(functions),
+            'functions': list(functions) if functions else [],
         }
         process = await self._start_driver(init_msg)
         try:
@@ -128,6 +216,8 @@ class DriverBasedRuntime(CodeRuntime):
         except Exception as e:
             raise CodeRuntimeError(f'Driver communication error: {e}') from e
 
+    # --- Protocol implementation ---
+
     async def _run_with_timeout(self, process: DriverTransport, call_tool: ToolCallback) -> Any:
         """Run the execution loop, applying ``execution_timeout`` if configured."""
         coro = self._execution_loop(process, call_tool)
@@ -140,11 +230,7 @@ class DriverBasedRuntime(CodeRuntime):
         return await coro
 
     async def _execution_loop(self, process: DriverTransport, call_tool: ToolCallback) -> Any:
-        """Run the dual-wait event loop: read driver stdout + dispatch tool tasks.
-
-        Simultaneously reads protocol messages from the driver and manages
-        asyncio tasks for tool call execution.
-        """
+        """Run the dual-wait event loop: read driver stdout + dispatch tool tasks."""
         tool_tasks: dict[int, asyncio.Task[Any]] = {}
         task_id_to_cid: dict[int, int] = {}
 
@@ -234,16 +320,11 @@ class DriverBasedRuntime(CodeRuntime):
         tool_tasks: dict[int, asyncio.Task[Any]],
         task_id_to_cid: dict[int, int],
     ) -> None:
-        """Handle a completed tool task: send result back to the driver.
-
-        Tool exceptions propagate naturally — cleanup is handled by ``_execution_loop``'s
-        ``finally`` block.
-        """
+        """Handle a completed tool task: send result back to the driver."""
         cid = task_id_to_cid.pop(id(task))
         del tool_tasks[cid]
 
         result = task.result()
-        # The callback already serializes via tool_return_ta, so result is JSON-compatible.
         result_msg = json.dumps({'type': 'result', 'id': cid, 'result': result}) + '\n'
         await process.write_line(result_msg.encode())
 

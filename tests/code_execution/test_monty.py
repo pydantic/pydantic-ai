@@ -12,7 +12,7 @@ from typing_extensions import NotRequired, TypedDict
 try:
     from pydantic_monty import Monty
 
-    from pydantic_ai.toolsets.code_execution.monty import MontyRuntime
+    from pydantic_ai.environments.monty import MontyEnvironment
 except ImportError:  # pragma: lax no cover
     pytest.skip('pydantic-monty is not installed', allow_module_level=True)
 
@@ -33,7 +33,7 @@ def add(*, x: int, y: int) -> int:
 async def test_type_error_raises_model_retry():
     """Type errors in generated code raise ModelRetry so the LLM can fix them."""
     with pytest.raises(ModelRetry) as exc_info:
-        await run_code_with_tools('add(x="hello", y="world")', MontyRuntime(), (add, False))
+        await run_code_with_tools('add(x="hello", y="world")', MontyEnvironment(), (add, False))
 
     assert str(exc_info.value) == snapshot("""\
 Type error in generated code:
@@ -44,11 +44,11 @@ main.py:2:16: error[invalid-argument-type] Argument to function `add` is incorre
 
 async def test_generated_signatures_are_valid_python():
     """Generated signatures must be valid Python that Monty can parse and type check."""
-    _, tools = await build_code_execution_toolset(MontyRuntime(), (add, False))
+    _, tools = await build_code_execution_toolset(MontyEnvironment(), (add, False))
 
     tool = tools['run_code']
-    runtime = MontyRuntime()
-    prefix = runtime._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
+    env = MontyEnvironment()
+    prefix = env._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
 
     # `...` and `pass` are not valid for Monty/ty type checking — ty is intentionally
     # stricter than pyright here. See https://github.com/astral-sh/ty/issues/1922
@@ -67,7 +67,7 @@ async def add(*, x: int, y: int) -> int:
 
 async def test_signatures_use_ellipsis_monty_converts_for_type_check():
     """Signatures use '...' body; Monty converts to 'raise NotImplementedError()' for type checking."""
-    _code_execution, tools = await build_code_execution_toolset(MontyRuntime(), (add, False))
+    _code_execution, tools = await build_code_execution_toolset(MontyEnvironment(), (add, False))
 
     tool = tools['run_code']
 
@@ -77,8 +77,8 @@ async def test_signatures_use_ellipsis_monty_converts_for_type_check():
     assert 'raise NotImplementedError()' not in description
 
     # But when Monty builds the type-check prefix, it converts to 'raise NotImplementedError()'
-    runtime = MontyRuntime()
-    prefix = runtime._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
+    env = MontyEnvironment()
+    prefix = env._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
     assert 'raise NotImplementedError()' in prefix
     assert '    ...' not in prefix
 
@@ -136,7 +136,7 @@ def _tag_resource(*, resource_name: str, tag: _Tag) -> bool:
 async def test_full_description_snapshot():
     """Snapshot the full run_code description with shared types, conflicts, and nesting."""
     _, tools = await build_code_execution_toolset(
-        MontyRuntime(),
+        MontyEnvironment(),
         (_find_resources, False),
         (_search_items, False),
         (_get_item, False),
@@ -234,13 +234,13 @@ async def _tag_resource(*, resource_name: str, tag: _Tag) -> bool:
 async def test_monty_runtime_error_raises_model_retry():
     """MontyRuntimeError during execution is surfaced as ModelRetry."""
     with pytest.raises(ModelRetry, match='Runtime error in generated code'):
-        await run_code_with_tools('1 / 0', MontyRuntime(), (add, False))
+        await run_code_with_tools('1 / 0', MontyEnvironment(), (add, False))
 
 
 async def test_monty_syntax_error_message():
     """Monty syntax errors include a descriptive message for the LLM."""
     with pytest.raises(ModelRetry) as exc_info:
-        await run_code_with_tools('def while invalid syntax', MontyRuntime())
+        await run_code_with_tools('def while invalid syntax', MontyEnvironment())
 
     assert str(exc_info.value) == snapshot("""\
 Syntax error in generated code:
@@ -284,7 +284,7 @@ async def test_monty_normalizes_tool_results_to_json_compatible():
 
     result = await run_code_with_tools(
         code,
-        MontyRuntime(),
+        MontyEnvironment(),
         (get_user, False),
         (inspect_type, False),
     )
@@ -297,8 +297,8 @@ async def test_monty_normalizes_tool_results_to_json_compatible():
 
 async def test_build_type_check_prefix_empty_lists():
     """Empty signatures/types produces just the typing import line."""
-    runtime = MontyRuntime()
-    prefix = runtime._build_type_check_prefix([], [])  # pyright: ignore[reportPrivateUsage]
+    env = MontyEnvironment()
+    prefix = env._build_type_check_prefix([], [])  # pyright: ignore[reportPrivateUsage]
     assert prefix == 'import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal'
 
 
@@ -313,7 +313,7 @@ def sync_add(*, x: int, y: int) -> int:
 async def test_sequential_tool_renders_as_def():
     """A sequential tool renders as `def` (not `async def`) in description and type-check prefix."""
     _, tools = await build_code_execution_toolset(
-        MontyRuntime(),
+        MontyEnvironment(),
         Tool(sync_add, takes_ctx=False, sequential=True),
     )
     tool = tools['run_code']
@@ -324,8 +324,8 @@ async def test_sequential_tool_renders_as_def():
     assert 'async def sync_add(' not in description
 
     # Type-check prefix also uses `def`
-    runtime = MontyRuntime()
-    prefix = runtime._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
+    env = MontyEnvironment()
+    prefix = env._build_type_check_prefix(tool.signatures, tool.referenced_types)  # pyright: ignore[reportPrivateUsage]
     assert 'def sync_add(' in prefix
     assert 'async def sync_add(' not in prefix
 
@@ -334,7 +334,7 @@ async def test_sequential_tool_execution():
     """Sequential tool is called as `result = my_tool(x=1)` (no `await`)."""
     result = await run_code_with_tools(
         'sync_add(x=3, y=4)',
-        MontyRuntime(),
+        MontyEnvironment(),
         Tool(sync_add, takes_ctx=False, sequential=True),
     )
     assert result == 7
@@ -345,7 +345,7 @@ async def test_mixed_sync_async_execution():
     code = 'f = add(x=1, y=2)\nsum_result = sync_add(x=10, y=20)\nawaited = await f\n[awaited, sum_result]'
     result = await run_code_with_tools(
         code,
-        MontyRuntime(),
+        MontyEnvironment(),
         (add, False),
         Tool(sync_add, takes_ctx=False, sequential=True),
     )
@@ -369,7 +369,7 @@ async def test_sequential_drain_behavior():
     code = 'f = fire_tool(name="first")\nresult = seq_tool(name="second")\nawaited = await f\n[awaited, result]'
     result = await run_code_with_tools(
         code,
-        MontyRuntime(),
+        MontyEnvironment(),
         (fire_tool, False),
         Tool(seq_tool, takes_ctx=False, sequential=True),
     )
@@ -383,7 +383,7 @@ async def test_await_on_sync_tool_is_type_error():
     with pytest.raises(ModelRetry, match='Type error in generated code'):
         await run_code_with_tools(
             'await sync_add(x=1, y=2)',
-            MontyRuntime(),
+            MontyEnvironment(),
             Tool(sync_add, takes_ctx=False, sequential=True),
         )
 
@@ -393,7 +393,7 @@ async def test_global_sequential_mode():
     token = _parallel_execution_mode_ctx_var.set('sequential')
     try:
         _, tools = await build_code_execution_toolset(
-            MontyRuntime(),
+            MontyEnvironment(),
             (add, False),
         )
         tool = tools['run_code']
@@ -409,7 +409,7 @@ async def test_global_parallel_ordered_events_mode():
     token = _parallel_execution_mode_ctx_var.set('parallel_ordered_events')
     try:
         _, tools = await build_code_execution_toolset(
-            MontyRuntime(),
+            MontyEnvironment(),
             (add, False),
         )
         tool = tools['run_code']
@@ -422,7 +422,7 @@ async def test_global_parallel_ordered_events_mode():
 
 async def test_description_no_all_functions_are_async():
     """The prompt no longer says 'All functions are async'."""
-    _, tools = await build_code_execution_toolset(MontyRuntime(), (add, False))
+    _, tools = await build_code_execution_toolset(MontyEnvironment(), (add, False))
     description = tools['run_code'].tool_def.description or ''
     assert 'All functions are async' not in description
 
@@ -431,4 +431,4 @@ async def test_pending_tasks_cancelled_on_runtime_error():
     """Async tasks fired before a runtime error are cancelled in the finally block."""
     code = 'f = add(x=1, y=2)\n1 / 0'
     with pytest.raises(ModelRetry, match='Runtime error in generated code'):
-        await run_code_with_tools(code, MontyRuntime(), (add, False))
+        await run_code_with_tools(code, MontyEnvironment(), (add, False))
