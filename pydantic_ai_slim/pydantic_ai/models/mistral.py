@@ -609,7 +609,9 @@ class MistralModel(Model):
                     elif item.media_type == 'application/pdf':
                         content.append(MistralDocumentURLChunk(document_url=item.data_uri, type='document_url'))
                     else:
-                        raise NotImplementedError('BinaryContent other than image or PDF is not supported in Mistral.')
+                        raise NotImplementedError(
+                            'BinaryContent other than image or PDF is not supported in Mistral user prompts'
+                        )
                 elif isinstance(item, DocumentUrl):
                     if item.media_type == 'application/pdf':
                         if item.force_download:
@@ -620,11 +622,11 @@ class MistralModel(Model):
                         else:
                             content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
                     else:
-                        raise NotImplementedError('DocumentUrl other than PDF is not supported in Mistral.')
+                        raise NotImplementedError('DocumentUrl other than PDF is not supported in Mistral user prompts')
                 elif isinstance(item, AudioUrl):
-                    raise NotImplementedError('AudioUrl is not supported in Mistral.')
+                    raise NotImplementedError('AudioUrl is not supported in Mistral user prompts')
                 elif isinstance(item, VideoUrl):
-                    raise NotImplementedError('VideoUrl is not supported in Mistral.')
+                    raise NotImplementedError('VideoUrl is not supported in Mistral user prompts')
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
         return MistralUserMessage(content=content)

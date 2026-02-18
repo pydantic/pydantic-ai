@@ -1138,9 +1138,9 @@ class OpenAIChatModel(Model):
             elif isinstance(part, ToolReturnPart):
                 for f in part.files:
                     if isinstance(f, AudioUrl) or (isinstance(f, BinaryContent) and f.is_audio):
-                        raise NotImplementedError('AudioUrl is not supported for OpenAI Chat tool returns')
+                        raise NotImplementedError('AudioUrl is not supported in OpenAI Chat Completions tool returns')
                     if isinstance(f, VideoUrl) or (isinstance(f, BinaryContent) and f.is_video):
-                        raise NotImplementedError('VideoUrl is not supported for OpenAI Chat tool returns')
+                        raise NotImplementedError('VideoUrl is not supported in OpenAI Chat Completions tool returns')
                 tool_text, tool_file_content = part.fallback_tool_return()
                 file_content.extend(tool_file_content)
                 yield chat.ChatCompletionToolMessageParam(
@@ -1203,7 +1203,7 @@ class OpenAIChatModel(Model):
                 type='file',
             )
         elif item.is_video:
-            raise NotImplementedError('VideoUrl is not supported for OpenAI')
+            raise NotImplementedError('VideoUrl is not supported in OpenAI Chat Completions user prompts')
         else:  # pragma: no cover
             raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
 
@@ -1251,7 +1251,7 @@ class OpenAIChatModel(Model):
 
     async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:  # pragma: no cover
         """Map a VideoUrl to a chat completion content part."""
-        raise NotImplementedError('VideoUrl is not supported for OpenAI')
+        raise NotImplementedError('VideoUrl is not supported in OpenAI Chat Completions user prompts')
 
     async def _map_content_item(
         self, item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | CachePoint
@@ -1541,7 +1541,7 @@ class OpenAIResponsesModel(Model):
                 pass
 
         finish_reason: FinishReason | None = None
-        provider_details = {}
+        provider_details: dict[str, Any] = {}
         raw_finish_reason = details.reason if (details := response.incomplete_details) else response.status
         if raw_finish_reason:
             provider_details['finish_reason'] = raw_finish_reason
@@ -2172,9 +2172,11 @@ class OpenAIResponsesModel(Model):
                             )
                         )
                     elif item.is_audio:
-                        raise NotImplementedError('Audio as binary content is not supported for OpenAI Responses API.')
+                        raise NotImplementedError(
+                            'BinaryContent with audio is not supported in OpenAI Responses user prompts'
+                        )
                     elif item.is_video:
-                        raise NotImplementedError('VideoUrl is not supported for OpenAI.')
+                        raise NotImplementedError('VideoUrl is not supported in OpenAI Responses user prompts')
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, ImageUrl):
@@ -2210,7 +2212,7 @@ class OpenAIResponsesModel(Model):
                             )
                         )
                 elif isinstance(item, VideoUrl):
-                    raise NotImplementedError('VideoUrl is not supported for OpenAI.')
+                    raise NotImplementedError('VideoUrl is not supported in OpenAI Responses user prompts')
                 elif isinstance(item, CachePoint):
                     # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
                     pass
@@ -2252,9 +2254,11 @@ class OpenAIResponsesModel(Model):
                         )
                     )
                 elif item.is_video:
-                    raise NotImplementedError('VideoUrl is not supported for OpenAI.')
+                    raise NotImplementedError('VideoUrl is not supported in OpenAI Responses tool returns')
                 else:
-                    raise NotImplementedError(f'Unsupported binary content type: {item.media_type}')
+                    raise NotImplementedError(
+                        f'Unsupported binary content type in OpenAI Responses tool returns: {item.media_type}'
+                    )
             elif isinstance(item, ImageUrl):
                 detail = 'auto'
                 image_url = item.url
@@ -2277,7 +2281,7 @@ class OpenAIResponsesModel(Model):
                 else:
                     output.append(ResponseInputFileContentParam(type='input_file', file_url=item.url))
             elif isinstance(item, VideoUrl):
-                raise NotImplementedError('VideoUrl is not supported for OpenAI.')
+                raise NotImplementedError('VideoUrl is not supported in OpenAI Responses tool returns')
             else:
                 assert isinstance(item, str)
                 output.append(ResponseInputTextContentParam(type='input_text', text=item))

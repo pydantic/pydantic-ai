@@ -732,10 +732,10 @@ class BedrockConverseModel(Model):
                                         sibling_content.append(file_block)  # pyright: ignore[reportArgumentType]
                                 elif isinstance(item, BinaryContent):
                                     raise NotImplementedError(
-                                        f'Unsupported binary content type for Bedrock tool returns: {item.media_type}'
+                                        f'Unsupported binary content type in Bedrock tool returns: {item.media_type}'
                                     )
                             elif isinstance(item, AudioUrl):
-                                raise NotImplementedError('AudioUrl is not supported for Bedrock tool returns')
+                                raise NotImplementedError('AudioUrl is not supported in Bedrock tool returns')
                             elif content_mode == 'str':
                                 assert isinstance(item, str)
                                 tool_result_content.append({'text': item})
@@ -964,7 +964,7 @@ class BedrockConverseModel(Model):
                         )
                     content.append(file_block)  # pyright: ignore[reportArgumentType]
                 elif isinstance(item, AudioUrl):
-                    raise NotImplementedError('Audio is not supported yet.')
+                    raise NotImplementedError('AudioUrl is not supported in Bedrock user prompts')
                 elif isinstance(item, CachePoint):
                     if not supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching

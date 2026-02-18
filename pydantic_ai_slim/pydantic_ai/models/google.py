@@ -735,7 +735,11 @@ class GoogleModel(Model):
         return result
 
     async def _map_file_to_part(self, file: FileUrl | BinaryContent) -> PartDict:
-        """Map a multimodal file directly to a Google API part."""
+        """Map a multimodal file directly to a Google API part.
+
+        See also `_map_file_to_function_response_part` which uses the same resolution
+        logic but returns `FunctionResponsePartDict` (no `video_metadata` support).
+        """
         if isinstance(file, BinaryContent):
             inline_data_dict: BlobDict = {'data': file.data, 'mime_type': file.media_type}
             part_dict: PartDict = {'inline_data': inline_data_dict}
@@ -786,7 +790,8 @@ class GoogleModel(Model):
     async def _map_file_to_function_response_part(self, file: FileUrl | BinaryContent) -> FunctionResponsePartDict:
         """Map a multimodal file to `FunctionResponsePartDict` for Gemini 3+ native tool returns.
 
-        This format is simpler than `PartDict` - only inline_data or file_data, no video_metadata.
+        Uses the same resolution logic as `_map_file_to_part` but returns the simpler
+        `FunctionResponsePartDict` format — only inline_data or file_data, no video_metadata.
 
         Note: `FunctionResponseBlobDict`/`FunctionResponseFileDataDict` declare `display_name` but
         the google-genai SDK's `_live_converters.py` rejects it at runtime. We omit it until the

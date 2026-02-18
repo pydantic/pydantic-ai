@@ -458,18 +458,18 @@ class XaiModel(Model):
                         image_detail = item.vendor_metadata['detail']
                     content_items.append(image(item.data_uri, detail=image_detail))
                 elif item.is_audio:
-                    raise NotImplementedError('AudioUrl/BinaryContent with audio is not supported by xAI SDK')
+                    raise NotImplementedError('BinaryContent with audio is not supported in xAI user prompts')
                 elif item.is_document:
                     # Upload document to xAI files API and reference it
                     filename = item.identifier or f'document.{item.format}'
                     file_id = await self._upload_file_to_xai(item.data, filename)
                     content_items.append(file(file_id))
                 elif item.is_video:
-                    raise NotImplementedError('VideoUrl/BinaryContent with video is not supported by xAI SDK')
+                    raise NotImplementedError('BinaryContent with video is not supported in xAI user prompts')
                 else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
             elif isinstance(item, AudioUrl):
-                raise NotImplementedError('AudioUrl is not supported by xAI SDK')
+                raise NotImplementedError('AudioUrl is not supported in xAI user prompts')
             elif isinstance(item, DocumentUrl):
                 # Download and upload to xAI files API
                 downloaded = await download_item(item, data_format='bytes')
@@ -481,7 +481,7 @@ class XaiModel(Model):
                 file_id = await self._upload_file_to_xai(downloaded['data'], filename)
                 content_items.append(file(file_id))
             elif isinstance(item, VideoUrl):
-                raise NotImplementedError('VideoUrl is not supported by xAI SDK')
+                raise NotImplementedError('VideoUrl is not supported in xAI user prompts')
             elif isinstance(item, CachePoint):
                 # xAI doesn't support prompt caching via CachePoint, so we filter it out
                 pass

@@ -751,16 +751,16 @@ class AnthropicModel(Model):
                                     tool_result_content.append(self._map_binary_data(item.data, item.media_type))
                                 else:
                                     raise NotImplementedError(
-                                        f'Unsupported binary content type for Anthropic tool returns: {item.media_type}'
+                                        f'Unsupported binary content type in Anthropic tool returns: {item.media_type}'
                                     )
                             elif isinstance(item, ImageUrl):
                                 tool_result_content.append(await self._map_image_url(item))
                             elif isinstance(item, DocumentUrl):
                                 tool_result_content.append(await self._map_document_url(item))
                             elif isinstance(item, AudioUrl):
-                                raise NotImplementedError('AudioUrl is not supported for Anthropic tool returns')
+                                raise NotImplementedError('AudioUrl is not supported in Anthropic tool returns')
                             elif isinstance(item, VideoUrl):
-                                raise NotImplementedError('VideoUrl is not supported for Anthropic tool returns')
+                                raise NotImplementedError('VideoUrl is not supported in Anthropic tool returns')
                             else:
                                 assert isinstance(item, str)
                                 tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
@@ -1158,15 +1158,17 @@ class AnthropicModel(Model):
                     if item.is_image or item.is_document:
                         yield AnthropicModel._map_binary_data(item.data, item.media_type)
                     else:
-                        raise NotImplementedError(f'Unsupported binary content type for Anthropic: {item.media_type}')
+                        raise NotImplementedError(
+                            f'Unsupported binary content type in Anthropic user prompts: {item.media_type}'
+                        )
                 elif isinstance(item, ImageUrl):
                     yield await AnthropicModel._map_image_url(item)
                 elif isinstance(item, DocumentUrl):
                     yield await AnthropicModel._map_document_url(item)
                 elif isinstance(item, AudioUrl):
-                    raise NotImplementedError('AudioUrl is not supported by Anthropic')
+                    raise NotImplementedError('AudioUrl is not supported in Anthropic user prompts')
                 elif isinstance(item, VideoUrl):
-                    raise NotImplementedError('VideoUrl is not supported by Anthropic')
+                    raise NotImplementedError('VideoUrl is not supported in Anthropic user prompts')
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 

@@ -150,34 +150,34 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
     ('openai_chat', 'image'): 'as_user_content',
     ('openai_chat', 'document'): 'as_user_content',
     ('openai_chat', 'audio'): ExpectError(
-        NotImplementedError, r'AudioUrl is not supported for OpenAI Chat tool returns'
+        NotImplementedError, r'AudioUrl is not supported in OpenAI Chat Completions tool returns'
     ),
     ('openai_chat', 'video'): ExpectError(
-        NotImplementedError, r'VideoUrl is not supported for OpenAI Chat tool returns'
+        NotImplementedError, r'VideoUrl is not supported in OpenAI Chat Completions tool returns'
     ),
     # OpenAI Responses: images and documents in_tool_result, audio/video unsupported
     ('openai_responses', 'image'): 'in_tool_result',
     ('openai_responses', 'document'): 'in_tool_result',
-    ('openai_responses', 'audio'): ExpectError(NotImplementedError, r'(?i)audio.*openai|unsupported binary'),
-    ('openai_responses', 'video'): ExpectError(NotImplementedError, r'VideoUrl is not supported'),
+    ('openai_responses', 'audio'): ExpectError(NotImplementedError, r'(?i)audio.*openai responses|unsupported binary'),
+    ('openai_responses', 'video'): ExpectError(NotImplementedError, r'VideoUrl is not supported in OpenAI Responses'),
     # xAI: images and documents as_user_content, audio/video unsupported
     ('xai', 'image'): 'as_user_content',
     ('xai', 'document'): 'as_user_content',
-    ('xai', 'audio'): ExpectError(NotImplementedError, r'(?i)not supported by xAI'),
-    ('xai', 'video'): ExpectError(NotImplementedError, r'(?i)not supported by xAI'),
+    ('xai', 'audio'): ExpectError(NotImplementedError, r'(?i)not supported in xAI'),
+    ('xai', 'video'): ExpectError(NotImplementedError, r'(?i)not supported in xAI'),
     # Groq: images as_user_content, everything else unsupported
     ('groq', 'image'): 'as_user_content',
-    ('groq', 'document'): ExpectError(match=r'(?:DocumentUrl|images are supported).*(?:Groq|binary content)'),
-    ('groq', 'audio'): ExpectError(match=r'(?:AudioUrl|images are supported).*(?:Groq|binary content)'),
-    ('groq', 'video'): ExpectError(match=r'(?:VideoUrl|images are supported).*(?:Groq|binary content)'),
+    ('groq', 'document'): ExpectError(match=r'(?:DocumentUrl|images are supported).*Groq user prompts'),
+    ('groq', 'audio'): ExpectError(match=r'(?:AudioUrl|images are supported).*Groq user prompts'),
+    ('groq', 'video'): ExpectError(match=r'(?:VideoUrl|images are supported).*Groq user prompts'),
     # Mistral: images and documents as_user_content, audio/video unsupported
     ('mistral', 'image'): 'as_user_content',
     ('mistral', 'document'): 'as_user_content',
     ('mistral', 'audio'): ExpectError(
-        match=r'(?:AudioUrl|BinaryContent other than image or PDF) is not supported in Mistral'
+        match=r'(?:AudioUrl|BinaryContent other than image or PDF) is not supported in Mistral user prompts'
     ),
     ('mistral', 'video'): ExpectError(
-        match=r'(?:VideoUrl|BinaryContent other than image or PDF) is not supported in Mistral'
+        match=r'(?:VideoUrl|BinaryContent other than image or PDF) is not supported in Mistral user prompts'
     ),
 }
 
@@ -193,7 +193,7 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
         ModelHTTPError, r'expected to be either text or image_url'
     ),
     ('openai_chat', 'video', None, 'tool_return_content'): ExpectError(
-        NotImplementedError, r'VideoUrl is not supported for OpenAI'
+        NotImplementedError, r'VideoUrl is not supported in OpenAI Chat Completions user prompts'
     ),
     ('openai_responses', 'audio', 'url', None): ExpectError(ModelHTTPError, r'unsupported'),
     ('openai_responses', 'audio', 'url_force_download', None): ExpectError(ModelHTTPError, r'unsupported'),
@@ -286,30 +286,14 @@ AUDIO_URL = 'https://download.samplelib.com/mp3/sample-3s.mp3'
 VIDEO_URL = 'https://www.w3schools.com/html/mov_bbb.mp4'
 
 
-def make_image_url() -> ImageUrl:
-    return ImageUrl(url=IMAGE_URL)
-
-
-def make_document_url() -> DocumentUrl:
-    return DocumentUrl(url=DOCUMENT_URL)
-
-
-def make_audio_url() -> AudioUrl:
-    return AudioUrl(url=AUDIO_URL)
-
-
-def make_video_url() -> VideoUrl:
-    return VideoUrl(url=VIDEO_URL)
-
-
 URL_FACTORIES: dict[tuple[FileType, ContentSource], Any] = {
-    ('image', 'url'): make_image_url,
+    ('image', 'url'): lambda: ImageUrl(url=IMAGE_URL),
     ('image', 'url_force_download'): lambda: ImageUrl(url=IMAGE_URL, force_download=True),
-    ('document', 'url'): make_document_url,
+    ('document', 'url'): lambda: DocumentUrl(url=DOCUMENT_URL),
     ('document', 'url_force_download'): lambda: DocumentUrl(url=DOCUMENT_URL, force_download=True),
-    ('audio', 'url'): make_audio_url,
+    ('audio', 'url'): lambda: AudioUrl(url=AUDIO_URL),
     ('audio', 'url_force_download'): lambda: AudioUrl(url=AUDIO_URL, force_download=True),
-    ('video', 'url'): make_video_url,
+    ('video', 'url'): lambda: VideoUrl(url=VIDEO_URL),
     ('video', 'url_force_download'): lambda: VideoUrl(url=VIDEO_URL, force_download=True),
 }
 
@@ -553,13 +537,12 @@ async def test_mixed_content_ordering(
 
     image_support = SUPPORT_MATRIX[(provider, 'image')]
     model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
-    image = image_content
 
     agent: Agent[None, str] = Agent(model)
 
     @agent.tool_plain
     def get_mixed_content() -> list[Any]:
-        return ['Here is the image:', image, {'pydantic_ai_marker': 'test_42'}]
+        return ['Here is the image:', image_content, {'pydantic_ai_marker': 'test_42'}]
 
     result = await agent.run(
         'Call the get_mixed_content tool and describe what you received.',
@@ -608,7 +591,7 @@ async def test_model_sees_multiple_images(
 
     model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
     kiwi_image = image_content
-    url_image = make_image_url()
+    url_image = URL_FACTORIES[('image', 'url')]()
 
     agent: Agent[None, str] = Agent(model)
 
@@ -702,7 +685,9 @@ async def test_non_pdf_document_url_error(
     def get_file() -> DocumentUrl:
         return DocumentUrl(url='https://example.com/file.txt', media_type='text/plain')
 
-    with pytest.raises(NotImplementedError, match='DocumentUrl other than PDF is not supported in Mistral'):
+    with pytest.raises(
+        NotImplementedError, match='DocumentUrl other than PDF is not supported in Mistral user prompts'
+    ):
         await agent.run(
             'Use the get_file tool to retrieve a file.',
             usage_limits=UsageLimits(output_tokens_limit=100000),
