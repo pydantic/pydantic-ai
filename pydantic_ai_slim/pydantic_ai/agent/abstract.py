@@ -273,7 +273,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         ) as agent_run:
             async for node in agent_run:
                 if event_stream_handler is not None and (
-                    self.is_model_request_node(node) or self.is_call_tools_node(node)
+                    self.is_model_request_node(node)
+                    or self.is_call_tools_node(node)
+                    or self.is_continue_request_node(node)
                 ):
                     async with node.stream(agent_run.ctx) as stream:
                         await event_stream_handler(_agent_graph.build_run_context(agent_run.ctx), stream)

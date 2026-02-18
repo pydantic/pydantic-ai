@@ -2407,6 +2407,51 @@ async def test_continue_request_node_cached_run_reused() -> None:
     assert run.result.output == 'done'
 
 
+async def test_continue_request_node_streams_events() -> None:
+    """ContinueRequestNode.stream() uses request_stream() and yields ModelResponseStreamEvents."""
+    request_calls = 0
+    stream_calls = 0
+
+    def result_func(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal request_calls
+        request_calls += 1
+        # First call returns suspended; continuation is handled by stream
+        return ModelResponse(parts=[TextPart('paused')], state='suspended')
+
+    async def stream_func(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal stream_calls
+        stream_calls += 1
+        yield 'continuation '
+        yield 'content'
+
+    agent = Agent(FunctionModel(result_func, stream_function=stream_func))
+
+    streamed_events: list[AgentStreamEvent] = []
+
+    async with agent.iter('test streaming continuation') as run:
+        node = run.next_node
+        while not Agent.is_continue_request_node(node):
+            assert not Agent.is_end_node(node)
+            node = await run.next(node)
+
+        # Use stream() to get streaming events from continuation
+        async with node.stream(run.ctx) as stream:
+            async for event in stream:
+                streamed_events.append(event)
+
+        next_node = await run.next(node)
+        while not Agent.is_end_node(next_node):
+            next_node = await run.next(next_node)
+
+    # Verify we got model response stream events (PartStartEvent, PartDeltaEvent, etc.)
+    assert any(isinstance(e, PartStartEvent) for e in streamed_events)
+    assert any(isinstance(e, PartDeltaEvent) for e in streamed_events)
+    # Non-streaming request() was called once (initial), then request_stream() for continuation
+    assert request_calls == 1
+    assert stream_calls == 1
+    assert run.result is not None
+
+
 async def test_streamed_run_result_metadata_available() -> None:
     agent = Agent(TestModel(custom_output_text='stream metadata'), metadata={'env': 'stream'})
 

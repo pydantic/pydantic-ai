@@ -10163,6 +10163,52 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
     )
 
 
+@pytest.mark.vcr()
+async def test_background_mode_streaming_vcr(allow_model_requests: None, openai_api_key: str):
+    """VCR test: background mode with streaming (run_stream).
+
+    Verifies that the ContinueRequestNode streaming path works end-to-end
+    with the OpenAI Responses API background mode.
+    """
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    async with agent.run_stream(
+        'What is 2 + 2?',
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+    ) as result:
+        output = await result.get_output()
+
+    assert output == snapshot('2 + 2 equals 4.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='2 + 2 equals 4.',
+                        id='msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=15, output_tokens=9, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                provider_response_id='resp_0da443d9ee8333600069950a0635d88196b2d9243b08e8cc01',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_background_queued_then_completed(allow_model_requests: None):
     """Background mode: create returns status='queued', retrieve returns status='completed'."""
     mock_client = MockOpenAIResponses(
