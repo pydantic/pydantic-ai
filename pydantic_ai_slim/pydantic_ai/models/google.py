@@ -813,6 +813,8 @@ class GeminiStreamedResponse(StreamedResponse):
                             r.model_dump(by_alias=True) for r in chunk.prompt_feedback.safety_ratings
                         ]
                     self.finish_reason = 'content_filter'
+                    if chunk.response_id:  # pragma: no branch
+                        self.provider_response_id = chunk.response_id
                 continue
 
             candidate = chunk.candidates[0]
@@ -822,7 +824,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
             raw_finish_reason = candidate.finish_reason
             if raw_finish_reason and not self._has_content_filter:
-                self.provider_details = {'finish_reason': raw_finish_reason.value}
+                self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason.value}
 
                 if candidate.safety_ratings:
                     self.provider_details['safety_ratings'] = [
