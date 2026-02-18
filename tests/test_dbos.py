@@ -100,6 +100,15 @@ def setup_logfire_instrumentation() -> Iterator[None]:
     yield
 
 
+@pytest.fixture(autouse=True)
+def _clear_mcp_tool_cache() -> None:
+    """Clear cached tool defs on module-level DBOSMCPServer instances between tests."""
+    for agent in (complex_dbos_agent, seq_complex_dbos_agent):
+        for toolset in agent.toolsets:
+            if isinstance(toolset, DBOSMCPServer):
+                toolset._cached_tool_defs = None  # pyright: ignore[reportPrivateUsage]
+
+
 @contextmanager
 def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[None]:
     """Helper for asserting that a DBOS workflow fails with the expected error."""

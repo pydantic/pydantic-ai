@@ -37,6 +37,9 @@ class TemporalMCPServer(TemporalMCPToolset[AgentDepsT]):
             deps_type=deps_type,
             run_context_type=run_context_type,
         )
+        # Cached across activities to avoid redundant MCP connections per activity.
+        # Not invalidated by `tools/list_changed` notifications — users who need
+        # dynamic tools during a workflow should set `cache_tools=False`.
         self._cached_tool_defs: dict[str, ToolDefinition] | None = None
 
     @property

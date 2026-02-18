@@ -343,9 +343,10 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     Set to `False` for servers that change tools dynamically without sending notifications.
 
-    Note: When using durable execution (Temporal, DBOS), tool definitions are also cached across
-    activities/steps by the durable execution wrapper, to avoid redundant MCP connections.
-    Set to `False` if tools may change during a workflow, including as a result of tool calls.
+    Note: When using durable execution (Temporal, DBOS), tool definitions are additionally cached
+    at the wrapper level across activities/steps, to avoid redundant MCP connections. This
+    wrapper-level cache is not invalidated by `tools/list_changed` notifications.
+    Set to `False` to disable all caching if tools may change during a workflow.
     """
 
     cache_resources: bool

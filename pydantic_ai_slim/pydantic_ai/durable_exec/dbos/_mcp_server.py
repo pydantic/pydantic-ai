@@ -27,6 +27,9 @@ class DBOSMCPServer(DBOSMCPToolset[AgentDepsT]):
             step_name_prefix=step_name_prefix,
             step_config=step_config,
         )
+        # Cached across steps to avoid redundant MCP connections per step.
+        # Not invalidated by `tools/list_changed` notifications — users who need
+        # dynamic tools during a workflow should set `cache_tools=False`.
         self._cached_tool_defs: dict[str, ToolDefinition] | None = None
 
     @property
