@@ -16,6 +16,7 @@ from pydantic_ai.profiles.qwen import qwen_model_profile
 
 try:
     from huggingface_hub import AsyncInferenceClient
+    from huggingface_hub.constants import INFERENCE_PROXY_TEMPLATE
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `huggingface_hub` package to use the HuggingFace provider, '
@@ -37,8 +38,6 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
         if self._client.model is not None:
             return self._client.model
         if self._client.provider is not None:
-            from huggingface_hub.constants import INFERENCE_PROXY_TEMPLATE
-
             return INFERENCE_PROXY_TEMPLATE.format(provider=self._client.provider)
         raise UserError(
             'Unable to determine base URL for HuggingFace provider. '
