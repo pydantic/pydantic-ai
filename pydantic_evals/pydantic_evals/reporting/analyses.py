@@ -98,6 +98,8 @@ class LinePlotCurve(BaseModel):
     """Points on the curve, ordered by x value."""
     style: Literal['solid', 'dashed'] = 'solid'
     """Line style for rendering."""
+    step: Literal['start', 'middle', 'end'] | None = None
+    """Step interpolation mode. Use `'end'` for empirical CDFs (right-continuous step functions)."""
 
 
 class LinePlot(BaseModel):

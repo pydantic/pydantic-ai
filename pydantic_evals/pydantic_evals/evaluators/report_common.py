@@ -197,9 +197,8 @@ class PrecisionRecallEvaluator(ReportEvaluator):
         # Compute precision/recall at every unique score for exact AUC
         unique_thresholds = sorted({s for s, _ in scored_cases}, reverse=True)
         # Start with anchor at (recall=0, precision=1) — the "no predictions" point
-        all_points: list[PrecisionRecallPoint] = [
-            PrecisionRecallPoint(threshold=float('inf'), precision=1.0, recall=0.0)
-        ]
+        max_score = unique_thresholds[0]
+        all_points: list[PrecisionRecallPoint] = [PrecisionRecallPoint(threshold=max_score, precision=1.0, recall=0.0)]
         for threshold in unique_thresholds:
             tp = sum(1 for s, p in scored_cases if s >= threshold and p)
             fp = sum(1 for s, p in scored_cases if s >= threshold and not p)
@@ -368,10 +367,12 @@ class KolmogorovSmirnovEvaluator(ReportEvaluator):
         pos_curve = LinePlotCurve(
             name='Positive',
             points=[LinePlotPoint(x=s, y=v) for s, v in display_pos],
+            step='end',
         )
         neg_curve = LinePlotCurve(
             name='Negative',
             points=[LinePlotPoint(x=s, y=v) for s, v in display_neg],
+            step='end',
         )
 
         return [

@@ -489,7 +489,8 @@ LinePlot(
 | `description` | `str \| None` | Optional longer description |
 
 Each `LinePlotCurve` contains a `name`, a list of `LinePlotPoint`s (with `x`, `y`),
-and an optional `style` (`'solid'` or `'dashed'`).
+an optional `style` (`'solid'` or `'dashed'`), and an optional `step` interpolation
+mode (`'start'`, `'middle'`, or `'end'`) for step functions like empirical CDFs.
 
 `LinePlot` is the recommended return type for custom curve-based evaluators — any evaluator
 that returns a `LinePlot` will be rendered as a line chart in the Logfire UI without requiring
