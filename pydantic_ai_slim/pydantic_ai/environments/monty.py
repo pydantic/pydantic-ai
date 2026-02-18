@@ -23,7 +23,7 @@ from ._base import ExecutionEnvironment
 
 if TYPE_CHECKING:
     from pydantic_ai._python_signature import FunctionSignature, TypeSignature
-    from pydantic_ai.toolsets.code_execution._abstract import ToolCallback
+    from pydantic_ai.toolsets.code_execution._abstract import FunctionCallback
 
     from ._base import Capability, Language, ToolName
 
@@ -66,15 +66,11 @@ class MontyEnvironment(ExecutionEnvironment):
 
     @property
     def capabilities(self) -> frozenset[Capability]:
-        return frozenset({'run_code'})
+        return frozenset({'run_code', 'run_code_with_functions'})
 
     @property
     def supported_code_languages(self) -> frozenset[Language]:
         return frozenset({'python'})
-
-    @property
-    def supports_external_functions(self) -> bool:
-        return True
 
     def tool_description(self, tool: ToolName) -> str | None:
         if tool == 'run_python':
@@ -108,20 +104,38 @@ class MontyEnvironment(ExecutionEnvironment):
             )
         return None
 
-    async def run_python(
+    async def run_python(self, code: str) -> Any:
+        """Execute code in the Monty sandbox without external functions."""
+        try:
+            monty = Monty(code=f'import asyncio\n{code}', external_functions=[])
+            monty.type_check(_TYPING_IMPORTS)
+        except MontyTypingError as e:
+            raise CodeTypingError(e.display(format='concise')) from e
+        except MontySyntaxError as e:
+            raise CodeSyntaxError(e.display()) from e
+
+        try:
+            limits = (
+                ResourceLimits(max_duration_secs=self.execution_timeout) if self.execution_timeout is not None else None
+            )
+            monty_state = monty.start(limits=limits)
+            if not isinstance(monty_state, MontyComplete):
+                raise CodeRuntimeError('Unexpected external function call in code without functions.')
+        except MontyRuntimeError as e:
+            self._raise_if_timeout(e)
+            raise CodeRuntimeError(e.display()) from e
+
+        return monty_state.output
+
+    async def run_python_with_functions(
         self,
         code: str,
-        call_tool: ToolCallback | None = None,
         *,
+        function_callback: FunctionCallback,
         functions: dict[str, FunctionSignature] | None = None,
         referenced_types: list[TypeSignature] | None = None,
     ) -> Any:
-        """Execute code in the Monty sandbox."""
-        if call_tool is None:
-            raise NotImplementedError(
-                'MontyEnvironment requires call_tool for code execution. '
-                'It does not support standalone script execution.'
-            )
+        """Execute code in the Monty sandbox with external function support."""
         if functions is None:
             functions = {}
         if referenced_types is None:
@@ -141,7 +155,7 @@ class MontyEnvironment(ExecutionEnvironment):
                 ResourceLimits(max_duration_secs=self.execution_timeout) if self.execution_timeout is not None else None
             )
             monty_state = monty.start(limits=limits)
-            monty_state = await self._execution_loop(monty_state, call_tool, functions=functions)
+            monty_state = await self._execution_loop(monty_state, function_callback, functions=functions)
         except MontyRuntimeError as e:
             self._raise_if_timeout(e)
             raise CodeRuntimeError(e.display()) from e
@@ -166,7 +180,7 @@ class MontyEnvironment(ExecutionEnvironment):
     @staticmethod
     async def _execution_loop(
         monty_state: MontyComplete | MontyFutureSnapshot | MontySnapshot,
-        call_tool: ToolCallback,
+        function_callback: FunctionCallback,
         *,
         functions: dict[str, FunctionSignature],
     ) -> MontyComplete:
@@ -186,11 +200,11 @@ class MontyEnvironment(ExecutionEnvironment):
                         # Sequential: drain pending async tasks, then call synchronously
                         if tasks:
                             await asyncio.gather(*tasks.values())
-                        result = await call_tool(call)
+                        result = await function_callback(call)
                         monty_state = monty_state.resume(return_value=result)
                     else:
                         # Async: fire and defer (existing behavior)
-                        tasks[monty_state.call_id] = asyncio.ensure_future(call_tool(call))
+                        tasks[monty_state.call_id] = asyncio.ensure_future(function_callback(call))
                         monty_state = monty_state.resume(future=...)
                 elif isinstance(monty_state, MontyFutureSnapshot):
                     pending_call_ids = monty_state.pending_call_ids

@@ -35,7 +35,7 @@ from ._abstract import (
     CodeSyntaxError,
     CodeTypingError,
     FunctionCall,
-    ToolCallback,
+    FunctionCallback,
 )
 
 __all__ = (
@@ -48,7 +48,7 @@ __all__ = (
     'DescriptionFunc',
     'FunctionCall',
     'FunctionSignature',
-    'ToolCallback',
+    'FunctionCallback',
     'TypeSignature',
     'build_default_description',
 )
@@ -212,7 +212,7 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
     ) -> None:
         if isinstance(environment, str):
             environment = get_environment(environment)
-        if toolset is not None and not environment.supports_external_functions:
+        if toolset is not None and 'run_code_with_functions' not in environment.capabilities:
             raise TypeError(
                 f'{type(environment).__name__} does not support external functions. '
                 'Cannot wrap tools for code execution.'
@@ -349,7 +349,7 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
                 tools=tool.tools,
             )
 
-        async def call_tool_callback(call: FunctionCall) -> Any:
+        async def function_callback(call: FunctionCall) -> Any:
             sanitized_name = call.function_name
             original_name = tool.name_map.get(sanitized_name, sanitized_name)
 
@@ -375,12 +375,15 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
                 raise CodeRuntimeError(f'Call to {sanitized_name!r} failed: {e}') from e
 
         try:
-            return await self.environment.run_python(
-                code,
-                call_tool_callback,
-                functions={sig.name: sig for sig in tool.signatures},
-                referenced_types=tool.referenced_types,
-            )
+            if 'run_code_with_functions' in self.environment.capabilities:
+                return await self.environment.run_python_with_functions(
+                    code,
+                    function_callback=function_callback,
+                    functions={sig.name: sig for sig in tool.signatures},
+                    referenced_types=tool.referenced_types,
+                )
+            else:
+                return await self.environment.run_python(code)
         except CodeTypingError as e:
             raise ModelRetry(f'Type error in generated code:\n{e.message}') from e
         except CodeSyntaxError as e:

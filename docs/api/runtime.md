@@ -14,4 +14,4 @@
         - CodeTypingError
         - CodeRuntimeError
         - CodeExecutionTimeout
-        - ToolCallback
+        - FunctionCallback

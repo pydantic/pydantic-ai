@@ -12,7 +12,7 @@ from pydantic_ai.toolsets.code_execution import (
     CodeTypingError,
     EnvironmentName,
     FunctionCall,
-    ToolCallback,
+    FunctionCallback,
     get_environment,
 )
 
@@ -45,6 +45,6 @@ __all__ = (
     'ExecutionEnvironment',
     'FunctionCall',
     'MontyEnvironment',
-    'ToolCallback',
+    'FunctionCallback',
     'get_environment',
 )

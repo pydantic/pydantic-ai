@@ -109,9 +109,9 @@ async def test_run_catches_non_standard_exception():
     """Non-standard exceptions from transport are wrapped in CodeRuntimeError."""
     env = _ErrorEnvironment()
     with pytest.raises(CodeRuntimeError, match='Driver communication error.*bad read'):
-        await env.run_python(
+        await env.run_python_with_functions(
             'x = 1',
-            AsyncMock(),
+            function_callback=AsyncMock(),
             functions={},
             referenced_types=[],
         )

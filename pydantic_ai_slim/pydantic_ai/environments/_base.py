@@ -16,12 +16,14 @@ from typing_extensions import Self
 
 if TYPE_CHECKING:
     from pydantic_ai._python_signature import FunctionSignature, TypeSignature
-    from pydantic_ai.toolsets.code_execution._abstract import ToolCallback
+    from pydantic_ai.toolsets.code_execution._abstract import FunctionCallback
 
 
 # --- Capability / Tool type aliases ---
 
-Capability = Literal['ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'run_code']
+Capability = Literal[
+    'ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'run_code', 'run_code_with_functions'
+]
 """High-level capability identifier used in ``capabilities``, ``include``/``exclude``."""
 
 EditStrategy = Literal['replace_str', 'apply_patch']
@@ -223,15 +225,6 @@ class ExecutionEnvironment(ABC):
         """Languages for code execution. Only relevant if ``'run_code'`` in capabilities."""
         return frozenset()
 
-    @property
-    def supports_external_functions(self) -> bool:
-        """Whether code execution supports calling external functions (code mode).
-
-        True for ``DriverBasedEnvironment`` (NDJSON protocol) and ``MontyEnvironment``.
-        False for environments that run code via simple shell execution.
-        """
-        return False
-
     def tool_description(self, tool: ToolName) -> str | None:
         """Per-tool description for the LLM. Takes the specific tool name, not the capability.
 
@@ -396,36 +389,21 @@ class ExecutionEnvironment(ABC):
         """
         raise NotImplementedError(f'{type(self).__name__} does not support grep.')
 
-    async def run_python(
-        self,
-        code: str,
-        call_tool: ToolCallback | None = None,
-        *,
-        functions: dict[str, FunctionSignature] | None = None,
-        referenced_types: list[TypeSignature] | None = None,
-    ) -> Any:
+    async def run_python(self, code: str) -> Any:
         """Execute Python code.
 
         The default implementation writes the code to a temp file and runs
-        it via ``shell()``. It does not support external functions; subclasses
-        that support ``call_tool`` (code mode) must override this method.
+        it via ``shell()``.
 
         Args:
             code: The Python code to execute.
-            call_tool: Callback for external function calls. If provided and the
-                environment doesn't support it, raises ``NotImplementedError``.
-            functions: Mapping of function name to signature (for type checking).
-            referenced_types: Type definitions referenced by the signatures.
 
         Returns:
             The output of the code execution.
 
         Raises:
-            NotImplementedError: If ``call_tool`` is provided but not supported.
             CodeRuntimeError: If the code exits with a non-zero status.
         """
-        if call_tool is not None:
-            raise NotImplementedError(f'{type(self).__name__} does not support external functions in code execution.')
         await self.write_file('/tmp/_pydantic_ai_code.py', code)
         result = await self.shell('python /tmp/_pydantic_ai_code.py')
         if result.exit_code != 0:
@@ -434,19 +412,50 @@ class ExecutionEnvironment(ABC):
             raise CodeRuntimeError(result.output)
         return result.output
 
-    async def run_typescript(
+    async def run_python_with_functions(
         self,
         code: str,
-        call_tool: ToolCallback | None = None,
         *,
+        function_callback: FunctionCallback,
         functions: dict[str, FunctionSignature] | None = None,
         referenced_types: list[TypeSignature] | None = None,
     ) -> Any:
+        """Execute Python code with access to external functions.
+
+        Environments that support this must include ``'run_code_with_functions'``
+        in their ``capabilities``.
+
+        Args:
+            code: The Python code to execute.
+            function_callback: Callback invoked when the code calls an external function.
+            functions: Mapping of function name to signature (for type checking).
+            referenced_types: Type definitions referenced by the signatures.
+
+        Returns:
+            The output of the code execution.
+        """
+        raise NotImplementedError(f'{type(self).__name__} does not support run_python_with_functions.')
+
+    async def run_typescript(self, code: str) -> Any:
         """Execute TypeScript code.
 
         Not yet implemented. Reserved for future multi-language support.
         """
         raise NotImplementedError(f'{type(self).__name__} does not support run_typescript.')
+
+    async def run_typescript_with_functions(
+        self,
+        code: str,
+        *,
+        function_callback: FunctionCallback,
+        functions: dict[str, FunctionSignature] | None = None,
+        referenced_types: list[TypeSignature] | None = None,
+    ) -> Any:
+        """Execute TypeScript code with access to external functions.
+
+        Not yet implemented. Reserved for future multi-language support.
+        """
+        raise NotImplementedError(f'{type(self).__name__} does not support run_typescript_with_functions.')
 
     # --- Internal helpers (not tools) ---
 

@@ -198,7 +198,19 @@ class E2BEnvironment(DriverBasedEnvironment):
 
     @property
     def capabilities(self) -> frozenset[Capability]:
-        return frozenset({'ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'run_code'})
+        return frozenset(
+            {
+                'ls',
+                'shell',
+                'read_file',
+                'write_file',
+                'edit_file',
+                'glob',
+                'grep',
+                'run_code',
+                'run_code_with_functions',
+            }
+        )
 
     def tool_description(self, tool: ToolName) -> str | None:
         if tool == 'grep':

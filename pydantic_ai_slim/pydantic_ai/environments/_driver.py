@@ -25,7 +25,7 @@ from ._base import EditStrategy, ExecutionEnvironment, Language
 
 if TYPE_CHECKING:
     from pydantic_ai._python_signature import FunctionSignature, TypeSignature
-    from pydantic_ai.toolsets.code_execution._abstract import ToolCallback
+    from pydantic_ai.toolsets.code_execution._abstract import FunctionCallback
 
     from ._base import ExecutionProcess
 
@@ -139,10 +139,6 @@ class DriverBasedEnvironment(ExecutionEnvironment, ABC):
         return frozenset({'python'})
 
     @property
-    def supports_external_functions(self) -> bool:
-        return True
-
-    @property
     def supported_edit_strategies(self) -> frozenset[EditStrategy]:
         return frozenset({'replace_str'})
 
@@ -178,23 +174,15 @@ class DriverBasedEnvironment(ExecutionEnvironment, ABC):
         """
         ...
 
-    async def run_python(
+    async def run_python_with_functions(
         self,
         code: str,
-        call_tool: ToolCallback | None = None,
         *,
+        function_callback: FunctionCallback,
         functions: dict[str, FunctionSignature] | None = None,
         referenced_types: list[TypeSignature] | None = None,
     ) -> Any:
-        """Execute Python code via the NDJSON driver protocol.
-
-        When ``call_tool`` is None, falls back to the base class implementation
-        (write file + shell). When ``call_tool`` is provided, launches the driver
-        for full code mode with external function support.
-        """
-        if call_tool is None:
-            return await super().run_python(code)
-
+        """Execute Python code with external functions via the NDJSON driver protocol."""
         if not self._driver_copied:
             await self._copy_driver()
             self._driver_copied = True
@@ -206,7 +194,7 @@ class DriverBasedEnvironment(ExecutionEnvironment, ABC):
         }
         process = await self._start_driver(init_msg)
         try:
-            return await self._run_with_timeout(process, call_tool)
+            return await self._run_with_timeout(process, function_callback)
         except (CodeSyntaxError, CodeRuntimeError):
             raise
         except _ToolError as e:
@@ -218,9 +206,9 @@ class DriverBasedEnvironment(ExecutionEnvironment, ABC):
 
     # --- Protocol implementation ---
 
-    async def _run_with_timeout(self, process: DriverTransport, call_tool: ToolCallback) -> Any:
+    async def _run_with_timeout(self, process: DriverTransport, function_callback: FunctionCallback) -> Any:
         """Run the execution loop, applying ``execution_timeout`` if configured."""
-        coro = self._execution_loop(process, call_tool)
+        coro = self._execution_loop(process, function_callback)
         if self.execution_timeout is not None:
             try:
                 return await asyncio.wait_for(coro, timeout=self.execution_timeout)
@@ -229,7 +217,7 @@ class DriverBasedEnvironment(ExecutionEnvironment, ABC):
                 raise CodeExecutionTimeout(f'Code execution timed out after {self.execution_timeout} seconds')
         return await coro
 
-    async def _execution_loop(self, process: DriverTransport, call_tool: ToolCallback) -> Any:
+    async def _execution_loop(self, process: DriverTransport, function_callback: FunctionCallback) -> Any:
         """Run the dual-wait event loop: read driver stdout + dispatch tool tasks."""
         tool_tasks: dict[int, asyncio.Task[Any]] = {}
         task_id_to_cid: dict[int, int] = {}
@@ -243,7 +231,7 @@ class DriverBasedEnvironment(ExecutionEnvironment, ABC):
 
                 for task in done:
                     if task is stdout_task:
-                        result = await self._handle_stdout(task, process, call_tool, tool_tasks, task_id_to_cid)
+                        result = await self._handle_stdout(task, process, function_callback, tool_tasks, task_id_to_cid)
                         if isinstance(result, _FinalResult):
                             return result.value
                         stdout_task = asyncio.create_task(process.read_line())
@@ -264,7 +252,7 @@ class DriverBasedEnvironment(ExecutionEnvironment, ABC):
     async def _handle_stdout(
         task: asyncio.Task[bytes],
         process: DriverTransport,
-        call_tool: ToolCallback,
+        function_callback: FunctionCallback,
         tool_tasks: dict[int, asyncio.Task[Any]],
         task_id_to_cid: dict[int, int],
     ) -> _StdoutSignal | _FinalResult:
@@ -294,7 +282,7 @@ class DriverBasedEnvironment(ExecutionEnvironment, ABC):
                 args=tuple(msg.get('args', ())),
                 kwargs=msg.get('kwargs', {}),
             )
-            t = asyncio.ensure_future(call_tool(fc))
+            t = asyncio.ensure_future(function_callback(fc))
             tool_tasks[cid] = t
             task_id_to_cid[id(t)] = cid
             return _StdoutSignal.CONTINUE

@@ -18,7 +18,7 @@ from pydantic_ai.environments._base import ExecutionEnvironment
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import Tool
 from pydantic_ai.toolsets.code_execution import CodeExecutionToolset
-from pydantic_ai.toolsets.code_execution._abstract import ToolCallback
+from pydantic_ai.toolsets.code_execution._abstract import FunctionCallback
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
 
@@ -102,21 +102,17 @@ class StubEnvironment(ExecutionEnvironment):
 
     @property
     def capabilities(self) -> frozenset[Any]:
-        return frozenset({'run_code'})
+        return frozenset({'run_code', 'run_code_with_functions'})
 
     @property
     def supported_code_languages(self) -> frozenset[Any]:
         return frozenset({'python'})
 
-    @property
-    def supports_external_functions(self) -> bool:
-        return True
-
-    async def run_python(
+    async def run_python_with_functions(
         self,
         code: str,
-        call_tool: ToolCallback | None = None,
         *,
+        function_callback: FunctionCallback,
         functions: dict[str, FunctionSignature] | None = None,
         referenced_types: list[TypeSignature] | None = None,
     ) -> Any:

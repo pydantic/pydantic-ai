@@ -178,13 +178,13 @@ async def test_call_deferred_during_execution(monkeypatch: pytest.MonkeyPatch):
     call_made = False
 
     class ExecutingEnvironment(StubEnvironment):
-        async def run_python(
-            self, code: str, call_tool: Any = None, *, functions: Any = None, referenced_types: Any = None
+        async def run_python_with_functions(
+            self, code: str, *, function_callback: Any, functions: Any = None, referenced_types: Any = None
         ) -> Any:
             nonlocal call_made
             call = FunctionCall(call_id='1', function_name='_add', args=(), kwargs={'x': 1, 'y': 2})
             try:
-                await call_tool(call)
+                await function_callback(call)
             except UserError:
                 call_made = True
                 raise CodeRuntimeError('deferred')
