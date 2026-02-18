@@ -2,11 +2,12 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic.json_schema import JsonSchemaValue
 
 from pydantic_ai import Agent
 from pydantic_ai.ext.langchain import LangChainToolset, tool_from_langchain
+
+from .._inline_snapshot import snapshot
 
 
 @dataclass
