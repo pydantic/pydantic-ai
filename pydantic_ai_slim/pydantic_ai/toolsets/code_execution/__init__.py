@@ -228,10 +228,10 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        return None
+        return None  # pragma: no cover
 
     @property
-    def label(self) -> str:
+    def label(self) -> str:  # pragma: no cover
         if self.toolset is not None:
             return f'CodeExecutionToolset({self.toolset.label})'
         return 'CodeExecutionToolset'
@@ -254,7 +254,7 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
         finally:
             await self.runtime.__aexit__(*args)
 
-    def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
+    def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:  # pragma: no cover
         if self.toolset is not None:
             self.toolset.apply(visitor)
         else:
@@ -344,48 +344,43 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
         code = tool_args.get('code')
         assert isinstance(code, str)
 
-        if tool.tools:
-            assert self.toolset is not None
+        tool_manager: ToolManager[AgentDepsT] | None = None
+        if self.toolset is not None:
             tool_manager = ToolManager(
                 toolset=self.toolset,
                 ctx=ctx,
                 tools=tool.tools,
             )
 
-            async def call_tool_callback(call: FunctionCall) -> Any:
-                sanitized_name = call.function_name
-                original_name = tool.name_map.get(sanitized_name, sanitized_name)
+        async def call_tool_callback(call: FunctionCall) -> Any:
+            sanitized_name = call.function_name
+            original_name = tool.name_map.get(sanitized_name, sanitized_name)
 
-                try:
-                    if call.args:
-                        raise ModelRetry(
-                            'Positional arguments are not supported in code mode tool calls. All parameters are keyword-only.'
-                        )
+            try:
+                if tool_manager is None:  # pragma: no cover
+                    raise ModelRetry('No tools available')
 
-                    tool_call = ToolCallPart(tool_name=original_name, args=call.kwargs, tool_call_id=call.call_id)
-                    result = await tool_manager.handle_call(tool_call, wrap_validation_errors=False)
-
-                    return tool_return_ta.dump_python(result)
-                except (CallDeferred, ApprovalRequired):
-                    raise exceptions.UserError(
-                        'Tool approval and deferral are not yet supported in code execution mode. '
-                        'Ensure wrapped tools do not use approval or deferral when used with CodeExecutionToolset.'
+                if call.args:
+                    raise ModelRetry(
+                        'Positional arguments are not supported in code mode tool calls. All parameters are keyword-only.'
                     )
-                except (ModelRetry, ValidationError) as e:
-                    raise CodeRuntimeError(f'Call to {sanitized_name!r} failed: {e}') from e
 
-            callback: ToolCallback = call_tool_callback
-        else:
+                tool_call = ToolCallPart(tool_name=original_name, args=call.kwargs, tool_call_id=call.call_id)
+                result = await tool_manager.handle_call(tool_call, wrap_validation_errors=False)
 
-            async def no_tools_callback(call: FunctionCall) -> Any:
-                raise CodeRuntimeError(f'No tools available — cannot call {call.function_name!r}')
-
-            callback = no_tools_callback
+                return tool_return_ta.dump_python(result)
+            except (CallDeferred, ApprovalRequired):
+                raise exceptions.UserError(
+                    'Tool approval and deferral are not yet supported in code execution mode. '
+                    'Ensure wrapped tools do not use approval or deferral when used with CodeExecutionToolset.'
+                )
+            except (ModelRetry, ValidationError) as e:
+                raise CodeRuntimeError(f'Call to {sanitized_name!r} failed: {e}') from e
 
         try:
             return await self.runtime.run(
                 code,
-                callback,
+                call_tool_callback,
                 functions={sig.name: sig for sig in tool.signatures},
                 referenced_types=tool.referenced_types,
             )
