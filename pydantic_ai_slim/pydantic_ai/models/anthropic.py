@@ -490,10 +490,7 @@ class AnthropicModel(Model):
         if has_strict_tools or model_request_parameters.output_mode == 'native':
             betas.add('structured-outputs-2025-11-13')
 
-        if (
-            model_settings.get('anthropic_speed') == 'fast'
-            and anthropic_profile.anthropic_supports_fast_speed
-        ):
+        if model_settings.get('anthropic_speed') == 'fast' and anthropic_profile.anthropic_supports_fast_speed:
             betas.add('fast-mode-2026-02-01')
 
         if betas_from_setting := model_settings.get('anthropic_betas'):
@@ -504,9 +501,7 @@ class AnthropicModel(Model):
 
         return betas, extra_headers
 
-    def _effective_speed(
-        self, model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile
-    ):
+    def _effective_speed(self, model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile):
         """Speed to pass to the API: only 'fast' when profile supports it, otherwise setting or OMIT."""
         s = model_settings.get('anthropic_speed', OMIT)
         if s == 'fast' and not anthropic_profile.anthropic_supports_fast_speed:
