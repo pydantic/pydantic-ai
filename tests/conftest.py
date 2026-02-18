@@ -371,6 +371,30 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
     original_cached_func.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def patch_google_genai_gc_crash(monkeypatch: pytest.MonkeyPatch):
+    """Work around google-genai BaseApiClient GC crash on Python 3.14.
+
+    BaseApiClient.__del__ schedules aclose() during GC, which crashes when the
+    object was only partially initialized. Python 3.14's GC surfaces this.
+    Remove when https://github.com/googleapis/python-genai/issues/2023 closes.
+    """
+    if sys.version_info < (3, 14):
+        return
+    try:
+        from google.genai._api_client import BaseApiClient
+    except ImportError:
+        return
+
+    original_aclose = BaseApiClient.aclose
+
+    async def safe_aclose(self):
+        if hasattr(self, '_async_httpx_client'):
+            await original_aclose(self)
+
+    monkeypatch.setattr(BaseApiClient, 'aclose', safe_aclose)
+
+
 @pytest.fixture(scope='session')
 def assets_path() -> Path:
     return Path(__file__).parent / 'assets'
