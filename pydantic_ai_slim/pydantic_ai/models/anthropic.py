@@ -240,7 +240,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     anthropic_speed: Literal['standard', 'fast']
     """The inference speed mode for this request.
 
-    `'fast'` enables high output-tokens-per-second inference for supported models.
+    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6).
     Fast mode is a research preview; see [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for details.
     """
 
@@ -432,7 +432,10 @@ class AnthropicModel(Model):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
+        anthropic_profile = AnthropicModelProfile.from_profile(self.profile)
+        betas, extra_headers = self._get_betas_and_extra_headers(
+            tools, model_request_parameters, model_settings, anthropic_profile
+        )
         betas.update(builtin_tool_betas)
         container = self._get_container(messages, model_settings)
         try:
@@ -454,7 +457,7 @@ class AnthropicModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
                 container=container or OMIT,
-                speed=self._effective_speed(model_settings),
+                speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -470,6 +473,7 @@ class AnthropicModel(Model):
         tools: list[BetaToolUnionParam],
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
+        anthropic_profile: AnthropicModelProfile,
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
@@ -488,7 +492,7 @@ class AnthropicModel(Model):
 
         if (
             model_settings.get('anthropic_speed') == 'fast'
-            and AnthropicModelProfile.from_profile(self.profile).supports_fast_speed
+            and anthropic_profile.anthropic_supports_fast_speed
         ):
             betas.add('fast-mode-2026-02-01')
 
@@ -500,10 +504,12 @@ class AnthropicModel(Model):
 
         return betas, extra_headers
 
-    def _effective_speed(self, model_settings: AnthropicModelSettings) -> Literal['standard', 'fast'] | Any:
+    def _effective_speed(
+        self, model_settings: AnthropicModelSettings, anthropic_profile: AnthropicModelProfile
+    ):
         """Speed to pass to the API: only 'fast' when profile supports it, otherwise setting or OMIT."""
         s = model_settings.get('anthropic_speed', OMIT)
-        if s == 'fast' and not AnthropicModelProfile.from_profile(self.profile).supports_fast_speed:
+        if s == 'fast' and not anthropic_profile.anthropic_supports_fast_speed:
             return OMIT
         return s if s in ('standard', 'fast') else OMIT
 
@@ -537,7 +543,10 @@ class AnthropicModel(Model):
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_config = self._build_output_config(model_request_parameters, model_settings)
-        betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
+        anthropic_profile = AnthropicModelProfile.from_profile(self.profile)
+        betas, extra_headers = self._get_betas_and_extra_headers(
+            tools, model_request_parameters, model_settings, anthropic_profile
+        )
         betas.update(builtin_tool_betas)
         try:
             return await self.client.beta.messages.count_tokens(
@@ -551,7 +560,7 @@ class AnthropicModel(Model):
                 output_config=output_config or OMIT,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
-                speed=self._effective_speed(model_settings),
+                speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )

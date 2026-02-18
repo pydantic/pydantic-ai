@@ -350,7 +350,7 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 
 ## Fast mode
 
-Fast mode provides higher output tokens per second for supported models. It is a research preview. Set [`anthropic_speed`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_speed] to `'fast'` to enable it:
+Fast mode provides higher output tokens per second and is currently supported only on **Claude Opus 4.6** (`anthropic:claude-opus-4-6`). It is a research preview. Set [`anthropic_speed`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_speed] to `'fast'` to enable it; Pydantic AI automatically adds the required `fast-mode-2026-02-01` beta. On other models, `anthropic_speed='fast'` is ignored. For pricing, rate limits, and the latest list of supported models, see the [Anthropic fast mode docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -363,5 +363,3 @@ agent = Agent(
 result = agent.run_sync('Summarize this document')
 print(result.output)
 ```
-
-Pydantic AI automatically adds the required `fast-mode-2026-02-01` beta when `anthropic_speed='fast'`. For pricing, rate limits, and supported models, see the [Anthropic fast mode docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode).

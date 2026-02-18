@@ -62,7 +62,7 @@ from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncAnthropic
+    from anthropic import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncAnthropic, omit as OMIT
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
@@ -1429,6 +1429,8 @@ async def test_anthropic_speed_setting(allow_model_requests: None, speed: str | 
 
     if speed is not None:
         assert kwargs['speed'] == speed
+    else:
+        assert kwargs.get('speed') is OMIT
     if speed == 'fast':
         assert 'fast-mode-2026-02-01' in kwargs['betas']
     else:
@@ -1449,7 +1451,8 @@ async def test_anthropic_speed_fast_ignored_on_unsupported_model(allow_model_req
         model_settings=AnthropicModelSettings(anthropic_speed='fast', anthropic_betas=['custom-beta']),
     )
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    # Haiku does not support fast; profile.supports_fast_speed is False, so we omit speed and the beta
+    # Haiku does not support fast; profile.anthropic_supports_fast_speed is False, so we omit speed and the beta
+    assert kwargs.get('speed') is OMIT
     betas = kwargs.get('betas')
     assert isinstance(betas, (list, tuple))
     assert 'fast-mode-2026-02-01' not in betas
