@@ -310,7 +310,7 @@ class TestGoogleUnifiedThinking:
         assert result == {'thinking_budget': expected_budget}
 
     def test_thinking_true_gemini3(self, google_thinking_profile: ModelProfile):
-        """thinking=True on Gemini 3 → thinking_level: HIGH."""
+        """thinking=True on Gemini 3 without effort → None (model uses its default level)."""
         model = GoogleModel.__new__(GoogleModel)
         model._model_name = 'gemini-3-flash'
         model._profile = google_thinking_profile
@@ -318,7 +318,7 @@ class TestGoogleUnifiedThinking:
         settings: GoogleModelSettings = {'thinking': True}
         result = model._resolve_thinking_config(settings)
 
-        assert result == {'thinking_level': ThinkingLevel.HIGH}
+        assert result is None
 
     def test_thinking_false_gemini3(self, google_thinking_profile: ModelProfile):
         """thinking=False on Gemini 3 → thinking_level: LOW + include_thoughts: False."""

@@ -296,8 +296,7 @@ class GoogleModel(Model):
             # Gemini 3+: Map effort to thinking_level
             if resolved.effort:
                 result['thinking_level'] = _GOOGLE_EFFORT_TO_LEVEL.get(resolved.effort, ThinkingLevel.HIGH)
-            else:
-                result['thinking_level'] = ThinkingLevel.HIGH
+            # No else: let the model use its default thinking level when no effort specified
         elif resolved.effort:
             # Gemini 2.5: Map effort to thinking_budget
             result['thinking_budget'] = _GOOGLE_EFFORT_TO_BUDGET[resolved.effort]
