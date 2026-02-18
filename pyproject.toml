@@ -251,6 +251,9 @@ filterwarnings = [
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed <ssl.SSLSocket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
+    # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
+    # happens only for python < 3.12 because of vllms pins
+    "ignore:The 'default' attribute with value 'UTC' was provided.*:UserWarning",
     # This is because of cohere.
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
     # This is because of google.
