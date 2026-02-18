@@ -1475,7 +1475,7 @@ async def test_xai_audio_url_not_supported(allow_model_requests: None):
 
     audio_url = AudioUrl(url='https://example.com/audio.mp3')
 
-    with pytest.raises(NotImplementedError, match='AudioUrl is not supported by xAI SDK'):
+    with pytest.raises(NotImplementedError, match='AudioUrl is not supported in xAI user prompts'):
         await agent.run(['What is in this audio?', audio_url])
 
 
@@ -1488,7 +1488,7 @@ async def test_xai_video_url_not_supported(allow_model_requests: None):
 
     video_url = VideoUrl(url='https://example.com/video.mp4')
 
-    with pytest.raises(NotImplementedError, match='VideoUrl is not supported by xAI SDK'):
+    with pytest.raises(NotImplementedError, match='VideoUrl is not supported in xAI user prompts'):
         await agent.run(['What is in this video?', video_url])
 
 
@@ -1504,7 +1504,7 @@ async def test_xai_binary_content_audio_not_supported(allow_model_requests: None
         media_type='audio/mpeg',
     )
 
-    with pytest.raises(NotImplementedError, match='AudioUrl/BinaryContent with audio is not supported by xAI SDK'):
+    with pytest.raises(NotImplementedError, match='BinaryContent with audio is not supported in xAI user prompts'):
         await agent.run(['What is in this audio?', audio_content])
 
 
@@ -1517,7 +1517,7 @@ async def test_xai_binary_content_unknown_media_type_raises(allow_model_requests
 
     # Video binary content is not supported by xAI SDK
     bc = BinaryContent(b'123', media_type='video/mp4')
-    with pytest.raises(NotImplementedError, match='VideoUrl/BinaryContent with video is not supported by xAI SDK'):
+    with pytest.raises(NotImplementedError, match='BinaryContent with video is not supported in xAI user prompts'):
         await agent.run(['hello', bc])
 
 
