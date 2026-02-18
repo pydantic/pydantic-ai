@@ -364,7 +364,7 @@ export VOYAGE_API_KEY='your-api-key'
 
 You can then use the model:
 
-```python {title="voyageai_embeddings.py"}
+```python {title="voyageai_embeddings.py" max_py="3.13"}
 from pydantic_ai import Embedder
 
 embedder = Embedder('voyageai:voyage-3.5')
@@ -384,7 +384,7 @@ See the [VoyageAI Embeddings documentation](https://docs.voyageai.com/docs/embed
 
 VoyageAI models support additional settings via [`VoyageAIEmbeddingSettings`][pydantic_ai.embeddings.voyageai.VoyageAIEmbeddingSettings]:
 
-```python {title="voyageai_settings.py"}
+```python {title="voyageai_settings.py" max_py="3.13"}
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingSettings
 
@@ -590,7 +590,7 @@ pip/uv-add "pydantic-ai-slim[sentence-transformers]"
 
 #### Usage
 
-```python {title="sentence_transformers_embeddings.py"}
+```python {title="sentence_transformers_embeddings.py" max_py="3.13"}
 from pydantic_ai import Embedder
 
 # Model is downloaded from Hugging Face on first use
@@ -611,7 +611,7 @@ See the [Sentence-Transformers pretrained models](https://www.sbert.net/docs/sen
 
 Control which device to use for inference:
 
-```python {title="sentence_transformers_device.py"}
+```python {title="sentence_transformers_device.py" max_py="3.13"}
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.sentence_transformers import (
     SentenceTransformersEmbeddingSettings,
@@ -630,7 +630,7 @@ embedder = Embedder(
 
 If you need more control over model initialization:
 
-```python {title="sentence_transformers_instance.py"}
+```python {title="sentence_transformers_instance.py" max_py="3.13"}
 from sentence_transformers import SentenceTransformer
 
 from pydantic_ai import Embedder

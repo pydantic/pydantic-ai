@@ -85,6 +85,16 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
+import sys
+
+if sys.version_info >= (3, 14):
+    pytest.skip(
+        'temporalio sandbox is incompatible with Python 3.14: '
+        'sandbox module state accumulates across validation cycles causing import failures after ~22 workflows '
+        '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
+        allow_module_level=True,
+    )
+
 try:
     import logfire
     from logfire import Logfire
