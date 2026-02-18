@@ -282,9 +282,25 @@ try:
 
     logfire.DEFAULT_LOGFIRE_INSTANCE.config.ignore_no_config = True
 
+    @pytest.fixture(scope='session')
+    def _logfire_session(request: pytest.FixtureRequest):
+        if request.config.getoption('debug_with_logfire'):
+            logfire.configure(send_to_logfire='if-token-present', console=False)
+            logfire.instrument_httpx(capture_all=True)
+            with logfire.span('pytest session'):
+                yield
+            logfire.shutdown(flush=True)
+        else:
+            yield
+
     @pytest.fixture(autouse=True)
-    def fresh_logfire():
-        logfire.shutdown(flush=False)
+    async def fresh_logfire(request: pytest.FixtureRequest, _logfire_session: None, anyio_backend: str):
+        if request.config.getoption('debug_with_logfire'):
+            with logfire.span('test: {test_name}', test_name=request.node.name):
+                yield
+        else:
+            logfire.shutdown(flush=False)
+            yield
 
 except ImportError:
     pass
@@ -315,6 +331,13 @@ def pytest_addoption(parser: Any) -> None:
         dest='xai_proto_include_json',
         help='Include JSON representations in xAI proto cassette YAML files.',
     )
+    parser.addoption(
+        '--debug-with-logfire',
+        action='store_true',
+        default=False,
+        dest='debug_with_logfire',
+        help='Enable logfire tracing during tests for debugging.',
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -334,14 +357,18 @@ def mock_vcr_aiohttp_content(mocker: MockerFixture):
     mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
 
 
-@pytest.fixture(scope='module')
-def vcr_config():
-    return {
+@pytest.fixture(scope='function')
+def vcr_config(request: pytest.FixtureRequest):
+    config: dict[str, Any] = {
         'ignore_localhost': True,
         # Note: additional header filtering is done inside the serializer
         'filter_headers': ['authorization', 'x-api-key'],
         'decode_compressed_response': True,
     }
+    if request.config.getoption('debug_with_logfire'):
+        logfire_hosts = ['logfire-us.pydantic.dev', 'logfire-api.pydantic.dev']
+        config.setdefault('ignore_hosts', []).extend(logfire_hosts)
+    return config
 
 
 @pytest.fixture(autouse=True)
