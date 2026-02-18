@@ -15,7 +15,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
-    from .models import Model
+    from .models import Model, ModelRequestParameters, ModelSettings
     from .result import RunUsage
 
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
@@ -40,6 +40,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
     """Messages exchanged in the conversation so far."""
+    model_settings: ModelSettings | None = None
+    """The model settings used for this run."""
+    model_request_parameters: ModelRequestParameters | None = None
+    """The model request parameters used for this run."""
     validation_context: Any = None
     """Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) for tool args and run outputs."""
     tracer: Tracer = field(default_factory=NoOpTracer)

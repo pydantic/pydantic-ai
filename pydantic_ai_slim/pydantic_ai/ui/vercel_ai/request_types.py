@@ -51,6 +51,21 @@ class ReasoningUIPart(BaseUIPart):
     """The provider metadata."""
 
 
+class CompactionUIPart(BaseUIPart):
+    """A compaction part of a message."""
+
+    type: Literal['compaction'] = 'compaction'
+
+    text: str | None = None
+    """The compaction text."""
+
+    state: Literal['streaming', 'done'] | None = None
+    """The state of the compaction part."""
+
+    provider_metadata: ProviderMetadata | None = None
+    """The provider metadata."""
+
+
 class SourceUrlUIPart(BaseUIPart):
     """A source part of a message."""
 
@@ -230,6 +245,7 @@ UIMessagePart = (
     | FileUIPart
     | DataUIPart
     | StepStartUIPart
+    | CompactionUIPart
 )
 """Union of all message part types."""
 

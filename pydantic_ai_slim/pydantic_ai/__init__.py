@@ -59,6 +59,7 @@ from .messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
@@ -270,5 +271,6 @@ __all__ = (
     'AgentRun',
     'AgentRunResult',
     'AgentRunResultEvent',
+    'CompactionPart',
 )
 __version__ = _metadata_version('pydantic_ai_slim')
