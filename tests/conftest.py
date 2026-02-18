@@ -406,6 +406,10 @@ def patch_google_genai_gc_crash():
     async def safe_aclose(self: BaseApiClient) -> None:
         if hasattr(self, '_async_httpx_client'):
             await original_aclose(self)
+        else:  # pragma: lax no cover
+            # In some test runs, the `if` above will always run, so we get an `if -> exit` branch coverage miss.
+            # This is a workaround to specify that the `else` branch may not be hit (as we don't have `lax no branch`)
+            pass
 
     BaseApiClient.aclose = safe_aclose
     yield
