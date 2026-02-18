@@ -120,7 +120,7 @@ class CassetteContext:
             return []
         if self.vcr is not None:
             bodies = _get_cassette_request_bodies(self.vcr)
-            if bodies:
+            if bodies:  # pragma: no branch
                 return bodies
         path = self._vcr_cassette_path()
         if path.exists():

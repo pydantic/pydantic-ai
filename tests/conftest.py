@@ -140,8 +140,9 @@ def sanitize_filename(name: str, max_len: int) -> str:
     return re.sub('[' + re.escape('<>:"/\\|?*') + ']', '-', name)[:max_len]
 
 
+# Only runs locally when creating snapshots (customize_repr is stubbed in CI)
 @customize_repr
-def _(value: bytes):
+def _(value: bytes):  # pragma: no cover
     """Use IsBytes() for large byte sequences in snapshots."""
     if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
         return 'IsBytes()'
