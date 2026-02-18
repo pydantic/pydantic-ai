@@ -2250,7 +2250,9 @@ class OpenAIStreamedResponse(StreamedResponse):
             if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
                 continue
 
-            # Handle refusal responses (structured output safety filter)
+            # Handle refusal responses (structured output safety filter).
+            # Note: OpenAI sends refusal instead of content (not alongside it), so in practice
+            # text parts won't have been yielded before _has_refusal is set.
             if choice.delta.refusal:
                 self._has_refusal = True
                 self.finish_reason = 'content_filter'
@@ -2658,11 +2660,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield event
 
             elif isinstance(chunk, responses.ResponseRefusalDeltaEvent):
+                # Accumulate refusal text from deltas as a fallback in case the done event is missing.
                 self._has_refusal = True
                 self.finish_reason = 'content_filter'
                 self._refusal_text += chunk.delta
 
             elif isinstance(chunk, responses.ResponseRefusalDoneEvent):
+                # The done event contains the full refusal text, replacing any accumulated deltas.
                 self._has_refusal = True
                 self.finish_reason = 'content_filter'
                 self._refusal_text = chunk.refusal
