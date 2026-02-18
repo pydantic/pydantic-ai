@@ -766,12 +766,12 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
 
     async def tracking_send_request(self_: Any, *args: Any, **kwargs: Any) -> Any:
         request = args[0] if args else kwargs.get('request')
-        if request is not None and hasattr(request, 'root') and hasattr(request.root, 'method'):
+        if request is not None and hasattr(request, 'root') and hasattr(request.root, 'method'):  # pragma: no branch
             methods_called.append(request.root.method)
         return await original_send_request(self_, *args, **kwargs)
 
     with patch.object(ClientSession, 'send_request', tracking_send_request):
-        async with Worker(  # pragma: no branch
+        async with Worker(
             client,
             task_queue=TASK_QUEUE,
             workflows=[ComplexAgentWorkflow],
