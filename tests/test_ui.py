@@ -45,7 +45,6 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
-from pydantic_ai.ui import NativeEvent, UIAdapter, UIEventStream
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
@@ -54,8 +53,11 @@ with try_import() as starlette_import_successful:
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
+    from pydantic_ai.ui import NativeEvent, UIAdapter, UIEventStream
+
 
 pytestmark = [
+    pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
