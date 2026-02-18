@@ -309,6 +309,28 @@ def test_precision_recall_evaluator_from_metrics():
     assert len(pr_result.curves) == 1
 
 
+def test_precision_recall_evaluator_downsamples():
+    """PrecisionRecallEvaluator downsamples when there are more unique thresholds than n_thresholds."""
+    cases = [_make_report_case(f'c{i}', scores={'s': i * 0.1}, assertions={'p': i >= 5}) for i in range(10)]
+    report = _make_report(cases)
+
+    evaluator = PrecisionRecallEvaluator(
+        score_from='scores',
+        score_key='s',
+        positive_from='assertions',
+        positive_key='p',
+        n_thresholds=3,
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    results = evaluator.evaluate(ctx)
+
+    pr_result = results[0]
+    assert isinstance(pr_result, PrecisionRecall)
+    curve = pr_result.curves[0]
+    # With n_thresholds=3, the anchor + 10 unique thresholds = 11 points should be downsampled to 3
+    assert len(curve.points) == 3
+
+
 def test_precision_recall_evaluator_empty():
     report = _make_report([])
     evaluator = PrecisionRecallEvaluator(
@@ -1016,6 +1038,27 @@ def test_roc_auc_evaluator_basic():
     assert scalar.title == 'ROC Curve AUC'
     # Perfect separation: AUC should be 1.0
     assert scalar.value == 1.0
+
+
+def test_roc_auc_evaluator_downsamples():
+    """ROCAUCEvaluator downsamples curve points when there are more than n_thresholds."""
+    cases = [_make_report_case(f'c{i}', scores={'s': i * 0.1}, assertions={'p': i >= 5}) for i in range(10)]
+    report = _make_report(cases)
+
+    evaluator = ROCAUCEvaluator(
+        score_key='s',
+        positive_from='assertions',
+        positive_key='p',
+        n_thresholds=3,
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    results = evaluator.evaluate(ctx)
+
+    line_plot = results[0]
+    assert isinstance(line_plot, LinePlot)
+    roc_curve = line_plot.curves[0]
+    # With n_thresholds=3, the ROC points should be downsampled
+    assert len(roc_curve.points) <= 3
 
 
 def test_roc_auc_evaluator_empty():
