@@ -10,6 +10,7 @@ import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from typing import Final
+from uuid import uuid4
 
 from ..._utils import now_utc
 from ...messages import (
@@ -214,8 +215,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseEvent]:
         tool_call_id = self._builtin_tool_call_ids[part.tool_call_id]
+        # Use a one-off message ID instead of `self.new_message_id()` to avoid
+        # mutating `self.message_id`, which is used as `parent_message_id` for
+        # subsequent tool calls in the same response.
         yield ToolCallResultEvent(
-            message_id=self.new_message_id(),
+            message_id=str(uuid4()),
             type=EventType.TOOL_CALL_RESULT,
             role='tool',
             tool_call_id=tool_call_id,

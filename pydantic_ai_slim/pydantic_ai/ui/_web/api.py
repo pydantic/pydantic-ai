@@ -120,7 +120,7 @@ def create_api_app(
     for label, model_ref in all_models:
         model = infer_model(model_ref)
         # Use original string if provided to preserve openai-chat: vs openai-responses: distinction
-        model_id = model_ref if isinstance(model_ref, str) else f'{model.system}:{model.model_name}'
+        model_id = model_ref if isinstance(model_ref, str) else model.model_id
         if model_id in seen_model_ids:
             continue
         seen_model_ids.add(model_id)

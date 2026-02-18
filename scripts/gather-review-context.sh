@@ -213,6 +213,90 @@ fi | awk -v dir="$CTX/diff" '
   !skip && outfile { print > outfile }
 '
 
+# Annotate commentable diff lines with source line numbers (NL:/OL: prefixes)
+# so the review bot can target inline comments without computing line numbers.
+echo "  - Annotating diffs with source line numbers"
+for diff_file in "$CTX/diff/"*.diff; do
+  [ -f "$diff_file" ] || continue
+  awk '
+    BEGIN { NEAR = 3 }
+
+    # Diff metadata: flush any buffered hunk, pass through
+    /^diff --git/ || /^index / || /^---/ || /^\+\+\+/ ||
+    /^new file/ || /^deleted file/ || /^old mode/ || /^new mode/ ||
+    /^rename / || /^similarity / || /^dissimilarity / || /^Binary / {
+        flush_hunk()
+        print
+        next
+    }
+
+    # Hunk header: flush previous hunk, parse line numbers
+    /^@@ / {
+        flush_hunk()
+        split($2, _o, ","); old_num = substr(_o[1], 2) + 0
+        split($3, _n, ","); new_num = substr(_n[1], 2) + 0
+        hunk_hdr = $0
+        n = 0
+        next
+    }
+
+    # "\ No newline at end of file"
+    /^\\/ {
+        n++; lines[n] = $0; types[n] = "\\"; is_chg[n] = 0
+        next
+    }
+
+    # Hunk body lines
+    {
+        n++; lines[n] = $0
+        c = substr($0, 1, 1)
+        if (c == "+") {
+            types[n] = "+"; lnums[n] = new_num++; is_chg[n] = 1
+        } else if (c == "-") {
+            types[n] = "-"; lnums[n] = old_num++; is_chg[n] = 1
+        } else {
+            types[n] = " "; lnums[n] = new_num++; old_num++; is_chg[n] = 0
+        }
+    }
+
+    function flush_hunk(    i, dist, min_d) {
+        if (n == 0) return
+
+        # Forward pass: context-line distance from nearest preceding change
+        dist = NEAR + 1
+        for (i = 1; i <= n; i++) {
+            if (is_chg[i]) dist = 0
+            else if (types[i] != "\\") { dist++; fwd[i] = dist }
+        }
+        # Backward pass: context-line distance from nearest following change
+        dist = NEAR + 1
+        for (i = n; i >= 1; i--) {
+            if (is_chg[i]) dist = 0
+            else if (types[i] != "\\") { dist++; bwd[i] = dist }
+        }
+
+        print hunk_hdr
+        for (i = 1; i <= n; i++) {
+            if (types[i] == "\\") { print lines[i] }
+            else if (is_chg[i]) {
+                if (types[i] == "+") printf "NL:%d %s\n", lnums[i], lines[i]
+                else                printf "OL:%d %s\n", lnums[i], lines[i]
+            } else {
+                min_d = fwd[i]; if (bwd[i] < min_d) min_d = bwd[i]
+                if (min_d <= NEAR) printf "NL:%d %s\n", lnums[i], lines[i]
+                else print lines[i]
+            }
+        }
+
+        delete lines; delete types; delete lnums
+        delete is_chg; delete fwd; delete bwd
+        n = 0
+    }
+
+    END { flush_hunk() }
+  ' "$diff_file" > "${diff_file}.tmp" && mv "${diff_file}.tmp" "$diff_file"
+done
+
 # List of ALL changed files with change counts + diff file paths
 echo "  - Changed files"
 gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
