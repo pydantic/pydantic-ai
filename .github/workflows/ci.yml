@@ -21,7 +21,7 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -45,7 +45,7 @@ jobs:
   mypy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -60,7 +60,7 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -89,12 +89,24 @@ jobs:
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Use Depot 4-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
+    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Depot outages)
+    runs-on: >-
+      ${{
+        !contains(github.event.pull_request.labels.*.name, 'ci:slow')
+        && matrix.install.name == 'all-extras'
+        && (
+          github.event.pull_request.head.repo.full_name == github.repository
+          || contains(github.event.pull_request.labels.*.name, 'ci:fast')
+        )
+        && 'depot-ubuntu-24.04-4'
+        || 'ubuntu-latest'
+      }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         install:
           - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
@@ -106,7 +118,7 @@ jobs:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -139,17 +151,28 @@ jobs:
 
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Use Depot 4-core runners for maintainers or opted in via 'ci:fast' label
+    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Depot outages)
+    runs-on: >-
+      ${{
+        !contains(github.event.pull_request.labels.*.name, 'ci:slow')
+        && (
+          github.event.pull_request.head.repo.full_name == github.repository
+          || contains(github.event.pull_request.labels.*.name, 'ci:fast')
+        )
+        && 'depot-ubuntu-24.04-4'
+        || 'ubuntu-latest'
+      }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -189,11 +212,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     env:
       CI: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -215,7 +238,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, test-lowest-versions]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # needed for diff-cover
           fetch-depth: 0
@@ -274,7 +297,7 @@ jobs:
       url: https://ai.pydantic.dev
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
       - run: npm install
@@ -316,7 +339,7 @@ jobs:
       statuses: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
       - run: npm install
@@ -368,7 +391,7 @@ jobs:
       package-version: ${{ steps.inspect_package.outputs.version }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:

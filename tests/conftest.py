@@ -19,13 +19,14 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
-from inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
 from pydantic_ai.models import Model
+
+from ._inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 
 __all__ = (
     'IsDatetime',
@@ -370,6 +371,31 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
     original_cached_func.cache_clear()
 
 
+@pytest.fixture(autouse=True, scope='session')
+def patch_google_genai_gc_crash():
+    """Work around google-genai BaseApiClient GC crash.
+
+    BaseApiClient.__del__ schedules aclose() during GC, which crashes when the
+    object was only partially initialized (_async_httpx_client never set).
+    Remove when https://github.com/googleapis/python-genai/issues/2023 closes.
+    """
+    try:
+        from google.genai._api_client import BaseApiClient
+    except ImportError:
+        yield
+        return
+
+    original_aclose = BaseApiClient.aclose
+
+    async def safe_aclose(self: BaseApiClient) -> None:
+        if hasattr(self, '_async_httpx_client'):
+            await original_aclose(self)
+
+    BaseApiClient.aclose = safe_aclose
+    yield
+    BaseApiClient.aclose = original_aclose
+
+
 @pytest.fixture(scope='session')
 def assets_path() -> Path:
     return Path(__file__).parent / 'assets'
@@ -520,7 +546,7 @@ def bedrock_provider():
             )
             yield provider
             provider.client.close()
-        else:
+        else:  # pragma: lax no cover
             bedrock_client = boto3.client(
                 'bedrock-runtime',
                 region_name=os.getenv('AWS_REGION', 'us-east-1'),
@@ -668,3 +694,27 @@ def mock_snapshot_id(mocker: MockerFixture):
         return f'{node_id}:{i}'
 
     return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)
+
+
+@pytest.fixture
+def disable_ssrf_protection_for_vcr():
+    """Disable SSRF protection for VCR compatibility.
+
+    VCR cassettes record requests with the original hostname. Since SSRF protection
+    resolves hostnames to IPs before making requests, we need to disable the validation
+    for VCR tests to match the pre-recorded cassettes.
+
+    This fixture patches validate_and_resolve_url to return the hostname in place
+    of the resolved IP, allowing the request URL to use the original hostname.
+    """
+    from unittest.mock import patch
+
+    from pydantic_ai._ssrf import ResolvedUrl, extract_host_and_port
+
+    async def mock_validate_and_resolve(url: str, allow_local: bool) -> ResolvedUrl:
+        hostname, path, port, is_https = extract_host_and_port(url)
+        # Return hostname in place of resolved IP - this allows VCR matching
+        return ResolvedUrl(resolved_ip=hostname, hostname=hostname, port=port, is_https=is_https, path=path)
+
+    with patch('pydantic_ai._ssrf.validate_and_resolve_url', mock_validate_and_resolve):
+        yield

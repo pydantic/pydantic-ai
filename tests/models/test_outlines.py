@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
@@ -39,7 +38,8 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import IsBytes, IsDatetime, IsStr, try_import
+from .._inline_snapshot import snapshot
+from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     import outlines
@@ -57,7 +57,7 @@ with try_import() as vllm_imports_successful:
     import vllm  # pyright: ignore[reportMissingImports]
 
     # We try to load the vllm model to ensure it is available
-    try:  # pragma: no lax cover
+    try:  # pragma: lax no cover
         vllm.LLM('microsoft/Phi-3-mini-4k-instruct')  # pyright: ignore[reportUnknownMemberType]
     except RuntimeError as e:  # pragma: lax no cover
         if 'Found no NVIDIA driver' in str(e) or 'Device string must not be empty' in str(e):
@@ -127,7 +127,7 @@ def mock_async_model() -> OutlinesModel:
     return OutlinesModel(MockOutlinesAsyncModel(), provider=OutlinesProvider())
 
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def transformers_model() -> OutlinesModel:
     hf_model = transformers.AutoModelForCausalLM.from_pretrained(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         'erwanf/gpt2-mini',
@@ -143,7 +143,7 @@ def transformers_model() -> OutlinesModel:
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def transformers_multimodal_model() -> OutlinesModel:
     hf_model = transformers.LlavaForConditionalGeneration.from_pretrained(  # pyright: ignore[reportUnknownMemberType]
         'trl-internal-testing/tiny-LlavaForConditionalGeneration',
@@ -159,7 +159,7 @@ def transformers_multimodal_model() -> OutlinesModel:
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def llamacpp_model() -> OutlinesModel:  # pragma: lax no cover
     outlines_model_llamacpp = outlines.models.llamacpp.from_llamacpp(
         llama_cpp.Llama.from_pretrained(  # pyright: ignore[reportUnknownMemberType]
@@ -494,7 +494,7 @@ def test_request_image_binary(transformers_multimodal_model: OutlinesModel, bina
                     UserPromptPart(
                         content=[
                             "What's on the image?",
-                            BinaryImage(data=IsBytes(), media_type='image/png'),
+                            IsInstance(BinaryImage),
                         ],
                         timestamp=IsDatetime(),
                     )
@@ -508,7 +508,7 @@ def test_request_image_binary(transformers_multimodal_model: OutlinesModel, bina
 
 
 @skip_if_transformers_imports_unsuccessful
-def test_request_image_url(transformers_multimodal_model: OutlinesModel) -> None:
+def test_request_image_url(transformers_multimodal_model: OutlinesModel, disable_ssrf_protection_for_vcr: None) -> None:
     agent = Agent(transformers_multimodal_model)
     result = agent.run_sync(
         [

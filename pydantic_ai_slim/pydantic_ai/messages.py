@@ -5,7 +5,7 @@ import hashlib
 import mimetypes
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import MimeTypes
@@ -18,7 +18,9 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord
-from typing_extensions import deprecated
+from opentelemetry.util.types import AnyValue
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+from typing_extensions import TypeAliasType, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -33,7 +35,7 @@ _mime_types = MimeTypes()
 _mime_types.read_windows_registry()
 for file in mimetypes.knownfiles:
     if os.path.isfile(file):
-        _mime_types.read(file)
+        _mime_types.read(file)  # pragma: lax no cover
 # TODO check for added mimetypes in Python 3.11 when dropping support for Python 3.10:
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
@@ -50,6 +52,7 @@ _mime_types.add_type('image/webp', '.webp')
 _mime_types.add_type('video/3gpp', '.three_gp')
 _mime_types.add_type('video/x-matroska', '.mkv')
 _mime_types.add_type('video/x-ms-wmv', '.wmv')
+_mime_types.add_type('video/x-flv', '.flv')
 
 # Audio types
 # NOTE: aac is platform specific (linux: audio/x-aac, macos: audio/aac) but x-aac is deprecated https://mimetype.io/audio/aac
@@ -65,6 +68,9 @@ _mime_types.add_type('application/yaml', '.yaml')
 _mime_types.add_type('application/yaml', '.yml')
 # TOML: RFC 9519 (https://www.rfc-editor.org/rfc/rfc9519.html)
 _mime_types.add_type('application/toml', '.toml')
+
+# XML is recognized as `text/xml` on some systems, but it needs to be `application/xml` per RFC 7303 (https://www.rfc-editor.org/rfc/rfc7303.html)
+_mime_types.add_type('application/xml', '.xml')
 
 
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
@@ -104,6 +110,15 @@ FinishReason: TypeAlias = Literal[
     'error',
 ]
 """Reason the model finished generating the response, normalized to OpenTelemetry values."""
+
+ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
+"""Type for the force_download parameter on FileUrl subclasses.
+
+- `False`: The URL is sent directly to providers that support it. For providers that don't,
+  the file is downloaded with SSRF protection (blocks private IPs and cloud metadata).
+- `True`: The file is always downloaded with SSRF protection (blocks private IPs and cloud metadata).
+- `'allow-local'`: The file is always downloaded, allowing private IPs but still blocking cloud metadata.
+"""
 
 ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
 """Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
@@ -152,7 +167,7 @@ def _multi_modal_content_identifier(identifier: str | bytes) -> str:
     return hashlib.sha1(identifier).hexdigest()[:6]
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class FileUrl(ABC):
     """Abstract base class for any URL-based file."""
 
@@ -161,11 +176,13 @@ class FileUrl(ABC):
 
     _: KW_ONLY
 
-    force_download: bool = False
-    """For OpenAI, Google APIs and xAI it:
+    force_download: ForceDownloadMode = False
+    """Controls whether the file is downloaded and how SSRF protection is applied:
 
-    * If True, the file is downloaded and the data is sent to the model as bytes.
-    * If False, the URL is sent directly to the model and no download is performed.
+    * If `False`, the URL is sent directly to providers that support it. For providers that don't,
+      the file is downloaded with SSRF protection (blocks private IPs and cloud metadata).
+    * If `True`, the file is always downloaded with SSRF protection (blocks private IPs and cloud metadata).
+    * If `'allow-local'`, the file is always downloaded, allowing private IPs but still blocking cloud metadata.
     """
 
     vendor_metadata: dict[str, Any] | None = None
@@ -185,20 +202,20 @@ class FileUrl(ABC):
         compare=False, default=None
     )
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `media_type` and `identifier` aliases.
     def __init__(
         self,
         url: str,
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
-    ) -> None:
-        self.url = url
-        self._media_type = media_type
-        self._identifier = identifier
-        self.force_download = force_download
-        self.vendor_metadata = vendor_metadata
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
+        _identifier: str | None = None,
+    ) -> None: ...  # pragma: no cover
 
     @pydantic.computed_field
     @property
@@ -237,7 +254,7 @@ class FileUrl(ABC):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class VideoUrl(FileUrl):
     """A URL to a video."""
 
@@ -249,27 +266,21 @@ class VideoUrl(FileUrl):
     kind: Literal['video-url'] = 'video-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
     def __init__(
         self,
         url: str,
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['video-url'] = 'video-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
-    ) -> None:
-        super().__init__(
-            url=url,
-            force_download=force_download,
-            vendor_metadata=vendor_metadata,
-            media_type=media_type or _media_type,
-            identifier=identifier or _identifier,
-        )
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     def _infer_media_type(self) -> str:
         """Return the media type of the video, based on the url."""
@@ -302,7 +313,7 @@ class VideoUrl(FileUrl):
         return _video_format_lookup[self.media_type]
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class AudioUrl(FileUrl):
     """A URL to an audio file."""
 
@@ -314,27 +325,21 @@ class AudioUrl(FileUrl):
     kind: Literal['audio-url'] = 'audio-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
     def __init__(
         self,
         url: str,
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['audio-url'] = 'audio-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
-    ) -> None:
-        super().__init__(
-            url=url,
-            force_download=force_download,
-            vendor_metadata=vendor_metadata,
-            media_type=media_type or _media_type,
-            identifier=identifier or _identifier,
-        )
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     def _infer_media_type(self) -> str:
         """Return the media type of the audio file, based on the url.
@@ -355,7 +360,7 @@ class AudioUrl(FileUrl):
         return _audio_format_lookup[self.media_type]
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class ImageUrl(FileUrl):
     """A URL to an image."""
 
@@ -367,27 +372,21 @@ class ImageUrl(FileUrl):
     kind: Literal['image-url'] = 'image-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
     def __init__(
         self,
         url: str,
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['image-url'] = 'image-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
-    ) -> None:
-        super().__init__(
-            url=url,
-            force_download=force_download,
-            vendor_metadata=vendor_metadata,
-            media_type=media_type or _media_type,
-            identifier=identifier or _identifier,
-        )
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     def _infer_media_type(self) -> str:
         """Return the media type of the image, based on the url."""
@@ -407,7 +406,7 @@ class ImageUrl(FileUrl):
         return _image_format_lookup[self.media_type]
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class DocumentUrl(FileUrl):
     """The URL of the document."""
 
@@ -419,27 +418,21 @@ class DocumentUrl(FileUrl):
     kind: Literal['document-url'] = 'document-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
     def __init__(
         self,
         url: str,
         *,
         media_type: str | None = None,
         identifier: str | None = None,
-        force_download: bool = False,
+        force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
         kind: Literal['document-url'] = 'document-url',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
-    ) -> None:
-        super().__init__(
-            url=url,
-            force_download=force_download,
-            vendor_metadata=vendor_metadata,
-            media_type=media_type or _media_type,
-            identifier=identifier or _identifier,
-        )
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     def _infer_media_type(self) -> str:
         """Return the media type of the document, based on the url."""
@@ -463,7 +456,13 @@ class DocumentUrl(FileUrl):
             raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
-@dataclass(init=False, repr=False)
+@pydantic_dataclass(
+    repr=False,
+    config=pydantic.ConfigDict(
+        ser_json_bytes='base64',
+        val_json_bytes='base64',
+    ),
+)
 class BinaryContent:
     """Binary content, e.g. an audio or image file."""
 
@@ -494,6 +493,8 @@ class BinaryContent:
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `identifier` alias for the `_identifier` field.
     def __init__(
         self,
         data: bytes,
@@ -504,12 +505,7 @@ class BinaryContent:
         kind: Literal['binary'] = 'binary',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
-    ) -> None:
-        self.data = data
-        self.media_type = media_type
-        self._identifier = identifier or _identifier
-        self.vendor_metadata = vendor_metadata
-        self.kind = kind
+    ) -> None: ...  # pragma: no cover
 
     @staticmethod
     def narrow_type(bc: BinaryContent) -> BinaryContent | BinaryImage:
@@ -617,26 +613,33 @@ class BinaryContent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@pydantic_dataclass(
+    repr=False,
+    config=pydantic.ConfigDict(
+        ser_json_bytes='base64',
+        val_json_bytes='base64',
+    ),
+)
 class BinaryImage(BinaryContent):
     """Binary content that's guaranteed to be an image."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `identifier` alias for the `_identifier` field.
     def __init__(
         self,
         data: bytes,
         *,
-        media_type: str,
+        media_type: ImageMediaType | str,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
-        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         kind: Literal['binary'] = 'binary',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _identifier: str | None = None,
-    ):
-        super().__init__(
-            data=data, media_type=media_type, identifier=identifier or _identifier, vendor_metadata=vendor_metadata
-        )
+    ) -> None: ...  # pragma: no cover
 
+    def __post_init__(self):
         if not self.is_image:
-            raise ValueError('`BinaryImage` must be have a media type that starts with "image/"')  # pragma: no cover
+            raise ValueError('`BinaryImage` must have a media type that starts with "image/"')
 
 
 @dataclass
@@ -663,7 +666,14 @@ class CachePoint:
     * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
-MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
+MULTI_MODAL_CONTENT_TYPES = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
+"""Tuple of multi-modal content types for use with isinstance() checks."""
+
+MultiModalContent = Annotated[
+    ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent, pydantic.Discriminator('kind')
+]
+"""Union of all multi-modal content types with a discriminator for Pydantic validation."""
+
 UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
 
@@ -677,7 +687,7 @@ class ToolReturn:
     - Optional metadata for application use
     """
 
-    return_value: Any
+    return_value: ToolReturnContent
     """The return value to be used in the tool response."""
 
     _: KW_ONLY
@@ -729,6 +739,42 @@ _video_format_lookup: dict[str, VideoFormat] = {
     'video/3gpp': 'three_gp',
 }
 
+_kind_to_modality_lookup: dict[str, Literal['image', 'audio', 'video']] = {
+    'image-url': 'image',
+    'audio-url': 'audio',
+    'video-url': 'video',
+}
+
+
+def _infer_modality_from_media_type(media_type: str) -> Literal['image', 'audio', 'video'] | None:
+    """Infer modality from media type for OTel GenAI semantic conventions."""
+    if media_type.startswith('image/'):
+        return 'image'
+    elif media_type.startswith('audio/'):
+        return 'audio'
+    elif media_type.startswith('video/'):
+        return 'video'
+    return None
+
+
+def _convert_binary_to_otel_part(
+    media_type: str, base64_content: Callable[[], str], settings: InstrumentationSettings
+) -> _otel_messages.BlobPart | _otel_messages.BinaryDataPart:
+    """Convert binary content to OTel message part based on version."""
+    if settings.version >= 4:
+        blob_part = _otel_messages.BlobPart(type='blob', mime_type=media_type)
+        modality = _infer_modality_from_media_type(media_type)
+        if modality is not None:
+            blob_part['modality'] = modality
+        if settings.include_content and settings.include_binary_content:
+            blob_part['content'] = base64_content()
+        return blob_part
+    else:
+        converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=media_type)
+        if settings.include_content and settings.include_binary_content:
+            converted_part['content'] = base64_content()
+        return converted_part
+
 
 @dataclass(repr=False)
 class UserPromptPart:
@@ -770,17 +816,27 @@ class UserPromptPart:
                     _otel_messages.TextPart(type='text', **({'content': part} if settings.include_content else {}))
                 )
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
-                parts.append(
-                    _otel_messages.MediaUrlPart(
-                        type=part.kind,
-                        **{'url': part.url} if settings.include_content else {},
+                if settings.version >= 4:
+                    uri_part = _otel_messages.UriPart(type='uri')
+                    modality = _kind_to_modality_lookup.get(part.kind)
+                    if modality is not None:
+                        uri_part['modality'] = modality
+                    try:  # don't fail the whole message if media type can't be inferred for some reason, just omit it
+                        uri_part['mime_type'] = part.media_type
+                    except ValueError:
+                        pass
+                    if settings.include_content:
+                        uri_part['uri'] = part.url
+                    parts.append(uri_part)
+                else:
+                    parts.append(
+                        _otel_messages.MediaUrlPart(
+                            type=part.kind,
+                            **{'url': part.url} if settings.include_content else {},
+                        )
                     )
-                )
             elif isinstance(part, BinaryContent):
-                converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.media_type)
-                if settings.include_content and settings.include_binary_content:
-                    converted_part['content'] = part.base64
-                parts.append(converted_part)
+                parts.append(_convert_binary_to_otel_part(part.media_type, lambda p=part: p.base64, settings))
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel
                 pass
@@ -795,6 +851,17 @@ tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
     Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 
+if TYPE_CHECKING:
+    # Simpler type for static analysis - recursive TypeAliasType with Any produces spurious Unknown types
+    ToolReturnContent: TypeAlias = MultiModalContent | Sequence[Any] | Mapping[str, Any] | Any
+else:
+    # Recursive type for runtime Pydantic validation - enables automatic reconstruction of
+    # BinaryContent/FileUrl objects nested inside dicts/lists during deserialization
+    ToolReturnContent = TypeAliasType(
+        'ToolReturnContent',
+        MultiModalContent | Sequence['ToolReturnContent'] | Mapping[str, 'ToolReturnContent'] | Any,
+    )
+
 
 @dataclass(repr=False)
 class BaseToolReturnPart:
@@ -803,7 +870,7 @@ class BaseToolReturnPart:
     tool_name: str
     """The name of the "tool" was called."""
 
-    content: Any
+    content: ToolReturnContent
     """The return value."""
 
     tool_call_id: str = field(default_factory=_generate_tool_call_id)
@@ -837,14 +904,17 @@ class BaseToolReturnPart:
             return {'return_value': json_content}
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        body: AnyValue = {
+            'role': 'tool',
+            'id': self.tool_call_id,
+            'name': self.tool_name,
+        }
+        if settings.include_content:
+            body['content'] = self.content  # pyright: ignore[reportArgumentType]
+
         return LogRecord(
+            body=body,
             attributes={'event.name': 'gen_ai.tool.message'},
-            body={
-                **({'content': self.content} if settings.include_content else {}),
-                'role': 'tool',
-                'id': self.tool_call_id,
-                'name': self.tool_name,
-            },
         )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
@@ -1472,10 +1542,9 @@ class ModelResponse:
                     )
                 )
             elif isinstance(part, FilePart):
-                converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.content.media_type)
-                if settings.include_content and settings.include_binary_content:
-                    converted_part['content'] = part.content.base64
-                parts.append(converted_part)
+                parts.append(
+                    _convert_binary_to_otel_part(part.content.media_type, lambda p=part: p.content.base64, settings)
+                )
             elif isinstance(part, BaseToolCallPart):
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
                 if isinstance(part, BuiltinToolCallPart):

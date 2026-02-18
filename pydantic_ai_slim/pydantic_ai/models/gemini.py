@@ -580,7 +580,7 @@ class GeminiSafetySettings(TypedDict):
     """Safety settings options for Gemini model request.
 
     See [Gemini API docs](https://ai.google.dev/gemini-api/docs/safety-settings) for safety category and threshold descriptions.
-    For an example on how to use `GeminiSafetySettings`, see [here](../../agents.md#model-specific-settings).
+    For an example on how to use `GeminiSafetySettings`, see [here](../../agent.md#model-specific-settings).
     """
 
     category: Literal[

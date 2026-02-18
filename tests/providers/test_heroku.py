@@ -2,12 +2,12 @@ import re
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
+from .._inline_snapshot import snapshot
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:

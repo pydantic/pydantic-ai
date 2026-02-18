@@ -13,7 +13,7 @@ from typing import Any
 from pydantic import ImportString, TypeAdapter, ValidationError
 from typing_inspection.introspection import get_literal_values
 
-from .. import __version__
+from .. import __version__, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..builtin_tools import BUILTIN_TOOLS_REQUIRING_CONFIG, SUPPORTED_BUILTIN_TOOLS
@@ -21,6 +21,7 @@ from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse
 from ..models import KnownModelName, infer_model
 from ..output import OutputDataT
+from ..settings import ModelSettings
 
 try:
     import argcomplete
@@ -130,7 +131,7 @@ def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
 def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
     """Run the CLI and return the exit code for the process."""
     # we don't want to autocomplete or list models that don't include the provider,
-    # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
+    # e.g. we want to show `openai:gpt-5.2` but not `gpt-5.2`
     qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
     args_list = list(args_list) if args_list is not None else sys.argv[1:]
 
@@ -159,7 +160,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         '--model',
         action='append',
         dest='models',
-        help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-5). '
+        help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-6). '
         'Format: "provider:model_name". First model is preselected in UI; additional models appear as options.',
     )
     model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
@@ -178,6 +179,10 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         help="System instructions. When `--agent` is specified, these are additional to the agent's existing instructions "
         'and will be passed as extra instructions to each run.',
     )
+    parser.add_argument(
+        '--html-source',
+        help='URL or file path for the chat UI HTML. If not specified, the UI is downloaded from a CDN.',
+    )
     parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
     parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
     argcomplete.autocomplete(parser)
@@ -193,6 +198,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         tools=args.tools or [],
         instructions=args.instructions,
         default_model=default_model,
+        html_source=args.html_source,
     )
 
 
@@ -227,7 +233,7 @@ subcommands:
     model_arg = parser.add_argument(
         '-m',
         '--model',
-        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "{default_model}".',
+        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-6". Defaults to "{default_model}".',
     )
     model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
     parser.add_argument(
@@ -281,7 +287,7 @@ def _run_chat_command(
             console.print(f'Error initializing [magenta]{args.model}[/magenta]:\n[red]{e}[/red]')
             return 1
 
-    model_name = agent.model if isinstance(agent.model, str) else f'{agent.model.system}:{agent.model.model_name}'
+    model_name = agent.model if isinstance(agent.model, str) else agent.model.model_id
     if args.agent and model_arg_set:
         console.print(
             f'{name_version} using custom agent [magenta]{args.agent}[/magenta] with [magenta]{model_name}[/magenta]',
@@ -322,6 +328,8 @@ async def run_chat(
     config_dir: Path | None = None,
     deps: AgentDepsT = None,
     message_history: Sequence[ModelMessage] | None = None,
+    model_settings: ModelSettings | None = None,
+    usage_limits: _usage.UsageLimits | None = None,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -348,7 +356,9 @@ async def run_chat(
                 return exit_value
         else:
             try:
-                messages = await ask_agent(agent, text, stream, console, code_theme, deps, messages)
+                messages = await ask_agent(
+                    agent, text, stream, console, code_theme, deps, messages, model_settings, usage_limits
+                )
             except CancelledError:  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
             except Exception as e:  # pragma: no cover
@@ -366,6 +376,8 @@ async def ask_agent(
     code_theme: str,
     deps: AgentDepsT = None,
     messages: Sequence[ModelMessage] | None = None,
+    model_settings: ModelSettings | None = None,
+    usage_limits: _usage.UsageLimits | None = None,
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
@@ -377,7 +389,9 @@ async def ask_agent(
         return result.all_messages()
 
     with status, ExitStack() as stack:
-        async with agent.iter(prompt, message_history=messages, deps=deps) as agent_run:
+        async with agent.iter(
+            prompt, message_history=messages, deps=deps, model_settings=model_settings, usage_limits=usage_limits
+        ) as agent_run:
             live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
             async for node in agent_run:
                 if Agent.is_model_request_node(node):
