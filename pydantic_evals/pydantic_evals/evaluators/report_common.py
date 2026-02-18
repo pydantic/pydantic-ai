@@ -389,5 +389,7 @@ class KolmogorovSmirnovEvaluator(ReportEvaluator):
 
 DEFAULT_REPORT_EVALUATORS: tuple[type[ReportEvaluator[Any, Any, Any]], ...] = (
     ConfusionMatrixEvaluator,
+    KolmogorovSmirnovEvaluator,
     PrecisionRecallEvaluator,
+    ROCAUCEvaluator,
 )

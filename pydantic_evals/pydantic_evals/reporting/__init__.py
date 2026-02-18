@@ -48,6 +48,7 @@ __all__ = (
     'ReportCaseAggregate',
     'ReportAnalysis',
     'ConfusionMatrix',
+    'LinePlot',
     'PrecisionRecall',
     'PrecisionRecallCurve',
     'PrecisionRecallPoint',
