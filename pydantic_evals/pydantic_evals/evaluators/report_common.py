@@ -86,7 +86,7 @@ def _extract_scored_cases(
 
 def _downsample(points: list[tuple[float, ...]], n: int) -> list[tuple[float, ...]]:
     """Downsample a list of points to at most n evenly spaced entries."""
-    if len(points) <= n:
+    if len(points) <= n or n <= 1:
         return points
     indices = sorted({int(i * (len(points) - 1) / (n - 1)) for i in range(n)})
     return [points[i] for i in indices]
@@ -215,7 +215,7 @@ class PrecisionRecallEvaluator(ReportEvaluator):
         auc = _trapezoidal_auc(auc_points)
 
         # Downsample for display
-        if len(all_points) <= self.n_thresholds:
+        if len(all_points) <= self.n_thresholds or self.n_thresholds <= 1:
             display_points = all_points
         else:
             indices = sorted(
