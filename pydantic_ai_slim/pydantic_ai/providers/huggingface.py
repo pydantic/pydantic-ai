@@ -40,7 +40,10 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             from huggingface_hub.constants import INFERENCE_PROXY_TEMPLATE
 
             return INFERENCE_PROXY_TEMPLATE.format(provider=self._client.provider)
-        return ''
+        raise UserError(
+            'Unable to determine base URL for HuggingFace provider. '
+            'Please provide `base_url`, `provider_name`, or a pre-configured `hf_client`.'
+        )
 
     @property
     def client(self) -> AsyncInferenceClient:
@@ -94,7 +97,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             api_key: The API key to use for authentication, if not provided, the `HF_TOKEN` environment variable
                 will be used if available.
             hf_client: An existing
-                [`AsyncInferenceClient`](https://huggingface.co/docs/huggingface_hub/v0.29.3/en/package_reference/inference_client#huggingface_hub.AsyncInferenceClient)
+                [`AsyncInferenceClient`](https://huggingface.co/docs/huggingface_hub/en/package_reference/inference_client#huggingface_hub.AsyncInferenceClient)
                 client to use. If not provided, a new instance will be created.
             http_client: (currently ignored) An existing `httpx.AsyncClient` to use for making HTTP requests.
             provider_name: Name of the provider to use for inference. available providers can be found in the [HF Inference Providers documentation](https://huggingface.co/docs/inference-providers/index#partners).

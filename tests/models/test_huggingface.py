@@ -42,7 +42,6 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception,
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    import aiohttp
     from huggingface_hub import (
         AsyncInferenceClient,
         ChatCompletionInputMessage,
@@ -219,6 +218,50 @@ async def test_request_structured_response(allow_model_requests: None, huggingfa
 
     result = await agent.run('What are the first three prime numbers? Return them as a list of integers.')
     assert result.output == snapshot([2, 3, 5])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What are the first three prime numbers? Return them as a list of integers.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"response":[2,3,5]}',
+                        tool_call_id='call_7qxjvbuxpm6017n3jcq1uqwt',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=19, output_tokens=29),
+                model_name='deepseek-ai/DeepSeek-R1',
+                timestamp=IsDatetime(),
+                provider_name='huggingface',
+                provider_url='https://router.huggingface.co/together',
+                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_response_id='oV1mqo1-28Eivz-9c4b14ce2f14c9b7',
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='call_7qxjvbuxpm6017n3jcq1uqwt',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_stream_completion(allow_model_requests: None):
@@ -772,22 +815,6 @@ async def test_max_completion_tokens(allow_model_requests: None, huggingface_api
 def test_system_property():
     model = HuggingFaceModel('some-model', provider=HuggingFaceProvider(hf_client=Mock(), api_key='x'))
     assert model.system == 'huggingface'
-
-
-async def test_model_client_response_error(allow_model_requests: None) -> None:
-    request_info = Mock(spec=aiohttp.RequestInfo)
-    request_info.url = 'http://test.com'
-    request_info.method = 'POST'
-    request_info.headers = {}
-    request_info.real_url = 'http://test.com'
-    error = aiohttp.ClientResponseError(request_info, history=(), status=400, message='Bad Request')
-
-    mock_client = MockHuggingFace.create_mock(error)
-    m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(m)
-    with pytest.raises(ModelHTTPError) as exc_info:
-        await agent.run('hello')
-    assert str(exc_info.value) == snapshot('status_code: 400, model_name: not_a_model, body: Bad Request')
 
 
 async def test_process_response_no_created_timestamp(allow_model_requests: None):

@@ -162,7 +162,8 @@ def test_huggingface_provider_base_url_fallback():
     mock_client.model = None
     mock_client.provider = None
     provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
-    assert provider.base_url == ''
+    with pytest.raises(UserError, match='Unable to determine base URL'):
+        provider.base_url
 
 
 def test_huggingface_provider_model_profile(mocker: MockerFixture):
