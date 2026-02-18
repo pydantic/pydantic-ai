@@ -777,7 +777,7 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
             workflows=[ComplexAgentWorkflow],
             plugins=[AgentPlugin(complex_temporal_agent)],
         ):
-            output = await client.execute_workflow(
+            output = await client.execute_workflow(  # pragma: no branch
                 ComplexAgentWorkflow.run,
                 args=[
                     'Tell me: the capital of the country; the weather there; the product name',
@@ -792,6 +792,41 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
     assert methods_called.count('tools/list') == 1
     # call_tool should still make a request each time (not cached)
     assert methods_called.count('tools/call') == 1
+
+
+async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None, client: Client):
+    """Verify that wrapper-level caching is skipped when cache_tools=False.
+
+    With caching disabled, the TemporalMCPServer wrapper should not populate
+    its _cached_tool_defs, so every get_tools call falls through to the activity.
+    """
+    mcp_toolset = next(ts for ts in complex_temporal_agent.toolsets if isinstance(ts, TemporalMCPServer))
+    server = mcp_toolset._server  # pyright: ignore[reportPrivateUsage]
+
+    original_cache_tools = server.cache_tools
+    server.cache_tools = False
+
+    try:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[ComplexAgentWorkflow],
+            plugins=[AgentPlugin(complex_temporal_agent)],
+        ):
+            output = await client.execute_workflow(
+                ComplexAgentWorkflow.run,
+                args=[
+                    'Tell me: the capital of the country; the weather there; the product name',
+                    Deps(country='Mexico'),
+                ],
+                id=f'{ComplexAgentWorkflow.__name__}_no_cache_test',
+                task_queue=TASK_QUEUE,
+            )
+        assert output is not None
+        # Wrapper-level cache should NOT be populated when cache_tools=False
+        assert mcp_toolset._cached_tool_defs is None  # pyright: ignore[reportPrivateUsage]
+    finally:
+        server.cache_tools = original_cache_tools
 
 
 async def test_complex_agent_run(allow_model_requests: None):

@@ -585,6 +585,42 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
     )
 
 
+async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None, dbos: DBOS) -> None:
+    """Verify that wrapper-level caching is skipped when cache_tools=False.
+
+    With caching disabled, every model request should be preceded by a get_tools step,
+    rather than only the first one populating the cache.
+    """
+    mcp_toolset = next(ts for ts in complex_dbos_agent.toolsets if isinstance(ts, DBOSMCPServer))
+    server = mcp_toolset._server  # pyright: ignore[reportPrivateUsage]
+
+    original_cache_tools = server.cache_tools
+    server.cache_tools = False
+
+    try:
+        wfid = str(uuid.uuid4())
+        with SetWorkflowID(wfid):
+            result = await complex_dbos_agent.run(
+                'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
+            )
+        assert result.output == snapshot(
+            Response(
+                answers=[
+                    Answer(label='Capital of the country', answer='Mexico City'),
+                    Answer(label='Weather in the capital', answer='Sunny'),
+                    Answer(label='Product Name', answer='Pydantic AI'),
+                ]
+            )
+        )
+
+        steps = await dbos.list_workflow_steps_async(wfid)
+        step_names = [step['function_name'] for step in steps]
+        # Without caching, get_tools should be called 3 times (once per model request)
+        assert step_names.count('complex_agent__mcp_server__mcp.get_tools') == 3
+    finally:
+        server.cache_tools = original_cache_tools
+
+
 # Test sequential tool call works
 async def test_complex_agent_run_sequential_tool(allow_model_requests: None, dbos: DBOS) -> None:
     # Set a workflow ID for testing list steps
