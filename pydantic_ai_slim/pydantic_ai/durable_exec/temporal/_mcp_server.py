@@ -55,6 +55,6 @@ class TemporalMCPServer(TemporalMCPToolset[AgentDepsT]):
             return {name: self.tool_for_tool_def(td) for name, td in self._cached_tool_defs.items()}
 
         result = await super().get_tools(ctx)
-        if self._server.cache_tools:
+        if self._server.cache_tools:  # pragma: no branch
             self._cached_tool_defs = {name: tool.tool_def for name, tool in result.items()}
         return result

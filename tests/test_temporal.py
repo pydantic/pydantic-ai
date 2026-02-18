@@ -771,13 +771,13 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
         return await original_send_request(self_, *args, **kwargs)
 
     with patch.object(ClientSession, 'send_request', tracking_send_request):
-        async with Worker(  # pragma: no branch
+        async with Worker(
             client,
             task_queue=TASK_QUEUE,
             workflows=[ComplexAgentWorkflow],
             plugins=[AgentPlugin(complex_temporal_agent)],
         ):
-            output = await client.execute_workflow(
+            coro = client.execute_workflow(
                 ComplexAgentWorkflow.run,
                 args=[
                     'Tell me: the capital of the country; the weather there; the product name',
@@ -786,6 +786,7 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
                 id=f'{ComplexAgentWorkflow.__name__}_cache_test',
                 task_queue=TASK_QUEUE,
             )
+            output = await coro  # pragma: no branch
         assert output is not None
 
     # 3 get_tools calls are made, but only 1 results in an actual tools/list MCP request
