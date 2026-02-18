@@ -321,7 +321,7 @@ class TestGoogleUnifiedThinking:
         assert result is None
 
     def test_thinking_false_gemini3(self, google_thinking_profile: ModelProfile):
-        """thinking=False on Gemini 3 → thinking_level: LOW + include_thoughts: False."""
+        """thinking=False on Gemini 3 → thinking_level: MINIMAL + include_thoughts: False."""
         model = GoogleModel.__new__(GoogleModel)
         model._model_name = 'gemini-3-flash'
         model._profile = google_thinking_profile
@@ -329,7 +329,7 @@ class TestGoogleUnifiedThinking:
         settings: GoogleModelSettings = {'thinking': False}
         result = model._resolve_thinking_config(settings)
 
-        assert result == {'thinking_level': ThinkingLevel.LOW, 'include_thoughts': False}
+        assert result == {'thinking_level': ThinkingLevel.MINIMAL, 'include_thoughts': False}
 
     @pytest.mark.parametrize('effort', ['low', 'medium', 'high'])
     def test_effort_maps_to_level_gemini3(self, google_thinking_profile: ModelProfile, effort: str):

@@ -287,7 +287,7 @@ class GoogleModel(Model):
 
         if not resolved.enabled:
             if uses_thinking_level:
-                return {'thinking_level': ThinkingLevel.LOW, 'include_thoughts': False}
+                return {'thinking_level': ThinkingLevel.MINIMAL, 'include_thoughts': False}
             return {'thinking_budget': 0}
 
         result: ThinkingConfigDict = {}
