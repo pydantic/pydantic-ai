@@ -17,6 +17,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FinalResultEvent,
@@ -634,8 +635,6 @@ async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
     )
 
 
-<<<<<<< send-multimodal-tool-results
-=======
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
 ):
@@ -704,7 +703,6 @@ async def test_image_as_binary_content_tool_response(
     )
 
 
->>>>>>> main
 @pytest.mark.parametrize('media_type', ['audio/wav', 'audio/mpeg'])
 async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
