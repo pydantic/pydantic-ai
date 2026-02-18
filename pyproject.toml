@@ -112,9 +112,8 @@ dev = [
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
-    "pip>=25.2",
+    "pip>=26.0",
     "genai-prices>=0.0.28",
-    "mcp-run-python>=0.0.20",
     "brotli>=1.2.0",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
