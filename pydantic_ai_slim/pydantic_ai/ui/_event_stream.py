@@ -309,6 +309,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case FilePart():  # pragma: no branch
                 async for e in self.handle_file(part):
                     yield e
+            case _:  # pragma: no cover
+                # URL types (ImageUrl, AudioUrl, VideoUrl, DocumentUrl) are passed through
+                pass
 
     async def handle_part_delta(self, event: PartDeltaEvent) -> AsyncIterator[EventT]:
         """Handle a PartDeltaEvent.
@@ -370,6 +373,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case BuiltinToolReturnPart() | FilePart():  # pragma: no cover
                 # These don't have deltas, so they don't need to be ended.
+                pass
+            case _:  # pragma: no cover
+                # URL types (ImageUrl, AudioUrl, VideoUrl, DocumentUrl) don't have deltas
                 pass
 
     async def before_stream(self) -> AsyncIterator[EventT]:

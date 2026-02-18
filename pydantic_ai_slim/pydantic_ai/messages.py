@@ -194,6 +194,12 @@ class FileUrl(ABC):
     - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    This is set when the URL is part of a model response to identify the originating provider.
+    """
+
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
         compare=False, default=None
     )
@@ -212,6 +218,7 @@ class FileUrl(ABC):
         identifier: str | None = None,
         force_download: ForceDownloadMode = False,
         vendor_metadata: dict[str, Any] | None = None,
+        provider_name: str | None = None,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
@@ -1329,9 +1336,30 @@ class BuiltinToolCallPart(BaseToolCallPart):
     """Part type identifier, this is available on all parts as a discriminator."""
 
 
+def _response_part_discriminator(v: Any) -> str:
+    """Discriminator for ModelResponsePart that handles both part_kind and kind fields.
+
+    Response parts (TextPart, ToolCallPart, etc.) use 'part_kind'.
+    URL types (ImageUrl, AudioUrl, etc.) use 'kind'.
+    """
+    if isinstance(v, dict):
+        d = cast('dict[str, Any]', v)
+        return d.get('part_kind') or d.get('kind') or ''
+    return getattr(v, 'part_kind', None) or getattr(v, 'kind', None) or ''
+
+
 ModelResponsePart = Annotated[
-    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
-    pydantic.Discriminator('part_kind'),
+    Annotated[TextPart, pydantic.Tag('text')]
+    | Annotated[ToolCallPart, pydantic.Tag('tool-call')]
+    | Annotated[BuiltinToolCallPart, pydantic.Tag('builtin-tool-call')]
+    | Annotated[BuiltinToolReturnPart, pydantic.Tag('builtin-tool-return')]
+    | Annotated[ThinkingPart, pydantic.Tag('thinking')]
+    | Annotated[FilePart, pydantic.Tag('file')]
+    | Annotated[ImageUrl, pydantic.Tag('image-url')]
+    | Annotated[AudioUrl, pydantic.Tag('audio-url')]
+    | Annotated[VideoUrl, pydantic.Tag('video-url')]
+    | Annotated[DocumentUrl, pydantic.Tag('document-url')],
+    pydantic.Discriminator(_response_part_discriminator),
 ]
 """A message part returned by a model."""
 

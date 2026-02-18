@@ -861,7 +861,11 @@ def test_dynamic_tool_use_messages():
 
     r = agent.run_sync('', deps=1)
     assert r.output == snapshot('done')
-    message_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in r.all_messages()]
+    # Use getattr since URL types in ModelResponsePart use 'kind' not 'part_kind'
+    message_part_kinds = [
+        (m.kind, [getattr(p, 'part_kind', None) or getattr(p, 'kind', 'unknown') for p in m.parts])
+        for m in r.all_messages()
+    ]
     assert message_part_kinds == snapshot(
         [
             ('request', ['user-prompt']),

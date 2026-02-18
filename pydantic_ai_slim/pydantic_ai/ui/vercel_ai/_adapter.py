@@ -473,6 +473,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             call_provider_metadata=call_provider_metadata,
                         )
                     )
+            elif isinstance(part, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):  # pragma: no cover
+                # URL types in model responses are passed through as-is
+                pass
             else:
                 assert_never(part)
 

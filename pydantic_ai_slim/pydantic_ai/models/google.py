@@ -939,7 +939,7 @@ class GeminiStreamedResponse(StreamedResponse):
         assert self._code_execution_tool_call_id is not None
         return _map_code_execution_result(code_execution_result, self.provider_name, self._code_execution_tool_call_id)
 
-    def _handle_executable_code_streaming(self, executable_code: ExecutableCode) -> ModelResponsePart:
+    def _handle_executable_code_streaming(self, executable_code: ExecutableCode) -> BuiltinToolCallPart:
         """Handle executable code for streaming responses.
 
         Returns a BuiltinToolCallPart for file search or code execution.
@@ -1003,6 +1003,10 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
     thinking_part_signature: str | None = None
     function_call_requires_signature: bool = True
     for item in m.parts:
+        # URL types in model responses are passed through as-is
+        if isinstance(item, FileUrl):  # pragma: no cover
+            continue
+
         part: PartDict = {}
         if (
             item.provider_details
