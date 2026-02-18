@@ -614,7 +614,10 @@ class GroqStreamedResponse(StreamedResponse):
                         tool_name=failed_generation.name,
                         args=failed_generation.arguments,
                     )
-                elif failed_generation:
+                elif failed_generation:  # pragma: no cover
+                    # This branch is not covered because when streaming, the non-tool call text would already
+                    # have streamed before the `tool_use_failed` error which comes with `failed_generation=''`,
+                    # but we keep this here for (hypothetical?) cases where that field would not be empty.
                     for event in self._parts_manager.handle_text_delta(
                         vendor_part_id='tool_use_failed',
                         content=failed_generation,
