@@ -136,6 +136,18 @@ def deserialize(cassette_string: str) -> dict[str, Any]:
     return cassette_dict
 
 
+def _scrub_form_body(body: str) -> str:
+    """Scrub sensitive keys from an application/x-www-form-urlencoded body."""
+    query_params = urllib.parse.parse_qs(body)
+    scrubbed = any(key in query_params for key in ('client_id', 'client_secret', 'refresh_token'))
+    if not scrubbed:
+        return body
+    for key in ('client_id', 'client_secret', 'refresh_token'):
+        if key in query_params:
+            query_params[key] = ['scrubbed']
+    return urllib.parse.urlencode(query_params, doseq=True)
+
+
 def serialize(cassette_dict: Any) -> str:  # pragma: lax no cover
     """Serialize a VCR cassette to YAML format.
 
@@ -205,11 +217,7 @@ def serialize(cassette_dict: Any) -> str:  # pragma: lax no cover
                         new_body = json.dumps(data['parsed_body'])
                         headers['content-length'] = [str(len(new_body.encode('utf-8')))]
             if content_type == ['application/x-www-form-urlencoded']:
-                query_params = urllib.parse.parse_qs(data['body'])
-                for key in ['client_id', 'client_secret', 'refresh_token']:  # pragma: no cover
-                    if key in query_params:
-                        query_params[key] = ['scrubbed']
-                        data['body'] = urllib.parse.urlencode(query_params)
+                data['body'] = _scrub_form_body(data['body'])
 
     # Use our custom dumper
     return yaml.dump(cassette_dict, Dumper=_LiteralDumper, allow_unicode=True, width=120)
