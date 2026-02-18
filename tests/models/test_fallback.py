@@ -1463,7 +1463,7 @@ async def test_fallback_streaming_pinned_continuation_non_fallback_error_propaga
         raise PotatoException('not a fallback error')
         yield ''  # pragma: no cover
 
-    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:  # pragma: no cover
         nonlocal fallback_calls
         fallback_calls += 1
         yield 'fallback response'
@@ -1688,3 +1688,31 @@ async def test_fallback_stream_stamp_with_existing_metadata() -> None:
     # Fallback routing info goes in metadata, not provider_details
     assert streamed_response.provider_details == snapshot({'existing_key': 'existing_value'})
     assert streamed_response.metadata == snapshot({'__pydantic_ai__': {'fallback_model_name': 'primary'}})
+
+
+async def test_fallback_stamp_continuation_with_existing_metadata() -> None:
+    """When the model response already has metadata, _stamp_continuation merges into it."""
+    call_count = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[TextPart('paused')],
+                state='suspended',
+                metadata={'provider_key': 'provider_value'},
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    primary_model = FunctionModel(primary, model_name='primary')
+    model = FallbackModel(primary_model)
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    params = ModelRequestParameters()
+
+    resp = await model.request(messages, None, params)
+    assert resp.state == 'suspended'
+    assert resp.metadata == snapshot(
+        {'provider_key': 'provider_value', '__pydantic_ai__': {'fallback_model_name': 'primary'}}
+    )
