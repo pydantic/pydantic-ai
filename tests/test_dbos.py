@@ -844,10 +844,9 @@ async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_
     with pytest.raises(Exception) as exc_info:
         await simple_dbos_agent.run('What is the capital of Mexico?', event_stream_handler=simple_event_stream_handler)
 
-    assert (
-        "local object 'test_dbos_agent_run_in_workflow_with_event_stream_handler.<locals>.simple_event_stream_handler'"
-        in str(exc_info.value)
-    )
+    # 3.14+: _pickle.PicklingError("Can't pickle local object <function ...>")
+    # <=3.13: AttributeError("Can't get local object '...<locals>...'")
+    assert 'local object' in str(exc_info.value) and 'simple_event_stream_handler' in str(exc_info.value)
 
 
 async def test_dbos_agent_run_in_workflow_with_model(allow_model_requests: None, dbos: DBOS):
