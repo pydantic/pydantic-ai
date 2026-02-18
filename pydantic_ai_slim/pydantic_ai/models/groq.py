@@ -689,8 +689,8 @@ class _GroqToolUseFailedError(BaseModel):
 
 
 def _parse_tool_use_failed_error(body: Any) -> _GroqToolUseFailedGeneration | str | None:
-    if not isinstance(body, dict):  # pragma: no branch
-        return None
+    if not isinstance(body, dict):
+        return None  # pragma: no cover
 
     try:
         error = _GroqToolUseFailedError.model_validate(body)
