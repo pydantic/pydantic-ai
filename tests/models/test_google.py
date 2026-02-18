@@ -13,7 +13,6 @@ from typing import Any, cast
 
 import pytest
 from httpx import AsyncClient as HttpxAsyncClient, Timeout
-from inline_snapshot import Is, snapshot
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
@@ -77,6 +76,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
+from .._inline_snapshot import Is, snapshot
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 

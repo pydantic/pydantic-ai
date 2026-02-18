@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
@@ -40,6 +39,7 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
@@ -128,7 +128,7 @@ def mock_async_model() -> OutlinesModel:
     return OutlinesModel(MockOutlinesAsyncModel(), provider=OutlinesProvider())
 
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def transformers_model() -> OutlinesModel:
     hf_model = transformers.AutoModelForCausalLM.from_pretrained(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         'erwanf/gpt2-mini',
@@ -144,7 +144,7 @@ def transformers_model() -> OutlinesModel:
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def transformers_multimodal_model() -> OutlinesModel:
     hf_model = transformers.LlavaForConditionalGeneration.from_pretrained(  # pyright: ignore[reportUnknownMemberType]
         'trl-internal-testing/tiny-LlavaForConditionalGeneration',
@@ -160,7 +160,7 @@ def transformers_multimodal_model() -> OutlinesModel:
     return OutlinesModel(outlines_model, provider=OutlinesProvider())
 
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def llamacpp_model() -> OutlinesModel:  # pragma: lax no cover
     outlines_model_llamacpp = outlines.models.llamacpp.from_llamacpp(
         llama_cpp.Llama.from_pretrained(  # pyright: ignore[reportUnknownMemberType]

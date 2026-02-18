@@ -10,7 +10,6 @@ from datetime import timedelta
 from typing import Any, Literal
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -57,6 +56,8 @@ from pydantic_ai.usage import RequestUsage
 from pydantic_graph.beta import GraphBuilder, StepContext
 from pydantic_graph.beta.join import reduce_list_append
 
+from ._inline_snapshot import snapshot
+
 try:
     import temporalio.api.common.v1
     from temporalio import workflow
@@ -84,6 +85,16 @@ try:
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
+
+import sys
+
+if sys.version_info >= (3, 14):
+    pytest.skip(
+        'temporalio sandbox is incompatible with Python 3.14: '
+        'sandbox module state accumulates across validation cycles causing import failures after ~22 workflows '
+        '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
+        allow_module_level=True,
+    )
 
 try:
     import logfire
@@ -120,7 +131,7 @@ with workflow.unsafe.imports_passed_through():
         pass
 
     # https://github.com/temporalio/sdk-python/blob/3244f8bffebee05e0e7efefb1240a75039903dda/tests/test_client.py#L112C1-L113C1
-    from inline_snapshot import snapshot
+    from ._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from .conftest import IsDatetime, IsStr
