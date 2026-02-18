@@ -190,7 +190,10 @@ class PrecisionRecallEvaluator(ReportEvaluator):
         )
 
         if not scored_cases:
-            return [PrecisionRecall(title=self.title, curves=[])]
+            return [
+                PrecisionRecall(title=self.title, curves=[]),
+                ScalarResult(title=f'{self.title} AUC', value=float('nan')),
+            ]
 
         total_positives = sum(1 for _, p in scored_cases if p)
 
@@ -249,22 +252,25 @@ class ROCAUCEvaluator(ReportEvaluator):
             ctx.report.cases, self.score_key, self.score_from, self.positive_from, self.positive_key
         )
 
-        empty_plot = LinePlot(
-            title=self.title,
-            x_label='False Positive Rate',
-            y_label='True Positive Rate',
-            x_range=(0, 1),
-            y_range=(0, 1),
-            curves=[],
-        )
+        empty_result: list[ReportAnalysis] = [
+            LinePlot(
+                title=self.title,
+                x_label='False Positive Rate',
+                y_label='True Positive Rate',
+                x_range=(0, 1),
+                y_range=(0, 1),
+                curves=[],
+            ),
+            ScalarResult(title=f'{self.title} AUC', value=float('nan')),
+        ]
         if not scored_cases:
-            return [empty_plot]
+            return empty_result
 
         total_positives = sum(1 for _, p in scored_cases if p)
         total_negatives = len(scored_cases) - total_positives
 
         if total_positives == 0 or total_negatives == 0:
-            return [empty_plot]
+            return empty_result
 
         # Compute TPR/FPR at every unique score for exact AUC
         unique_thresholds = sorted({s for s, _ in scored_cases}, reverse=True)
@@ -330,21 +336,24 @@ class KolmogorovSmirnovEvaluator(ReportEvaluator):
             ctx.report.cases, self.score_key, self.score_from, self.positive_from, self.positive_key
         )
 
-        empty_plot = LinePlot(
-            title=self.title,
-            x_label='Score',
-            y_label='Cumulative Probability',
-            y_range=(0, 1),
-            curves=[],
-        )
+        empty_result: list[ReportAnalysis] = [
+            LinePlot(
+                title=self.title,
+                x_label='Score',
+                y_label='Cumulative Probability',
+                y_range=(0, 1),
+                curves=[],
+            ),
+            ScalarResult(title='KS Statistic', value=float('nan')),
+        ]
         if not scored_cases:
-            return [empty_plot]
+            return empty_result
 
         pos_scores = sorted(s for s, p in scored_cases if p)
         neg_scores = sorted(s for s, p in scored_cases if not p)
 
         if not pos_scores or not neg_scores:
-            return [empty_plot]
+            return empty_result
 
         # Compute CDFs at all unique scores using binary search
         all_scores = sorted({s for s, _ in scored_cases})

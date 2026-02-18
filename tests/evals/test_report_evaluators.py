@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -320,10 +321,13 @@ def test_precision_recall_evaluator_empty():
     results = evaluator.evaluate(ctx)
 
     assert isinstance(results, list)
-    assert len(results) == 1  # Only PrecisionRecall, no ScalarResult when empty
+    assert len(results) == 2
     pr_result = results[0]
     assert isinstance(pr_result, PrecisionRecall)
     assert len(pr_result.curves) == 0
+    scalar_result = results[1]
+    assert isinstance(scalar_result, ScalarResult)
+    assert math.isnan(scalar_result.value)
 
 
 def test_precision_recall_assertions_requires_key():
@@ -1015,7 +1019,7 @@ def test_roc_auc_evaluator_basic():
 
 
 def test_roc_auc_evaluator_empty():
-    """ROCAUCEvaluator returns empty plot for no data."""
+    """ROCAUCEvaluator returns empty plot and NaN scalar for no data."""
     report = _make_report([])
     evaluator = ROCAUCEvaluator(
         score_key='s',
@@ -1025,13 +1029,15 @@ def test_roc_auc_evaluator_empty():
     ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
     results = evaluator.evaluate(ctx)
 
-    assert len(results) == 1
+    assert len(results) == 2
     assert isinstance(results[0], LinePlot)
     assert len(results[0].curves) == 0
+    assert isinstance(results[1], ScalarResult)
+    assert math.isnan(results[1].value)
 
 
 def test_roc_auc_evaluator_all_same_class():
-    """ROCAUCEvaluator returns empty plot when all cases are the same class."""
+    """ROCAUCEvaluator returns empty plot and NaN scalar when all cases are the same class."""
     cases = [
         _make_report_case('c1', scores={'s': 0.9}, assertions={'p': True}),
         _make_report_case('c2', scores={'s': 0.5}, assertions={'p': True}),
@@ -1042,9 +1048,11 @@ def test_roc_auc_evaluator_all_same_class():
     ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
     results = evaluator.evaluate(ctx)
 
-    assert len(results) == 1
+    assert len(results) == 2
     assert isinstance(results[0], LinePlot)
     assert len(results[0].curves) == 0
+    assert isinstance(results[1], ScalarResult)
+    assert math.isnan(results[1].value)
 
 
 def test_roc_auc_evaluator_from_metrics():
@@ -1110,7 +1118,7 @@ def test_ks_evaluator_basic():
 
 
 def test_ks_evaluator_empty():
-    """KolmogorovSmirnovEvaluator returns empty plot for no data."""
+    """KolmogorovSmirnovEvaluator returns empty plot and NaN scalar for no data."""
     report = _make_report([])
     evaluator = KolmogorovSmirnovEvaluator(
         score_key='s',
@@ -1120,13 +1128,15 @@ def test_ks_evaluator_empty():
     ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
     results = evaluator.evaluate(ctx)
 
-    assert len(results) == 1
+    assert len(results) == 2
     assert isinstance(results[0], LinePlot)
     assert len(results[0].curves) == 0
+    assert isinstance(results[1], ScalarResult)
+    assert math.isnan(results[1].value)
 
 
 def test_ks_evaluator_all_same_class():
-    """KolmogorovSmirnovEvaluator returns empty plot when all cases are the same class."""
+    """KolmogorovSmirnovEvaluator returns empty plot and NaN scalar when all cases are the same class."""
     cases = [
         _make_report_case('c1', scores={'s': 0.9}, assertions={'p': True}),
         _make_report_case('c2', scores={'s': 0.5}, assertions={'p': True}),
@@ -1137,9 +1147,11 @@ def test_ks_evaluator_all_same_class():
     ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
     results = evaluator.evaluate(ctx)
 
-    assert len(results) == 1
+    assert len(results) == 2
     assert isinstance(results[0], LinePlot)
     assert len(results[0].curves) == 0
+    assert isinstance(results[1], ScalarResult)
+    assert math.isnan(results[1].value)
 
 
 # --- LinePlot rendering test ---

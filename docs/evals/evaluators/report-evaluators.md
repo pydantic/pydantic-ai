@@ -737,7 +737,9 @@ for analysis in report.analyses:
     #> precision_recall: Precision-Recall Curve
     #> scalar: Precision-Recall Curve AUC
     #> line_plot: ROC Curve
+    #> scalar: ROC Curve AUC
     #> line_plot: KS Plot
+    #> scalar: KS Statistic
     #> scalar: Accuracy
 ```
 
