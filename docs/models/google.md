@@ -11,7 +11,6 @@ To use `GoogleModel`, you need to either install `pydantic-ai`, or install `pyda
 pip/uv-add "pydantic-ai-slim[google]"
 ```
 
-
 ## Configuration
 
 `GoogleModel` lets you use Google's Gemini models through their [Generative Language API](https://ai.google.dev/api/all-methods) (`generativelanguage.googleapis.com`) or [Vertex AI API](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models) (`*-aiplatform.googleapis.com`).
@@ -153,6 +152,48 @@ agent = Agent(model)
 ...
 ```
 
+#### Flex PayGo Pricing
+
+[Flex PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) is a cost-effective pricing option for Vertex AI that offers a 50% discount compared to standard pricing, with potentially longer response times. It's ideal for non-critical, latency-tolerant workloads like batch processing, data annotation, or evaluation.
+
+To use Flex PayGo, set the `google_service_tier` in your model settings:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelResponse
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+from pydantic_ai.providers.google import GoogleProvider
+
+# Flex PayGo requires the 'global' location
+provider = GoogleProvider(vertexai=True, location='global')
+model = GoogleModel('gemini-3-flash-preview', provider=provider)
+
+agent = Agent(model)
+result = agent.run_sync(
+    'Hello!',
+    model_settings=GoogleModelSettings(google_service_tier='flex'),
+)
+
+# Verify Flex PayGo was used by checking traffic_type in provider_details
+for message in result.all_messages():
+    if isinstance(message, ModelResponse) and message.provider_details:
+        traffic_type = message.provider_details.get('traffic_type')
+        if traffic_type == 'ON_DEMAND_FLEX':
+            print('Flex PayGo was used!')
+```
+
+**Requirements:**
+
+- Only supported when using **Vertex AI**
+- There may be model or region restrictions, check the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo) for more details.
+
+**Service tier options:**
+
+- `'flex'`: Use Flex PayGo with provisioned throughput fallback. If you have provisioned throughput quota, it will be used first.
+- `'flex_only'`: Use only Flex PayGo without provisioned throughput fallback.
+
+If you don't specify a service tier, standard pricing (not flex) is used.
+
 #### Model Garden
 
 You can access models from the [Model Garden](https://cloud.google.com/model-garden?hl=en) that support the `generateContent` API and are available under your GCP project, including but not limited to Gemini, using one of the following `model_name` patterns:
@@ -195,7 +236,6 @@ model = GoogleModel(
 agent = Agent(model)
 ...
 ```
-
 
 ## Document, Image, Audio, and Video Input
 
