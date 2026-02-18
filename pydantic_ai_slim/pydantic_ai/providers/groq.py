@@ -11,10 +11,11 @@ from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
+from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
@@ -27,21 +28,44 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
+_GROQ_NATIVE_OUTPUT_PROFILE = ModelProfile(
+    supports_json_object_output=True,
+    supports_json_schema_output=True,
+    default_structured_output_mode='native',
+    json_schema_transformer=OpenAIJsonSchemaTransformer,
+)
+"""Profile for Groq models that support native structured output.
+
+Groq's API requires OpenAI-compatible JSON schema format with strict mode
+constraints (additionalProperties: false on all objects) for structured output.
+
+Native output is preferred because some models (e.g. Llama 4) don't reliably
+produce tool-based structured output on Groq."""
+
+
 def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an MoonshotAI model used with the Groq provider."""
-    return ModelProfile(supports_json_object_output=True, supports_json_schema_output=True).update(
-        moonshotai_model_profile(model_name)
-    )
+    base = moonshotai_model_profile(model_name) or ModelProfile()
+    return base.update(_GROQ_NATIVE_OUTPUT_PROFILE)
 
 
 def meta_groq_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Meta model used with the Groq provider."""
     if model_name in {'llama-4-maverick-17b-128e-instruct', 'llama-4-scout-17b-16e-instruct'}:
-        return ModelProfile(supports_json_object_output=True, supports_json_schema_output=True).update(
-            meta_model_profile(model_name)
-        )
+        base = meta_model_profile(model_name) or ModelProfile()
+        return base.update(_GROQ_NATIVE_OUTPUT_PROFILE)
     else:
         return meta_model_profile(model_name)
+
+
+def groq_gpt_oss_model_profile(model_name: str) -> ModelProfile:
+    """Get profile for OpenAI GPT-OSS models on Groq.
+
+    GPT-OSS models (gpt-oss-20b, gpt-oss-120b) support strict native structured output
+    with 100% schema adherence.
+    """
+    base = harmony_model_profile(model_name)
+    return base.update(_GROQ_NATIVE_OUTPUT_PROFILE)
 
 
 class GroqProvider(Provider[AsyncGroq]):
@@ -69,15 +93,19 @@ class GroqProvider(Provider[AsyncGroq]):
             'mistral': mistral_model_profile,
             'moonshotai/': groq_moonshotai_model_profile,
             'compound-': groq_model_profile,
+            'openai/gpt-oss-': groq_gpt_oss_model_profile,
             'openai/': openai_model_profile,
         }
 
         for prefix, profile_func in prefix_to_profile.items():
-            model_name = model_name.lower()
-            if model_name.startswith(prefix):
-                if prefix.endswith('/'):
-                    model_name = model_name[len(prefix) :]
-                return profile_func(model_name)
+            model_name_lower = model_name.lower()
+            if model_name_lower.startswith(prefix):
+                # Strip provider prefix (e.g., 'openai/gpt-oss-120b' -> 'gpt-oss-120b')
+                if '/' in model_name_lower:
+                    model_name_for_profile = model_name_lower.split('/', 1)[-1]
+                else:
+                    model_name_for_profile = model_name_lower
+                return profile_func(model_name_for_profile)
 
         return None
 

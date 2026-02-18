@@ -1,0 +1,226 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '684'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: moonshotai/kimi-k2-instruct
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '653'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: The capital of France is Paris.
+          role: assistant
+      created: 1770418669
+      id: chatcmpl-9d4042f1-7d0b-409a-ac83-a0ff79646eed
+      model: moonshotai/kimi-k2-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_05df423bab
+      usage:
+        completion_time: 0.00311883
+        completion_tokens: 8
+        prompt_time: 0.033094247
+        prompt_tokens: 171
+        queue_time: 0.146024286
+        total_time: 0.036213077
+        total_tokens: 179
+      usage_breakdown: null
+      x_groq:
+        id: req_01kgtjt1s0ea2rbx8ez3mrmjhq
+        seed: 1071772654
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1038'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Tp6r4nBk2SG0Ci7BmvIZr1tWUAI1eF9HoEHx3qqTPjg-1770418668.5112388-1.0.1.1-sg5GbP0L3zCRCBJkgntKkFjXqsoLXz2V4_OrGC1STtifAWJeHR4mebBytqjcsaxe3EQ54em5UTXB1rZzorFLKx0xyCQW9.2AE1NRqKfWcUXlFTBgY6Q4KnTmO7UPsgec
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      - content: The capital of France is Paris.
+        role: assistant
+      - content: |-
+          1 validation error:
+          ```json
+          [
+            {
+              "type": "json_invalid",
+              "loc": [],
+              "msg": "Invalid JSON: expected value at line 1 column 1",
+              "input": "The capital of France is Paris."
+            }
+          ]
+          ```
+
+          Fix the errors and try again.
+        role: user
+      model: moonshotai/kimi-k2-instruct
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '929'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: 'I understand now. You want me to use the final_result function to provide the answer in the required JSON
+            format. Let me do that:'
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris","country":"France"}'
+              name: final_result
+            id: functions.final_result:0
+            type: function
+      created: 1770418670
+      id: chatcmpl-d061f09d-adf7-4868-ad4e-fa9a2feb11af
+      model: moonshotai/kimi-k2-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_05df423bab
+      usage:
+        completion_time: 0.261569974
+        completion_tokens: 51
+        prompt_time: 0.057774585
+        prompt_tokens: 250
+        queue_time: 0.617653942
+        total_time: 0.319344559
+        total_tokens: 301
+      usage_breakdown: null
+      x_groq:
+        id: req_01kgtjt25ve8086j1trya66xa6
+        seed: 2020706010
+    status:
+      code: 200
+      message: OK
+version: 1
