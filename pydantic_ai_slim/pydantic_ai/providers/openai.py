@@ -47,6 +47,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
         api_key: str | None = None,
         openai_client: None = None,
         http_client: httpx.AsyncClient | None = None,
+        max_retries: int = ...,
     ) -> None: ...
 
     def __init__(
@@ -55,6 +56,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
+        max_retries: int = 2,
     ) -> None:
         """Create a new OpenAI provider.
 
@@ -65,8 +67,10 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
                 will be used if available.
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
-                client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
+                client to use. If provided, `base_url`, `api_key`, `http_client`, and `max_retries` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            max_retries: Maximum number of retries for API requests. Set to `0` to disable retries.
+                Defaults to `2`, matching the OpenAI SDK default.
         """
         # This is a workaround for the OpenAI client requiring an API key, whilst locally served,
         # openai compatible models do not always need an API key, but a placeholder (non-empty) key is required.
@@ -79,7 +83,11 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=base_url, api_key=api_key, http_client=http_client, max_retries=max_retries
+            )
         else:
             http_client = cached_async_http_client(provider='openai')
-            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=base_url, api_key=api_key, http_client=http_client, max_retries=max_retries
+            )

@@ -427,6 +427,26 @@ agent = Agent(model)
 ...
 ```
 
+You can also configure `max_retries` to control how many times the underlying SDK retries failed requests (defaults to `2`). Set to `0` to disable retries, which is useful when using custom retry logic or durable execution frameworks:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.azure import AzureProvider
+
+model = OpenAIChatModel(
+    'gpt-5.2',
+    provider=AzureProvider(
+        azure_endpoint='your-azure-endpoint',
+        api_version='your-api-version',
+        api_key='your-api-key',
+        max_retries=0,  # Disable SDK retries
+    ),
+)
+agent = Agent(model)
+...
+```
+
 ### Vercel AI Gateway
 
 To use [Vercel's AI Gateway](https://vercel.com/docs/ai-gateway), first follow the [documentation](https://vercel.com/docs/ai-gateway) instructions on obtaining an API key or OIDC token.

@@ -67,6 +67,7 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         api_key: str | None = None,
         openai_client: None = None,
         http_client: httpx.AsyncClient | None = None,
+        max_retries: int = ...,
     ) -> None: ...
 
     def __init__(
@@ -75,7 +76,19 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
+        max_retries: int = 2,
     ) -> None:
+        """Create a new DeepSeek provider.
+
+        Args:
+            api_key: The API key to use for authentication, if not provided, the `DEEPSEEK_API_KEY` environment variable
+                will be used if available.
+            openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key`, `http_client`,
+                and `max_retries` must be `None`.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            max_retries: Maximum number of retries for API requests. Set to `0` to disable retries.
+                Defaults to `2`, matching the OpenAI SDK default.
+        """
         api_key = api_key or os.getenv('DEEPSEEK_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
@@ -86,7 +99,11 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
         if openai_client is not None:
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client, max_retries=max_retries
+            )
         else:
             http_client = cached_async_http_client(provider='deepseek')
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client, max_retries=max_retries
+            )
