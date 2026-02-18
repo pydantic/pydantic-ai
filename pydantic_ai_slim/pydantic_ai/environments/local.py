@@ -1,7 +1,7 @@
 """Local subprocess-based execution environment for development and testing.
 
 Runs commands directly on the host machine within a specified root directory.
-**No isolation** — use `DockerSandbox` for untrusted code.
+**No isolation** — use `DockerEnvironment` for untrusted code.
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ class LocalEnvironment(DriverBasedEnvironment):
     """Local subprocess-based execution environment for development and testing.
 
     Runs commands directly on the host machine within a specified root
-    directory. Provides no isolation — use `DockerSandbox` for untrusted code.
+    directory. Provides no isolation — use `DockerEnvironment` for untrusted code.
 
     Usage:
         ```python {test="skip" lint="skip"}
