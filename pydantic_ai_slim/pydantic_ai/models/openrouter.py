@@ -639,7 +639,7 @@ class OpenRouterModel(OpenAIChatModel):
         return new_settings, customized_parameters
 
     @override
-    def _get_web_search_options(self, model_request_parameters: ModelRequestParameters):
+    def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> None:
         """OpenRouter handles web search via plugins in extra_body, not via the OpenAI web_search_options parameter."""
         return None
 
