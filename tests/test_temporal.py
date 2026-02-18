@@ -771,13 +771,13 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
         return await original_send_request(self_, *args, **kwargs)
 
     with patch.object(ClientSession, 'send_request', tracking_send_request):
-        async with Worker(
+        async with Worker(  # pragma: no branch
             client,
             task_queue=TASK_QUEUE,
             workflows=[ComplexAgentWorkflow],
             plugins=[AgentPlugin(complex_temporal_agent)],
         ):
-            output = await client.execute_workflow(  # pragma: no branch
+            output = await client.execute_workflow(
                 ComplexAgentWorkflow.run,
                 args=[
                     'Tell me: the capital of the country; the weather there; the product name',
@@ -794,11 +794,11 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
     assert methods_called.count('tools/call') == 1
 
 
-async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None, client: Client):
+async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None):
     """Verify that wrapper-level caching is skipped when cache_tools=False.
 
-    With caching disabled, the TemporalMCPServer wrapper should not populate
-    its _cached_tool_defs, so every get_tools call falls through to the activity.
+    Runs outside the Temporal workflow (via .override()) so coverage can track
+    the TemporalMCPServer.get_tools() code path directly.
     """
     mcp_toolset = next(ts for ts in complex_temporal_agent.toolsets if isinstance(ts, TemporalMCPServer))
     server = mcp_toolset._server  # pyright: ignore[reportPrivateUsage]
@@ -807,22 +807,12 @@ async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None, cl
     server.cache_tools = False
 
     try:
-        async with Worker(
-            client,
-            task_queue=TASK_QUEUE,
-            workflows=[ComplexAgentWorkflow],
-            plugins=[AgentPlugin(complex_temporal_agent)],
-        ):
-            output = await client.execute_workflow(
-                ComplexAgentWorkflow.run,
-                args=[
-                    'Tell me: the capital of the country; the weather there; the product name',
-                    Deps(country='Mexico'),
-                ],
-                id=f'{ComplexAgentWorkflow.__name__}_no_cache_test',
-                task_queue=TASK_QUEUE,
+        with complex_temporal_agent.override(deps=Deps(country='Mexico')):
+            result = await complex_temporal_agent.run(
+                'Tell me: the capital of the country; the weather there; the product name',
+                deps=Deps(country='The Netherlands'),
             )
-        assert output is not None
+        assert result.output is not None
         # Wrapper-level cache should NOT be populated when cache_tools=False
         assert mcp_toolset._cached_tool_defs is None  # pyright: ignore[reportPrivateUsage]
     finally:
