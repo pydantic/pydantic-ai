@@ -201,11 +201,13 @@ class GroqModel(Model):
                         tool_name=failed_generation.name,
                         args=failed_generation.arguments,
                     )
-                else:
+                elif failed_generation:
                     part = TextPart(content=failed_generation)
+                else:  # pragma: no cover
+                    part = None
 
                 return ModelResponse(
-                    parts=[part],
+                    parts=[part] if part else [],
                     model_name=e.model_name,
                     provider_name=self._provider.name,
                     provider_url=self.base_url,
@@ -612,7 +614,7 @@ class GroqStreamedResponse(StreamedResponse):
                         tool_name=failed_generation.name,
                         args=failed_generation.arguments,
                     )
-                else:
+                elif failed_generation:
                     for event in self._parts_manager.handle_text_delta(
                         vendor_part_id='tool_use_failed',
                         content=failed_generation,

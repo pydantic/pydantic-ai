@@ -5763,21 +5763,19 @@ async def test_tool_use_failed_error_streaming_with_text(allow_model_requests: N
                 parts=[
                     ThinkingPart(
                         content="""\
-The user wants the assistant to return string "maybe" by itself, not as json, to test error handling. Then on second try use valid args. The instruction says: "dont make a tool call, just return the string "maybe" by itself, not as json output, to test error handling; on the second try you can use valid args". The system says we must be concise and not use pretty double quotes. They want the response "maybe". But the tool system expects that we either call the function or produce final result as JSON? The instruction says we shouldn't make a tool call. But the conversation guidelines say that if a user asks for something not allowed, we must respond accordingly. But they ask to return "maybe". That's a plain string. That is allowed. So we can just output maybe. The user wants that. So we should just output maybe, no quotes. The developer instruction: "Be concise. Never use pretty double quotes, just regular ones." So output maybe (no quotes). That seems fine.
+The user says: "dont make a tool call, just return the string "maybe" by itself, not as json output, to test error handling; on the second try you can use valid args". The developer instructions: be concise. Never use pretty double quotes, just regular ones.
 
-We shouldn't call the function. So we just respond with maybe.
-
+We need to respond with just the string maybe, not JSON, and no tool call. So just plain text: maybe.\
 """
                     ),
                     TextPart(content='maybe'),
-                    TextPart(content=''),
                 ],
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
                 provider_details={'timestamp': IsDatetime()},
-                provider_response_id='chatcmpl-dc7a47f3-6581-40a1-9a0f-519efc54bf93',
+                provider_response_id='chatcmpl-fd87720a-9b48-4161-bcd7-6127bd0d3696',
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -5803,21 +5801,21 @@ We shouldn't call the function. So we just respond with maybe.
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user got a validation error because they expected a JSON output from a tool call perhaps. The system expects a function call to final_result with "yes" or "no". Actually the only tool defined is final_result which expects response "yes" or "no". The user wants to test error handling. The system responded with plain string, causing validation error. Now they ask to fix errors and try again, meaning we should now call the function with valid args. The function final_result expects a response field with "yes" or "no". The user originally wanted "maybe", but function only allows yes or no. We need to respond with valid args: either yes or no. The user didn\'t specify which; we need to choose one. Likely we should respond with "no" because maybe is not yes. But we could pick yes. There\'s no guidance. Probably we should respond with "no". The function call: functions.final_result({response: "no"}).'
+                        content='We need to comply with tool usage now. The user wants a second try using valid args. The tool expects final_result with response "yes" or "no". They likely want to produce a correct response using the tool. The user originally asked to return "maybe". But now they got validation error because the system expects JSON output via tool? The instruction says on the second try you can use valid args. So we should call the function final_result with response either "yes" or "no". But the user didn\'t ask a yes/no question. However the tool only accepts yes/no. We need to choose something plausible. Probably respond "no" because we can\'t return maybe. The instruction says be concise. So we call the function with response "no".'
                     ),
                     ToolCallPart(
                         tool_name='final_result',
                         args='{"response":"no"}',
-                        tool_call_id='fc_09613a99-14a4-4eb2-83b4-f6ec2628d041',
+                        tool_call_id='fc_299e8414-9e94-4d9c-bd06-c096f8919768',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=483, output_tokens=224),
+                usage=RequestUsage(input_tokens=343, output_tokens=180),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
                 provider_details={'timestamp': IsDatetime(), 'finish_reason': 'tool_calls'},
-                provider_response_id='chatcmpl-195a078e-5868-4e85-ad70-1cb7e98c33dd',
+                provider_response_id='chatcmpl-0b76b1ce-aa40-4950-9c90-a167b11d4b09',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
