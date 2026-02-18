@@ -663,7 +663,7 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='arq6emmq6')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='911ra51k8')],
                 usage=RequestUsage(input_tokens=712, output_tokens=20),
                 model_name='meta-llama/llama-4-maverick-17b-128e-instruct',
                 timestamp=IsDatetime(),
@@ -678,11 +678,10 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 241a70',
-                        tool_call_id='arq6emmq6',
+                        content=IsInstance(BinaryImage),
+                        tool_call_id='911ra51k8',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(content=['This is file 241a70:', IsInstance(BinaryImage)], timestamp=IsDatetime()),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
