@@ -27,7 +27,7 @@ You can then use `AnthropicModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('anthropic:claude-sonnet-4-5')
+agent = Agent('anthropic:claude-sonnet-4-6')
 ...
 ```
 
@@ -168,7 +168,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     instructions='You are a helpful assistant.',
     model_settings=AnthropicModelSettings(
         anthropic_cache_messages=True,  # Automatically caches the last message
@@ -193,7 +193,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     instructions='Detailed instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache_instructions=True,      # Cache system instructions
@@ -220,7 +220,7 @@ Use manual `CachePoint` markers to control cache locations precisely:
 from pydantic_ai import Agent, CachePoint
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     instructions='Instructions...',
 )
 
@@ -242,7 +242,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     instructions='Instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache_instructions=True  # Default 5m TTL
@@ -278,7 +278,7 @@ from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     instructions='Detailed instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache_instructions=True,      # 1 cache point
@@ -315,7 +315,7 @@ from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     instructions='Instructions...',
     model_settings=AnthropicModelSettings(
         anthropic_cache_instructions=True,      # 1 cache point

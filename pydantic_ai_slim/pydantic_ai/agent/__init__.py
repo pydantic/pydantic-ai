@@ -812,7 +812,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: list[_messages.ModelMessage],
         new_message_index: int,
         metadata: dict[str, Any] | None = None,
-    ):
+    ) -> dict[str, str | int | float | bool]:
         if settings.version == 1:
             attrs = {
                 'all_messages_events': json.dumps(
@@ -848,8 +848,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if metadata is not None:
             attrs['metadata'] = json.dumps(InstrumentedModel.serialize_any(metadata))
 
+        usage_attrs = (
+            {
+                k.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): v
+                for k, v in usage.opentelemetry_attributes().items()
+            }
+            if settings.use_aggregated_usage_attribute_names
+            else usage.opentelemetry_attributes()
+        )
+
         return {
-            **usage.opentelemetry_attributes(),
+            **usage_attrs,
             **attrs,
             'logfire.json_schema': json.dumps(
                 {
@@ -1652,9 +1661,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Args:
             models: Additional models to make available in the UI. Can be:
-                - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-5']`)
+                - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-6']`)
                 - A dict mapping display labels to model names/instances
-                  (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'}`)
+                  (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-6'}`)
                 The agent's model is always included. Builtin tool support is automatically
                 determined from each model's profile.
             builtin_tools: Additional builtin tools to make available in the UI.
@@ -1683,7 +1692,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             app = agent.to_web()
 
             # Or provide additional models for UI selection
-            app = agent.to_web(models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'])
+            app = agent.to_web(models=['openai:gpt-5', 'anthropic:claude-sonnet-4-6'])
 
             # Then run with: uvicorn app:app --reload
             ```

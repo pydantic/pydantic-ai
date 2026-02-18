@@ -8,7 +8,6 @@ from collections.abc import AsyncIterator
 from importlib.metadata import distributions
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import UserError
 from pydantic_ai._utils import (
@@ -23,6 +22,7 @@ from pydantic_ai._utils import (
     validate_empty_kwargs,
 )
 
+from ._inline_snapshot import snapshot
 from .models.mock_async_stream import MockAsyncStream
 
 pytestmark = pytest.mark.anyio

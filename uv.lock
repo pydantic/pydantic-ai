@@ -6819,7 +6819,7 @@ requires-dist = [
     { name = "anyio", specifier = ">=0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.14.1" },
     { name = "logfire-api", specifier = ">=3.14.1" },
-    { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic", specifier = ">=2.12" },
     { name = "pydantic-ai-slim", editable = "pydantic_ai_slim" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "rich", specifier = ">=13.9.4" },
@@ -6858,7 +6858,7 @@ dependencies = [
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "logfire-api", specifier = ">=3.14.1" },
-    { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic", specifier = ">=2.12" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
 
