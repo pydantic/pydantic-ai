@@ -37,7 +37,6 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
-    is_multi_modal_content,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -533,22 +532,7 @@ class MistralModel(Model):
         and sent in a separate user message via the fallback pattern. Validation of supported
         file types is handled by `_map_user_prompt`.
         """
-        if not part.files:
-            return part.model_response_str(), []
-
-        tool_content_parts: list[str] = []
-        file_content: list[UserContent] = []
-
-        for item in part.content_items(mode='str'):
-            if is_multi_modal_content(item):
-                tool_content_parts.append(f'See file {item.identifier}.')
-                file_content.append(f'This is file {item.identifier}:')
-                file_content.append(item)
-            else:
-                assert isinstance(item, str)
-                tool_content_parts.append(item)
-
-        return '\n'.join(tool_content_parts) if tool_content_parts else '', file_content
+        return part.fallback_tool_return()
 
     async def _map_messages(  # noqa: C901
         self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters

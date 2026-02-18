@@ -61,7 +61,6 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
-    is_multi_modal_content,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
@@ -1137,23 +1136,17 @@ class OpenAIChatModel(Model):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_content_parts: list[str] = []
-
-                for item in part.content_items(mode='str'):
-                    if is_multi_modal_content(item):
-                        if isinstance(item, AudioUrl) or (isinstance(item, BinaryContent) and item.is_audio):
-                            raise NotImplementedError('Audio content in tool returns is not supported by OpenAI Chat.')
-                        tool_content_parts.append(f'See file {item.identifier}.')
-                        file_content.append(f'This is file {item.identifier}:')
-                        file_content.append(item)
-                    else:
-                        assert isinstance(item, str)
-                        tool_content_parts.append(item)
-
+                for f in part.files:
+                    if isinstance(f, AudioUrl) or (isinstance(f, BinaryContent) and f.is_audio):
+                        raise NotImplementedError('AudioUrl is not supported for OpenAI Chat tool returns')
+                    if isinstance(f, VideoUrl) or (isinstance(f, BinaryContent) and f.is_video):
+                        raise NotImplementedError('VideoUrl is not supported for OpenAI Chat tool returns')
+                tool_text, tool_file_content = part.fallback_tool_return()
+                file_content.extend(tool_file_content)
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
-                    content='\n'.join(tool_content_parts) if tool_content_parts else '',
+                    content=tool_text,
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:

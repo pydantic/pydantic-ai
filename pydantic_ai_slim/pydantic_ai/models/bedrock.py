@@ -890,13 +890,10 @@ class BedrockConverseModel(Model):
 
     @staticmethod
     async def _map_file_to_content_block(
-        file: ImageUrl | DocumentUrl | VideoUrl | AudioUrl | BinaryContent,
+        file: ImageUrl | DocumentUrl | VideoUrl | BinaryContent,
         document_count: Iterator[int],
     ) -> _FileContentBlock | None:
         """Map a multimodal file directly to a Bedrock content block for tool results."""
-        if isinstance(file, AudioUrl):  # pragma: no cover
-            return None
-
         # Resolve content kind
         kind: Literal['image', 'document', 'video']
         if isinstance(file, BinaryContent):

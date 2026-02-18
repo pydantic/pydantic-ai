@@ -41,7 +41,6 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
-    is_multi_modal_content,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
@@ -481,21 +480,12 @@ class GroqModel(Model):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_content_parts: list[str] = []
-
-                for item in part.content_items(mode='str'):
-                    if is_multi_modal_content(item):
-                        tool_content_parts.append(f'See file {item.identifier}.')
-                        file_content.append(f'This is file {item.identifier}:')
-                        file_content.append(item)
-                    else:
-                        assert isinstance(item, str)
-                        tool_content_parts.append(item)
-
+                tool_text, tool_file_content = part.fallback_tool_return()
+                file_content.extend(tool_file_content)
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
-                    content='\n'.join(tool_content_parts) if tool_content_parts else '',
+                    content=tool_text,
                 )
             elif isinstance(part, RetryPromptPart):  # pragma: no branch
                 if part.tool_name is None:

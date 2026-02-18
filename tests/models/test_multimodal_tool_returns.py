@@ -150,9 +150,11 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
     ('openai_chat', 'image'): 'as_user_content',
     ('openai_chat', 'document'): 'as_user_content',
     ('openai_chat', 'audio'): ExpectError(
-        NotImplementedError, r'Audio content in tool returns is not supported by OpenAI Chat'
+        NotImplementedError, r'AudioUrl is not supported for OpenAI Chat tool returns'
     ),
-    ('openai_chat', 'video'): ExpectError(NotImplementedError, r'VideoUrl is not supported'),
+    ('openai_chat', 'video'): ExpectError(
+        NotImplementedError, r'VideoUrl is not supported for OpenAI Chat tool returns'
+    ),
     # OpenAI Responses: images and documents in_tool_result, audio/video unsupported
     ('openai_responses', 'image'): 'in_tool_result',
     ('openai_responses', 'document'): 'in_tool_result',
@@ -186,9 +188,12 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
     ('bedrock_claude', 'audio', 'binary', 'tool_return_content'): ExpectError(
         NotImplementedError, r'Unsupported content type for Bedrock user prompts'
     ),
-    # tool_return_content routes audio through UserPromptPart which the API rejects
+    # tool_return_content routes through UserPromptPart which uses different error messages
     ('openai_chat', 'audio', None, 'tool_return_content'): ExpectError(
         ModelHTTPError, r'expected to be either text or image_url'
+    ),
+    ('openai_chat', 'video', None, 'tool_return_content'): ExpectError(
+        NotImplementedError, r'VideoUrl is not supported for OpenAI'
     ),
     ('openai_responses', 'audio', 'url', None): ExpectError(ModelHTTPError, r'unsupported'),
     ('openai_responses', 'audio', 'url_force_download', None): ExpectError(ModelHTTPError, r'unsupported'),

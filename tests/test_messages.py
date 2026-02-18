@@ -894,3 +894,13 @@ def test_tool_return_content_nested_multimodal():
     assert isinstance(reloaded_content['images'][0], ImageUrl)
     assert isinstance(reloaded_content['documents'][0], DocumentUrl)
     assert reloaded_content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
+
+
+def test_multi_modal_content_types_matches_union():
+    """Validate that MULTI_MODAL_CONTENT_TYPES matches the MultiModalContent union members."""
+    from typing import get_args
+
+    from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES, MultiModalContent
+
+    union_members = set(get_args(get_args(MultiModalContent)[0]))
+    assert set(MULTI_MODAL_CONTENT_TYPES) == union_members

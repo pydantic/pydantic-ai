@@ -11,7 +11,7 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypeGuard, cast, get_args, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, TypeGuard, cast, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -671,8 +671,8 @@ MultiModalContent = Annotated[
 ]
 """Union of all multi-modal content types with a discriminator for Pydantic validation."""
 
-MULTI_MODAL_CONTENT_TYPES: tuple[type, ...] = get_args(get_args(MultiModalContent)[0])
-"""Tuple of multi-modal content types for use with isinstance() checks, derived from `MultiModalContent`."""
+# Explicit tuple for readability; validated against MultiModalContent in tests
+MULTI_MODAL_CONTENT_TYPES: tuple[type, ...] = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
 
 
 def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
@@ -693,7 +693,12 @@ class ToolReturn:
     _: KW_ONLY
 
     content: str | Sequence[UserContent] | None = None
-    """Content sent to the model as a separate `UserPromptPart`."""
+    """Content sent to the model as a separate `UserPromptPart`.
+
+    Use this when you want content to appear outside the tool result message.
+    For multimodal content that should be sent natively in the tool result,
+    return it directly from the tool function or include it in `return_value`.
+    """
 
     metadata: Any = None
     """Additional data accessible by the application but not sent to the LLM."""
@@ -910,10 +915,6 @@ class BaseToolReturnPart:
         """The multimodal file parts from `content` (`ImageUrl`, `AudioUrl`, `DocumentUrl`, `VideoUrl`, `BinaryContent`)."""
         return self._split_content()[1]
 
-    @property
-    def _non_file_content(self) -> list[Any]:
-        return self._split_content()[0]
-
     def content_items(self, *, mode: Literal['raw', 'str', 'json'] = 'raw') -> list[ToolReturnContent]:
         """Return content as a flat list for iteration, with optional serialization.
 
@@ -949,12 +950,12 @@ class BaseToolReturnPart:
 
         This excludes multimodal files - use `.files` to get those separately.
         """
-        data = self._non_file_content
+        data, files = self._split_content()
         if not data:
             return ''
         # Unwrap single-item list when content was scalar or when files were filtered out,
         # since the list may have only existed to bundle data alongside files
-        if len(data) == 1 and (not isinstance(self.content, list) or self.files):
+        if len(data) == 1 and (not isinstance(self.content, list) or files):
             value = data[0]
         else:
             value = data
@@ -968,12 +969,12 @@ class BaseToolReturnPart:
         This excludes multimodal files - use `.files` to get those separately.
         Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
         """
-        data = self._non_file_content
+        data, files = self._split_content()
         if not data:
             return {}
         # Unwrap single-item list when content was scalar or when files were filtered out,
         # since the list may have only existed to bundle data alongside files
-        if len(data) == 1 and (not isinstance(self.content, list) or self.files):
+        if len(data) == 1 and (not isinstance(self.content, list) or files):
             value = data[0]
         else:
             value = data
@@ -982,6 +983,30 @@ class BaseToolReturnPart:
             return json_content
         else:
             return {RETURN_VALUE_KEY: json_content}
+
+    def fallback_tool_return(self) -> tuple[str, list[UserContent]]:
+        """Build a text-only tool result with multimodal files extracted for a trailing user message.
+
+        For providers whose tool result API only accepts text. Multimodal files are referenced
+        by identifier in the tool result text ('See file {id}.') and included in full in the
+        returned file content list ('This is file {id}:' followed by the file).
+        """
+        if not self.files:
+            return self.model_response_str(), []
+
+        tool_content_parts: list[str] = []
+        file_content: list[UserContent] = []
+
+        for item in self.content_items(mode='str'):
+            if is_multi_modal_content(item):
+                tool_content_parts.append(f'See file {item.identifier}.')
+                file_content.append(f'This is file {item.identifier}:')
+                file_content.append(item)
+            else:
+                assert isinstance(item, str)
+                tool_content_parts.append(item)
+
+        return '\n'.join(tool_content_parts) if tool_content_parts else '', file_content
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         body: AnyValue = {
