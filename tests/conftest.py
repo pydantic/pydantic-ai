@@ -382,6 +382,7 @@ def patch_google_genai_gc_crash():
     try:
         from google.genai._api_client import BaseApiClient
     except ImportError:
+        yield
         return
 
     original_aclose = BaseApiClient.aclose
