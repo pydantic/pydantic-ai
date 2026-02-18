@@ -19,7 +19,7 @@ async def test_simple_execution(code_runtime: CodeRuntime):
     """Valid code + tool call executes and returns result."""
 
     def add(x: int, y: int) -> int:
-        return x + y  # pragma: no cover
+        return x + y
 
     result = await run_code_with_tools('await add(x=1, y=2)', code_runtime, (add, False))
     assert result == 3

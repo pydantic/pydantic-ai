@@ -464,9 +464,7 @@ def schema_to_signature(
     all_referenced = list(param_referenced.values())
     seen_ids = {id(ts) for ts in all_referenced}
     for ts in return_referenced.values():
-        if (
-            id(ts) not in seen_ids
-        ):  # pragma: no cover — param/return dicts are built independently, so objects never overlap
+        if id(ts) not in seen_ids:
             all_referenced.append(ts)
             seen_ids.add(id(ts))
 

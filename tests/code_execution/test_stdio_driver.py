@@ -616,7 +616,7 @@ async def test_build_proxy_normal_call(monkeypatch: pytest.MonkeyPatch):
     assert messages[1] == {'type': 'calls_ready'}
 
     # Clean up: cancel the handle
-    if handle[0] is not None:  # pragma: no cover
+    if handle[0] is not None:
         handle[0].cancel()
 
 
@@ -643,7 +643,7 @@ async def test_build_proxy_batched_calls(monkeypatch: pytest.MonkeyPatch):
         {'type': 'calls_ready'},
     ]
 
-    if handle[0] is not None:  # pragma: no cover
+    if handle[0] is not None:
         handle[0].cancel()
 
 
