@@ -371,8 +371,8 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
     original_cached_func.cache_clear()
 
 
-@pytest.fixture(autouse=True)
-def patch_google_genai_gc_crash(monkeypatch: pytest.MonkeyPatch):
+@pytest.fixture(autouse=True, scope='session')
+def patch_google_genai_gc_crash():
     """Work around google-genai BaseApiClient GC crash.
 
     BaseApiClient.__del__ schedules aclose() during GC, which crashes when the
@@ -386,11 +386,13 @@ def patch_google_genai_gc_crash(monkeypatch: pytest.MonkeyPatch):
 
     original_aclose = BaseApiClient.aclose
 
-    async def safe_aclose(self: BaseApiClient):
+    async def safe_aclose(self: BaseApiClient) -> None:
         if hasattr(self, '_async_httpx_client'):
             await original_aclose(self)
 
-    monkeypatch.setattr(BaseApiClient, 'aclose', safe_aclose)
+    BaseApiClient.aclose = safe_aclose
+    yield
+    BaseApiClient.aclose = original_aclose
 
 
 @pytest.fixture(scope='session')
