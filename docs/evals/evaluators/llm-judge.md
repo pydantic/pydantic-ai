@@ -120,7 +120,7 @@ LLMJudge(rubric='...')
 # Anthropic Claude (alternative default)
 LLMJudge(
     rubric='...',
-    model='anthropic:claude-sonnet-4-5',
+    model='anthropic:claude-sonnet-4-6',
 )
 
 # Cheaper option for simple checks
@@ -347,7 +347,7 @@ recipe_dataset = Dataset[CustomerOrder, Recipe, Any](
         LLMJudge(
             rubric='Recipe should have clear steps and relevant ingredients',
             include_input=True,
-            model='anthropic:claude-sonnet-4-5',
+            model='anthropic:claude-sonnet-4-6',
         ),
     ],
 )
@@ -647,7 +647,7 @@ def my_task(inputs: str) -> str:
 
 judges = [
     LLMJudge(rubric='Response is clear', model='openai:gpt-5.2'),
-    LLMJudge(rubric='Response is clear', model='anthropic:claude-sonnet-4-5'),
+    LLMJudge(rubric='Response is clear', model='anthropic:claude-sonnet-4-6'),
     LLMJudge(rubric='Response is clear', model='openai:gpt-5-mini'),
 ]
 
@@ -666,7 +666,7 @@ from pydantic_evals.evaluators import LLMJudge
 from pydantic_evals.evaluators.llm_as_a_judge import set_default_judge_model
 
 # Set default to Claude
-set_default_judge_model('anthropic:claude-sonnet-4-5')
+set_default_judge_model('anthropic:claude-sonnet-4-6')
 
 # Now all LLMJudge instances use Claude by default
 LLMJudge(rubric='...')  # Uses Claude

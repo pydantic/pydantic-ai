@@ -19,13 +19,14 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
-from inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
 from pydantic_ai.models import Model
+
+from ._inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 
 __all__ = (
     'IsDatetime',
@@ -49,6 +50,8 @@ __all__ = (
 logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
+
+os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 if TYPE_CHECKING:
     from typing import TypeVar
@@ -370,6 +373,35 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
     original_cached_func.cache_clear()
 
 
+@pytest.fixture(autouse=True, scope='session')
+def patch_google_genai_gc_crash():
+    """Work around google-genai BaseApiClient GC crash.
+
+    BaseApiClient.__del__ schedules aclose() during GC, which crashes when the
+    object was only partially initialized (_async_httpx_client never set).
+    Remove when https://github.com/googleapis/python-genai/issues/2023 closes.
+    """
+    try:
+        from google.genai._api_client import BaseApiClient
+    except ImportError:
+        yield
+        return
+
+    original_aclose = BaseApiClient.aclose
+
+    async def safe_aclose(self: BaseApiClient) -> None:
+        if hasattr(self, '_async_httpx_client'):
+            await original_aclose(self)
+        else:  # pragma: lax no cover
+            # In some test runs, the `if` above will always run, so we get an `if -> exit` branch coverage miss.
+            # This is a workaround to specify that the `else` branch may not be hit (as we don't have `lax no branch`)
+            pass
+
+    BaseApiClient.aclose = safe_aclose
+    yield
+    BaseApiClient.aclose = original_aclose
+
+
 @pytest.fixture(scope='session')
 def assets_path() -> Path:
     return Path(__file__).parent / 'assets'
@@ -454,6 +486,35 @@ def openrouter_api_key() -> str:
 @pytest.fixture(scope='session')
 def huggingface_api_key() -> str:
     return os.getenv('HF_TOKEN', 'hf_token')
+
+
+@pytest.fixture(autouse=True, scope='session')
+def _patch_hf_provider_mappings():
+    """Populate the SDK's hardcoded model mappings to avoid sync HTTP calls during VCR tests.
+
+    The HuggingFace SDK makes a synchronous HTTP call to resolve provider mappings at request time,
+    which is incompatible with VCR's async test infrastructure.
+    """
+    try:
+        from huggingface_hub.hf_api import InferenceProviderMapping
+        from huggingface_hub.inference._providers._common import HARDCODED_MODEL_INFERENCE_MAPPING
+    except ImportError:
+        return
+
+    models: list[tuple[str, str, str]] = [
+        ('together', 'deepseek-ai/DeepSeek-R1', 'conversational'),
+        ('nebius', 'Qwen/Qwen2.5-VL-72B-Instruct', 'conversational'),
+        ('nebius', 'Qwen/Qwen2.5-72B-Instruct', 'conversational'),
+    ]
+
+    for provider, model_id, task in models:
+        HARDCODED_MODEL_INFERENCE_MAPPING[provider][model_id] = InferenceProviderMapping(
+            provider=provider,
+            hf_model_id=model_id,
+            providerId=model_id,
+            status='live',
+            task=task,
+        )
 
 
 @pytest.fixture(scope='session')
@@ -648,8 +709,8 @@ def model(
 
             return OutlinesModel(
                 from_transformers(
-                    AutoModelForCausalLM.from_pretrained('erwanf/gpt2-mini'),
-                    AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),
+                    AutoModelForCausalLM.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
+                    AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
                 )
             )
         else:
