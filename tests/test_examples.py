@@ -165,6 +165,10 @@ def test_docs_examples(
     mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
     mocker.patch('pydantic_ai.toolsets.fastmcp.FastMCPToolset', return_value=MockMCPServer())
     mocker.patch('mcp.server.fastmcp.FastMCP')
+    try:
+        mocker.patch('sentence_transformers.SentenceTransformer')
+    except ModuleNotFoundError:
+        pass
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
