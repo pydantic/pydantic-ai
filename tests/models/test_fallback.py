@@ -1368,97 +1368,55 @@ def test_response_handler_only_exception_propagates() -> None:
         agent.run_sync('hello')
 
 
-def test_is_response_handler_no_params() -> None:
-    """Test that handlers with no parameters are treated as exception handlers."""
-    from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]
+def test_callable_class_response_handler() -> None:
+    """Test that callable classes with __call__(ModelResponse) trigger response-based fallback."""
 
-    # A callable with no parameters - never called, only inspected for type hints
-    def no_params() -> bool:  # pragma: no cover
-        return True
+    class RejectPrimary:
+        def __call__(self, response: ModelResponse) -> bool:
+            part = response.parts[0] if response.parts else None
+            return isinstance(part, TextPart) and 'primary' in part.content
 
-    assert _is_response_handler(no_params) is False
-
-
-def test_is_response_handler_builtin() -> None:
-    """Test that builtins that can't be inspected are treated as exception handlers."""
-    from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]
-
-    # Built-in type - can't get type hints, should return False
-    assert _is_response_handler(int) is False
-
-
-def test_is_response_handler_callable_class() -> None:
-    """Test that callable classes with __call__ are properly detected."""
-    from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]
-
-    class ResponseHandlerClass:
-        """A callable class that handles ModelResponse."""
-
-        def __call__(self, response: ModelResponse) -> bool:  # pragma: no cover
-            return True
-
-    class ExceptionHandlerClass:
-        """A callable class that handles exceptions."""
-
-        def __call__(self, exc: Exception) -> bool:  # pragma: no cover
-            return True
-
-    # Callable class with ModelResponse parameter should be detected as response handler
-    assert _is_response_handler(ResponseHandlerClass()) is True
-    # Callable class with Exception parameter should NOT be detected as response handler
-    assert _is_response_handler(ExceptionHandlerClass()) is False
-
-
-def test_is_response_handler_unresolvable_forward_ref() -> None:
-    """Test that functions with unresolvable forward refs are treated as exception handlers."""
-    from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]
-
-    # Create a function with a forward reference that can't be resolved
-    # This triggers the exception handler in get_function_type_hints()
-    # Using exec to create the function in an isolated namespace where the type doesn't exist
-    exec_globals: dict[str, object] = {}
-    exec(
-        """
-def handler_with_bad_ref(x: "NonExistentType") -> bool:
-    return True
-""",
-        exec_globals,
+    fallback = FallbackModel(
+        primary_model,
+        fallback_model_impl,
+        fallback_on=RejectPrimary(),
     )
-    handler = exec_globals['handler_with_bad_ref']
+    agent = Agent(model=fallback)
+    result = agent.run_sync('hello')
+    assert result.output == 'fallback response'
 
-    # Should return False (treat as exception handler) because type hints can't be resolved
-    assert _is_response_handler(handler) is False  # pyright: ignore[reportArgumentType]
+
+def test_callable_class_exception_handler() -> None:
+    """Test that callable classes with __call__(Exception) trigger exception-based fallback."""
+
+    class HandleHTTPError:
+        def __call__(self, exc: Exception) -> bool:
+            return isinstance(exc, ModelHTTPError)
+
+    fallback = FallbackModel(
+        failure_model,
+        success_model,
+        fallback_on=HandleHTTPError(),
+    )
+    agent = Agent(model=fallback)
+    result = agent.run_sync('hello')
+    assert result.output == 'success'
 
 
 def test_fallback_on_single_exception_type_direct() -> None:
     """Test fallback_on with a single exception type (not in tuple/list)."""
-    # This tests line 182-183 - single exception type
+
+    def raises_api_error(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        raise ModelAPIError('test-model', 'test error')
+
     fallback = FallbackModel(
-        primary_model,
-        fallback_model_impl,
+        FunctionModel(raises_api_error),
+        success_model,
         fallback_on=ModelAPIError,  # Single type, not tuple
     )
-
-    assert len(fallback._exception_handlers) == 1  # pyright: ignore[reportPrivateUsage]
-    assert len(fallback._response_handlers) == 0  # pyright: ignore[reportPrivateUsage]
-
-
-def test_forward_reference_type_hint() -> None:
-    """Test that forward reference type hints are resolved correctly.
-
-    Note: With `from __future__ import annotations`, all annotations are
-    implicitly forward references and get_type_hints() resolves them.
-    This test verifies that our type detection works with this mechanism.
-    """
-    from pydantic_ai.models.fallback import _is_response_handler  # pyright: ignore[reportPrivateUsage]
-
-    # With `from __future__ import annotations`, this annotation is a forward ref
-    # that gets resolved by get_type_hints() - never called, only inspected
-    def handler_with_forward_ref(response: ModelResponse) -> bool:  # pragma: no cover
-        return False
-
-    # Should be detected as response handler after get_type_hints() resolves the forward ref
-    assert _is_response_handler(handler_with_forward_ref) is True
+    agent = Agent(model=fallback)
+    result = agent.run_sync('hello')
+    assert result.output == 'success'
 
 
 def test_empty_fallback_on_list_warning() -> None:
@@ -1493,8 +1451,8 @@ def test_empty_fallback_on_tuple_warning() -> None:
         assert 'empty fallback_on' in str(w[0].message)
 
 
-async def test_response_rejection_error_includes_model_name() -> None:
-    """Test that error message includes rejected model names."""
+async def test_response_rejection_error_message() -> None:
+    """Test that error message describes response rejections."""
 
     def always_reject(response: ModelResponse) -> bool:
         return True

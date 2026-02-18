@@ -360,8 +360,8 @@ print(result.output)
 
     To keep exception-based fallback alongside a response handler, pass them together as a list — see the [mixed example below](#combining-handlers).
 
-!!! note "Why check finish reasons explicitly?"
-    By default, Pydantic AI doesn't reject non-empty responses based on finish reason — even `'error'` is accepted if the response has content. Use a response handler as shown above to fallback on specific finish reasons.
+!!! note
+    By default, `FallbackModel` doesn't reject responses based on finish reason. Use a response handler to trigger fallback on specific finish reasons like `'length'` or `'content_filter'`.
 
 #### Built-in Tool Failure Example
 

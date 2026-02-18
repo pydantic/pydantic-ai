@@ -135,7 +135,7 @@ class FallbackModel(Model):
                 'All exceptions will propagate and all responses will be accepted. '
                 'Consider using fallback_on=(ModelAPIError,) for default behavior.',
                 UserWarning,
-                stacklevel=3,
+                stacklevel=3,  # user(3) -> __init__(2) -> _parse_fallback_on(1)
             )
 
     def _add_handler(self, handler: Callable[..., Any]) -> None:
@@ -149,6 +149,7 @@ class FallbackModel(Model):
         """Check if any handler wants to trigger fallback."""
         handlers = self._exception_handlers if isinstance(value, Exception) else self._response_handlers
         for handler in handlers:
+            # pyright can't narrow handler's param type from the isinstance check on value
             result = await handler(value) if is_async_callable(handler) else handler(value)  # type: ignore[arg-type]
             if result:
                 return True
@@ -283,20 +284,7 @@ def _raise_fallback_exception_group(exceptions: list[Exception], rejected_respon
         exceptions: List of exceptions raised by models.
         rejected_responses: List of responses that were rejected by fallback_on handlers.
     """
+    all_errors = list(exceptions)
     if rejected_responses:
-        model_names = ', '.join(r.model_name for r in rejected_responses if r.model_name)
-        rejection_error = RuntimeError(
-            f'{len(rejected_responses)} model response(s) rejected by fallback_on handler'
-            + (f' (models: {model_names})' if model_names else '')
-        )
-        all_errors: list[Exception] = [*exceptions, rejection_error]
-    else:
-        all_errors = exceptions
-
-    if all_errors:
-        raise FallbackExceptionGroup('All models from FallbackModel failed', all_errors)
-    else:
-        raise FallbackExceptionGroup(
-            'All models from FallbackModel failed',
-            [RuntimeError('No models available')],
-        )  # pragma: no cover
+        all_errors.append(RuntimeError(f'{len(rejected_responses)} model response(s) rejected by fallback_on handler'))
+    raise FallbackExceptionGroup('All models from FallbackModel failed', all_errors)
