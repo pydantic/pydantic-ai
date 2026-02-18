@@ -28,7 +28,7 @@ def run_web_command(
         agent_path: Agent path in 'module:variable' format. If None, creates generic agent.
         host: Host to bind the server to.
         port: Port to bind the server to.
-        models: List of model strings (e.g., ['openai:gpt-5', 'anthropic:claude-sonnet-4-5']).
+        models: List of model strings (e.g., ['openai:gpt-5', 'anthropic:claude-sonnet-4-6']).
         tools: List of builtin tool IDs (e.g., ['web_search', 'code_execution']).
         instructions: System instructions passed as extra instructions to each agent run.
         default_model: Default model to use when no agent or models are specified.

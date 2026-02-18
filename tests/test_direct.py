@@ -5,7 +5,6 @@ from datetime import timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.direct import (
@@ -34,6 +33,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio

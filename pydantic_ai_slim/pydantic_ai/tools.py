@@ -236,17 +236,6 @@ A = TypeVar('A')
 
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
-    def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
-        """Pydantic 2.12+ correctly handles most cases.
-
-        But typed `extras_schema` (e.g. **kwargs: int) still produces `additionalProperties: true` instead of the typed schema.
-        """
-        json_schema = super().typed_dict_schema(schema)
-        extras_schema = schema.get('extras_schema', None)
-        if extras_schema is not None:
-            json_schema['additionalProperties'] = self.generate_inner(extras_schema) or True
-        return json_schema
-
     def _named_required_fields_schema(self, named_required_fields: Sequence[tuple[str, bool, Any]]) -> JsonSchemaValue:
         # Remove largely-useless property titles
         s = super()._named_required_fields_schema(named_required_fields)

@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from typing import Literal
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_graph.beta import GraphBuilder, StepContext
 from pydantic_graph.beta.join import ReduceFirstValue, ReducerContext, reduce_sum
+
+from ..._inline_snapshot import snapshot
 
 pytestmark = pytest.mark.anyio
 
