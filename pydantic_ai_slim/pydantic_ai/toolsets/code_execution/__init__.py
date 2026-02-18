@@ -61,10 +61,10 @@ def get_environment(name: EnvironmentName) -> ExecutionEnvironment:
     """Create an execution environment by name.
 
     Args:
-        name: The environment name (``'monty'`` or ``'docker'``).
+        name: The environment name (`'monty'` or `'docker'`).
 
     Returns:
-        A new ``ExecutionEnvironment`` instance.
+        A new `ExecutionEnvironment` instance.
     """
     if name == 'monty':
         from ...environments.monty import MontyEnvironment
@@ -131,14 +131,14 @@ def build_default_description(
     """Build the default code execution tool description with the given tool signatures.
 
     This is the default description builder used by CodeExecutionToolset. Users can provide
-    their own callback via the ``description`` parameter, or pass a string to customize
+    their own callback via the `description` parameter, or pass a string to customize
     just the preamble text while keeping the default structure.
 
     Args:
         signatures: List of Python function signatures for available tools.
         referenced_types: Unique type definitions referenced by the signatures.
         environment_instructions: Environment-specific text to include in the description
-            (from ``environment.tool_description('run_python')``). Inserted verbatim if non-empty.
+            (from `environment.instructions('run_python')`). Inserted verbatim if non-empty.
         description: Custom preamble text to use instead of the built-in default.
 
     Returns:
@@ -179,12 +179,12 @@ class _CodeExecutionTool(ToolsetTool[AgentDepsT]):
 class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
     """A toolset that executes Python code, optionally with access to wrapped tools as callable functions.
 
-    When a ``toolset`` is provided, its tools are exposed as callable Python functions in the code
-    execution context. When no ``toolset`` is provided, it acts as a pure code execution environment.
+    When a `toolset` is provided, its tools are exposed as callable Python functions in the code
+    execution context. When no `toolset` is provided, it acts as a pure code execution environment.
 
     Args:
         environment: The code execution environment. Can be an environment instance or a string
-            shorthand (``'monty'`` or ``'docker'``). Defaults to ``'monty'``.
+            shorthand (`'monty'` or `'docker'`). Defaults to `'monty'`.
         toolset: Optional underlying toolset to wrap. When provided, its tools are exposed as
             callable Python functions in the code execution context.
         description: Custom tool description. Can be a string (used as the preamble text
@@ -212,7 +212,7 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
     ) -> None:
         if isinstance(environment, str):
             environment = get_environment(environment)
-        if toolset is not None and 'run_code_with_functions' not in environment.capabilities:
+        if toolset is not None and 'run_python_with_functions' not in environment.capabilities:
             raise TypeError(
                 f'{type(environment).__name__} does not support external functions. '
                 'Cannot wrap tools for code execution.'
@@ -306,7 +306,8 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
             signatures = []
             referenced_types = []
 
-        environment_instructions = self.environment.tool_description('run_python')
+        run_capability = 'run_python_with_functions' if wrapped_tools else 'run_python'
+        environment_instructions = self.environment.instructions(run_capability)
         if isinstance(self.description, str):
             tool_description = build_default_description(
                 signatures, referenced_types, environment_instructions, description=self.description
@@ -375,7 +376,7 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
                 raise CodeRuntimeError(f'Call to {sanitized_name!r} failed: {e}') from e
 
         try:
-            if 'run_code_with_functions' in self.environment.capabilities:
+            if 'run_python_with_functions' in self.environment.capabilities:
                 return await self.environment.run_python_with_functions(
                     code,
                     function_callback=function_callback,

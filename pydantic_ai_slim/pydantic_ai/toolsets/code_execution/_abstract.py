@@ -1,7 +1,7 @@
 """Data types for the code execution layer.
 
-This module defines error types, the ``FunctionCall`` dataclass, and the
-``FunctionCallback`` type alias used by ``CodeExecutionToolset`` and execution
+This module defines error types, the `FunctionCall` dataclass, and the
+`FunctionCallback` type alias used by `CodeExecutionToolset` and execution
 environments.
 """
 

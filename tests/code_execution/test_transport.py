@@ -96,7 +96,7 @@ class _ErrorEnvironment(DriverBasedEnvironment):
 
     @property
     def capabilities(self) -> frozenset[Any]:
-        return frozenset({'run_code'})
+        return frozenset({'run_python'})
 
     async def _copy_driver(self) -> None:
         pass

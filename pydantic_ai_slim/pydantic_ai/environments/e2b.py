@@ -32,7 +32,6 @@ from ._base import (
     ExecuteResult,
     ExecutionProcess,
     FileInfo,
-    ToolName,
     apply_edit,
     build_glob_cmd,
     build_grep_cmd,
@@ -204,18 +203,18 @@ class E2BEnvironment(DriverBasedEnvironment):
                 'shell',
                 'read_file',
                 'write_file',
-                'edit_file',
+                'replace_str',
                 'glob',
                 'grep',
-                'run_code',
-                'run_code_with_functions',
+                'run_python',
+                'run_python_with_functions',
             }
         )
 
-    def tool_description(self, tool: ToolName) -> str | None:
-        if tool == 'grep':
+    def instructions(self, capability: Capability) -> str | None:
+        if capability == 'grep':
             return 'Uses POSIX basic regex, not Python `re` syntax.'
-        if tool == 'glob':
+        if capability == 'glob':
             return 'Uses `find` for pattern matching; `**` is not supported.'
         return None
 

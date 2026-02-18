@@ -102,11 +102,7 @@ class StubEnvironment(ExecutionEnvironment):
 
     @property
     def capabilities(self) -> frozenset[Any]:
-        return frozenset({'run_code', 'run_code_with_functions'})
-
-    @property
-    def supported_code_languages(self) -> frozenset[Any]:
-        return frozenset({'python'})
+        return frozenset({'run_python', 'run_python_with_functions'})
 
     async def run_python_with_functions(
         self,

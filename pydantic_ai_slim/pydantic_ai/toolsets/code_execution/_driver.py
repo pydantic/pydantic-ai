@@ -58,18 +58,18 @@ def _build_proxy(
     """Build an eager proxy function for a declared tool.
 
     Calling the proxy immediately sends a call message and returns a future.
-    ``await`` just waits for the result. This enables fire-then-await parallelism:
-    ``f1 = tool_a(); f2 = tool_b(); r1 = await f1; r2 = await f2`` fires both
+    `await` just waits for the result. This enables fire-then-await parallelism:
+    `f1 = tool_a(); f2 = tool_b(); r1 = await f1; r2 = await f2` fires both
     calls instantly.
 
-    NOT async — returns a future directly. If this were ``async def``, calling
-    without ``await`` would return an unstarted coroutine (no parallelism).
+    NOT async — returns a future directly. If this were `async def`, calling
+    without `await` would return an unstarted coroutine (no parallelism).
 
-    After sending a call message, a ``calls_ready`` boundary message is
-    scheduled via ``loop.call_soon``. Each proxy call cancels the previous
-    handle, so exactly one ``calls_ready`` is emitted after the last
+    After sending a call message, a `calls_ready` boundary message is
+    scheduled via `loop.call_soon`. Each proxy call cancels the previous
+    handle, so exactly one `calls_ready` is emitted after the last
     synchronous proxy call in a batch — when the event loop runs on the
-    next ``await``.
+    next `await`.
     """
 
     def proxy(*args: Any, **kwargs: Any) -> asyncio.Future[Any]:

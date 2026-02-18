@@ -1,8 +1,8 @@
 """Host-side ABC for driver-based execution environments.
 
-Provides ``DriverBasedEnvironment``, an intermediate abstract base class that
-extends ``ExecutionEnvironment`` with code execution via the NDJSON driver protocol.
-Concrete subclasses (Docker, E2B, Local) implement ``_start_driver`` and ``_copy_driver``.
+Provides `DriverBasedEnvironment`, an intermediate abstract base class that
+extends `ExecutionEnvironment` with code execution via the NDJSON driver protocol.
+Concrete subclasses (Docker, E2B, Local) implement `_start_driver` and `_copy_driver`.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from pydantic_ai.toolsets.code_execution._abstract import (
     FunctionCall,
 )
 
-from ._base import EditStrategy, ExecutionEnvironment, Language
+from ._base import ExecutionEnvironment
 
 if TYPE_CHECKING:
     from pydantic_ai._python_signature import FunctionSignature, TypeSignature
@@ -34,7 +34,7 @@ class DriverTransport(ABC):
     """Interface for communicating with a driver process.
 
     Concrete implementations wrap platform-specific transport types
-    (``asyncio.subprocess.Process``, SDK handles, WebSocket connections, etc.).
+    (`asyncio.subprocess.Process`, SDK handles, WebSocket connections, etc.).
     """
 
     @abstractmethod
@@ -59,9 +59,9 @@ class DriverTransport(ABC):
 
 
 class ExecutionProcessTransport(DriverTransport):
-    """Adapts an ``ExecutionProcess`` to the ``DriverTransport`` interface.
+    """Adapts an `ExecutionProcess` to the `DriverTransport` interface.
 
-    Provides line-buffered reads on top of the raw ``recv()`` interface,
+    Provides line-buffered reads on top of the raw `recv()` interface,
     which is what the NDJSON protocol requires.
     """
 
@@ -113,14 +113,14 @@ class _FinalResult:
 class DriverBasedEnvironment(ExecutionEnvironment, ABC):
     """Environment with code execution via the NDJSON driver protocol.
 
-    Extends ``ExecutionEnvironment`` with ``run_python`` that launches a
+    Extends `ExecutionEnvironment` with `run_python` that launches a
     driver script inside the environment and communicates via NDJSON over
     stdin/stdout. The driver handles code compilation, execution, and
     proxying of external function calls.
 
-    Subclasses must implement ``_copy_driver`` (install the driver script into
-    the environment). The default ``_start_driver`` uses ``create_process``
-    with an ``ExecutionProcessTransport`` adapter; override for custom transport.
+    Subclasses must implement `_copy_driver` (install the driver script into
+    the environment). The default `_start_driver` uses `create_process`
+    with an `ExecutionProcessTransport` adapter; override for custom transport.
     """
 
     execution_timeout: float | None = None
@@ -134,21 +134,13 @@ class DriverBasedEnvironment(ExecutionEnvironment, ABC):
 
     _driver_copied: bool = False
 
-    @property
-    def supported_code_languages(self) -> frozenset[Language]:
-        return frozenset({'python'})
-
-    @property
-    def supported_edit_strategies(self) -> frozenset[EditStrategy]:
-        return frozenset({'replace_str'})
-
     # --- Driver protocol ---
 
     async def _start_driver(self, init_msg: dict[str, Any]) -> DriverTransport:
         """Launch the driver process and send the init message.
 
-        The default implementation uses ``create_process`` with an
-        ``ExecutionProcessTransport`` adapter. Override for custom transport
+        The default implementation uses `create_process` with an
+        `ExecutionProcessTransport` adapter. Override for custom transport
         (e.g. asyncio subprocess with the Docker CLI).
 
         Args:
@@ -168,9 +160,9 @@ class DriverBasedEnvironment(ExecutionEnvironment, ABC):
     async def _copy_driver(self) -> None:
         """Install the driver script into the environment.
 
-        Called once before the first ``run_python`` invocation. Implementations
+        Called once before the first `run_python` invocation. Implementations
         should copy the driver script from the host to the environment
-        (e.g. via ``docker exec tee``, file API, or local file reference).
+        (e.g. via `docker exec tee`, file API, or local file reference).
         """
         ...
 
@@ -207,7 +199,7 @@ class DriverBasedEnvironment(ExecutionEnvironment, ABC):
     # --- Protocol implementation ---
 
     async def _run_with_timeout(self, process: DriverTransport, function_callback: FunctionCallback) -> Any:
-        """Run the execution loop, applying ``execution_timeout`` if configured."""
+        """Run the execution loop, applying `execution_timeout` if configured."""
         coro = self._execution_loop(process, function_callback)
         if self.execution_timeout is not None:
             try:

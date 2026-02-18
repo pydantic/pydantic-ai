@@ -43,7 +43,7 @@ async def test_description_default():
     assert 'run Python code' in description
     # Function signature present
     assert 'async def _add' in description
-    # No environment instructions (StubEnvironment.tool_description returns None)
+    # No environment instructions (StubEnvironment.instructions returns None)
     assert 'restricted Python subset' not in description
 
 

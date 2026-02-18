@@ -88,8 +88,8 @@ def _close_subprocess_transport(proc: anyio.abc.Process) -> None:
     """Close the underlying asyncio subprocess transport to prevent ResourceWarning on Python 3.10.
 
     On Python 3.10, asyncio subprocess transports are not closed by
-    ``Process.wait()`` or ``Process.aclose()`` and their ``__del__``
-    emits ``ResourceWarning: unclosed transport``.  Python 3.11+ fixed
+    `Process.wait()` or `Process.aclose()` and their `__del__`
+    emits `ResourceWarning: unclosed transport`.  Python 3.11+ fixed
     this, but we still support 3.10.
     """
     inner = getattr(proc, '_process', None)  # anyio wraps asyncio.subprocess.Process
@@ -138,7 +138,7 @@ class LocalEnvironment(DriverBasedEnvironment):
 
     @property
     def capabilities(self) -> frozenset[Capability]:
-        return frozenset({'ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'run_code'})
+        return frozenset({'ls', 'shell', 'read_file', 'write_file', 'replace_str', 'glob', 'grep', 'run_python'})
 
     async def __aenter__(self) -> Self:
         self._root_dir.mkdir(parents=True, exist_ok=True)

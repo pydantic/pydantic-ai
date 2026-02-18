@@ -24,7 +24,7 @@ from ._base import (
 )
 
 if TYPE_CHECKING:
-    from ._base import Capability, EditStrategy
+    from ._base import Capability
 
 
 class MemoryEnvironment(ExecutionEnvironment):
@@ -71,11 +71,7 @@ class MemoryEnvironment(ExecutionEnvironment):
 
     @property
     def capabilities(self) -> frozenset[Capability]:
-        return frozenset({'ls', 'read_file', 'write_file', 'edit_file', 'glob', 'grep'})
-
-    @property
-    def supported_edit_strategies(self) -> frozenset[EditStrategy]:
-        return frozenset({'replace_str'})
+        return frozenset({'ls', 'read_file', 'write_file', 'replace_str', 'glob', 'grep'})
 
     @staticmethod
     def _normalize(path: str) -> str:

@@ -12,18 +12,43 @@ from typing import Any, Literal
 
 from typing_extensions import Self
 
+from ..environments._base import (
+    IMAGE_MEDIA_TYPES,
+    ExecutionEnvironment,
+)
 from ..exceptions import ModelRetry
 from ..messages import BinaryContent
 from ..toolsets.function import FunctionToolset
-from ._base import (
-    IMAGE_MEDIA_TYPES,
-    Capability,
-    EditStrategy,
-    ExecutionEnvironment,
-)
+
+Capability = Literal[
+    'ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'run_code', 'run_code_with_functions'
+]
+"""Toolset-level capability used in ``include``/``exclude``.
+
+These are higher-level than the environment's fine-grained capabilities.
+The toolset maps these to the appropriate environment capabilities.
+"""
+
+EditStrategy = Literal['replace_str', 'apply_patch']
+"""Specific edit tool strategy. Expanded from the ``edit_file`` capability."""
+
+CodeLanguage = Literal['python', 'typescript']
+"""Code execution language. Expanded from the ``run_code`` capability."""
 
 # Capabilities that are excluded by default (handled by CodeExecutionToolset)
 _DEFAULT_EXCLUDE: frozenset[Capability] = frozenset({'run_code'})
+
+# Mapping from toolset-level code capabilities to per-language env capabilities
+_CODE_CAPABILITY_MAP: dict[str, dict[CodeLanguage, str]] = {
+    'run_code': {
+        'python': 'run_python',
+        'typescript': 'run_typescript',
+    },
+    'run_code_with_functions': {
+        'python': 'run_python_with_functions',
+        'typescript': 'run_typescript_with_functions',
+    },
+}
 
 
 class ExecutionEnvironmentToolset(FunctionToolset[Any]):
@@ -63,6 +88,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         include: frozenset[Capability] | None = None,
         exclude: frozenset[Capability] | None = None,
         edit_strategy: EditStrategy | None = None,
+        code_language: CodeLanguage | None = None,
         require_shell_approval: bool = False,
         require_write_approval: bool = False,
         image_support: bool = True,
@@ -82,6 +108,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                 Use ``frozenset()`` to include all capabilities including ``run_code``.
             edit_strategy: Which edit strategy to use. ``None`` auto-selects
                 ``'replace_str'`` if supported by the environment.
+            code_language: Code execution language. ``None`` auto-detects
+                from the environment's capabilities (defaults to ``'python'``).
             require_shell_approval: Whether the ``shell`` tool requires human-in-the-loop
                 approval before execution. Recommended for ``LocalEnvironment`` where
                 commands run directly on the host.
@@ -101,6 +129,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         self._include = include
         self._exclude = exclude if exclude is not None else _DEFAULT_EXCLUDE
         self._edit_strategy: EditStrategy | None = edit_strategy
+        self._code_language: CodeLanguage | None = code_language
         self._image_support = image_support
         self._max_image_bytes = max_image_bytes
         self._require_shell_approval = require_shell_approval
@@ -115,9 +144,23 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         self._register_tools(environment)
 
     def _resolve_capabilities(self, env: ExecutionEnvironment | None) -> set[Capability]:
-        """Determine which capabilities to register as tools."""
+        """Determine which toolset-level capabilities to register as tools."""
         if env is not None:
-            available: set[Capability] = set(env.capabilities)
+            env_caps = env.capabilities
+            available: set[Capability] = set()
+            # Map env capabilities back to toolset capabilities
+            for cap in ('ls', 'shell', 'read_file', 'write_file', 'glob', 'grep'):
+                if cap in env_caps:
+                    available.add(cap)
+            # Check for edit_file: env has replace_str or apply_patch
+            if 'replace_str' in env_caps or 'apply_patch' in env_caps:
+                available.add('edit_file')
+            # Check for run_code: env has run_python or run_typescript
+            if 'run_python' in env_caps or 'run_typescript' in env_caps:
+                available.add('run_code')
+            # Check for run_code_with_functions
+            if 'run_python_with_functions' in env_caps or 'run_typescript_with_functions' in env_caps:
+                available.add('run_code_with_functions')
         else:
             # No environment yet — register everything (runtime will error on unsupported)
             available = {'ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep'}
@@ -133,10 +176,10 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         if self._edit_strategy is not None:
             return self._edit_strategy
         if env is not None:
-            strategies = env.supported_edit_strategies
-            if 'replace_str' in strategies:
+            env_caps = env.capabilities
+            if 'replace_str' in env_caps:
                 return 'replace_str'
-            if 'apply_patch' in strategies:
+            if 'apply_patch' in env_caps:
                 return 'apply_patch'
             return None
         # Default when no environment is available

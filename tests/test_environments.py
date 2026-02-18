@@ -811,12 +811,12 @@ async def test_toolset_use_environment_no_default():
     assert toolset.environment is None
 
 
-async def test_toolset_tool_description():
-    """Environment tool_description is accessible for each tool."""
+async def test_toolset_instructions():
+    """Environment instructions is accessible for each tool."""
     env = LocalEnvironment('.')
     # LocalEnvironment returns None for all tool descriptions by default
-    assert env.tool_description('shell') is None
-    assert env.tool_description('read_file') is None
+    assert env.instructions('shell') is None
+    assert env.instructions('read_file') is None
 
 
 async def test_toolset_tool_name_conflict_hint():
@@ -1738,18 +1738,18 @@ async def test_toolset_edit_success(tmp_path: Path):
         assert result == snapshot('Replaced 1 occurrence in code.py.')
 
 
-async def test_toolset_with_custom_env_tool_description():
-    """Environment tool_description is used per-tool."""
+async def test_toolset_with_custom_env_instructions():
+    """Environment instructions is used per-tool."""
 
     class CustomEnv(MemoryEnvironment):
-        def tool_description(self, tool: str) -> str | None:
-            if tool == 'grep':
+        def instructions(self, capability: str) -> str | None:
+            if capability == 'grep':
                 return 'Custom grep description.'
             return None
 
     env = CustomEnv()
-    assert env.tool_description('grep') == 'Custom grep description.'
-    assert env.tool_description('read_file') is None
+    assert env.instructions('grep') == 'Custom grep description.'
+    assert env.instructions('read_file') is None
 
 
 async def test_toolset_lifecycle_ref_counting(tmp_path: Path):
@@ -2017,9 +2017,9 @@ async def test_docker_create_process(mock_docker_sandbox: Any) -> None:
     assert proc is not None
 
 
-async def test_docker_tool_description(mock_docker_sandbox: Any) -> None:
-    """DockerEnvironment.tool_description provides per-tool descriptions."""
-    grep_desc = mock_docker_sandbox.tool_description('grep')
+async def test_docker_instructions(mock_docker_sandbox: Any) -> None:
+    """DockerEnvironment.instructions provides per-tool descriptions."""
+    grep_desc = mock_docker_sandbox.instructions('grep')
     assert grep_desc is not None
     assert 'POSIX' in grep_desc
 
@@ -2376,9 +2376,9 @@ async def test_e2b_grep_count(mock_e2b_sandbox: Any) -> None:
     assert 'b.py:0' not in result
 
 
-async def test_e2b_tool_description(mock_e2b_sandbox: Any) -> None:
-    """E2BEnvironment.tool_description provides per-tool descriptions."""
-    grep_desc = mock_e2b_sandbox.tool_description('grep')
+async def test_e2b_instructions(mock_e2b_sandbox: Any) -> None:
+    """E2BEnvironment.instructions provides per-tool descriptions."""
+    grep_desc = mock_e2b_sandbox.instructions('grep')
     assert grep_desc is not None
     assert 'POSIX' in grep_desc
 

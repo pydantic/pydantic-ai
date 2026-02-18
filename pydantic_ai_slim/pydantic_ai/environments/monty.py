@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from pydantic_ai._python_signature import FunctionSignature, TypeSignature
     from pydantic_ai.toolsets.code_execution._abstract import FunctionCallback
 
-    from ._base import Capability, Language, ToolName
+    from ._base import Capability
 
 try:
     from pydantic_monty import (
@@ -57,7 +57,7 @@ class MontyEnvironment(ExecutionEnvironment):
     a MontySnapshot that can be resumed once the host has computed the
     function's return value.
 
-    This environment only supports code execution (``run_code`` capability).
+    This environment only supports code execution (`run_code` capability).
     It does not provide shell, file, or search operations.
     """
 
@@ -66,14 +66,10 @@ class MontyEnvironment(ExecutionEnvironment):
 
     @property
     def capabilities(self) -> frozenset[Capability]:
-        return frozenset({'run_code', 'run_code_with_functions'})
+        return frozenset({'run_python', 'run_python_with_functions'})
 
-    @property
-    def supported_code_languages(self) -> frozenset[Language]:
-        return frozenset({'python'})
-
-    def tool_description(self, tool: ToolName) -> str | None:
-        if tool == 'run_python':
+    def instructions(self, capability: Capability) -> str | None:
+        if capability in ('run_python', 'run_python_with_functions'):
             return textwrap.dedent(
                 """
                 The runtime uses a restricted Python subset:

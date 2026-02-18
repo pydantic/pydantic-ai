@@ -262,7 +262,7 @@ from pydantic_ai.environments._base import Capability
 class MyCloudEnvironment(ExecutionEnvironment):
     @property
     def capabilities(self) -> frozenset[Capability]:
-        return frozenset({'shell', 'read_file', 'write_file', 'edit_file', 'ls', 'glob', 'grep'})
+        return frozenset({'shell', 'read_file', 'write_file', 'replace_str', 'ls', 'glob', 'grep'})
 
     async def shell(
         self, command: str, *, timeout: float | None = 120, env: dict[str, str] | None = None

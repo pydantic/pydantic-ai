@@ -26,7 +26,6 @@ from ._base import (
     ExecuteResult,
     ExecutionProcess,
     FileInfo,
-    ToolName,
     apply_edit,
     build_glob_cmd,
     build_grep_cmd,
@@ -108,8 +107,8 @@ class DockerEnvironmentProcess(ExecutionProcess):
 
     Docker's exec socket uses a multiplexed stream protocol where stdout and
     stderr frames are interleaved with 8-byte headers indicating the stream
-    type.  This class properly separates the two streams so that ``recv()``
-    returns only stdout data and ``recv_stderr()`` returns only stderr data.
+    type.  This class properly separates the two streams so that `recv()`
+    returns only stdout data and `recv_stderr()` returns only stderr data.
     When one stream is requested but the other arrives first, the unexpected
     frame is buffered for the next call to the appropriate method.
     """
@@ -197,11 +196,11 @@ class DockerEnvironmentProcess(ExecutionProcess):
 
         Docker exec socket uses a multiplexed protocol:
         - 8 byte header: [stream_type(1), 0, 0, 0, size(4)]
-        - followed by ``size`` bytes of data
+        - followed by `size` bytes of data
 
         Returns:
-            A ``(stream_type, data)`` tuple.  ``stream_type`` is 1 for stdout
-            and 2 for stderr.  Returns ``(0, b'')`` on EOF.
+            A `(stream_type, data)` tuple.  `stream_type` is 1 for stdout
+            and 2 for stderr.  Returns `(0, b'')` on EOF.
         """
         if self._eof:
             return 0, b''
@@ -323,13 +322,13 @@ class DockerEnvironment(DriverBasedEnvironment):
                 Prevents fork bombs.
             network_disabled: Whether to disable network access.
             read_only: Whether to mount the root filesystem as read-only.
-                Use with ``tmpfs`` to provide writable scratch space.
-            cap_drop: Linux capabilities to drop (e.g. ``['ALL']``).
-            security_opt: Security options (e.g. ``['no-new-privileges']``).
-            user: User to run as inside the container (e.g. ``'nobody'``).
-            tmpfs: tmpfs mounts as ``{path: options}``
-                (e.g. ``{'/tmp': 'noexec,nosuid,size=64m'}``).
-            init: Whether to use ``--init`` to run an init process as PID 1.
+                Use with `tmpfs` to provide writable scratch space.
+            cap_drop: Linux capabilities to drop (e.g. `['ALL']`).
+            security_opt: Security options (e.g. `['no-new-privileges']`).
+            user: User to run as inside the container (e.g. `'nobody'`).
+            tmpfs: tmpfs mounts as `{path: options}`
+                (e.g. `{'/tmp': 'noexec,nosuid,size=64m'}`).
+            init: Whether to use `--init` to run an init process as PID 1.
                 Ensures proper signal handling and zombie reaping.
             cache_built_image: Whether to cache custom-built images.
         """
@@ -363,20 +362,20 @@ class DockerEnvironment(DriverBasedEnvironment):
                 'shell',
                 'read_file',
                 'write_file',
-                'edit_file',
+                'replace_str',
                 'glob',
                 'grep',
-                'run_code',
-                'run_code_with_functions',
+                'run_python',
+                'run_python_with_functions',
             }
         )
 
-    def tool_description(self, tool: ToolName) -> str | None:
-        if tool == 'grep':
+    def instructions(self, capability: Capability) -> str | None:
+        if capability == 'grep':
             return 'Uses POSIX basic regex, not Python `re` syntax.'
-        elif tool == 'glob':
+        elif capability == 'glob':
             return 'Uses `find` for pattern matching; `**` is not supported.'
-        elif tool == 'shell':
+        elif capability == 'shell':
             return 'Runs inside a Docker container.'
         return None
 
@@ -487,9 +486,9 @@ class DockerEnvironment(DriverBasedEnvironment):
     def _resolve_path(self, path: str) -> str:
         """Resolve a path relative to work_dir for Docker API calls.
 
-        Docker API methods like ``put_archive`` and ``get_archive`` resolve
-        paths against the container root ``/``, not the working directory.
-        This helper ensures relative paths are resolved against ``work_dir``.
+        Docker API methods like `put_archive` and `get_archive` resolve
+        paths against the container root `/`, not the working directory.
+        This helper ensures relative paths are resolved against `work_dir`.
         """
         if not path.startswith('/'):
             return f'{self._work_dir}/{path}'

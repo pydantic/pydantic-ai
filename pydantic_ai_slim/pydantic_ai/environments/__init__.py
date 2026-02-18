@@ -16,8 +16,9 @@ Implementations:
 - `environments.monty.MontyEnvironment` — Monty sandboxed interpreter for code execution
 """
 
+from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
+
 from ._base import ExecuteResult, ExecutionEnvironment, ExecutionProcess, FileInfo
-from ._toolset import ExecutionEnvironmentToolset
 
 __all__ = (
     'ExecuteResult',
