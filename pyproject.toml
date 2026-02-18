@@ -272,6 +272,7 @@ omit = [
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     # TODO(Marcelo): Enable prefect coverage again.
     "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
+    "pydantic_ai_slim/pydantic_ai/environments/e2b.py",  # e2b-code-interpreter requires cloud API
     "tests/test_prefect.py",
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
 ]

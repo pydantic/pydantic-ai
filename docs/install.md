@@ -68,6 +68,8 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `monty` - installs [Code Execution](code-execution.md) runtime dependency `pydantic-monty` [GitHub ↗](https://github.com/pydantic/monty){:target="_blank"}
 * `dbos` - installs [DBOS Durable Execution](durable_execution/dbos.md) dependency `dbos` [PyPI ↗](https://pypi.org/project/dbos){:target="_blank"}
 * `prefect` - installs [Prefect Durable Execution](durable_execution/prefect.md) dependency `prefect` [PyPI ↗](https://pypi.org/project/prefect){:target="_blank"}
+* `docker-sandbox` - installs [Docker Sandbox](environments.md#dockersandbox) dependency `docker` [PyPI ↗](https://pypi.org/project/docker){:target="_blank"}
+* `e2b-sandbox` - installs [E2B Sandbox](environments.md#e2bsandbox) dependency `e2b-code-interpreter` [PyPI ↗](https://pypi.org/project/e2b-code-interpreter){:target="_blank"}
 
 You can also install dependencies for multiple models and use cases, for example:
 
