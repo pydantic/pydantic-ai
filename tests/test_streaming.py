@@ -2506,7 +2506,7 @@ async def test_continue_request_node_streams_multiple_continuations() -> None:
 
         @property
         def system(self) -> str:
-            return inner.system
+            return inner.system  # pragma: no cover
 
     agent = Agent(_SuspendOnceStreamModel())
 

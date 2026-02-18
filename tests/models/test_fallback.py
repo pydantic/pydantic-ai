@@ -1703,7 +1703,7 @@ async def test_fallback_stamp_continuation_with_existing_metadata() -> None:
                 state='suspended',
                 metadata={'provider_key': 'provider_value'},
             )
-        return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
 
     primary_model = FunctionModel(primary, model_name='primary')
     model = FallbackModel(primary_model)
