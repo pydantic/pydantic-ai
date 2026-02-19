@@ -8,10 +8,12 @@ import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
 from .._run_context import AgentDepsT, RunContext
+from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
 from ..tools import (
     DocstringFormat,
     GenerateToolJsonSchema,
+    SystemPromptFunc,
     Tool,
     ToolFuncEither,
     ToolParams,
@@ -62,6 +64,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         id: str | None = None,
+        instructions: str | SystemPromptFunc[AgentDepsT] | Sequence[str | SystemPromptFunc[AgentDepsT]] | None = None,
     ):
         """Build a new function toolset.
 
@@ -90,6 +93,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
                 in which case the ID will be used to identify the toolset's activities within the workflow.
+            instructions: Instructions for this toolset that are automatically included in the model request.
+                Can be a string, a function (sync or async, with or without `RunContext`), or a sequence of these.
         """
         self.max_retries = max_retries
         self.timeout = timeout
@@ -101,6 +106,16 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
+
+        self._instructions_funcs: list[str | SystemPromptRunner[AgentDepsT]] = []
+        if instructions is not None:
+            if isinstance(instructions, str) or callable(instructions):
+                instructions = [instructions]
+            for instruction in instructions:
+                if isinstance(instruction, str):
+                    self._instructions_funcs.append(instruction)
+                else:
+                    self._instructions_funcs.append(SystemPromptRunner(instruction))
 
         self.tools = {}
         for tool in tools:
@@ -236,6 +251,37 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         return tool_decorator if func is None else tool_decorator(func)
 
+    def instructions(
+        self,
+        func: SystemPromptFunc[AgentDepsT],
+        /,
+    ) -> SystemPromptFunc[AgentDepsT]:
+        """Decorator to register an instructions function for this toolset.
+
+        The function can be sync or async, and can optionally take a
+        [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
+
+        Example:
+        ```python
+        from pydantic_ai import FunctionToolset, RunContext
+
+        toolset = FunctionToolset[int]()
+
+        @toolset.instructions
+        def my_instructions(ctx: RunContext[int]) -> str:
+            return 'Always use the search tool when looking for information.'
+
+        @toolset.tool
+        def search(ctx: RunContext[int], query: str) -> str:
+            return f'Results for: {query}'
+        ```
+
+        Args:
+            func: The instructions function to register.
+        """
+        self._instructions_funcs.append(SystemPromptRunner(func))
+        return func
+
     def add_function(
         self,
         func: ToolFuncEither[AgentDepsT, ToolParams],
@@ -333,6 +379,19 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool
+
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
+        if not self._instructions_funcs:
+            return None
+        parts: list[str] = []
+        for func in self._instructions_funcs:
+            if isinstance(func, str):
+                parts.append(func)
+            else:
+                result = await func.run(ctx)
+                if result:
+                    parts.append(result)
+        return '\n\n'.join(parts).strip() or None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}

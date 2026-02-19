@@ -113,6 +113,140 @@ print([t.name for t in test_model.last_model_request_parameters.function_tools])
 
 _(This example is complete, it can be run "as is")_
 
+### Toolset Instructions
+
+A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] can provide instructions that are automatically included in the model request whenever the toolset is used. This lets each toolset carry its own usage guidance alongside its tools, so you don't need to duplicate instructions on every agent that uses the toolset.
+
+Instructions can be provided as strings, functions (sync or async, with or without [`RunContext`][pydantic_ai.tools.RunContext]), or a mix of both:
+
+```python {title="toolset_instructions.py"}
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.models.test import TestModel
+
+
+search_toolset = FunctionToolset(
+    instructions='Always use the search tool before answering factual questions.',
+)
+
+
+@search_toolset.tool
+def search(query: str) -> str:
+    """Search for information."""
+    return f'Results for: {query}'
+
+
+test_model = TestModel()
+agent = Agent(test_model, toolsets=[search_toolset])
+result = agent.run_sync('What is the capital of France?')
+print(result.all_messages()[0].instructions)
+#> Always use the search tool before answering factual questions.
+```
+
+_(This example is complete, it can be run "as is")_
+
+You can also use the [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions] decorator to register dynamic instruction functions that can access the run context:
+
+```python {title="toolset_instructions_decorator.py"}
+from pydantic_ai import Agent, FunctionToolset, RunContext
+from pydantic_ai.models.test import TestModel
+
+
+math_toolset = FunctionToolset[str]()
+
+
+@math_toolset.instructions
+def math_instructions(ctx: RunContext[str]) -> str:
+    return f'You are helping: {ctx.deps}. Always show your work when using the calculator.'
+
+
+@math_toolset.tool
+def calculator(expression: str) -> str:
+    """Evaluate a math expression."""
+    return '4'
+
+
+test_model = TestModel()
+agent = Agent(test_model, toolsets=[math_toolset], deps_type=str)
+result = agent.run_sync('What is 2+2?', deps='Alice')
+print(result.all_messages()[0].instructions)
+#> You are helping: Alice. Always show your work when using the calculator.
+```
+
+_(This example is complete, it can be run "as is")_
+
+When a toolset with instructions is used alongside agent-level [`instructions`][pydantic_ai.agent.Agent.__init__], the toolset instructions are appended after the agent instructions:
+
+```python {title="toolset_instructions_combined.py"}
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.models.test import TestModel
+
+
+toolset = FunctionToolset(instructions='Use the greeting tool for all greetings.')
+
+
+@toolset.tool
+def greeting(name: str) -> str:
+    """Greet someone."""
+    return f'Hello, {name}!'
+
+
+test_model = TestModel()
+agent = Agent(
+    test_model,
+    instructions='You are a friendly assistant.',
+    toolsets=[toolset],
+)
+result = agent.run_sync('Hi there!')
+print(result.all_messages()[0].instructions)
+"""
+You are a friendly assistant.
+
+Use the greeting tool for all greetings.
+"""
+```
+
+_(This example is complete, it can be run "as is")_
+
+When multiple toolsets with instructions are registered on an agent, all their instructions are combined:
+
+```python {title="toolset_instructions_multiple.py"}
+from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.models.test import TestModel
+
+
+weather_toolset = FunctionToolset(instructions='Use weather tools for forecasts.')
+
+
+@weather_toolset.tool
+def forecast(city: str) -> str:
+    """Get weather forecast."""
+    return 'Sunny'
+
+
+calendar_toolset = FunctionToolset(instructions='Use calendar tools for scheduling.')
+
+
+@calendar_toolset.tool
+def schedule(event: str) -> str:
+    """Schedule an event."""
+    return 'Scheduled'
+
+
+test_model = TestModel()
+agent = Agent(test_model, toolsets=[weather_toolset, calendar_toolset])
+result = agent.run_sync('Plan my day')
+print(result.all_messages()[0].instructions)
+"""
+Use weather tools for forecasts.
+
+Use calendar tools for scheduling.
+"""
+```
+
+_(This example is complete, it can be run "as is")_
+
+Custom toolsets that extend [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] can also provide instructions by overriding the [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] method. Wrapper toolsets (like [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset]) automatically pass through instructions from the wrapped toolset.
+
 ## Toolset Composition
 
 Toolsets can be composed to dynamically filter which tools are available, modify tool definitions, or change tool execution behavior. Multiple toolsets can also be combined into one.
@@ -652,6 +786,9 @@ print([t.name for t in test_model.last_model_request_parameters.function_tools])
 
 _(This example is complete, it can be run "as is")_
 
+!!! note "Dynamic toolset instructions are unavailable on the first model request"
+    Because a dynamic toolset is resolved inside [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] — which is called to build each model request — its [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] result is `None` until the toolset has been resolved at least once. This means that on the very first request of a run, any instructions defined on the inner toolset are silently omitted. If you need toolset instructions to be present from the very first request, define them on a `FunctionToolset` registered directly with the agent rather than inside a dynamic toolset factory.
+
 ## Building a Custom Toolset
 
 To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] and implement the [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] and [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] methods.
@@ -659,9 +796,6 @@ To define a fully custom toolset with its own logic to list available tools and 
 You can also override the [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] method to provide instructions that will be injected into the agent's system prompt. This is useful for helping the model understand how to effectively use your toolset's tools.
 
 If you want to reuse a network connection or session across tool listings and calls during an agent run, you can implement [`__aenter__()`][pydantic_ai.toolsets.AbstractToolset.__aenter__] and [`__aexit__()`][pydantic_ai.toolsets.AbstractToolset.__aexit__].
-
-!!! info "Custom Toolsets and Composition"
-    Custom instructions from [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] are automatically preserved when using composition methods like [`filtered()`][pydantic_ai.toolsets.AbstractToolset.filtered], [`prefixed()`][pydantic_ai.toolsets.AbstractToolset.prefixed], [`prepared()`][pydantic_ai.toolsets.AbstractToolset.prepared], [`renamed()`][pydantic_ai.toolsets.AbstractToolset.renamed], or [`approval_required()`][pydantic_ai.toolsets.AbstractToolset.approval_required]. Other custom methods will work at runtime but may not be recognized by static type checkers.
 
 ## Third-Party Toolsets
 

@@ -954,21 +954,20 @@ async def test_wrapper_toolsets_delegate_instructions():
 
 
 async def test_combined_toolset_instructions():
-    """Test that CombinedToolset uses default instructions behavior (returns None)."""
+    """Test that CombinedToolset aggregates instructions from all contained toolsets."""
     instructions1 = 'Instructions from toolset 1.'
     instructions2 = 'Instructions from toolset 2.'
-    
+
     toolset1 = MockToolsetWithInstructions(instructions=instructions1, id='toolset1')
     toolset2 = MockToolsetWithInstructions(instructions=instructions2, id='toolset2')
     toolset3 = MockToolsetWithInstructions(instructions=None, id='toolset3')  # No instructions
-    
+
     combined = CombinedToolset([toolset1, toolset2, toolset3])
     ctx = build_run_context(None)
-    
-    # CombinedToolset uses the default implementation which returns None
-    # Individual toolsets' instructions are not automatically combined
+
+    # CombinedToolset aggregates non-None instructions from all contained toolsets
     instructions = await combined.get_instructions(ctx)
-    assert instructions is None
+    assert instructions == 'Instructions from toolset 1.\n\nInstructions from toolset 2.'
 
 
 async def test_combined_toolset_instructions_all_none():
@@ -1021,3 +1020,305 @@ def test_agent_toolset_decorator_id():
     # Third toolset should have explicit id
     assert isinstance(toolsets[2], DynamicToolset)
     assert toolsets[2].id == 'custom_id'
+
+
+async def test_function_toolset_get_instructions_string():
+    """FunctionToolset with a string instruction returns it via get_instructions."""
+    toolset = FunctionToolset(instructions='Always use tool X for math.')
+
+    @toolset.tool
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result == 'Always use tool X for math.'
+
+
+async def test_function_toolset_get_instructions_function():
+    """FunctionToolset with a function instruction calls it via get_instructions."""
+    toolset = FunctionToolset(instructions=lambda: 'Use search for lookups.')
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result == 'Use search for lookups.'
+
+
+async def test_function_toolset_get_instructions_with_ctx():
+    """FunctionToolset instruction function can access RunContext."""
+
+    def my_instructions(ctx: RunContext[str]) -> str:
+        return f'Deps are: {ctx.deps}'
+
+    toolset = FunctionToolset[str](instructions=my_instructions)
+
+    ctx = build_run_context('hello')
+    result = await toolset.get_instructions(ctx)
+    assert result == 'Deps are: hello'
+
+
+async def test_function_toolset_get_instructions_async():
+    """FunctionToolset with an async instruction function works."""
+
+    async def my_instructions() -> str:
+        return 'Async instructions here.'
+
+    toolset = FunctionToolset(instructions=my_instructions)
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result == 'Async instructions here.'
+
+
+async def test_function_toolset_get_instructions_multiple():
+    """FunctionToolset with a sequence of instructions joins them."""
+    toolset = FunctionToolset(instructions=['First instruction.', lambda: 'Second instruction.'])
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result == 'First instruction.\n\nSecond instruction.'
+
+
+async def test_function_toolset_get_instructions_none_default():
+    """FunctionToolset without instructions returns None."""
+    toolset = FunctionToolset()
+
+    @toolset.tool
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result is None
+
+
+async def test_function_toolset_instructions_decorator():
+    """The @toolset.instructions decorator registers instruction functions."""
+    toolset = FunctionToolset()
+
+    @toolset.instructions
+    def my_instructions() -> str:
+        return 'Use tool Y for data processing.'
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result == 'Use tool Y for data processing.'
+
+
+async def test_function_toolset_instructions_decorator_with_ctx():
+    """The @toolset.instructions decorator works with RunContext."""
+    toolset = FunctionToolset[int]()
+
+    @toolset.instructions
+    def my_instructions(ctx: RunContext[int]) -> str:
+        return f'Dep value: {ctx.deps}'
+
+    ctx = build_run_context(42)
+    result = await toolset.get_instructions(ctx)
+    assert result == 'Dep value: 42'
+
+
+async def test_function_toolset_instructions_decorator_combined_with_constructor():
+    """Constructor instructions and decorator instructions are combined."""
+    toolset = FunctionToolset(instructions='From constructor.')
+
+    @toolset.instructions
+    def extra() -> str:
+        return 'From decorator.'
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result == 'From constructor.\n\nFrom decorator.'
+
+
+async def test_function_toolset_instructions_none_filtered():
+    """Instructions returning None are excluded."""
+    toolset = FunctionToolset(instructions=[lambda: None, 'Only this.'])  # type: ignore[arg-type]
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result == 'Only this.'
+
+
+async def test_function_toolset_empty_string_instructions():
+    """Empty string instructions are treated as no instructions."""
+    toolset = FunctionToolset(instructions='')
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result is None
+
+
+async def test_function_toolset_whitespace_only_instructions():
+    """Whitespace-only instructions are treated as no instructions."""
+    toolset = FunctionToolset(instructions='   \n\n  ')
+
+    ctx = build_run_context(None)
+    result = await toolset.get_instructions(ctx)
+    assert result is None
+
+
+async def test_wrapper_toolset_passes_through_instructions():
+    """WrapperToolset delegates get_instructions to wrapped toolset."""
+    inner = FunctionToolset(instructions='Inner instructions.')
+    wrapped = inner.prefixed('my')
+
+    ctx = build_run_context(None)
+    result = await wrapped.get_instructions(ctx)
+    assert result == 'Inner instructions.'
+
+
+async def test_combined_toolset_aggregates_instructions():
+    """CombinedToolset gathers instructions from all children."""
+    ts1 = FunctionToolset(instructions='Toolset 1 instructions.')
+
+    @ts1.tool
+    def tool_a() -> str:
+        return 'a'
+
+    ts2 = FunctionToolset(instructions='Toolset 2 instructions.')
+
+    @ts2.tool
+    def tool_b() -> str:
+        return 'b'
+
+    combined = CombinedToolset([ts1, ts2])
+
+    ctx = build_run_context(None)
+    result = await combined.get_instructions(ctx)
+    assert result == 'Toolset 1 instructions.\n\nToolset 2 instructions.'
+
+
+async def test_combined_toolset_skips_none_instructions():
+    """CombinedToolset skips toolsets that return None for instructions."""
+    ts1 = FunctionToolset(instructions='Only from ts1.')
+
+    @ts1.tool
+    def tool_a() -> str:
+        return 'a'
+
+    ts2 = FunctionToolset()  # No instructions
+
+    @ts2.tool
+    def tool_b() -> str:
+        return 'b'
+
+    combined = CombinedToolset([ts1, ts2])
+
+    ctx = build_run_context(None)
+    result = await combined.get_instructions(ctx)
+    assert result == 'Only from ts1.'
+
+
+async def test_combined_toolset_all_none_returns_none():
+    """CombinedToolset returns None when all children return None."""
+    ts1 = FunctionToolset()
+
+    @ts1.tool
+    def tool_a() -> str:
+        return 'a'
+
+    ts2 = FunctionToolset()
+
+    @ts2.tool
+    def tool_b() -> str:
+        return 'b'
+
+    combined = CombinedToolset([ts1, ts2])
+
+    ctx = build_run_context(None)
+    result = await combined.get_instructions(ctx)
+    assert result is None
+
+
+async def test_dynamic_toolset_instructions_before_resolution():
+    """DynamicToolset returns None for instructions before get_tools resolves it."""
+
+    def make_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+        return FunctionToolset(instructions='Dynamic instructions.')
+
+    dynamic = DynamicToolset(make_toolset)
+
+    ctx = build_run_context(None)
+    # Before get_tools is called, _toolset is None
+    result = await dynamic.get_instructions(ctx)
+    assert result is None
+
+
+async def test_dynamic_toolset_instructions_after_resolution():
+    """DynamicToolset delegates instructions after get_tools resolves it."""
+
+    def make_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+        ts = FunctionToolset[None](instructions='Dynamic instructions.')
+
+        @ts.tool
+        def my_tool() -> str:
+            return 'result'
+
+        return ts
+
+    dynamic = DynamicToolset(make_toolset)
+
+    ctx = build_run_context(None)
+    # get_tools triggers resolution
+    await dynamic.get_tools(ctx)
+    result = await dynamic.get_instructions(ctx)
+    assert result == 'Dynamic instructions.'
+
+
+async def test_toolset_instructions_in_agent():
+    """Toolset instructions appear in the model request when added to an agent."""
+    from pydantic_ai import Agent
+
+    toolset = FunctionToolset(instructions='Always use my_tool correctly.')
+
+    @toolset.tool
+    def my_tool() -> str:
+        """A simple tool."""
+        return 'done'
+
+    agent = Agent(TestModel(), toolsets=[toolset])
+    result = await agent.run('Hello')
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'Always use my_tool correctly.'  # type: ignore[union-attr]
+
+
+async def test_toolset_instructions_combined_with_agent_instructions():
+    """Toolset instructions are appended after agent-level instructions."""
+    from pydantic_ai import Agent
+
+    toolset = FunctionToolset(instructions='Use search for lookups.')
+
+    @toolset.tool
+    def search() -> str:
+        """Search for information."""
+        return 'results'
+
+    agent = Agent(TestModel(), instructions='You are a helpful assistant.', toolsets=[toolset])
+    result = await agent.run('Hello')
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'You are a helpful assistant.\n\nUse search for lookups.'  # type: ignore[union-attr]
+
+
+async def test_multiple_toolset_instructions_in_agent():
+    """Multiple toolsets with instructions are all included."""
+    from pydantic_ai import Agent
+
+    ts1 = FunctionToolset(instructions='Use calculator for math.')
+
+    @ts1.tool
+    def calculator() -> str:
+        """Evaluate a math expression."""
+        return '4'
+
+    ts2 = FunctionToolset(instructions='Use search for lookups.')
+
+    @ts2.tool
+    def search() -> str:
+        """Search for information."""
+        return 'results'
+
+    agent = Agent(TestModel(), toolsets=[ts1, ts2])
+    result = await agent.run('Hello')
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'Use calculator for math.\n\nUse search for lookups.'  # type: ignore[union-attr]
