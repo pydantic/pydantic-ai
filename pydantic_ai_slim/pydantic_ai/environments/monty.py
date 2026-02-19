@@ -98,7 +98,7 @@ class MontyEnvironment(ExecutionEnvironment):
                     r3 = await get_data(id=3)
                 """
             )
-        return None
+        return None  # pragma: no cover
 
     async def run_python(self, code: str) -> Any:
         """Execute code in the Monty sandbox without external functions."""

@@ -175,7 +175,7 @@ class DriverBasedEnvironment(ExecutionEnvironment, ABC):
         referenced_types: list[TypeSignature] | None = None,
     ) -> Any:
         """Execute Python code with external functions via the NDJSON driver protocol."""
-        if not self._driver_copied:
+        if not self._driver_copied:  # pragma: no branch
             await self._copy_driver()
             self._driver_copied = True
 

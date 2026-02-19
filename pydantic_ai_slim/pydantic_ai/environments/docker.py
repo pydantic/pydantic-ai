@@ -355,7 +355,7 @@ class DockerEnvironment(DriverBasedEnvironment):
         self._container: Container | None = None
 
     @property
-    def capabilities(self) -> frozenset[Capability]:
+    def capabilities(self) -> frozenset[Capability]:  # pragma: lax no cover
         return frozenset(
             {
                 'ls',
@@ -371,13 +371,13 @@ class DockerEnvironment(DriverBasedEnvironment):
         )
 
     def instructions(self, capability: Capability) -> str | None:
-        if capability == 'grep':
+        if capability == 'grep':  # pragma: lax no cover
             return 'Uses POSIX basic regex, not Python `re` syntax.'
-        elif capability == 'glob':
+        elif capability == 'glob':  # pragma: lax no cover
             return 'Uses `find` for pattern matching; `**` is not supported.'
-        elif capability == 'shell':
+        elif capability == 'shell':  # pragma: lax no cover
             return 'Runs inside a Docker container.'
-        return None
+        return None  # pragma: lax no cover
 
     async def __aenter__(self) -> Self:
         await anyio.to_thread.run_sync(self._setup)
@@ -645,7 +645,7 @@ class DockerEnvironment(DriverBasedEnvironment):
 
         return await anyio.to_thread.run_sync(_grep)
 
-    async def _copy_driver(self) -> None:
+    async def _copy_driver(self) -> None:  # pragma: lax no cover
         """Copy the driver script into the container."""
         driver_source = Path(__file__).parents[1] / 'toolsets' / 'code_execution' / '_driver.py'
         content = driver_source.read_text('utf-8')

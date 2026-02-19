@@ -432,3 +432,52 @@ async def test_pending_tasks_cancelled_on_runtime_error():
     code = 'f = add(x=1, y=2)\n1 / 0'
     with pytest.raises(ModelRetry, match='Runtime error in generated code'):
         await run_code_with_tools(code, MontyEnvironment(), (add, False))
+
+
+# --- Direct run_python tests ---
+
+
+async def test_run_python_success():
+    """run_python returns the last expression."""
+    env = MontyEnvironment()
+    result = await env.run_python('"hello"')
+    assert result == 'hello'
+
+
+async def test_run_python_syntax_error():
+    """run_python raises CodeSyntaxError for invalid syntax."""
+    from pydantic_ai.toolsets.code_execution._abstract import CodeSyntaxError
+
+    env = MontyEnvironment()
+    with pytest.raises(CodeSyntaxError):
+        await env.run_python('def while')
+
+
+async def test_run_python_type_error():
+    """run_python raises CodeTypingError for type errors."""
+    from pydantic_ai.toolsets.code_execution._abstract import CodeTypingError
+
+    env = MontyEnvironment()
+    with pytest.raises(CodeTypingError):
+        await env.run_python('x: int = "hello"')
+
+
+async def test_run_python_runtime_error():
+    """run_python raises CodeRuntimeError for runtime errors."""
+    from pydantic_ai.toolsets.code_execution._abstract import CodeRuntimeError
+
+    env = MontyEnvironment()
+    with pytest.raises(CodeRuntimeError):
+        await env.run_python('1 / 0')
+
+
+async def test_run_python_with_functions_default_params():
+    """run_python_with_functions works with default functions/referenced_types."""
+    from unittest.mock import AsyncMock
+
+    env = MontyEnvironment()
+    result = await env.run_python_with_functions(
+        '"hello"',
+        function_callback=AsyncMock(),
+    )
+    assert result == 'hello'

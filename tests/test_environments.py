@@ -3808,3 +3808,225 @@ async def test_memory_read_file_that_is_also_directory_prefix():
         content = await env.read_file('dir')
         assert isinstance(content, str)
         assert 'I am a file' in content
+
+
+# --- ExecutionEnvironmentToolset: capability and edit strategy resolution ---
+
+
+def test_resolve_edit_tool_explicit_strategy():
+    """Passing edit_strategy to constructor overrides auto-detection."""
+    env = MemoryEnvironment()
+    toolset = ExecutionEnvironmentToolset(env, edit_strategy='apply_patch')
+    strategy = toolset._resolve_edit_tool(env)
+    assert strategy == 'apply_patch'
+
+
+def test_resolve_edit_tool_apply_patch_fallback():
+    """When env has apply_patch but not replace_str, resolves to apply_patch."""
+    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _ApplyPatchEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'apply_patch'})
+
+    toolset = ExecutionEnvironmentToolset(_ApplyPatchEnv())
+    strategy = toolset._resolve_edit_tool(_ApplyPatchEnv())
+    assert strategy == 'apply_patch'
+
+
+def test_resolve_edit_tool_neither():
+    """When env has neither replace_str nor apply_patch, returns None."""
+    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _NoEditEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'ls'})
+
+    toolset = ExecutionEnvironmentToolset(_NoEditEnv())
+    strategy = toolset._resolve_edit_tool(_NoEditEnv())
+    assert strategy is None
+
+
+def test_resolve_capabilities_with_run_code_with_functions():
+    """Env with run_python_with_functions maps to run_code_with_functions capability."""
+    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _FunctionsEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'run_python_with_functions'})
+
+    toolset = ExecutionEnvironmentToolset(
+        _FunctionsEnv(),
+        exclude=frozenset(),  # don't exclude run_code
+    )
+    caps = toolset._resolve_capabilities(_FunctionsEnv())
+    assert 'run_code_with_functions' in caps
+
+
+# --- ExecutionEnvironmentToolset: ls formatting through toolset ---
+
+
+async def test_toolset_ls_error_handling():
+    """Toolset ls returns error string when environment raises."""
+    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _ErrorLsEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'ls'})
+
+        async def ls(self, path: str = '.') -> list[FileInfo]:
+            raise NotADirectoryError(f'Not a directory: {path}')
+
+    env = _ErrorLsEnv()
+    toolset = ExecutionEnvironmentToolset(env)
+    ctx = build_run_context()
+    tools = await toolset.get_tools(ctx)
+    result = await toolset.call_tool('ls', {'path': '/bad'}, ctx, tools['ls'])
+    assert 'Error:' in str(result)
+
+
+async def test_toolset_ls_formats_dirs():
+    """Toolset ls formats directory entries with trailing /."""
+    env = MemoryEnvironment(files={'sub/a.txt': 'hello'})
+    toolset = ExecutionEnvironmentToolset(env)
+    ctx = build_run_context()
+    tools = await toolset.get_tools(ctx)
+    async with env:
+        result = await toolset.call_tool('ls', {'path': '.'}, ctx, tools['ls'])
+    assert 'sub/' in str(result)
+
+
+async def test_toolset_ls_formats_files_without_size():
+    """Toolset ls formats file entries without size (just the name)."""
+    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _NoSizeEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'ls'})
+
+        async def ls(self, path: str = '.') -> list[FileInfo]:
+            return [FileInfo(name='readme.txt', path='readme.txt', is_dir=False, size=None)]
+
+    env = _NoSizeEnv()
+    toolset = ExecutionEnvironmentToolset(env)
+    ctx = build_run_context()
+    tools = await toolset.get_tools(ctx)
+    result = await toolset.call_tool('ls', {'path': '.'}, ctx, tools['ls'])
+    assert str(result) == 'readme.txt'
+
+
+async def test_toolset_ls_empty_directory():
+    """Toolset ls returns 'Empty directory.' for empty listings."""
+    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _EmptyLsEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'ls'})
+
+        async def ls(self, path: str = '.') -> list[FileInfo]:
+            return []
+
+    env = _EmptyLsEnv()
+    toolset = ExecutionEnvironmentToolset(env)
+    ctx = build_run_context()
+    tools = await toolset.get_tools(ctx)
+    result = await toolset.call_tool('ls', {'path': '.'}, ctx, tools['ls'])
+    assert str(result) == 'Empty directory.'
+
+
+# --- Memory image file stored as string ---
+
+
+async def test_memory_read_image_stored_as_string():
+    """MemoryEnvironment returns bytes for image files even when stored as a string."""
+    env = MemoryEnvironment(files={'image.png': 'fake png data'})
+    async with env:
+        result = await env.read_file('image.png')
+    assert isinstance(result, bytes)
+    assert result == b'fake png data'
+
+
+# --- Base run_python via shell (ExecutionEnvironment default implementation) ---
+
+
+async def test_base_run_python_success():
+    """Base ExecutionEnvironment.run_python writes code to file and runs via shell."""
+    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _ShellEnv(BaseEnv):
+        """Env with shell and write_file that delegates to the OS."""
+
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'shell', 'write_file', 'run_python'})
+
+        async def write_file(self, path: str, content: str | bytes) -> None:
+            p = Path(path)
+            if isinstance(content, str):
+                p.write_text(content, encoding='utf-8')
+            else:
+                p.write_bytes(content)
+
+        async def shell(
+            self, command: str, *, timeout: float | None = 120, env: dict[str, str] | None = None
+        ) -> ExecuteResult:
+            import asyncio as _asyncio
+
+            proc = await _asyncio.create_subprocess_shell(
+                command, stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.STDOUT
+            )
+            stdout, _ = await proc.communicate()
+            return ExecuteResult(output=stdout.decode(), exit_code=proc.returncode or 0)
+
+    env = _ShellEnv()
+    result = await env.run_python('print("hello world")')
+    assert 'hello world' in result
+
+
+async def test_base_run_python_error():
+    """Base ExecutionEnvironment.run_python raises CodeRuntimeError on non-zero exit."""
+    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+    from pydantic_ai.toolsets.code_execution._abstract import CodeRuntimeError
+
+    class _ShellEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'shell', 'write_file', 'run_python'})
+
+        async def write_file(self, path: str, content: str | bytes) -> None:
+            p = Path(path)
+            if isinstance(content, str):
+                p.write_text(content, encoding='utf-8')
+            else:
+                p.write_bytes(content)
+
+        async def shell(
+            self, command: str, *, timeout: float | None = 120, env: dict[str, str] | None = None
+        ) -> ExecuteResult:
+            import asyncio as _asyncio
+
+            proc = await _asyncio.create_subprocess_shell(
+                command, stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.STDOUT
+            )
+            stdout, _ = await proc.communicate()
+            return ExecuteResult(output=stdout.decode(), exit_code=proc.returncode or 0)
+
+    env = _ShellEnv()
+    with pytest.raises(CodeRuntimeError):
+        await env.run_python('raise Exception("fail")')
+
+
+# --- Lazy import test ---
+
+
+def test_lazy_import_code_execution_toolset():
+    """CodeExecutionToolset is importable via lazy __getattr__ on pydantic_ai.toolsets."""
+    from pydantic_ai.toolsets import CodeExecutionToolset
+
+    assert CodeExecutionToolset is not None

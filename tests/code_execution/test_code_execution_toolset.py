@@ -239,3 +239,98 @@ async def test_no_toolset_description_omits_tool_calling():
     assert 'call other tools as functions' not in description
     assert 'Available functions' not in description
     assert 'async def' not in description
+
+
+# --- Environment factory and compatibility tests ---
+
+
+def test_get_environment_docker():
+    """get_environment('docker') returns a DockerEnvironment."""
+    try:
+        from pydantic_ai.environments.docker import DockerEnvironment
+    except ImportError:
+        pytest.skip('docker package not installed')
+    from pydantic_ai.toolsets.code_execution import get_environment
+
+    env = get_environment('docker')
+    assert isinstance(env, DockerEnvironment)
+
+
+def test_toolset_with_incompatible_env_raises_type_error():
+    """Creating CodeExecutionToolset with a toolset and env without run_python_with_functions raises TypeError."""
+    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment
+
+    class _RunPythonOnlyEnv(ExecutionEnvironment):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'run_python'})
+
+    ts: FunctionToolset[None] = FunctionToolset()
+    ts.add_function(_add, takes_ctx=False)
+    with pytest.raises(TypeError, match='does not support external functions'):
+        CodeExecutionToolset(_RunPythonOnlyEnv(), toolset=ts)
+
+
+async def test_positional_args_rejected():
+    """Positional arguments in a function call raise CodeRuntimeError → ModelRetry."""
+    from pydantic_ai.toolsets.code_execution._abstract import FunctionCall
+
+    class _CallbackEnv(StubEnvironment):
+        async def run_python_with_functions(
+            self, code: str, *, function_callback: Any, functions: Any = None, referenced_types: Any = None
+        ) -> Any:
+            call = FunctionCall(call_id='1', function_name='_add', args=(1, 2), kwargs={})
+            return await function_callback(call)
+
+    ts: FunctionToolset[None] = FunctionToolset()
+    ts.add_function(_add, takes_ctx=False)
+    cm = CodeExecutionToolset(_CallbackEnv(), toolset=ts)
+    ctx = build_run_context()
+    tools = await cm.get_tools(ctx)
+
+    from pydantic_ai.exceptions import ModelRetry
+
+    with pytest.raises(ModelRetry, match='Runtime error'):
+        await cm.call_tool('run_code', {'code': '_add(1, 2)'}, ctx, tools['run_code'])
+
+
+async def test_validation_error_becomes_runtime_error():
+    """ValidationError from invalid kwargs is surfaced as ModelRetry."""
+    from pydantic_ai.toolsets.code_execution._abstract import FunctionCall
+
+    class _BadKwargsEnv(StubEnvironment):
+        async def run_python_with_functions(
+            self, code: str, *, function_callback: Any, functions: Any = None, referenced_types: Any = None
+        ) -> Any:
+            call = FunctionCall(call_id='1', function_name='_add', args=(), kwargs={'x': 'not_int', 'y': 'not_int'})
+            return await function_callback(call)
+
+    ts: FunctionToolset[None] = FunctionToolset()
+    ts.add_function(_add, takes_ctx=False)
+    cm = CodeExecutionToolset(_BadKwargsEnv(), toolset=ts)
+    ctx = build_run_context()
+    tools = await cm.get_tools(ctx)
+
+    from pydantic_ai.exceptions import ModelRetry
+
+    with pytest.raises(ModelRetry, match='Runtime error'):
+        await cm.call_tool('run_code', {'code': '_add(x="a", y="b")'}, ctx, tools['run_code'])
+
+
+async def test_run_python_fallback_without_functions_capability():
+    """CodeExecutionToolset falls back to run_python when env lacks run_python_with_functions."""
+    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment
+
+    class _RunPythonOnlyEnv(ExecutionEnvironment):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'run_python'})
+
+        async def run_python(self, code: str) -> Any:
+            return 'ran_python'
+
+    cm = CodeExecutionToolset(_RunPythonOnlyEnv())
+    ctx = build_run_context()
+    tools = await cm.get_tools(ctx)
+    result = await cm.call_tool('run_code', {'code': 'print("hi")'}, ctx, tools['run_code'])
+    assert result == 'ran_python'

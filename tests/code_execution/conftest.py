@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import uuid
-from collections.abc import Callable, Iterator
-from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -124,31 +122,6 @@ def _docker_is_available() -> bool:
     except (subprocess.CalledProcessError, FileNotFoundError):  # pragma: lax no cover
         return False
     return True  # pragma: lax no cover
-
-
-@pytest.fixture(scope='session')
-def _docker_container() -> Iterator[str]:
-    """Create a long-lived Docker container for the test session.
-
-    Copies the driver script into the container so that DockerEnvironment
-    can execute code inside it.
-    """
-    container_name = f'pydantic-ai-test-{uuid.uuid4().hex[:8]}'
-    subprocess.run(
-        ['docker', 'run', '-d', '--name', container_name, 'python:3.12-slim', 'sleep', 'infinity'],
-        check=True,
-        capture_output=True,
-    )
-    driver_src = (
-        Path(__file__).parents[2] / 'pydantic_ai_slim' / 'pydantic_ai' / 'toolsets' / 'code_execution' / '_driver.py'
-    )
-    subprocess.run(
-        ['docker', 'cp', str(driver_src), f'{container_name}:/tmp/pydantic_ai_driver.py'],
-        check=True,
-        capture_output=True,
-    )
-    yield container_name
-    subprocess.run(['docker', 'rm', '-f', container_name], capture_output=True)
 
 
 @pytest.fixture(params=['monty'])
