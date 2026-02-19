@@ -898,6 +898,7 @@ def test_tool_return_content_nested_multimodal():
     assert isinstance(reloaded_content['documents'][0], DocumentUrl)
     assert reloaded_content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
 
+
 def test_model_request_tool_tracking_excluded_from_serialization():
     """Test that request metadata is accessible but not serialized."""
     tool_def = ToolDefinition(
