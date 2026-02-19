@@ -60,7 +60,7 @@ __all__ = (
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
-EndStrategy = Literal['early', 'complete', 'exhaustive']
+EndStrategy = Literal['early', 'graceful', 'exhaustive']
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 

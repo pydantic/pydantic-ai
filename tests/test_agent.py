@@ -3927,8 +3927,8 @@ class TestMultipleToolCalls:
             ]
         )
 
-    def test_complete_strategy_executes_function_tools_but_skips_output_tools(self):
-        """Test that 'complete' strategy executes function tools but skips remaining output tools."""
+    def test_graceful_strategy_executes_function_tools_but_skips_output_tools(self):
+        """Test that 'graceful' strategy executes function tools but skips remaining output tools."""
         tool_called: list[str] = []
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -3941,7 +3941,7 @@ class TestMultipleToolCalls:
                 ],
             )
 
-        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='complete')
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='graceful')
 
         @agent.tool_plain
         def regular_tool(x: int) -> int:
@@ -3955,7 +3955,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        result = agent.run_sync('test complete strategy')
+        result = agent.run_sync('test graceful strategy')
 
         # Verify the result came from the output tool
         assert result.output.value == 'first'
@@ -3967,7 +3967,7 @@ class TestMultipleToolCalls:
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='test complete strategy', timestamp=IsNow(tz=timezone.utc))],
+                    parts=[UserPromptPart(content='test graceful strategy', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
@@ -4006,8 +4006,8 @@ class TestMultipleToolCalls:
             ]
         )
 
-    def test_complete_strategy_does_not_call_additional_output_tools(self):
-        """Test that 'complete' strategy does not execute additional output tool functions."""
+    def test_graceful_strategy_does_not_call_additional_output_tools(self):
+        """Test that 'graceful' strategy does not execute additional output tool functions."""
         output_tools_called: list[str] = []
 
         def process_first(output: OutputType) -> OutputType:
@@ -4035,10 +4035,10 @@ class TestMultipleToolCalls:
                 ToolOutput(process_first, name='first_output'),
                 ToolOutput(process_second, name='second_output'),
             ],
-            end_strategy='complete',
+            end_strategy='graceful',
         )
 
-        result = agent.run_sync('test complete output tools')
+        result = agent.run_sync('test graceful output tools')
 
         # Verify the result came from the first output tool
         assert isinstance(result.output, OutputType)
@@ -4051,7 +4051,7 @@ class TestMultipleToolCalls:
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content='test complete output tools', timestamp=IsNow(tz=timezone.utc))],
+                    parts=[UserPromptPart(content='test graceful output tools', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
                 ),
@@ -4086,8 +4086,8 @@ class TestMultipleToolCalls:
             ]
         )
 
-    def test_complete_strategy_uses_first_final_result(self):
-        """Test that 'complete' strategy uses the first final result and ignores subsequent ones."""
+    def test_graceful_strategy_uses_first_final_result(self):
+        """Test that 'graceful' strategy uses the first final result and ignores subsequent ones."""
 
         def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert info.output_tools is not None
@@ -4098,7 +4098,7 @@ class TestMultipleToolCalls:
                 ],
             )
 
-        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='complete')
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='graceful')
         result = agent.run_sync('test multiple final results')
         messages = result.all_messages()
 
@@ -4134,6 +4134,121 @@ class TestMultipleToolCalls:
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Output tool not used - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    def test_graceful_strategy_with_final_result_in_middle(self):
+        """Test that 'graceful' strategy executes function tools but skips output and deferred tools."""
+        tool_called: list[str] = []
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('regular_tool', {'x': 1}),
+                    ToolCallPart('final_result', {'value': 'final'}),
+                    ToolCallPart('another_tool', {'y': 2}),
+                    ToolCallPart('unknown_tool', {'value': '???'}),
+                    ToolCallPart('deferred_tool', {'x': 5}),
+                ],
+            )
+
+        agent = Agent(FunctionModel(return_model), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """Another tool that should be called."""
+            tool_called.append('another_tool')
+            return y
+
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            tool_called.append('deferred_tool')
+            return x + 1
+
+        result = agent.run_sync('test graceful strategy with final result in middle')
+
+        # Verify function tools were called but deferred tools were not
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
+
+        # Verify we got the correct final result
+        assert result.output.value == 'final'
+
+        # Verify we got appropriate tool returns
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='test graceful strategy with final result in middle',
+                            timestamp=IsNow(tz=timezone.utc),
+                        )
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='regular_tool', args={'x': 1}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args={'value': 'final'}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='deferred_tool',
+                            args={'x': 5},
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=58, output_tokens=22),
+                    model_name='function:return_model:',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content=1,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool',
+                            content=2,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        RetryPromptPart(
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
+                            tool_name='unknown_tool',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='deferred_tool',
+                            content='Tool not executed - a final result was already processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
