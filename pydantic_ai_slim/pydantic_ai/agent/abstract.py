@@ -648,7 +648,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 node = cast(_agent_graph.AgentNode[Any, Any], next_node)
 
         if not yielded:
-            raise exceptions.AgentRunError('Agent run finished without producing a final result')  # pragma: no cover
+            raise exceptions.AgentRunError('Agent run finished without producing a final result')
 
     @overload
     def run_stream_sync(
