@@ -31,11 +31,6 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
 
 
-@pytest.fixture(autouse=True)
-def mcp_servers_config(mocker: MockerFixture):
-    mocker.patch('pydantic_ai._cli.mcp_servers_from_config', return_value=[])
-
-
 def test_cli_version(capfd: CaptureFixture[str]):
     assert cli(['--version']) == 0
     assert capfd.readouterr().out.startswith('clai - Pydantic AI CLI')
@@ -136,6 +131,19 @@ def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker:
     assert 'Could not load agent from bad_path' in capfd.readouterr().out
 
 
+def test_mcp_config(mocker: MockerFixture, env: TestEnv, tmp_path: Any):
+    env.set('OPENAI_API_KEY', 'test')
+    config_file = tmp_path / 'mcp_servers.json'
+    config_file.write_text('{"mcpServers": {"my-server": {"command": "echo", "args": ["hello"]}}}')
+
+    mock_load = mocker.patch('pydantic_ai.mcp.load_mcp_servers', return_value=[])
+    mock_ask = mocker.patch('pydantic_ai._cli.ask_agent')
+
+    assert cli(['--mcp-config', str(config_file), 'hello']) == 0
+    mock_load.assert_called_once_with(str(config_file))
+    mock_ask.assert_called_once()
+
+
 def test_no_command_defaults_to_chat(mocker: MockerFixture):
     """Test that running clai with no command defaults to chat mode."""
     # Mock _run_chat_command to avoid actual execution
@@ -181,6 +189,25 @@ def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
         assert cli(['--no-stream', 'hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
+
+
+@pytest.mark.anyio
+async def test_streaming_with_tool_calls():
+    """Streaming with tool calls displays tool call indicators."""
+    from pydantic_ai._cli import ask_agent
+
+    agent = Agent(TestModel(custom_output_text='final answer'))
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        """A test tool."""
+        return 'tool output'
+
+    console = Console(file=StringIO())
+    messages = await ask_agent(agent, 'hello', stream=True, console=console, code_theme='monokai')
+    output = console.file.getvalue()  # type: ignore[union-attr]
+    assert 'Called tool my_tool' in output
+    assert len(messages) > 0
 
 
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):

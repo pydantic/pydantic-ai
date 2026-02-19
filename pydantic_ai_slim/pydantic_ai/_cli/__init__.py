@@ -2,9 +2,6 @@ from __future__ import annotations as _annotations
 
 import argparse
 import asyncio
-import os
-import shlex
-import subprocess
 import sys
 from asyncio import CancelledError
 from collections.abc import Sequence
@@ -14,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import ImportString, TypeAdapter, ValidationError
-from typing_extensions import TypedDict
 from typing_inspection.introspection import get_literal_values
 
 from .. import __version__, usage as _usage
@@ -49,7 +45,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-__all__ = 'cli', 'cli_exit', 'mcp_servers_from_config'
+__all__ = 'cli', 'cli_exit'
 
 
 PYDANTIC_AI_HOME = Path.home() / '.pydantic-ai'
@@ -59,9 +55,6 @@ This folder is used to store the prompt history and configuration.
 """
 
 PROMPT_HISTORY_FILENAME = 'prompt-history.txt'
-
-PYDANTIC_AI_MCP_SERVERS_FILE = PYDANTIC_AI_HOME / 'mcp_servers.jsonc'
-"""The MCP servers configuration file."""
 
 SUPPORTED_CLI_TOOL_IDS = sorted(
     bint.kind for bint in SUPPORTED_BUILTIN_TOOLS if bint not in BUILTIN_TOOLS_REQUIRING_CONFIG
@@ -255,7 +248,10 @@ subcommands:
         default='dark',
     )
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
-    parser.add_argument('--edit-mcp-servers', action='store_true', help='Open an editor to configure MCP servers')
+    parser.add_argument(
+        '--mcp-config',
+        help='Path to MCP servers configuration file (JSON, same format as Claude Desktop).',
+    )
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
@@ -270,8 +266,6 @@ subcommands:
         for model in qualified_model_names:
             console.print(f'  {model}', highlight=False)
         return 0
-    if args.edit_mcp_servers:
-        return edit_mcp_servers(console)
 
     # Default to chat command
     return _run_chat_command(args, console, name_version, default_model, prog_name)
@@ -289,8 +283,16 @@ def _run_chat_command(
             return 1
         agent = loaded
 
-    mcp_servers = mcp_servers_from_config()
-    agent._user_toolsets.extend(mcp_servers)  # pyright: ignore[reportPrivateUsage]
+    if args.mcp_config:
+        try:
+            from ..mcp import load_mcp_servers
+        except ImportError as e:
+            raise ImportError(
+                'Please install the `mcp` package to use --mcp-config, '
+                'you can use the `mcp` optional group - `pip install "pydantic-ai-slim[mcp]"`'
+            ) from e
+        mcp_servers = load_mcp_servers(args.mcp_config)
+        agent._user_toolsets.extend(mcp_servers)  # pyright: ignore[reportPrivateUsage]
 
     model_arg_set = args.model is not None
     if agent.model is None or model_arg_set:
@@ -511,102 +513,3 @@ def handle_slash_command(
     else:
         console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
     return None, multiline
-
-
-class _MCPServerHTTP(TypedDict):
-    url: str
-
-
-class _MCPServerStdio(TypedDict):
-    command: str
-    args: list[str]
-
-
-class _MCPServers(TypedDict):
-    mcpServers: dict[str, _MCPServerHTTP | _MCPServerStdio]
-
-
-_mcp_servers_ta: TypeAdapter[_MCPServers] = TypeAdapter(_MCPServers)
-
-
-def edit_mcp_servers(console: Console) -> int:
-    """Open an editor to configure MCP servers."""
-    PYDANTIC_AI_HOME.mkdir(parents=True, exist_ok=True)
-
-    default_content = """\
-/* This file is managed by PydanticAI CLI.
-
-You can include MCP servers in the following format:
-
-    ```jsonc
-    {
-        "mcpServers": {
-            "my-http-server": {
-                "url": "http://localhost:3000"
-            },
-            "my-stdio-server": {
-                "command": "uv",
-                "args": ["run", "my_script.py"]
-            }
-        }
-    }
-    ```
-
-For more information, visit: https://ai.pydantic.dev/mcp/
-*/
-{
-  "mcpServers": {}
-}
-"""
-
-    if not PYDANTIC_AI_MCP_SERVERS_FILE.exists():
-        PYDANTIC_AI_MCP_SERVERS_FILE.write_text(default_content)
-        console.print(f'Created new MCP servers configuration at [cyan]{PYDANTIC_AI_MCP_SERVERS_FILE}[/cyan]')
-
-    editor = os.environ.get('EDITOR', 'vim')
-    try:
-        subprocess.run(shlex.split(editor) + [str(PYDANTIC_AI_MCP_SERVERS_FILE)], check=True)
-        console.print(f'Successfully edited MCP servers configuration at [cyan]{PYDANTIC_AI_MCP_SERVERS_FILE}[/cyan]')
-        return 0
-    except subprocess.CalledProcessError as e:
-        console.print(f'[red]Error editing MCP servers configuration: {e}[/red]')
-        return 1
-
-
-def mcp_servers_from_config() -> list[Any]:
-    """Load MCP servers from the configuration file."""
-    if not PYDANTIC_AI_MCP_SERVERS_FILE.exists():
-        return []
-
-    file_content = PYDANTIC_AI_MCP_SERVERS_FILE.read_text()
-    # Strip block comments (/* ... */)
-    cleaned = file_content
-    while True:
-        start = cleaned.find('/*')
-        if start == -1:
-            break
-        end = cleaned.find('*/', start)
-        if end == -1:
-            break
-        cleaned = cleaned[:start] + cleaned[end + 2 :]
-
-    config = _mcp_servers_ta.validate_json(cleaned)
-
-    if not config['mcpServers']:
-        return []
-
-    try:
-        from ..mcp import MCPServerSSE, MCPServerStdio
-    except ImportError as e:
-        raise ImportError(
-            'Please install the `mcp` package to use MCP servers in the CLI, '
-            'you can use the `mcp` optional group - `pip install "pydantic-ai-slim[mcp]"`'
-        ) from e
-
-    servers: list[Any] = []
-    for server in config['mcpServers'].values():
-        if 'url' in server:
-            servers.append(MCPServerSSE(server['url']))
-        elif 'command' in server:
-            servers.append(MCPServerStdio(server['command'], server['args']))
-    return servers

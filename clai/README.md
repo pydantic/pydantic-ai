@@ -54,7 +54,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 ## Help
 
 ```
-usage: clai [-h] [-l] [--version] [-m MODEL] [-a AGENT] [-t CODE_THEME] [--no-stream] [--edit-mcp-servers] [prompt]
+usage: clai [-h] [-l] [--version] [-m MODEL] [-a AGENT] [-t CODE_THEME] [--no-stream] [--mcp-config MCP_CONFIG] [prompt]
 
 Pydantic AI CLI v...
 
@@ -76,7 +76,8 @@ options:
   -t CODE_THEME, --code-theme CODE_THEME
                         Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
   --no-stream           Disable streaming from the model
-  --edit-mcp-servers    Open an editor to configure MCP servers
+  --mcp-config MCP_CONFIG
+                        Path to MCP servers configuration file (JSON, same format as Claude Desktop).
 ```
 
 For more information on how to use it, see the [CLI documentation](https://ai.pydantic.dev/cli/).

@@ -54,6 +54,7 @@ Then running `clai` will start an interactive session where you can chat with th
 | `-a`, `--agent` | Custom agent in `module:variable` format |
 | `-t`, `--code-theme` | Syntax highlighting theme (`dark`, `light`, or [pygments theme](https://pygments.org/styles/)) |
 | `--no-stream` | Disable streaming from the model |
+| `--mcp-config` | Path to [MCP servers configuration file](mcp/index.md) (JSON, same format as Claude Desktop) |
 | `-l`, `--list-models` | List all available models and exit |
 | `--version` | Show version and exit |
 
@@ -67,19 +68,15 @@ clai --model anthropic:claude-sonnet-4-6
 
 (a full list of models available can be printed with `clai --list-models`)
 
-### Configure MCP Servers
+### MCP Servers
 
-You can configure MCP servers using the `--edit-mcp-servers` flag:
+You can connect to [MCP servers](mcp/index.md) using the `--mcp-config` flag with a JSON configuration file (same format as [Claude Desktop](https://modelcontextprotocol.io/quickstart/user)):
 
 ```bash
-clai --edit-mcp-servers
+clai --mcp-config mcp_servers.json
 ```
 
-This will open your default text editor (or the one specified in your `EDITOR` environment variable)
-to edit the MCP servers configuration file located at `~/.pydantic-ai/mcp_servers.jsonc`.
-The configuration file uses the following format:
-
-```json
+```json title="mcp_servers.json"
 {
   "mcpServers": {
     "my-stdio-server": {
@@ -92,8 +89,6 @@ The configuration file uses the following format:
   }
 }
 ```
-
-For more information about MCP servers and their configuration, visit the [MCP documentation](mcp/index.md).
 
 ### Custom Agents
 
