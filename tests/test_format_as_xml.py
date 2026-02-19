@@ -1,16 +1,20 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
+from enum import Enum
 from typing import Any
+from uuid import UUID
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, computed_field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import Self
 
 from pydantic_ai import format_as_xml
+
+from ._inline_snapshot import snapshot
 
 
 @dataclass
@@ -22,6 +26,16 @@ class ExampleDataclass:
 class ExamplePydanticModel(BaseModel):
     name: str
     age: int
+
+
+class ExampleEnum(Enum):
+    FOO = 1
+    BAR = 2
+
+
+class ExampleStrEnum(str, Enum):
+    FOO = 'foo'
+    BAR = 'bar'
 
 
 class ExamplePydanticFields(BaseModel):
@@ -43,6 +57,9 @@ class ExamplePydanticFields(BaseModel):
         pytest.param('a string', snapshot('<examples>a string</examples>'), id='string'),
         pytest.param(42, snapshot('<examples>42</examples>'), id='int'),
         pytest.param(None, snapshot('<examples>null</examples>'), id='null'),
+        # regression test for https://github.com/pydantic/pydantic-ai/pull/4131
+        pytest.param(ExampleEnum.FOO, snapshot('<examples>ExampleEnum.FOO</examples>'), id='enum'),
+        pytest.param(ExampleStrEnum.FOO, snapshot('<examples>foo</examples>'), id='str enum'),
         pytest.param(
             ExampleDataclass(name='John', age=42),
             snapshot("""\
@@ -554,6 +571,22 @@ def test_nested_data():
 """),
             id='list[date]',
         ),
+        pytest.param(
+            [time(12, 30, 45), time(8, 15)],
+            snapshot("""\
+<item>12:30:45</item>
+<item>08:15:00</item>\
+"""),
+            id='list[time]',
+        ),
+        pytest.param(
+            [timedelta(days=1, hours=2, minutes=30), timedelta(seconds=90)],
+            snapshot("""\
+<item>1 day, 2:30:00</item>
+<item>0:01:30</item>\
+"""),
+            id='list[timedelta]',
+        ),
     ],
 )
 def test_no_root(input_obj: Any, output: str):
@@ -592,3 +625,27 @@ def test_set():
 
 def test_custom_null():
     assert format_as_xml(None, none_str='nil') == snapshot('<item>nil</item>')
+
+
+def test_non_primitive_types():
+    assert format_as_xml(Decimal('123.45')) == snapshot('<item>123.45</item>')
+    assert format_as_xml(UUID('123e4567-e89b-12d3-a456-426614174000')) == snapshot(
+        '<item>123e4567-e89b-12d3-a456-426614174000</item>'
+    )
+
+
+def test_model_with_non_primitive_types():
+    class ExamplePydanticModelWithNonPrimitiveTypes(BaseModel):
+        name: str
+        age: Decimal
+        uuid: UUID
+
+    assert format_as_xml(
+        ExamplePydanticModelWithNonPrimitiveTypes(
+            name='John', age=Decimal('123.45'), uuid=UUID('123e4567-e89b-12d3-a456-426614174000')
+        )
+    ) == snapshot("""\
+<name>John</name>
+<age>123.45</age>
+<uuid>123e4567-e89b-12d3-a456-426614174000</uuid>\
+""")

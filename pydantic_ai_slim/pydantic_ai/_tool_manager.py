@@ -5,11 +5,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from typing import Any, Generic
+from typing import Any, Generic, Literal
 
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
@@ -18,9 +18,13 @@ from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
-from .usage import UsageLimits
+from .usage import RunUsage
 
-_sequential_tool_calls_ctx_var: ContextVar[bool] = ContextVar('sequential_tool_calls', default=False)
+ParallelExecutionMode = Literal['parallel', 'sequential', 'parallel_ordered_events']
+
+_parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar(
+    'parallel_execution_mode', default='parallel'
+)
 
 
 @dataclass
@@ -33,18 +37,35 @@ class ToolManager(Generic[AgentDepsT]):
     """The agent run context for a specific run step."""
     tools: dict[str, ToolsetTool[AgentDepsT]] | None = None
     """The cached tools for this run step."""
-    failed_tools: set[str] = field(default_factory=set)
+    failed_tools: set[str] = field(default_factory=set[str])
     """Names of tools that failed in this run step."""
+    default_max_retries: int = 1
+    """Default number of times to retry a tool"""
 
     @classmethod
     @contextmanager
-    def sequential_tool_calls(cls) -> Iterator[None]:
-        """Run tool calls sequentially during the context."""
-        token = _sequential_tool_calls_ctx_var.set(True)
+    def parallel_execution_mode(cls, mode: ParallelExecutionMode = 'parallel') -> Iterator[None]:
+        """Set the parallel execution mode during the context.
+
+        Args:
+            mode: The execution mode for tool calls:
+                - 'parallel': Run tool calls in parallel, yielding events as they complete (default).
+                - 'sequential': Run tool calls one at a time in order.
+                - 'parallel_ordered_events': Run tool calls in parallel, but events are emitted in order, after all calls complete.
+        """
+        token = _parallel_execution_mode_ctx_var.set(mode)
         try:
             yield
         finally:
-            _sequential_tool_calls_ctx_var.reset(token)
+            _parallel_execution_mode_ctx_var.reset(token)
+
+    @classmethod
+    @contextmanager
+    @deprecated('Use `parallel_execution_mode("sequential")` instead.')
+    def sequential_tool_calls(cls) -> Iterator[None]:
+        """Run tool calls sequentially during the context."""
+        with cls.parallel_execution_mode('sequential'):
+            yield
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
         """Build a new tool manager for the next run step, carrying over the retries from the current run step."""
@@ -62,6 +83,7 @@ class ToolManager(Generic[AgentDepsT]):
             toolset=self.toolset,
             ctx=ctx,
             tools=await self.toolset.get_tools(ctx),
+            default_max_retries=self.default_max_retries,
         )
 
     @property
@@ -72,11 +94,20 @@ class ToolManager(Generic[AgentDepsT]):
 
         return [tool.tool_def for tool in self.tools.values()]
 
-    def should_call_sequentially(self, calls: list[ToolCallPart]) -> bool:
-        """Whether to require sequential tool calls for a list of tool calls."""
-        return _sequential_tool_calls_ctx_var.get() or any(
-            tool_def.sequential for call in calls if (tool_def := self.get_tool_def(call.tool_name))
-        )
+    def get_parallel_execution_mode(self, calls: list[ToolCallPart]) -> ParallelExecutionMode:
+        """Get the effective parallel execution mode for a list of tool calls.
+
+        This takes into account both the context variable and whether any tool
+        has `sequential=True` set. If any tool requires sequential execution,
+        returns `'sequential'` regardless of the context variable.
+        """
+        # Check if any tool requires sequential execution
+        if any(tool_def.sequential for call in calls if (tool_def := self.get_tool_def(call.tool_name))):
+            return 'sequential'
+
+        mode = _parallel_execution_mode_ctx_var.get()
+
+        return mode
 
     def get_tool_def(self, name: str) -> ToolDefinition | None:
         """Get the tool definition for a given tool name, or `None` if the tool is unknown."""
@@ -93,7 +124,9 @@ class ToolManager(Generic[AgentDepsT]):
         call: ToolCallPart,
         allow_partial: bool = False,
         wrap_validation_errors: bool = True,
-        usage_limits: UsageLimits | None = None,
+        *,
+        approved: bool = False,
+        metadata: Any = None,
     ) -> Any:
         """Handle a tool call by validating the arguments, calling the tool, and handling retries.
 
@@ -101,32 +134,42 @@ class ToolManager(Generic[AgentDepsT]):
             call: The tool call part to handle.
             allow_partial: Whether to allow partial validation of the tool arguments.
             wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
-            usage_limits: Optional usage limits to check before executing tools.
+            approved: Whether the tool call has been approved.
+            metadata: Additional metadata from DeferredToolResults.metadata.
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         if (tool := self.tools.get(call.tool_name)) and tool.tool_def.kind == 'output':
             # Output tool calls are not traced and not counted
-            return await self._call_tool(call, allow_partial, wrap_validation_errors, count_tool_usage=False)
-        else:
-            return await self._call_tool_traced(
+            return await self._call_tool(
                 call,
-                allow_partial,
-                wrap_validation_errors,
-                self.ctx.tracer,
-                self.ctx.trace_include_content,
-                self.ctx.instrumentation_version,
-                usage_limits,
+                allow_partial=allow_partial,
+                wrap_validation_errors=wrap_validation_errors,
+                approved=approved,
+                metadata=metadata,
+            )
+        else:
+            return await self._call_function_tool(
+                call,
+                allow_partial=allow_partial,
+                wrap_validation_errors=wrap_validation_errors,
+                approved=approved,
+                metadata=metadata,
+                tracer=self.ctx.tracer,
+                include_content=self.ctx.trace_include_content,
+                instrumentation_version=self.ctx.instrumentation_version,
+                usage=self.ctx.usage,
             )
 
     async def _call_tool(
         self,
         call: ToolCallPart,
+        *,
         allow_partial: bool,
         wrap_validation_errors: bool,
-        usage_limits: UsageLimits | None = None,
-        count_tool_usage: bool = True,
+        approved: bool,
+        metadata: Any = None,
     ) -> Any:
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -141,8 +184,8 @@ class ToolManager(Generic[AgentDepsT]):
                     msg = 'No tools available.'
                 raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
 
-            if tool.tool_def.defer:
-                raise RuntimeError('Deferred tools cannot be called')
+            if tool.tool_def.kind == 'external':
+                raise RuntimeError('External tools cannot be called')
 
             ctx = replace(
                 self.ctx,
@@ -150,26 +193,25 @@ class ToolManager(Generic[AgentDepsT]):
                 tool_call_id=call.tool_call_id,
                 retry=self.ctx.retries.get(name, 0),
                 max_retries=tool.max_retries,
+                tool_call_approved=approved,
+                tool_call_metadata=metadata,
+                partial_output=allow_partial,
             )
 
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
             validator = tool.args_validator
             if isinstance(call.args, str):
-                args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
+                args_dict = validator.validate_json(
+                    call.args or '{}', allow_partial=pyd_allow_partial, context=ctx.validation_context
+                )
             else:
-                args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
+                args_dict = validator.validate_python(
+                    call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
+                )
 
-            if usage_limits is not None and count_tool_usage:
-                usage_limits.check_before_tool_call(self.ctx.usage)
-
-            result = await self.toolset.call_tool(name, args_dict, ctx, tool)
-
-            if count_tool_usage:
-                self.ctx.usage.tool_calls += 1
-
-            return result
+            return await self.toolset.call_tool(name, args_dict, ctx, tool)
         except (ValidationError, ModelRetry) as e:
-            max_retries = tool.max_retries if tool is not None else 1
+            max_retries = tool.max_retries if tool is not None else self.default_max_retries
             current_retry = self.ctx.retries.get(name, 0)
 
             if current_retry == max_retries:
@@ -199,15 +241,18 @@ class ToolManager(Generic[AgentDepsT]):
 
                 raise e
 
-    async def _call_tool_traced(
+    async def _call_function_tool(
         self,
         call: ToolCallPart,
+        *,
         allow_partial: bool,
         wrap_validation_errors: bool,
+        approved: bool,
+        metadata: Any = None,
         tracer: Tracer,
         include_content: bool,
         instrumentation_version: int,
-        usage_limits: UsageLimits | None = None,
+        usage: RunUsage,
     ) -> Any:
         """See <https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/#execute-tool-span>."""
         instrumentation_names = InstrumentationNames.for_version(instrumentation_version)
@@ -242,7 +287,15 @@ class ToolManager(Generic[AgentDepsT]):
             attributes=span_attributes,
         ) as span:
             try:
-                tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors, usage_limits)
+                tool_result = await self._call_tool(
+                    call,
+                    allow_partial=allow_partial,
+                    wrap_validation_errors=wrap_validation_errors,
+                    approved=approved,
+                    metadata=metadata,
+                )
+                usage.tool_calls += 1
+
             except ToolRetryError as e:
                 part = e.tool_retry
                 if include_content and span.is_recording():

@@ -1,23 +1,19 @@
 from __future__ import annotations
 
-from abc import ABC
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from pydantic_ai import ToolsetTool
+from pydantic_ai.mcp import MCPServer
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
-from dbos import DBOS
-from typing_extensions import Self
-
-from pydantic_ai import AbstractToolset, ToolsetTool, WrapperToolset
-from pydantic_ai.tools import AgentDepsT, RunContext
-
+from ._mcp import DBOSMCPToolset
 from ._utils import StepConfig
 
-if TYPE_CHECKING:
-    from pydantic_ai.mcp import MCPServer, ToolResult
 
+class DBOSMCPServer(DBOSMCPToolset[AgentDepsT]):
+    """A wrapper for MCPServer that integrates with DBOS, turning call_tool and get_tools into DBOS steps.
 
-class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC):
-    """A wrapper for MCPServer that integrates with DBOS, turning call_tool and get_tools to DBOS steps."""
+    Tool definitions are cached across steps to avoid redundant MCP server round-trips,
+    respecting the wrapped server's `cache_tools` setting.
+    """
 
     def __init__(
         self,
@@ -26,65 +22,29 @@ class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC):
         step_name_prefix: str,
         step_config: StepConfig,
     ):
-        super().__init__(wrapped)
-        self._step_config = step_config or {}
-        self._step_name_prefix = step_name_prefix
-        id_suffix = f'__{wrapped.id}' if wrapped.id else ''
-        self._name = f'{step_name_prefix}__mcp_server{id_suffix}'
-
-        # Wrap get_tools in a DBOS step.
-        @DBOS.step(
-            name=f'{self._name}.get_tools',
-            **self._step_config,
+        super().__init__(
+            wrapped,
+            step_name_prefix=step_name_prefix,
+            step_config=step_config,
         )
-        async def wrapped_get_tools_step(
-            ctx: RunContext[AgentDepsT],
-        ) -> dict[str, ToolsetTool[AgentDepsT]]:
-            return await super(DBOSMCPServer, self).get_tools(ctx)
-
-        self._dbos_wrapped_get_tools_step = wrapped_get_tools_step
-
-        # Wrap call_tool in a DBOS step.
-        @DBOS.step(
-            name=f'{self._name}.call_tool',
-            **self._step_config,
-        )
-        async def wrapped_call_tool_step(
-            name: str,
-            tool_args: dict[str, Any],
-            ctx: RunContext[AgentDepsT],
-            tool: ToolsetTool[AgentDepsT],
-        ) -> ToolResult:
-            return await super(DBOSMCPServer, self).call_tool(name, tool_args, ctx, tool)
-
-        self._dbos_wrapped_call_tool_step = wrapped_call_tool_step
+        # Cached across steps to avoid redundant MCP connections per step.
+        # Not invalidated by `tools/list_changed` notifications — users who need
+        # dynamic tools during a workflow should set `cache_tools=False`.
+        self._cached_tool_defs: dict[str, ToolDefinition] | None = None
 
     @property
-    def id(self) -> str | None:
-        return self.wrapped.id
+    def _server(self) -> MCPServer:
+        assert isinstance(self.wrapped, MCPServer)
+        return self.wrapped
 
-    async def __aenter__(self) -> Self:
-        # The wrapped MCPServer enters itself around listing and calling tools
-        # so we don't need to enter it here (nor could we because we're not inside a DBOS step).
-        return self
-
-    async def __aexit__(self, *args: Any) -> bool | None:
-        return None
-
-    def visit_and_replace(
-        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
-    ) -> AbstractToolset[AgentDepsT]:
-        # DBOS-ified toolsets cannot be swapped out after the fact.
-        return self
+    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+        return self._server.tool_for_tool_def(tool_def)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        return await self._dbos_wrapped_get_tools_step(ctx)
+        if self._server.cache_tools and self._cached_tool_defs is not None:
+            return {name: self.tool_for_tool_def(td) for name, td in self._cached_tool_defs.items()}
 
-    async def call_tool(
-        self,
-        name: str,
-        tool_args: dict[str, Any],
-        ctx: RunContext[AgentDepsT],
-        tool: ToolsetTool[AgentDepsT],
-    ) -> ToolResult:
-        return await self._dbos_wrapped_call_tool_step(name, tool_args, ctx, tool)
+        result = await super().get_tools(ctx)
+        if self._server.cache_tools:
+            self._cached_tool_defs = {name: tool.tool_def for name, tool in result.items()}
+        return result

@@ -6,7 +6,6 @@ from datetime import timezone
 
 import pydantic_core
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -27,7 +26,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import RunUsage
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsNow, IsStr
+from .._inline_snapshot import snapshot
+from ..conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -66,12 +66,17 @@ def test_simple():
     assert result.output == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
                 usage=RequestUsage(input_tokens=51, output_tokens=3),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -80,19 +85,29 @@ def test_simple():
     assert result2.output == snapshot("content='World' part_kind='user-prompt' message_count=3")
     assert result2.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
                 usage=RequestUsage(input_tokens=51, output_tokens=3),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
-            ModelRequest(parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content="content='World' part_kind='user-prompt' message_count=3")],
                 usage=RequestUsage(input_tokens=52, output_tokens=6),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -153,7 +168,11 @@ def test_weather():
     assert result.output == 'Raining in London'
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -163,6 +182,7 @@ def test_weather():
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -172,13 +192,16 @@ def test_weather():
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_weather', args='{"lat": 51, "lng": 0}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=56, output_tokens=11),
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -188,13 +211,16 @@ def test_weather():
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Raining in London')],
                 usage=RequestUsage(input_tokens=57, output_tokens=14),
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -350,7 +376,9 @@ def test_call_all():
                 parts=[
                     SystemPromptPart(content='foobar', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -363,6 +391,7 @@ def test_call_all():
                 usage=RequestUsage(input_tokens=52, output_tokens=21),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -381,13 +410,16 @@ def test_call_all():
                     ToolReturnPart(
                         tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                     ),
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')],
                 usage=RequestUsage(input_tokens=57, output_tokens=33),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -451,12 +483,17 @@ async def test_stream_text():
         assert await result.get_output() == snapshot('hello world')
         assert result.all_messages() == snapshot(
             [
-                ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
+                ModelRequest(
+                    parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::stream_text_function',
                     timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
                 ),
             ]
         )

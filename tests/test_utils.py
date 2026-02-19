@@ -8,7 +8,6 @@ from collections.abc import AsyncIterator
 from importlib.metadata import distributions
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import UserError
 from pydantic_ai._utils import (
@@ -23,6 +22,7 @@ from pydantic_ai._utils import (
     validate_empty_kwargs,
 )
 
+from ._inline_snapshot import snapshot
 from .models.mock_async_stream import MockAsyncStream
 
 pytestmark = pytest.mark.anyio
@@ -164,6 +164,28 @@ async def test_run_in_executor_with_contextvars() -> None:
     # show that the old version did not work
     old_result = asyncio.get_running_loop().run_in_executor(None, ctx_var.get)
     assert old_result != ctx_var.get()
+
+
+async def test_run_in_executor_with_disable_threads() -> None:
+    from pydantic_ai._utils import disable_threads
+
+    calls: list[str] = []
+
+    def sync_func() -> str:
+        calls.append('called')
+        return 'result'
+
+    # Without disable_threads, should use threading
+    result = await run_in_executor(sync_func)
+    assert result == 'result'
+    assert calls == ['called']
+
+    # With disable_threads enabled, should execute directly
+    calls.clear()
+    with disable_threads():
+        result = await run_in_executor(sync_func)
+        assert result == 'result'
+        assert calls == ['called']
 
 
 def test_is_async_callable():
@@ -495,6 +517,7 @@ def test_merge_json_schema_defs():
 def test_strip_markdown_fences():
     assert strip_markdown_fences('{"foo": "bar"}') == '{"foo": "bar"}'
     assert strip_markdown_fences('```json\n{"foo": "bar"}\n```') == '{"foo": "bar"}'
+    assert strip_markdown_fences('```json\n{\n  "foo": "bar"\n}') == '{\n  "foo": "bar"\n}'
     assert (
         strip_markdown_fences('{"foo": "```json\\n{"foo": "bar"}\\n```"}')
         == '{"foo": "```json\\n{"foo": "bar"}\\n```"}'

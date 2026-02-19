@@ -12,7 +12,7 @@ If you have a direct URL for the image, you can use [`ImageUrl`][pydantic_ai.Ima
 ```py {title="image_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, ImageUrl
 
-agent = Agent(model='openai:gpt-4o')
+agent = Agent(model='openai:gpt-5.2')
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -20,7 +20,7 @@ result = agent.run_sync(
     ]
 )
 print(result.output)
-# > This is the logo for Pydantic, a data validation and settings management library in Python.
+#> This is the logo for Pydantic, a data validation and settings management library in Python.
 ```
 
 If you have the image locally, you can also use [`BinaryContent`][pydantic_ai.BinaryContent]:
@@ -32,7 +32,7 @@ from pydantic_ai import Agent, BinaryContent
 
 image_response = httpx.get('https://iili.io/3Hs4FMg.png')  # Pydantic logo
 
-agent = Agent(model='openai:gpt-4o')
+agent = Agent(model='openai:gpt-5.2')
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -40,7 +40,7 @@ result = agent.run_sync(
     ]
 )
 print(result.output)
-# > This is the logo for Pydantic, a data validation and settings management library in Python.
+#> This is the logo for Pydantic, a data validation and settings management library in Python.
 ```
 
 1. To ensure the example is runnable we download this image from the web, but you can also use `Path().read_bytes()` to read a local file's contents.
@@ -71,7 +71,7 @@ If you have a direct URL for the document, you can use [`DocumentUrl`][pydantic_
 ```py {title="document_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, DocumentUrl
 
-agent = Agent(model='anthropic:claude-3-sonnet')
+agent = Agent(model='anthropic:claude-sonnet-4-6')
 result = agent.run_sync(
     [
         'What is the main content of this document?',
@@ -79,7 +79,7 @@ result = agent.run_sync(
     ]
 )
 print(result.output)
-# > This document is the technical report introducing Gemini 1.5, Google's latest large language model...
+#> This document is the technical report introducing Gemini 1.5, Google's latest large language model...
 ```
 
 The supported document formats vary by model.
@@ -91,7 +91,7 @@ from pathlib import Path
 from pydantic_ai import Agent, BinaryContent
 
 pdf_path = Path('document.pdf')
-agent = Agent(model='anthropic:claude-3-sonnet')
+agent = Agent(model='anthropic:claude-sonnet-4-6')
 result = agent.run_sync(
     [
         'What is the main content of this document?',
@@ -99,25 +99,41 @@ result = agent.run_sync(
     ]
 )
 print(result.output)
-# > The document discusses...
+#> The document discusses...
 ```
 
 ## User-side download vs. direct file URL
 
-As a general rule, when you provide a URL using any of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic AI downloads the file content and then sends it as part of the API request.
+When using one of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic AI will default to sending the URL to the model provider, so the file is downloaded on their side.
 
-The situation is different for certain models:
+Support for file URLs varies depending on type and provider:
 
-- [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]: if you provide a PDF document via `DocumentUrl`, the URL is sent directly in the API request, so no download happens on the user side.
+| Model | Send URL directly | Download and send bytes | Unsupported |
+|-------|-------------------|-------------------------|-------------|
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl` |
+| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | — | `VideoUrl` |
+| [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl` |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Vertex) | All URL types | — | — |
+| [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA) | [YouTube](models/google.md#document-image-audio-and-video-input), [Files API](models/google.md#document-image-audio-and-video-input) | All other URLs | — |
+| [`XaiModel`][pydantic_ai.models.xai.XaiModel] | `ImageUrl` | `DocumentUrl` | `AudioUrl`, `VideoUrl` |
+| [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | — | `AudioUrl`, `VideoUrl`, `DocumentUrl` (non-PDF) |
+| [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` |
+| [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` | — |
 
-- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI: any URL provided using `ImageUrl`, `AudioUrl`, `VideoUrl`, or `DocumentUrl` is sent as-is in the API request and no data is downloaded beforehand.
+A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request. In such cases, you can instruct Pydantic AI to download the file content locally and send that instead of the URL by setting `force_download` on the URL object:
 
-  See the [Gemini API docs for Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata) to learn more about supported URLs, formats and limitations:
+```py {title="force_download.py" test="skip" lint="skip"}
+from pydantic_ai import ImageUrl, AudioUrl, VideoUrl, DocumentUrl
 
-  - Cloud Storage bucket URIs (with protocol `gs://`)
-  - Public HTTP(S) URLs
-  - Public YouTube video URL (maximum one URL per request)
+ImageUrl(url='https://example.com/image.png', force_download=True)
+AudioUrl(url='https://example.com/audio.mp3', force_download=True)
+VideoUrl(url='https://example.com/video.mp4', force_download=True)
+DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
+```
 
-  However, because of crawling restrictions, it may happen that Gemini can't access certain URLs. In that case, you can instruct Pydantic AI to download the file content and send that instead of the URL by setting the boolean flag `force_download` to `True`. This attribute is available on all objects that inherit from [`FileUrl`][pydantic_ai.messages.FileUrl].
+## Uploaded Files
 
-- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on GLA: YouTube video URLs are sent directly in the request to the model.
+Some model providers support passing URLs to files hosted on their platform:
+
+- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] supports the [Files API](models/google.md#document-image-audio-and-video-input) for uploading and referencing files.
+- [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] supports `s3://<bucket-name>/<object-key>` URIs, provided that the assumed role has the `s3:GetObject` permission. An optional `bucketOwner` query parameter must be specified if the bucket is not owned by the account making the request. For example: `s3://my-bucket/my-file.png?bucketOwner=123456789012`.

@@ -9,12 +9,37 @@ from .agent import (
     UserPromptNode,
     capture_run_messages,
 )
-from .builtin_tools import CodeExecutionTool, UrlContextTool, WebSearchTool, WebSearchUserLocation
+from .builtin_tools import (
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    MemoryTool,
+    UrlContextTool,  # pyright: ignore[reportDeprecated]
+    WebFetchTool,
+    WebSearchTool,
+    WebSearchUserLocation,
+)
+from .concurrency import (
+    AbstractConcurrencyLimiter,
+    AnyConcurrencyLimit,
+    ConcurrencyLimit,
+    ConcurrencyLimiter,
+)
+from .embeddings import (
+    Embedder,
+    EmbeddingModel,
+    EmbeddingResult,
+    EmbeddingSettings,
+)
 from .exceptions import (
     AgentRunError,
     ApprovalRequired,
     CallDeferred,
+    ConcurrencyLimitExceeded,
     FallbackExceptionGroup,
+    IncompleteToolCall,
+    ModelAPIError,
     ModelHTTPError,
     ModelRetry,
     UnexpectedModelBehavior,
@@ -30,11 +55,14 @@ from .messages import (
     BaseToolCallPart,
     BaseToolReturnPart,
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
+    FilePart,
     FileUrl,
     FinalResultEvent,
     FinishReason,
@@ -54,6 +82,7 @@ from .messages import (
     ModelResponseStreamEvent,
     MultiModalContent,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
@@ -71,6 +100,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
+from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
     DEFAULT_PROFILE,
@@ -79,6 +109,7 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
+from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
 from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets import (
@@ -107,13 +138,28 @@ __all__ = (
     'UserPromptNode',
     'capture_run_messages',
     'InstrumentationSettings',
+    # embeddings
+    'Embedder',
+    'EmbeddingModel',
+    'EmbeddingSettings',
+    'EmbeddingResult',
+    # concurrency
+    'AbstractConcurrencyLimiter',
+    'AnyConcurrencyLimit',
+    'ConcurrencyLimit',
+    'ConcurrencyLimitedModel',
+    'ConcurrencyLimiter',
+    'limit_model_concurrency',
     # exceptions
     'AgentRunError',
     'CallDeferred',
     'ApprovalRequired',
+    'ConcurrencyLimitExceeded',
     'ModelRetry',
+    'ModelAPIError',
     'ModelHTTPError',
     'FallbackExceptionGroup',
+    'IncompleteToolCall',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',
@@ -127,10 +173,12 @@ __all__ = (
     'BinaryContent',
     'BuiltinToolCallPart',
     'BuiltinToolReturnPart',
+    'CachePoint',
     'DocumentFormat',
     'DocumentMediaType',
     'DocumentUrl',
     'FileUrl',
+    'FilePart',
     'FinalResultEvent',
     'FinishReason',
     'FunctionToolCallEvent',
@@ -139,6 +187,7 @@ __all__ = (
     'ImageFormat',
     'ImageMediaType',
     'ImageUrl',
+    'BinaryImage',
     'ModelMessage',
     'ModelMessagesTypeAdapter',
     'ModelRequest',
@@ -149,6 +198,7 @@ __all__ = (
     'ModelResponseStreamEvent',
     'MultiModalContent',
     'PartDeltaEvent',
+    'PartEndEvent',
     'PartStartEvent',
     'RetryPromptPart',
     'SystemPromptPart',
@@ -193,10 +243,15 @@ __all__ = (
     'ToolsetTool',
     'WrapperToolset',
     # builtin_tools
+    'CodeExecutionTool',
+    'FileSearchTool',
+    'ImageGenerationTool',
+    'MCPServerTool',
+    'MemoryTool',
+    'UrlContextTool',
+    'WebFetchTool',
     'WebSearchTool',
     'WebSearchUserLocation',
-    'UrlContextTool',
-    'CodeExecutionTool',
     # output
     'ToolOutput',
     'NativeOutput',
@@ -211,5 +266,9 @@ __all__ = (
     'RunUsage',
     'RequestUsage',
     'UsageLimits',
+    # run
+    'AgentRun',
+    'AgentRunResult',
+    'AgentRunResultEvent',
 )
 __version__ = _metadata_version('pydantic_ai_slim')

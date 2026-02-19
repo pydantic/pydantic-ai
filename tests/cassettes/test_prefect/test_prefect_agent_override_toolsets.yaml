@@ -1,0 +1,82 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '105'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=EGlv.LzYbJ3w9GCuZFkTZc6oq0QWEOM0NG7aMJPGjvk-1759436802-1.0.1.1-6oxojh3oohGyLcgU4JW0tlAp58gjOtU_gxXDExM6TYMtkY__jPait0ymNkQmMfL4if.C.4i5xBwDmMoWScw7U9pDwoE_d_f999NvYqOWu0k;
+        _cfuvid=X9yhA1__xIYNmD8jrktglFeG98OLAwcfPSs_ukpzW4c-1759436802603-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of Mexico?
+        role: user
+      model: gpt-4o
+      stream: false
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '838'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-xgcwoiiqpw3hpu7oxktn2g9g
+      openai-processing-ms:
+      - '281'
+      openai-project:
+      - proj_nKlzMl1B51a3SCL1Rndf7JTx
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The capital of Mexico is Mexico City.
+          refusal: null
+          role: assistant
+      created: 1759436823
+      id: chatcmpl-CMKBDWolt72vmpE6ZTAXIr8796Zpf
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_cbf1785567
+      usage:
+        completion_tokens: 8
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 14
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 22
+    status:
+      code: 200
+      message: OK
+version: 1

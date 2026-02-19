@@ -7,7 +7,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 from pydantic_core import to_json
 
-from pydantic_ai import Agent, MultiModalContent, UserContent, models
+from pydantic_ai import Agent, UserContent, models
+from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES
 from pydantic_ai.settings import ModelSettings
 
 __all__ = (
@@ -20,7 +21,7 @@ __all__ = (
 )
 
 
-_default_model: models.Model | models.KnownModelName = 'openai:gpt-4o'
+_default_model: models.Model | models.KnownModelName = 'openai:gpt-5.2'
 
 
 class GradingOutput(BaseModel, populate_by_name=True):
@@ -55,12 +56,12 @@ _judge_output_agent = Agent(
 async def judge_output(
     output: Any,
     rubric: str,
-    model: models.Model | models.KnownModelName | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
 ) -> GradingOutput:
     """Judge the output of a model based on a rubric.
 
-    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
+    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(output=output, rubric=rubric)
@@ -96,12 +97,12 @@ async def judge_input_output(
     inputs: Any,
     output: Any,
     rubric: str,
-    model: models.Model | models.KnownModelName | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
 ) -> GradingOutput:
     """Judge the output of a model based on the inputs and a rubric.
 
-    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
+    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric)
@@ -141,12 +142,12 @@ async def judge_input_output_expected(
     output: Any,
     expected_output: Any,
     rubric: str,
-    model: models.Model | models.KnownModelName | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
 ) -> GradingOutput:
     """Judge the output of a model based on the inputs and a rubric.
 
-    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
+    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric, expected_output=expected_output)
@@ -185,12 +186,12 @@ async def judge_output_expected(
     output: Any,
     expected_output: Any,
     rubric: str,
-    model: models.Model | models.KnownModelName | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
 ) -> GradingOutput:
     """Judge the output of a model based on the expected output, output, and a rubric.
 
-    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
+    If the model is not specified, a default model is used. The default model starts as 'openai:gpt-5.2',
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(output=output, rubric=rubric, expected_output=expected_output)
@@ -201,7 +202,7 @@ async def judge_output_expected(
     ).output
 
 
-def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:  # pragma: no cover
+def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:
     """Set the default model used for judging.
 
     This model is used if `None` is passed to the `model` argument of `judge_output` and `judge_input_output`.
@@ -221,39 +222,44 @@ def _stringify(value: Any) -> str:
         return repr(value)
 
 
+def _make_section(content: Any, tag: str) -> list[str | UserContent]:
+    """Create a tagged section, handling different content types, for use in the LLMJudge's prompt.
+
+    Args:
+        content (Any): content to include in the section_
+        tag (str): tag name for the section
+
+    Returns:
+        list[str | UserContent]: the tagged section as a list of strings or UserContent
+    """
+    sections: list[str | UserContent] = []
+    items: Sequence[str | UserContent] = (  # pyright: ignore[reportUnknownVariableType]
+        content if isinstance(content, Sequence) and not isinstance(content, str) else [content]
+    )
+
+    sections.append(f'<{tag}>')
+    for item in items:
+        sections.append(item if isinstance(item, (str, *MULTI_MODAL_CONTENT_TYPES)) else _stringify(item))
+    sections.append(f'</{tag}>')
+    return sections
+
+
 def _build_prompt(
     output: Any,
     rubric: str,
     inputs: Any | None = None,
     expected_output: Any | None = None,
 ) -> str | Sequence[str | UserContent]:
-    """Build a prompt that includes input, output, and rubric."""
+    """Build a prompt that includes input, output, expected output, and rubric."""
     sections: list[str | UserContent] = []
-
     if inputs is not None:
-        if isinstance(inputs, str):
-            sections.append(f'<Input>\n{inputs}\n</Input>')
-        else:
-            sections.append('<Input>\n')
-            if isinstance(inputs, Sequence):
-                for item in inputs:  # type: ignore
-                    if isinstance(item, str | MultiModalContent):
-                        sections.append(item)
-                    else:
-                        sections.append(_stringify(item))
-            elif isinstance(inputs, MultiModalContent):
-                sections.append(inputs)
-            else:
-                sections.append(_stringify(inputs))
-            sections.append('</Input>')
+        sections.extend(_make_section(inputs, 'Input'))
 
-    sections.append(f'<Output>\n{_stringify(output)}\n</Output>')
-    sections.append(f'<Rubric>\n{rubric}\n</Rubric>')
+    sections.extend(_make_section(output, 'Output'))
+    sections.extend(_make_section(rubric, 'Rubric'))
 
     if expected_output is not None:
-        sections.append(f'<ExpectedOutput>\n{_stringify(expected_output)}\n</ExpectedOutput>')
-
-    if inputs is None or isinstance(inputs, str):
-        return '\n\n'.join(sections)  # type: ignore[arg-type]
-    else:
-        return sections
+        sections.extend(_make_section(expected_output, 'ExpectedOutput'))
+    if all(isinstance(section, str) for section in sections):
+        return '\n'.join(sections)  # type: ignore[arg-type]
+    return sections

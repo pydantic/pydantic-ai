@@ -8,16 +8,16 @@ If you want a model to be able to call a function as its final action, without t
 
 There are a number of ways to register tools with an agent:
 
-- via the [`@agent.tool`][pydantic_ai.Agent.tool] decorator — for tools that need access to the agent [context][pydantic_ai.tools.RunContext]
-- via the [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
-- via the [`tools`][pydantic_ai.Agent.__init__] keyword argument to `Agent` which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
+- via the [`@agent.tool`][pydantic_ai.agent.Agent.tool] decorator — for tools that need access to the agent [context][pydantic_ai.tools.RunContext]
+- via the [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorator — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
+- via the [`tools`][pydantic_ai.agent.Agent.__init__] keyword argument to `Agent` which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
 
-For more advanced use cases, the [toolsets](toolsets.md) feature lets you manage collections of tools (built by you or provided by an [MCP server](mcp/client.md) or other [third party](third-party-tools.md#third-party-tools)) and register them with an agent in one go via the [`toolsets`][pydantic_ai.Agent.__init__] keyword argument to `Agent`. Internally, all `tools` and `toolsets` are gathered into a single [combined toolset](toolsets.md#combining-toolsets) that's made available to the model.
+For more advanced use cases, the [toolsets](toolsets.md) feature lets you manage collections of tools (built by you or provided by an [MCP server](mcp/client.md) or other [third party](third-party-tools.md#third-party-tools)) and register them with an agent in one go via the [`toolsets`][pydantic_ai.agent.Agent.__init__] keyword argument to `Agent`. Internally, all `tools` and `toolsets` are gathered into a single [combined toolset](toolsets.md#combining-toolsets) that's made available to the model.
 
 !!! info "Function tools vs. RAG"
     Function tools are basically the "R" of RAG (Retrieval-Augmented Generation) — they augment what the model can do by letting it request extra information.
 
-    The main semantic difference between Pydantic AI Tools and RAG is RAG is synonymous with vector search, while Pydantic AI tools are more general-purpose. (Note: we may add support for vector search functionality in the future, particularly an API for generating embeddings. See [#58](https://github.com/pydantic/pydantic-ai/issues/58))
+    The main semantic difference between Pydantic AI Tools and RAG is RAG is synonymous with vector search, while Pydantic AI tools are more general-purpose. For vector search, you can use our [embeddings](embeddings.md) support to generate embeddings across multiple providers.
 
 !!! info "Function Tools vs. Structured Outputs"
     As the name suggests, function tools use the model's "tools" or "functions" API to let the model know what is available to call. Tools or functions are also used to define the schema(s) for [structured output](output.md) when using the default [tool output mode](output.md#tool-output), thus a model might have access to many tools, some of which call function tools while others end the run and produce a final output.
@@ -34,9 +34,9 @@ import random
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'google-gla:gemini-1.5-flash',  # (1)!
+    'google-gla:gemini-3-flash-preview',  # (1)!
     deps_type=str,  # (2)!
-    system_prompt=(
+    instructions=(
         "You're a dice game, you should roll the die and see if the number "
         "you get back matches the user's guess. If so, tell them they're a winner. "
         "Use the player's name in the response."
@@ -79,15 +79,14 @@ print(dice_result.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
-                timestamp=datetime.datetime(...),
-            ),
             UserPromptPart(
                 content='My guess is 4',
                 timestamp=datetime.datetime(...),
-            ),
-        ]
+            )
+        ],
+        timestamp=datetime.datetime(...),
+        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
+        run_id='...',
     ),
     ModelResponse(
         parts=[
@@ -95,9 +94,10 @@ print(dice_result.all_messages())
                 tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(input_tokens=90, output_tokens=2),
-        model_name='gemini-1.5-flash',
+        usage=RequestUsage(input_tokens=54, output_tokens=2),
+        model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
     ModelRequest(
         parts=[
@@ -107,7 +107,10 @@ print(dice_result.all_messages())
                 tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
             )
-        ]
+        ],
+        timestamp=datetime.datetime(...),
+        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
+        run_id='...',
     ),
     ModelResponse(
         parts=[
@@ -115,9 +118,10 @@ print(dice_result.all_messages())
                 tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(input_tokens=91, output_tokens=4),
-        model_name='gemini-1.5-flash',
+        usage=RequestUsage(input_tokens=55, output_tokens=4),
+        model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
     ModelRequest(
         parts=[
@@ -127,7 +131,10 @@ print(dice_result.all_messages())
                 tool_call_id='pyd_ai_tool_call_id',
                 timestamp=datetime.datetime(...),
             )
-        ]
+        ],
+        timestamp=datetime.datetime(...),
+        instructions="You're a dice game, you should roll the die and see if the number you get back matches the user's guess. If so, tell them they're a winner. Use the player's name in the response.",
+        run_id='...',
     ),
     ModelResponse(
         parts=[
@@ -135,9 +142,10 @@ print(dice_result.all_messages())
                 content="Congratulations Anne, you guessed correctly! You're a winner!"
             )
         ],
-        usage=RequestUsage(input_tokens=92, output_tokens=12),
-        model_name='gemini-1.5-flash',
+        usage=RequestUsage(input_tokens=56, output_tokens=12),
+        model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
+        run_id='...',
     ),
 ]
 """
@@ -181,14 +189,14 @@ sequenceDiagram
 
 ## Registering via Agent Argument {#registering-function-tools-via-agent-argument}
 
-As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to reuse tools, and can also give more fine-grained control over the tools.
+As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.agent.Agent.__init__]. This is useful when you want to reuse tools, and can also give more fine-grained control over the tools.
 
 ```python {title="dice_game_tool_kwarg.py"}
 import random
 
 from pydantic_ai import Agent, RunContext, Tool
 
-system_prompt = """\
+instructions = """\
 You're a dice game, you should roll the die and see if the number
 you get back matches the user's guess. If so, tell them they're a winner.
 Use the player's name in the response.
@@ -206,19 +214,19 @@ def get_player_name(ctx: RunContext[str]) -> str:
 
 
 agent_a = Agent(
-    'google-gla:gemini-1.5-flash',
+    'google-gla:gemini-3-flash-preview',
     deps_type=str,
     tools=[roll_dice, get_player_name],  # (1)!
-    system_prompt=system_prompt,
+    instructions=instructions,
 )
 agent_b = Agent(
-    'google-gla:gemini-1.5-flash',
+    'google-gla:gemini-3-flash-preview',
     deps_type=str,
     tools=[  # (2)!
         Tool(roll_dice, takes_ctx=False),
         Tool(get_player_name, takes_ctx=True),
     ],
-    system_prompt=system_prompt,
+    instructions=instructions,
 )
 
 dice_result = {}
@@ -350,6 +358,16 @@ print(test_model.last_model_request_parameters.function_tools)
 
 _(This example is complete, it can be run "as is")_
 
+
+!!! tip "Debugging Tool Calls"
+    Understanding tool behavior is crucial for agent development. By instrumenting your agent with [Logfire](logfire.md), you can see:
+
+    - What arguments were passed to each tool
+    - What each tool returned
+    - How long each tool took to execute
+    - Any errors that occurred
+
+    This visibility helps you understand why an agent made specific decisions and identify issues in tool implementations.
 
 ## See Also
 

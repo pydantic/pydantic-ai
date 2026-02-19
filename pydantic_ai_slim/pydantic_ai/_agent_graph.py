@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import inspect
+import uuid
 from asyncio import Task
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
@@ -18,16 +19,19 @@ from typing_extensions import TypeVar, assert_never
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager
-from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, run_in_executor
+from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_graph import BaseNode, Graph, GraphRunContext
+from pydantic_graph import BaseNode, GraphRunContext
+from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
+    BuiltinToolFunc,
     DeferredToolCallResult,
     DeferredToolResult,
     DeferredToolResults,
@@ -57,11 +61,6 @@ T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
 EndStrategy = Literal['early', 'exhaustive']
-"""The strategy for handling multiple tool calls when a final result is found.
-
-- `'early'`: Stop processing other tool calls once a final result is found
-- `'exhaustive'`: Process all tool calls even after finding a final result
-"""
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
@@ -87,14 +86,35 @@ Can optionally accept a `RunContext` as a parameter.
 class GraphAgentState:
     """State kept across the execution of the agent graph."""
 
-    message_history: list[_messages.ModelMessage]
-    usage: _usage.RunUsage
-    retries: int
-    run_step: int
+    message_history: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
+    usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
+    retries: int = 0
+    run_step: int = 0
+    run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
+    metadata: dict[str, Any] | None = None
 
-    def increment_retries(self, max_result_retries: int, error: BaseException | None = None) -> None:
+    def increment_retries(
+        self,
+        max_result_retries: int,
+        error: BaseException | None = None,
+        model_settings: ModelSettings | None = None,
+    ) -> None:
         self.retries += 1
         if self.retries > max_result_retries:
+            if (
+                self.message_history
+                and isinstance(model_response := self.message_history[-1], _messages.ModelResponse)
+                and model_response.finish_reason == 'length'
+                and model_response.parts
+                and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
+            ):
+                try:
+                    tool_call.args_as_dict()
+                except Exception:
+                    max_tokens = model_settings.get('max_tokens') if model_settings else None
+                    raise exceptions.IncompleteToolCall(
+                        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
+                    )
             message = f'Exceeded maximum retries ({max_result_retries}) for output validation'
             if error:
                 if isinstance(error, exceptions.UnexpectedModelBehavior) and error.__cause__ is not None:
@@ -122,10 +142,11 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     output_schema: _output.OutputSchema[OutputDataT]
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
+    validation_context: Any | Callable[[RunContext[DepsT]], Any]
 
     history_processors: Sequence[HistoryProcessor[DepsT]]
 
-    builtin_tools: list[AbstractBuiltinTool] = dataclasses.field(repr=False)
+    builtin_tools: list[AbstractBuiltinTool | BuiltinToolFunc[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
 
     tracer: Tracer
@@ -166,12 +187,16 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     deferred_tool_results: DeferredToolResults | None = None
 
     instructions: str | None = None
-    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(default_factory=list)
+    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
+        default_factory=list[_system_prompt.SystemPromptRunner[DepsT]]
+    )
 
     system_prompts: tuple[str, ...] = dataclasses.field(default_factory=tuple)
-    system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(default_factory=list)
+    system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
+        default_factory=list[_system_prompt.SystemPromptRunner[DepsT]]
+    )
     system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
-        default_factory=dict
+        default_factory=dict[str, _system_prompt.SystemPromptRunner[DepsT]]
     )
 
     async def run(  # noqa: C901
@@ -199,6 +224,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         next_message: _messages.ModelRequest | None = None
 
+        run_context: RunContext[DepsT] | None = None
+        instructions: str | None = None
+
         if messages and (last_message := messages[-1]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
@@ -220,17 +248,20 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         ctx.deps.prompt = combined_content
             elif isinstance(last_message, _messages.ModelResponse):
                 if self.user_prompt is None:
-                    # Skip ModelRequestNode and go directly to CallToolsNode
-                    return CallToolsNode[DepsT, NodeRunEndT](last_message)
-                elif any(isinstance(part, _messages.ToolCallPart) for part in last_message.parts):
+                    run_context = build_run_context(ctx)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    if not instructions:
+                        # If there's no new prompt or instructions, skip ModelRequestNode and go directly to CallToolsNode
+                        return CallToolsNode[DepsT, NodeRunEndT](last_message)
+                elif last_message.tool_calls:
                     raise exceptions.UserError(
                         'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
                     )
 
-        # Build the run context after `ctx.deps.prompt` has been updated
-        run_context = build_run_context(ctx)
+        if not run_context:
+            run_context = build_run_context(ctx)
+            instructions = await ctx.deps.get_instructions(run_context)
 
-        parts: list[_messages.ModelRequestPart] = []
         if messages:
             await self._reevaluate_dynamic_prompts(messages, run_context)
 
@@ -246,7 +277,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
             next_message = _messages.ModelRequest(parts=parts)
 
-        next_message.instructions = await ctx.deps.get_instructions(run_context)
+        next_message.instructions = instructions
+
+        if not messages and not next_message.parts and not next_message.instructions:
+            raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
         return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
 
@@ -272,13 +306,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             raise exceptions.UserError(
                 'Tool call results were provided, but the message history does not contain a `ModelResponse`.'
             )
-        if not any(isinstance(part, _messages.ToolCallPart) for part in last_model_response.parts):
+        if not last_model_response.tool_calls:
             raise exceptions.UserError(
                 'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
-            )
-        if self.user_prompt is not None:
-            raise exceptions.UserError(
-                'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
             )
 
         tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
@@ -307,7 +337,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     tool_call_results[part.tool_call_id] = 'skip'
 
         # Skip ModelRequestNode and go directly to CallToolsNode
-        return CallToolsNode[DepsT, NodeRunEndT](last_model_response, tool_call_results=tool_call_results)
+        return CallToolsNode[DepsT, NodeRunEndT](
+            last_model_response,
+            tool_call_results=tool_call_results,
+            tool_call_metadata=deferred_tool_results.metadata or None,
+            user_prompt=self.user_prompt,
+        )
 
     async def _reevaluate_dynamic_prompts(
         self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
@@ -324,8 +359,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                             if runner := self.system_prompt_dynamic_functions.get(  # pragma: lax no cover
                                 part.dynamic_ref
                             ):
+                                # To enable dynamic system prompt refs in future runs, use a placeholder string
                                 updated_part_content = await runner.run(run_context)
-                                part = _messages.SystemPromptPart(updated_part_content, dynamic_ref=part.dynamic_ref)
+                                part = _messages.SystemPromptPart(
+                                    updated_part_content or '', dynamic_ref=part.dynamic_ref
+                                )
 
                         reevaluated_message_parts.append(part)
 
@@ -339,8 +377,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         for sys_prompt_runner in self.system_prompt_functions:
             prompt = await sys_prompt_runner.run(run_context)
             if sys_prompt_runner.dynamic:
-                messages.append(_messages.SystemPromptPart(prompt, dynamic_ref=sys_prompt_runner.function.__qualname__))
-            else:
+                # To enable dynamic system prompt refs in future runs, use a placeholder string
+                messages.append(
+                    _messages.SystemPromptPart(prompt or '', dynamic_ref=sys_prompt_runner.function.__qualname__)
+                )
+            elif prompt:
+                # omit empty system prompts
                 messages.append(_messages.SystemPromptPart(prompt))
         return messages
 
@@ -352,12 +394,10 @@ async def _prepare_request_parameters(
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
-    output_object = None
-    if isinstance(output_schema, _output.NativeOutputSchema):
-        output_object = output_schema.object_def
 
-    # ToolOrTextOutputSchema, NativeOutputSchema, and PromptedOutputSchema all inherit from TextOutputSchema
-    allow_text_output = isinstance(output_schema, _output.TextOutputSchema)
+    prompted_output_template = (
+        output_schema.template if isinstance(output_schema, _output.StructuredTextOutputSchema) else None
+    )
 
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
@@ -367,13 +407,29 @@ async def _prepare_request_parameters(
         else:
             function_tools.append(tool_def)
 
+    # resolve dynamic builtin tools
+    builtin_tools: list[AbstractBuiltinTool] = []
+    if ctx.deps.builtin_tools:
+        run_context = build_run_context(ctx)
+        for tool in ctx.deps.builtin_tools:
+            if isinstance(tool, AbstractBuiltinTool):
+                builtin_tools.append(tool)
+            else:
+                t = tool(run_context)
+                if inspect.isawaitable(t):
+                    t = await t
+                if t is not None:
+                    builtin_tools.append(t)
+
     return models.ModelRequestParameters(
         function_tools=function_tools,
-        builtin_tools=ctx.deps.builtin_tools,
+        builtin_tools=builtin_tools,
         output_mode=output_schema.mode,
         output_tools=output_tools,
-        output_object=output_object,
-        allow_text_output=allow_text_output,
+        output_object=output_schema.object_def,
+        prompted_output_template=prompted_output_template,
+        allow_text_output=output_schema.allows_text,
+        allow_image_output=output_schema.allows_image,
     )
 
 
@@ -407,25 +463,27 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
-        async with ctx.deps.model.request_stream(
-            message_history, model_settings, model_request_parameters, run_context
-        ) as streamed_response:
-            self._did_stream = True
-            ctx.state.usage.requests += 1
-            agent_stream = result.AgentStream[DepsT, T](
-                _raw_stream_response=streamed_response,
-                _output_schema=ctx.deps.output_schema,
-                _model_request_parameters=model_request_parameters,
-                _output_validators=ctx.deps.output_validators,
-                _run_ctx=build_run_context(ctx),
-                _usage_limits=ctx.deps.usage_limits,
-                _tool_manager=ctx.deps.tool_manager,
-            )
-            yield agent_stream
-            # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
-            # otherwise usage won't be properly counted:
-            async for _ in agent_stream:
-                pass
+        with set_current_run_context(run_context):
+            async with ctx.deps.model.request_stream(
+                message_history, model_settings, model_request_parameters, run_context
+            ) as streamed_response:
+                self._did_stream = True
+                ctx.state.usage.requests += 1
+                agent_stream = result.AgentStream[DepsT, T](
+                    _raw_stream_response=streamed_response,
+                    _output_schema=ctx.deps.output_schema,
+                    _model_request_parameters=model_request_parameters,
+                    _output_validators=ctx.deps.output_validators,
+                    _run_ctx=build_run_context(ctx),
+                    _usage_limits=ctx.deps.usage_limits,
+                    _tool_manager=ctx.deps.tool_manager,
+                    _metadata_getter=lambda: ctx.state.metadata,
+                )
+                yield agent_stream
+                # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
+                # otherwise usage won't be properly counted:
+                async for _ in agent_stream:
+                    pass
 
         model_response = streamed_response.get()
 
@@ -438,8 +496,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._result is not None:
             return self._result  # pragma: no cover
 
-        model_settings, model_request_parameters, message_history, _ = await self._prepare_request(ctx)
-        model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
+        model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
+        with set_current_run_context(run_context):
+            model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.requests += 1
 
         return self._finish_handling(ctx, model_response)
@@ -447,6 +506,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
+        self.request.timestamp = now_utc()
+        self.request.run_id = self.request.run_id or ctx.state.run_id
         ctx.state.message_history.append(self.request)
 
         ctx.state.run_step += 1
@@ -458,20 +519,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         original_history = ctx.state.message_history[:]
         message_history = await _process_message_history(original_history, ctx.deps.history_processors, run_context)
-        # Never merge the new `ModelRequest` with the one preceding it, to keep `new_messages()` from accidentally including part of the existing message history
-        message_history = [*_clean_message_history(message_history[:-1]), message_history[-1]]
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = message_history
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index -= len(original_history) - len(message_history)
 
-        # Do one more cleaning pass to merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
-        # but don't store it in the message history on state.
+        # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
+        # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
         message_history = _clean_message_history(message_history)
 
         model_request_parameters = await _prepare_request_parameters(ctx)
-        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
 
         model_settings = ctx.deps.model_settings
         usage = ctx.state.usage
@@ -491,6 +549,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
+        response.run_id = response.run_id or ctx.state.run_id
         # Update usage
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
@@ -513,6 +572,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
     model_response: _messages.ModelResponse
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
+    tool_call_metadata: dict[str, dict[str, Any]] | None = None
+    """Metadata for deferred tool calls, keyed by `tool_call_id`."""
+    user_prompt: str | Sequence[_messages.UserContent] | None = None
+    """Optional user prompt to include alongside tool call results.
+
+    This prompt is only sent to the model when the `model_response` contains tool calls.
+    If the `model_response` has final output instead, this user prompt is ignored.
+    The user prompt will be appended after all tool return parts in the next model request.
+    """
 
     _events_iterator: AsyncIterator[_messages.HandleResponseEvent] | None = field(default=None, init=False, repr=False)
     _next_node: ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]] | None = field(
@@ -545,79 +613,139 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         if self._events_iterator is None:
             # Ensure that the stream is only run once
 
+            output_schema = ctx.deps.output_schema
+
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
+                if not self.model_response.parts:
+                    # Don't retry if the model returned an empty response because the token limit was exceeded, possibly during thinking.
+                    if self.model_response.finish_reason == 'length':
+                        model_settings = ctx.deps.model_settings
+                        max_tokens = model_settings.get('max_tokens') if model_settings else None
+                        raise exceptions.UnexpectedModelBehavior(
+                            f'Model token limit ({max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
+                        )
+
+                    # Check for content filter on empty response
+                    if self.model_response.finish_reason == 'content_filter':
+                        details = self.model_response.provider_details or {}
+                        body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
+
+                        if reason := details.get('finish_reason'):
+                            message = f"Content filter triggered. Finish reason: '{reason}'"
+                        elif reason := details.get('block_reason'):
+                            message = f"Content filter triggered. Block reason: '{reason}'"
+                        elif refusal := details.get('refusal'):
+                            message = f'Content filter triggered. Refusal: {refusal!r}'
+                        else:  # pragma: no cover
+                            message = 'Content filter triggered.'
+
+                        raise exceptions.ContentFilterError(message, body=body)
+
+                    # we got an empty response.
+                    # this sometimes happens with anthropic (and perhaps other models)
+                    # when the model has already returned text along side tool calls
+                    if text_processor := output_schema.text_processor:  # pragma: no branch
+                        # in this scenario, if text responses are allowed, we return text from the most recent model
+                        # response, if any
+                        for message in reversed(ctx.state.message_history):
+                            if isinstance(message, _messages.ModelResponse):
+                                text = ''
+                                for part in message.parts:
+                                    if isinstance(part, _messages.TextPart):
+                                        text += part.content
+                                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                                        # Text parts before a built-in tool call are essentially thoughts,
+                                        # not part of the final result output, so we reset the accumulated text
+                                        text = ''  # pragma: no cover
+                                if text:
+                                    try:
+                                        self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                                        return
+                                    except ToolRetryError:  # pragma: no cover
+                                        # If the text from the previous response was invalid, ignore it.
+                                        pass
+
+                    # Go back to the model request node with an empty request, which means we'll essentially
+                    # resubmit the most recent request that resulted in an empty response,
+                    # as the empty response and request will not create any items in the API payload,
+                    # in the hope the model will return a non-empty response this time.
+                    ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
+                    run_context = build_run_context(ctx)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                        _messages.ModelRequest(parts=[], instructions=instructions)
+                    )
+                    return
+
                 text = ''
                 tool_calls: list[_messages.ToolCallPart] = []
-                invisible_parts: bool = False
+                files: list[_messages.BinaryContent] = []
 
                 for part in self.model_response.parts:
                     if isinstance(part, _messages.TextPart):
                         text += part.content
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
+                    elif isinstance(part, _messages.FilePart):
+                        files.append(part.content)
                     elif isinstance(part, _messages.BuiltinToolCallPart):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text
                         text = ''
-                        invisible_parts = True
                         yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.BuiltinToolReturnPart):
-                        invisible_parts = True
                         yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
-                        invisible_parts = True
+                        pass
                     else:
                         assert_never(part)
 
-                # At the moment, we prioritize at least executing tool calls if they are present.
-                # In the future, we'd consider making this configurable at the agent or run level.
-                # This accounts for cases like anthropic returns that might contain a text response
-                # and a tool call response, where the text response just indicates the tool call will happen.
                 try:
+                    # At the moment, we prioritize at least executing tool calls if they are present.
+                    # In the future, we'd consider making this configurable at the agent or run level.
+                    # This accounts for cases like anthropic returns that might contain a text response
+                    # and a tool call response, where the text response just indicates the tool call will happen.
+                    alternatives: list[str] = []
                     if tool_calls:
                         async for event in self._handle_tool_calls(ctx, tool_calls):
                             yield event
-                    elif text:
-                        # No events are emitted during the handling of text responses, so we don't need to yield anything
-                        self._next_node = await self._handle_text_response(ctx, text)
-                    elif invisible_parts:
-                        # handle responses with only thinking or built-in tool parts.
-                        # this can happen with models that support thinking mode when they don't provide
-                        # actionable output alongside their thinking content. so we tell the model to try again.
-                        m = _messages.RetryPromptPart(
-                            content='Responses without text or tool calls are not permitted.',
-                        )
-                        raise ToolRetryError(m)
-                    else:
-                        # we got an empty response with no tool calls, text, thinking, or built-in tool calls.
-                        # this sometimes happens with anthropic (and perhaps other models)
-                        # when the model has already returned text along side tool calls
-                        # in this scenario, if text responses are allowed, we return text from the most recent model
-                        # response, if any
-                        if isinstance(ctx.deps.output_schema, _output.TextOutputSchema):
-                            for message in reversed(ctx.state.message_history):
-                                if isinstance(message, _messages.ModelResponse):
-                                    text = ''
-                                    for part in message.parts:
-                                        if isinstance(part, _messages.TextPart):
-                                            text += part.content
-                                        elif isinstance(part, _messages.BuiltinToolCallPart):
-                                            # Text parts before a built-in tool call are essentially thoughts,
-                                            # not part of the final result output, so we reset the accumulated text
-                                            text = ''  # pragma: no cover
-                                    if text:
-                                        self._next_node = await self._handle_text_response(ctx, text)
-                                        return
+                        return
+                    elif output_schema.toolset:
+                        alternatives.append('include your response in a tool call')
+                    elif ctx.deps.tool_manager.tools is None or ctx.deps.tool_manager.tools:
+                        # tools is None when the tool manager is unprepared (e.g. UserPromptNode
+                        # skips to CallToolsNode, bypassing for_run_step); in that case we
+                        # default to suggesting tools to be safe
+                        alternatives.append('call a tool')
 
-                        # Go back to the model request node with an empty request, which means we'll essentially
-                        # resubmit the most recent request that resulted in an empty response,
-                        # as the empty response and request will not create any items in the API payload,
-                        # in the hope the model will return a non-empty response this time.
-                        ctx.state.increment_retries(ctx.deps.max_result_retries)
-                        self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
+                    if output_schema.allows_image:
+                        if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
+                            self._next_node = await self._handle_image_response(ctx, image)
+                            return
+                        alternatives.append('return an image')
+
+                    if text_processor := output_schema.text_processor:
+                        if text:
+                            self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                            return
+                        alternatives.insert(0, 'return text')
+
+                    # handle responses with only parts that don't constitute output.
+                    # This can happen with models that support thinking mode when they don't provide
+                    # actionable output alongside their thinking content. so we tell the model to try again.
+                    m = _messages.RetryPromptPart(
+                        content=f'Please {" or ".join(alternatives)}.',
+                    )
+                    raise ToolRetryError(m)
                 except ToolRetryError as e:
-                    ctx.state.increment_retries(ctx.deps.max_result_retries, e)
-                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
+                    ctx.state.increment_retries(
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                    )
+                    run_context = build_run_context(ctx)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                        _messages.ModelRequest(parts=[e.tool_retry], instructions=instructions)
+                    )
 
             self._events_iterator = _run_stream()
 
@@ -641,6 +769,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             tool_manager=ctx.deps.tool_manager,
             tool_calls=tool_calls,
             tool_call_results=self.tool_call_results,
+            tool_call_metadata=self.tool_call_metadata,
             final_result=None,
             ctx=ctx,
             output_parts=output_parts,
@@ -652,10 +781,41 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             final_result = output_final_result[0]
             self._next_node = self._handle_final_result(ctx, final_result, output_parts)
         else:
+            # Add user prompt if provided, after all tool return parts
+            if self.user_prompt is not None:
+                output_parts.append(_messages.UserPromptPart(self.user_prompt))
+
             instructions = await ctx.deps.get_instructions(run_context)
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                 _messages.ModelRequest(parts=output_parts, instructions=instructions)
             )
+
+    async def _handle_text_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        text: str,
+        text_processor: _output.BaseOutputProcessor[NodeRunEndT],
+    ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        run_context = build_run_context(ctx)
+        run_context = replace(
+            run_context,
+            retry=ctx.state.retries,
+            max_retries=ctx.deps.max_result_retries,
+        )
+
+        result_data = await text_processor.process(text, run_context=run_context)
+
+        for validator in ctx.deps.output_validators:
+            result_data = await validator.validate(result_data, run_context)
+        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
+
+    async def _handle_image_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        image: _messages.BinaryImage,
+    ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
+        result_data = cast(NodeRunEndT, image)
+        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     def _handle_final_result(
         self,
@@ -665,43 +825,37 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> End[result.FinalResult[NodeRunEndT]]:
         messages = ctx.state.message_history
 
-        # For backwards compatibility, append a new ModelRequest using the tool returns and retries
+        # To allow this message history to be used in a future run without dangling tool calls,
+        # append a new ModelRequest using the tool returns and retries
         if tool_responses:
-            messages.append(_messages.ModelRequest(parts=tool_responses))
+            messages.append(_messages.ModelRequest(parts=tool_responses, run_id=ctx.state.run_id, timestamp=now_utc()))
 
         return End(final_result)
-
-    async def _handle_text_response(
-        self,
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        text: str,
-    ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
-        output_schema = ctx.deps.output_schema
-        run_context = build_run_context(ctx)
-
-        if isinstance(output_schema, _output.TextOutputSchema):
-            result_data = await output_schema.process(text, run_context)
-        else:
-            m = _messages.RetryPromptPart(
-                content='Plain text responses are not permitted, please include your response in a tool call',
-            )
-            raise ToolRetryError(m)
-
-        for validator in ctx.deps.output_validators:
-            result_data = await validator.validate(result_data, run_context)
-        return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     __repr__ = dataclasses_no_defaults_repr
 
 
+@dataclasses.dataclass
+class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
+    """A node that immediately ends the graph run after a streaming response produced a final result."""
+
+    final_result: result.FinalResult[NodeRunEndT]
+
+    async def run(
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
+    ) -> End[result.FinalResult[NodeRunEndT]]:
+        return End(self.final_result)
+
+
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
     """Build a `RunContext` object from the current agent graph run context."""
-    return RunContext[DepsT](
+    run_context = RunContext[DepsT](
         deps=ctx.deps.user_deps,
         model=ctx.deps.model,
         usage=ctx.state.usage,
         prompt=ctx.deps.prompt,
         messages=ctx.state.message_history,
+        validation_context=None,
         tracer=ctx.deps.tracer,
         trace_include_content=ctx.deps.instrumentation_settings is not None
         and ctx.deps.instrumentation_settings.include_content,
@@ -709,14 +863,31 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         if ctx.deps.instrumentation_settings
         else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
-        tool_call_approved=ctx.state.run_step == 0,
+        run_id=ctx.state.run_id,
+        metadata=ctx.state.metadata,
     )
+    validation_context = build_validation_context(ctx.deps.validation_context, run_context)
+    run_context = replace(run_context, validation_context=validation_context)
+    return run_context
+
+
+def build_validation_context(
+    validation_ctx: Any | Callable[[RunContext[DepsT]], Any],
+    run_context: RunContext[DepsT],
+) -> Any:
+    """Build a Pydantic validation context, potentially from the current agent run context."""
+    if callable(validation_ctx):
+        fn = cast(Callable[[RunContext[DepsT]], Any], validation_ctx)
+        return fn(run_context)
+    else:
+        return validation_ctx
 
 
 async def process_tool_calls(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None,
+    tool_call_metadata: dict[str, dict[str, Any]] | None,
     final_result: result.FinalResult[NodeRunEndT] | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
@@ -739,31 +910,56 @@ async def process_tool_calls(  # noqa: C901
 
     # First, we handle output tool calls
     for call in tool_calls_by_kind['output']:
-        if final_result:
-            if final_result.tool_call_id == call.tool_call_id:
-                part = _messages.ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content='Final result processed.',
-                    tool_call_id=call.tool_call_id,
-                )
-            else:
-                yield _messages.FunctionToolCallEvent(call)
-                part = _messages.ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content='Output tool not used - a final result was already processed.',
-                    tool_call_id=call.tool_call_id,
-                )
-                yield _messages.FunctionToolResultEvent(part)
-
+        # `final_result` can be passed into `process_tool_calls` from `Agent.run_stream`
+        # when streaming and there's already a final result
+        if final_result and final_result.tool_call_id == call.tool_call_id:
+            part = _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content='Final result processed.',
+                tool_call_id=call.tool_call_id,
+            )
             output_parts.append(part)
+        # Early strategy is chosen and final result is already set
+        elif ctx.deps.end_strategy == 'early' and final_result:
+            yield _messages.FunctionToolCallEvent(call)
+            part = _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content='Output tool not used - a final result was already processed.',
+                tool_call_id=call.tool_call_id,
+            )
+            yield _messages.FunctionToolResultEvent(part)
+            output_parts.append(part)
+        # Early strategy is chosen and final result is not yet set
+        # Or exhaustive strategy is chosen
         else:
             try:
                 result_data = await tool_manager.handle_call(call)
             except exceptions.UnexpectedModelBehavior as e:
-                ctx.state.increment_retries(ctx.deps.max_result_retries, e)
-                raise e  # pragma: lax no cover
+                # If we already have a valid final result, don't fail the entire run
+                # This allows exhaustive strategy to complete successfully when at least one output tool is valid
+                if final_result:
+                    # If output tool fails when we already have a final result, skip it without retrying
+                    yield _messages.FunctionToolCallEvent(call)
+                    part = _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content='Output tool not used - output failed validation.',
+                        tool_call_id=call.tool_call_id,
+                    )
+                    output_parts.append(part)
+                    yield _messages.FunctionToolResultEvent(part)
+                else:
+                    # No valid result yet, so this is a real failure
+                    ctx.state.increment_retries(
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                    )
+                    raise e  # pragma: lax no cover
             except ToolRetryError as e:
-                ctx.state.increment_retries(ctx.deps.max_result_retries, e)
+                # If we already have a valid final result, don't increment retries for invalid output tools
+                # This allows the run to succeed if at least one output tool returned a valid result
+                if not final_result:
+                    ctx.state.increment_retries(
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                    )
                 yield _messages.FunctionToolCallEvent(call)
                 output_parts.append(e.tool_retry)
                 yield _messages.FunctionToolResultEvent(e.tool_retry)
@@ -774,27 +970,28 @@ async def process_tool_calls(  # noqa: C901
                     tool_call_id=call.tool_call_id,
                 )
                 output_parts.append(part)
-                final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
+
+                # In both `early` and `exhaustive` modes, use the first output tool's result as the final result
+                if not final_result:
+                    final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
 
     # Then, we handle function tool calls
     calls_to_run: list[_messages.ToolCallPart] = []
     if final_result and ctx.deps.end_strategy == 'early':
-        output_parts.extend(
-            [
+        for call in tool_calls_by_kind['function']:
+            output_parts.append(
                 _messages.ToolReturnPart(
                     tool_name=call.tool_name,
                     content='Tool not executed - a final result was already processed.',
                     tool_call_id=call.tool_call_id,
                 )
-                for call in tool_calls_by_kind['function']
-            ]
-        )
+            )
     else:
         calls_to_run.extend(tool_calls_by_kind['function'])
 
     # Then, we handle unknown tool calls
     if tool_calls_by_kind['unknown']:
-        ctx.state.increment_retries(ctx.deps.max_result_retries)
+        ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
         calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     calls_to_run_results: dict[str, DeferredToolResult] = {}
@@ -816,16 +1013,20 @@ async def process_tool_calls(  # noqa: C901
         calls_to_run = [call for call in calls_to_run if call.tool_call_id in calls_to_run_results]
 
     deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = defaultdict(list)
+    deferred_metadata: dict[str, dict[str, Any]] = {}
 
     if calls_to_run:
         async for event in _call_tools(
             tool_manager=tool_manager,
             tool_calls=calls_to_run,
             tool_call_results=calls_to_run_results,
+            tool_call_metadata=tool_call_metadata,
             tracer=ctx.deps.tracer,
+            usage=ctx.state.usage,
             usage_limits=ctx.deps.usage_limits,
             output_parts=output_parts,
             output_deferred_calls=deferred_calls,
+            output_deferred_metadata=deferred_metadata,
         ):
             yield event
 
@@ -833,14 +1034,17 @@ async def process_tool_calls(  # noqa: C901
     if tool_call_results is None:
         calls = [*tool_calls_by_kind['external'], *tool_calls_by_kind['unapproved']]
         if final_result:
-            for call in calls:
-                output_parts.append(
-                    _messages.ToolReturnPart(
-                        tool_name=call.tool_name,
-                        content='Tool not executed - a final result was already processed.',
-                        tool_call_id=call.tool_call_id,
+            # If the run was already determined to end on deferred tool calls,
+            # we shouldn't insert return parts as the deferred tools will still get a real result.
+            if not isinstance(final_result.output, _output.DeferredToolRequests):
+                for call in calls:
+                    output_parts.append(
+                        _messages.ToolReturnPart(
+                            tool_name=call.tool_name,
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=call.tool_call_id,
+                        )
                     )
-                )
         elif calls:
             deferred_calls['external'].extend(tool_calls_by_kind['external'])
             deferred_calls['unapproved'].extend(tool_calls_by_kind['unapproved'])
@@ -856,6 +1060,7 @@ async def process_tool_calls(  # noqa: C901
         deferred_tool_requests = _output.DeferredToolRequests(
             calls=deferred_calls['external'],
             approvals=deferred_calls['unapproved'],
+            metadata=deferred_metadata,
         )
 
         final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests), None, None)
@@ -864,18 +1069,27 @@ async def process_tool_calls(  # noqa: C901
         output_final_result.append(final_result)
 
 
-async def _call_tools(
+async def _call_tools(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult],
+    tool_call_metadata: dict[str, dict[str, Any]] | None,
     tracer: Tracer,
-    usage_limits: _usage.UsageLimits | None,
+    usage: _usage.RunUsage,
+    usage_limits: _usage.UsageLimits,
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
+    output_deferred_metadata: dict[str, dict[str, Any]],
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
+    deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
+
+    if usage_limits.tool_calls_limit is not None:
+        projected_usage = deepcopy(usage)
+        projected_usage.tool_calls += len(tool_calls)
+        usage_limits.check_before_tool_call(projected_usage)
 
     for call in tool_calls:
         yield _messages.FunctionToolCallEvent(call)
@@ -890,30 +1104,39 @@ async def _call_tools(
 
         async def handle_call_or_result(
             coro_or_task: Awaitable[
-                tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
+                tuple[
+                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
+                ]
             ]
-            | Task[tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]],
+            | Task[
+                tuple[
+                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
+                ]
+            ],
             index: int,
         ) -> _messages.HandleResponseEvent | None:
             try:
-                tool_part, tool_user_part = (
+                tool_part, tool_user_content = (
                     (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
                 )
-            except exceptions.CallDeferred:
+            except exceptions.CallDeferred as e:
                 deferred_calls_by_index[index] = 'external'
-            except exceptions.ApprovalRequired:
+                deferred_metadata_by_index[index] = e.metadata
+            except exceptions.ApprovalRequired as e:
                 deferred_calls_by_index[index] = 'unapproved'
+                deferred_metadata_by_index[index] = e.metadata
             else:
                 tool_parts_by_index[index] = tool_part
-                if tool_user_part:
-                    user_parts_by_index[index] = tool_user_part
+                if tool_user_content:
+                    user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
 
-                return _messages.FunctionToolResultEvent(tool_part)
+                return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
-        if tool_manager.should_call_sequentially(tool_calls):
+        parallel_execution_mode = tool_manager.get_parallel_execution_mode(tool_calls)
+        if parallel_execution_mode == 'sequential':
             for index, call in enumerate(tool_calls):
                 if event := await handle_call_or_result(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), usage_limits),
+                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
                     index,
                 ):
                     yield event
@@ -921,42 +1144,78 @@ async def _call_tools(
         else:
             tasks = [
                 asyncio.create_task(
-                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), usage_limits),
+                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), tool_call_metadata),
                     name=call.tool_name,
                 )
                 for call in tool_calls
             ]
+            try:
+                if parallel_execution_mode == 'parallel_ordered_events':
+                    # Wait for all tasks to complete before yielding any events
+                    await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
+                    for index, task in enumerate(tasks):
+                        if event := await handle_call_or_result(coro_or_task=task, index=index):
+                            yield event
+                else:
+                    pending: set[
+                        asyncio.Task[
+                            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
+                        ]
+                    ] = set(tasks)  # pyright: ignore[reportAssignmentType]
+                    while pending:
+                        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                        for task in done:
+                            index = tasks.index(task)  # pyright: ignore[reportArgumentType]
+                            if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
+                                yield event
 
-            pending = tasks
-            while pending:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    index = tasks.index(task)
-                    if event := await handle_call_or_result(coro_or_task=task, index=index):
-                        yield event
+            except asyncio.CancelledError as e:
+                for task in tasks:
+                    task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+
+                raise
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
     # This is mostly just to simplify testing
     output_parts.extend([tool_parts_by_index[k] for k in sorted(tool_parts_by_index)])
     output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
+    _populate_deferred_calls(
+        tool_calls, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
+    )
+
+
+def _populate_deferred_calls(
+    tool_calls: list[_messages.ToolCallPart],
+    deferred_calls_by_index: dict[int, Literal['external', 'unapproved']],
+    deferred_metadata_by_index: dict[int, dict[str, Any] | None],
+    output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
+    output_deferred_metadata: dict[str, dict[str, Any]],
+) -> None:
+    """Populate deferred calls and metadata from indexed mappings."""
     for k in sorted(deferred_calls_by_index):
-        output_deferred_calls[deferred_calls_by_index[k]].append(tool_calls[k])
+        call = tool_calls[k]
+        output_deferred_calls[deferred_calls_by_index[k]].append(call)
+        metadata = deferred_metadata_by_index[k]
+        if metadata is not None:
+            output_deferred_metadata[call.tool_call_id] = metadata
 
 
 async def _call_tool(
     tool_manager: ToolManager[DepsT],
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
-    usage_limits: _usage.UsageLimits | None,
-) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]:
+    tool_call_metadata: dict[str, dict[str, Any]] | None,
+) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
     try:
         if tool_call_result is None:
-            tool_result = await tool_manager.handle_call(tool_call, usage_limits=usage_limits)
+            tool_result = await tool_manager.handle_call(tool_call)
         elif isinstance(tool_call_result, ToolApproved):
             if tool_call_result.override_args is not None:
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
-            tool_result = await tool_manager.handle_call(tool_call, usage_limits=usage_limits)
+            # Get metadata from the tool_call_metadata dict by tool_call_id
+            metadata = tool_call_metadata.get(tool_call.tool_call_id) if tool_call_metadata else None
+            tool_result = await tool_manager.handle_call(tool_call, approved=True, metadata=metadata)
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
                 tool_name=tool_call.tool_name,
@@ -993,7 +1252,7 @@ async def _call_tool(
                     f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
                     f'`ToolReturn` should be used directly.'
                 )
-            elif isinstance(content, _messages.MultiModalContent):
+            elif isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES):
                 identifier = content.identifier
 
                 return_values.append(f'See file {identifier}')
@@ -1007,10 +1266,10 @@ async def _call_tool(
         )
 
     if (
-        isinstance(tool_return.return_value, _messages.MultiModalContent)
+        isinstance(tool_return.return_value, _messages.MULTI_MODAL_CONTENT_TYPES)
         or isinstance(tool_return.return_value, list)
         and any(
-            isinstance(content, _messages.MultiModalContent)
+            isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES)
             for content in tool_return.return_value  # type: ignore
         )
     ):
@@ -1026,14 +1285,7 @@ async def _call_tool(
         metadata=tool_return.metadata,
     )
 
-    user_part: _messages.UserPromptPart | None = None
-    if tool_return.content:
-        user_part = _messages.UserPromptPart(
-            content=tool_return.content,
-            part_kind='user-prompt',
-        )
-
-    return return_part, user_part
+    return return_part, tool_return.content or None
 
 
 @dataclasses.dataclass
@@ -1049,7 +1301,7 @@ _messages_ctx_var: ContextVar[_RunMessages] = ContextVar('var')
 def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
     """Context manager to access the messages used in a [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] call.
 
-    Useful when a run may raise an exception, see [model errors](../agents.md#model-errors) for more information.
+    Useful when a run may raise an exception, see [model errors](../agent.md#model-errors) for more information.
 
     Examples:
     ```python
@@ -1095,21 +1347,32 @@ def build_agent_graph(
     name: str | None,
     deps_type: type[DepsT],
     output_type: OutputSpec[OutputT],
-) -> Graph[GraphAgentState, GraphAgentDeps[DepsT, result.FinalResult[OutputT]], result.FinalResult[OutputT]]:
+) -> Graph[
+    GraphAgentState,
+    GraphAgentDeps[DepsT, OutputT],
+    UserPromptNode[DepsT, OutputT],
+    result.FinalResult[OutputT],
+]:
     """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
-    nodes = (
-        UserPromptNode[DepsT],
-        ModelRequestNode[DepsT],
-        CallToolsNode[DepsT],
-    )
-    graph = Graph[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[OutputT]](
-        nodes=nodes,
+    g = GraphBuilder(
         name=name or 'Agent',
         state_type=GraphAgentState,
-        run_end_type=result.FinalResult[OutputT],
+        deps_type=GraphAgentDeps[DepsT, OutputT],
+        input_type=UserPromptNode[DepsT, OutputT],
+        output_type=result.FinalResult[OutputT],
         auto_instrument=False,
     )
-    return graph
+
+    g.add(
+        g.edge_from(g.start_node).to(UserPromptNode[DepsT, OutputT]),
+        g.node(UserPromptNode[DepsT, OutputT]),
+        g.node(ModelRequestNode[DepsT, OutputT]),
+        g.node(CallToolsNode[DepsT, OutputT]),
+        g.node(
+            SetFinalResult[DepsT, OutputT],
+        ),
+    )
+    return g.build(validate_graph_structure=False)
 
 
 async def _process_message_history(
@@ -1125,8 +1388,7 @@ async def _process_message_history(
             if takes_ctx:
                 messages = await processor(run_context, messages)
             else:
-                async_processor = cast(_HistoryProcessorAsync, processor)
-                messages = await async_processor(messages)
+                messages = await processor(messages)
         else:
             if takes_ctx:
                 sync_processor_with_ctx = cast(_HistoryProcessorSyncWithCtx[DepsT], processor)
@@ -1140,6 +1402,10 @@ async def _process_message_history(
 
     if not isinstance(messages[-1], _messages.ModelRequest):
         raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
+
+    # Ensure the last request has a timestamp (history processors may create new ModelRequest objects without one)
+    if messages[-1].timestamp is None:
+        messages[-1].timestamp = now_utc()
 
     return messages
 
@@ -1169,6 +1435,7 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                 merged_message = _messages.ModelRequest(
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
+                    timestamp=message.timestamp or last_message.timestamp,
                 )
                 clean_messages[-1] = merged_message
             else:

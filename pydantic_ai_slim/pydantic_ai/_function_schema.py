@@ -7,8 +7,9 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from functools import partial
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
+from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_origin
 
 from pydantic import ConfigDict
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
@@ -17,7 +18,7 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import ParamSpec, TypeIs, TypeVar
+from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
@@ -42,7 +43,7 @@ class FunctionSchema:
     takes_ctx: bool
     is_async: bool
     single_arg_name: str | None = None
-    positional_fields: list[str] = field(default_factory=list)
+    positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
@@ -90,9 +91,6 @@ def function_schema(  # noqa: C901
     Returns:
         A `FunctionSchema` instance.
     """
-    if takes_ctx is None:
-        takes_ctx = _takes_ctx(function)
-
     config = ConfigDict(title=function.__name__, use_attribute_docstrings=True)
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper)
@@ -103,8 +101,10 @@ def function_schema(  # noqa: C901
     except ValueError as e:
         errors.append(str(e))
         sig = signature(lambda: None)
+    original_func = function.func if isinstance(function, partial) else function
+    function = cast(Callable[..., Any], function)  # cope with pyright changing the type from the isinstance() check.
 
-    type_hints = _typing_extra.get_function_type_hints(function)
+    type_hints = get_type_hints(original_func, include_extras=True)
 
     var_kwargs_schema: core_schema.CoreSchema | None = None
     fields: dict[str, core_schema.TypedDictField] = {}
@@ -112,21 +112,13 @@ def function_schema(  # noqa: C901
     var_positional_field: str | None = None
     decorators = _decorators.DecoratorInfos()
 
-    description, field_descriptions = doc_descriptions(function, sig, docstring_format=docstring_format)
-
-    if require_parameter_descriptions:
-        if takes_ctx:
-            parameters_without_ctx = set(
-                name for name in sig.parameters if not _is_call_ctx(sig.parameters[name].annotation)
-            )
-            missing_params = parameters_without_ctx - set(field_descriptions)
-        else:
-            missing_params = set(sig.parameters) - set(field_descriptions)
-
-        if missing_params:
-            errors.append(f'Missing parameter descriptions for {", ".join(missing_params)}')
+    description, field_descriptions = doc_descriptions(original_func, sig, docstring_format=docstring_format)
+    missing_param_descriptions: set[str] = set()
 
     for index, (name, p) in enumerate(sig.parameters.items()):
+        if index == 0 and takes_ctx is None:
+            takes_ctx = p.annotation is not sig.empty and _is_call_ctx(type_hints[name])
+
         if p.annotation is sig.empty:
             if takes_ctx and index == 0:
                 # should be the `context` argument, skip
@@ -148,6 +140,10 @@ def function_schema(  # noqa: C901
                 continue
 
         field_name = p.name
+
+        if require_parameter_descriptions and field_name not in field_descriptions:
+            missing_param_descriptions.add(field_name)
+
         if p.kind == Parameter.VAR_KEYWORD:
             var_kwargs_schema = gen_schema.generate_schema(annotation)
         else:
@@ -178,6 +174,9 @@ def function_schema(  # noqa: C901
             elif p.kind == Parameter.VAR_POSITIONAL:
                 var_positional_field = field_name
 
+    if missing_param_descriptions:
+        errors.append(f'Missing parameter descriptions for {", ".join(missing_param_descriptions)}')
+
     if errors:
         from .exceptions import UserError
 
@@ -185,10 +184,8 @@ def function_schema(  # noqa: C901
         raise UserError(f'Error generating schema for {function.__qualname__}:\n  {error_details}')
 
     core_config = config_wrapper.core_config(None)
-    # noinspection PyTypedDict
-    core_config['extra_fields_behavior'] = 'allow' if var_kwargs_schema else 'forbid'
 
-    schema, single_arg_name = _build_schema(fields, var_kwargs_schema, gen_schema, core_config)
+    schema, single_arg_name = _build_schema(fields, var_kwargs_schema, core_config)
     schema = gen_schema.clean_schema(schema)
     # noinspection PyUnresolvedReferences
     schema_validator = create_schema_validator(
@@ -219,7 +216,7 @@ def function_schema(  # noqa: C901
         single_arg_name=single_arg_name,
         positional_fields=positional_fields,
         var_positional_field=var_positional_field,
-        takes_ctx=takes_ctx,
+        takes_ctx=bool(takes_ctx),
         is_async=is_async_callable(function),
         function=function,
     )
@@ -234,7 +231,7 @@ WithoutCtx = Callable[P, R]
 TargetCallable = WithCtx[P, R] | WithoutCtx[P, R]
 
 
-def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:
+def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:  # pyright: ignore[reportUnusedFunction]
     """Check if a callable takes a `RunContext` first argument.
 
     Args:
@@ -270,7 +267,6 @@ def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:
 def _build_schema(
     fields: dict[str, core_schema.TypedDictField],
     var_kwargs_schema: core_schema.CoreSchema | None,
-    gen_schema: _generate_schema.GenerateSchema,
     core_config: core_schema.CoreConfig,
 ) -> tuple[core_schema.CoreSchema, str | None]:
     """Generate a typed dict schema for function parameters.
@@ -278,7 +274,6 @@ def _build_schema(
     Args:
         fields: The fields to generate a typed dict schema for.
         var_kwargs_schema: The variable keyword arguments schema.
-        gen_schema: The `GenerateSchema` instance.
         core_config: The core configuration.
 
     Returns:
@@ -290,10 +285,12 @@ def _build_schema(
         if td_field['metadata']['is_model_like']:  # type: ignore
             return td_field['schema'], name
 
+    extra_behavior: Literal['allow', 'forbid'] = 'allow' if var_kwargs_schema else 'forbid'
     td_schema = core_schema.typed_dict_schema(
         fields,
         config=core_config,
-        extras_schema=gen_schema.generate_schema(var_kwargs_schema) if var_kwargs_schema else None,
+        extra_behavior=extra_behavior,
+        extras_schema=var_kwargs_schema,
     )
     return td_schema, None
 

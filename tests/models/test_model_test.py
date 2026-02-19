@@ -11,7 +11,6 @@ from typing import Annotated, Any, Literal
 import pytest
 from annotated_types import Ge, Gt, Le, Lt, MaxLen, MinLen
 from anyio import Event
-from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
 from pydantic_ai import (
@@ -34,7 +33,8 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsNow, IsStr
+from .._inline_snapshot import snapshot
+from ..conftest import IsDatetime, IsNow, IsStr
 
 
 def test_call_one():
@@ -69,6 +69,45 @@ def test_custom_output_args():
     agent = Agent(output_type=tuple[str, str])
     result = agent.run_sync('x', model=TestModel(custom_output_args=['a', 'b']))
     assert result.output == ('a', 'b')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='x',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'response': ['a', 'b']},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=7),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_custom_output_args_model():
@@ -79,12 +118,90 @@ def test_custom_output_args_model():
     agent = Agent(output_type=Foo)
     result = agent.run_sync('x', model=TestModel(custom_output_args={'foo': 'a', 'bar': 1}))
     assert result.output == Foo(foo='a', bar=1)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='x',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'foo': 'a', 'bar': 1},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=6),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_output_type():
     agent = Agent(output_type=tuple[str, str])
     result = agent.run_sync('x', model=TestModel())
     assert result.output == ('a', 'a')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='x',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'response': ['a', 'a']},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=7),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 def test_tool_retry():
@@ -105,12 +222,17 @@ def test_tool_retry():
     assert result.output == snapshot('{"my_ret":"1"}')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -120,26 +242,32 @@ def test_tool_retry():
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=61, output_tokens=8),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='my_ret', content='1', tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"my_ret":"1"}')],
                 usage=RequestUsage(input_tokens=62, output_tokens=12),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )

@@ -10,14 +10,14 @@ from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
 from genai_prices.types import PriceCalculation
-from opentelemetry._events import (
-    Event,  # pyright: ignore[reportPrivateImportUsage]
-    EventLogger,  # pyright: ignore[reportPrivateImportUsage]
-    EventLoggerProvider,  # pyright: ignore[reportPrivateImportUsage]
-    get_event_logger_provider,  # pyright: ignore[reportPrivateImportUsage]
+from opentelemetry._logs import (
+    Logger,
+    LoggerProvider,
+    LogRecord,
+    get_logger_provider,
 )
 from opentelemetry.metrics import MeterProvider, get_meter_provider
-from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
+from opentelemetry.trace import Span, SpanKind, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
@@ -88,11 +88,12 @@ class InstrumentationSettings:
     """
 
     tracer: Tracer = field(repr=False)
-    event_logger: EventLogger = field(repr=False)
+    logger: Logger = field(repr=False)
     event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
     include_content: bool = True
-    version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION
+    version: Literal[1, 2, 3, 4] = DEFAULT_INSTRUMENTATION_VERSION
+    use_aggregated_usage_attribute_names: bool = False
 
     def __init__(
         self,
@@ -101,9 +102,10 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
-        version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION,
+        version: Literal[1, 2, 3, 4] = DEFAULT_INSTRUMENTATION_VERSION,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
-        event_logger_provider: EventLoggerProvider | None = None,
+        logger_provider: LoggerProvider | None = None,
+        use_aggregated_usage_attribute_names: bool = False,
     ):
         """Create instrumentation options.
 
@@ -120,28 +122,39 @@ class InstrumentationSettings:
             version: Version of the data format. This is unrelated to the Pydantic AI package version.
                 Version 1 is based on the legacy event-based OpenTelemetry GenAI spec
                     and will be removed in a future release.
-                    The parameters `event_mode` and `event_logger_provider` are only relevant for version 1.
+                    The parameters `event_mode` and `logger_provider` are only relevant for version 1.
                 Version 2 uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
                     - `gen_ai.system_instructions` for instructions passed to the agent.
                     - `gen_ai.input.messages` and `gen_ai.output.messages` on model request spans.
                     - `pydantic_ai.all_messages` on agent run spans.
+                Version 3 is the same as version 2, with additional support for thinking tokens.
+                Version 4 is the same as version 3, with GenAI semantic conventions for multimodal content:
+                    URL-based media uses type='uri' with uri and mime_type fields (and modality for image/audio/video).
+                    Inline binary content uses type='blob' with mime_type and content fields (and modality for image/audio/video).
+                    https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
             event_mode: The mode for emitting events in version 1.
                 If `'attributes'`, events are attached to the span as attributes.
                 If `'logs'`, events are emitted as OpenTelemetry log-based events.
-            event_logger_provider: The OpenTelemetry event logger provider to use.
-                If not provided, the global event logger provider is used.
-                Calling `logfire.configure()` sets the global event logger provider, so most users don't need this.
+            logger_provider: The OpenTelemetry logger provider to use.
+                If not provided, the global logger provider is used.
+                Calling `logfire.configure()` sets the global logger provider, so most users don't need this.
                 This is only used if `event_mode='logs'` and `version=1`.
+            use_aggregated_usage_attribute_names: Whether to use `gen_ai.aggregated_usage.*` attribute names
+                for token usage on agent run spans instead of the standard `gen_ai.usage.*` names.
+                Enable this to prevent double-counting in observability backends that aggregate span
+                attributes across parent and child spans. Defaults to False.
+                Note: `gen_ai.aggregated_usage.*` is a custom namespace, not part of the OpenTelemetry
+                Semantic Conventions. It may be updated if OTel introduces an official convention.
         """
         from pydantic_ai import __version__
 
         tracer_provider = tracer_provider or get_tracer_provider()
         meter_provider = meter_provider or get_meter_provider()
-        event_logger_provider = event_logger_provider or get_event_logger_provider()
+        logger_provider = logger_provider or get_logger_provider()
         scope_name = 'pydantic-ai'
         self.tracer = tracer_provider.get_tracer(scope_name, __version__)
         self.meter = meter_provider.get_meter(scope_name, __version__)
-        self.event_logger = event_logger_provider.get_event_logger(scope_name, __version__)
+        self.logger = logger_provider.get_logger(scope_name, __version__)
         self.event_mode = event_mode
         self.include_binary_content = include_binary_content
         self.include_content = include_content
@@ -154,6 +167,7 @@ class InstrumentationSettings:
             version = 1
 
         self.version = version
+        self.use_aggregated_usage_attribute_names = use_aggregated_usage_attribute_names
 
         # As specified in the OpenTelemetry GenAI metrics spec:
         # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
@@ -178,27 +192,30 @@ class InstrumentationSettings:
             description='Monetary cost',
         )
 
-    def messages_to_otel_events(self, messages: list[ModelMessage]) -> list[Event]:
+    def messages_to_otel_events(
+        self, messages: list[ModelMessage], parameters: ModelRequestParameters | None = None
+    ) -> list[LogRecord]:
         """Convert a list of model messages to OpenTelemetry events.
 
         Args:
             messages: The messages to convert.
+            parameters: The model request parameters.
 
         Returns:
             A list of OpenTelemetry events.
         """
-        events: list[Event] = []
-        instructions = InstrumentedModel._get_instructions(messages)  # pyright: ignore [reportPrivateUsage]
+        events: list[LogRecord] = []
+        instructions = InstrumentedModel._get_instructions(messages, parameters)  # pyright: ignore [reportPrivateUsage]
         if instructions is not None:
             events.append(
-                Event(
-                    'gen_ai.system.message',
+                LogRecord(
+                    attributes={'event.name': 'gen_ai.system.message'},
                     body={**({'content': instructions} if self.include_content else {}), 'role': 'system'},
                 )
             )
 
         for message_index, message in enumerate(messages):
-            message_events: list[Event] = []
+            message_events: list[LogRecord] = []
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if hasattr(part, 'otel_event'):
@@ -225,6 +242,7 @@ class InstrumentationSettings:
                     for part in group:
                         if hasattr(part, 'otel_message_parts'):
                             message_parts.extend(part.otel_message_parts(self))
+
                     result.append(
                         _otel_messages.ChatMessage(role='system' if is_system else 'user', parts=message_parts)
                     )
@@ -235,13 +253,20 @@ class InstrumentationSettings:
                 result.append(otel_message)
         return result
 
-    def handle_messages(self, input_messages: list[ModelMessage], response: ModelResponse, system: str, span: Span):
+    def handle_messages(
+        self,
+        input_messages: list[ModelMessage],
+        response: ModelResponse,
+        system: str,
+        span: Span,
+        parameters: ModelRequestParameters | None = None,
+    ):
         if self.version == 1:
-            events = self.messages_to_otel_events(input_messages)
-            for event in self.messages_to_otel_events([response]):
+            events = self.messages_to_otel_events(input_messages, parameters)
+            for event in self.messages_to_otel_events([response], parameters):
                 events.append(
-                    Event(
-                        'gen_ai.choice',
+                    LogRecord(
+                        attributes={'event.name': 'gen_ai.choice'},
                         body={
                             'index': 0,
                             'message': event.body,
@@ -258,8 +283,10 @@ class InstrumentationSettings:
             output_messages = self.messages_to_otel_messages([response])
             assert len(output_messages) == 1
             output_message = output_messages[0]
-            instructions = InstrumentedModel._get_instructions(input_messages)  # pyright: ignore [reportPrivateUsage]
+
+            instructions = InstrumentedModel._get_instructions(input_messages, parameters)  # pyright: ignore [reportPrivateUsage]
             system_instructions_attributes = self.system_instructions_attributes(instructions)
+
             attributes: dict[str, AttributeValue] = {
                 'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
                 'gen_ai.output.messages': json.dumps([output_message]),
@@ -289,10 +316,10 @@ class InstrumentationSettings:
             }
         return {}
 
-    def _emit_events(self, span: Span, events: list[Event]) -> None:
+    def _emit_events(self, span: Span, events: list[LogRecord]) -> None:
         if self.event_mode == 'logs':
             for event in events:
-                self.event_logger.emit(event)
+                self.logger.emit(event)
         else:
             attr_name = 'events'
             span.set_attributes(
@@ -328,6 +355,30 @@ class InstrumentationSettings:
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
 GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
+GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
+
+
+def _build_tool_definitions(model_request_parameters: ModelRequestParameters) -> list[dict[str, Any]]:
+    """Build OTel-compliant tool definitions from model request parameters.
+
+    Extracts tool metadata from function_tools and output_tools into a list of
+    tool definition dicts following the OTel GenAI semantic conventions format.
+    """
+    all_tools = itertools.chain(
+        model_request_parameters.function_tools or [],
+        model_request_parameters.output_tools or [],
+    )
+
+    tool_definitions: list[dict[str, Any]] = []
+    for tool in all_tools:
+        tool_def: dict[str, Any] = {'type': 'function', 'name': tool.name}
+        if tool.description:
+            tool_def['description'] = tool.description
+        if tool.parameters_json_schema:
+            tool_def['parameters'] = tool.parameters_json_schema
+        tool_definitions.append(tool_def)
+
+    return tool_definitions
 
 
 @dataclass(init=False)
@@ -360,7 +411,7 @@ class InstrumentedModel(WrapperModel):
         )
         with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
             response = await self.wrapped.request(messages, model_settings, model_request_parameters)
-            finish(response)
+            finish(response, prepared_parameters)
             return response
 
     @asynccontextmanager
@@ -384,7 +435,7 @@ class InstrumentedModel(WrapperModel):
                     yield response_stream
             finally:
                 if response_stream:  # pragma: no branch
-                    finish(response_stream.get())
+                    finish(response_stream.get(), prepared_parameters)
 
     @contextmanager
     def _instrument(
@@ -392,7 +443,7 @@ class InstrumentedModel(WrapperModel):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> Iterator[Callable[[ModelResponse], None]]:
+    ) -> Iterator[Callable[[ModelResponse, ModelRequestParameters], None]]:
         operation = 'chat'
         span_name = f'{operation} {self.model_name}'
         # TODO Missing attributes:
@@ -401,7 +452,7 @@ class InstrumentedModel(WrapperModel):
         attributes: dict[str, AttributeValue] = {
             'gen_ai.operation.name': operation,
             **self.model_attributes(self.wrapped),
-            'model_request_parameters': json.dumps(InstrumentedModel.serialize_any(model_request_parameters)),
+            **self.model_request_parameters_attributes(model_request_parameters),
             'logfire.json_schema': json.dumps(
                 {
                     'type': 'object',
@@ -410,6 +461,10 @@ class InstrumentedModel(WrapperModel):
             ),
         }
 
+        tool_definitions = _build_tool_definitions(model_request_parameters)
+        if tool_definitions:
+            attributes['gen_ai.tool.definitions'] = json.dumps(tool_definitions)
+
         if model_settings:
             for key in MODEL_SETTING_ATTRIBUTES:
                 if isinstance(value := model_settings.get(key), float | int):
@@ -417,9 +472,11 @@ class InstrumentedModel(WrapperModel):
 
         record_metrics: Callable[[], None] | None = None
         try:
-            with self.instrumentation_settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
+            with self.instrumentation_settings.tracer.start_as_current_span(
+                span_name, attributes=attributes, kind=SpanKind.CLIENT
+            ) as span:
 
-                def finish(response: ModelResponse):
+                def finish(response: ModelResponse, parameters: ModelRequestParameters):
                     # FallbackModel updates these span attributes.
                     attributes.update(getattr(span, 'attributes', {}))
                     request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
@@ -430,7 +487,8 @@ class InstrumentedModel(WrapperModel):
 
                     def _record_metrics():
                         metric_attributes = {
-                            GEN_AI_SYSTEM_ATTRIBUTE: system,
+                            GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,  # New OTel standard attribute
+                            GEN_AI_SYSTEM_ATTRIBUTE: system,  # Preserved for backward compatibility (deprecated)
                             'gen_ai.operation.name': operation,
                             'gen_ai.request.model': request_model,
                             'gen_ai.response.model': response_model,
@@ -443,7 +501,7 @@ class InstrumentedModel(WrapperModel):
                     if not span.is_recording():
                         return
 
-                    self.instrumentation_settings.handle_messages(messages, response, system, span)
+                    self.instrumentation_settings.handle_messages(messages, response, system, span, parameters)
 
                     attributes_to_set = {
                         **response.usage.opentelemetry_attributes(),
@@ -476,9 +534,10 @@ class InstrumentedModel(WrapperModel):
                 record_metrics()
 
     @staticmethod
-    def model_attributes(model: Model):
+    def model_attributes(model: Model) -> dict[str, AttributeValue]:
         attributes: dict[str, AttributeValue] = {
-            GEN_AI_SYSTEM_ATTRIBUTE: model.system,
+            GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,  # New OTel standard attribute
+            GEN_AI_SYSTEM_ATTRIBUTE: model.system,  # Preserved for backward compatibility (deprecated)
             GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
         }
         if base_url := model.base_url:
@@ -495,11 +554,17 @@ class InstrumentedModel(WrapperModel):
         return attributes
 
     @staticmethod
-    def event_to_dict(event: Event) -> dict[str, Any]:
+    def model_request_parameters_attributes(
+        model_request_parameters: ModelRequestParameters,
+    ) -> dict[str, AttributeValue]:
+        return {'model_request_parameters': json.dumps(InstrumentedModel.serialize_any(model_request_parameters))}
+
+    @staticmethod
+    def event_to_dict(event: LogRecord) -> dict[str, Any]:
         if not event.body:
             body = {}  # pragma: no cover
         elif isinstance(event.body, Mapping):
-            body = event.body  # type: ignore
+            body = event.body
         else:
             body = {'body': event.body}
         return {**body, **(event.attributes or {})}

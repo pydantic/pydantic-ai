@@ -1,0 +1,84 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '509'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Create a task named "Fix bug" with a priority
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          $defs:
+            Priority:
+              enum:
+              - 1
+              - 2
+              - 3
+              title: Priority
+              type: integer
+          description: A task with a priority level.
+          properties:
+            name:
+              type: string
+            priority:
+              $ref: '#/$defs/Priority'
+          required:
+          - name
+          - priority
+          title: Task
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '584'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2911
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: '{"name": "Fix bug", "priority": 1}'
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: D5MUaYKeH9PjnsEPron42AQ
+      usageMetadata:
+        candidatesTokenCount: 13
+        promptTokenCount: 12
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 12
+        thoughtsTokenCount: 448
+        totalTokenCount: 473
+    status:
+      code: 200
+      message: OK
+version: 1

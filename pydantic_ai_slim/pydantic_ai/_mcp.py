@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 from collections.abc import Sequence
 from typing import Any, Literal, cast
@@ -6,6 +8,8 @@ import logfire
 from pydantic.alias_generators import to_snake
 
 from pydantic_ai.agent.abstract import AbstractAgent
+
+from typing_extensions import assert_never
 
 from . import exceptions, messages
 from .agent import AgentDepsT, OutputDataT
@@ -39,11 +43,16 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
             # TODO(Marcelo): We can reuse the `_map_tool_result_part` from the mcp module here.
             if isinstance(content, mcp_types.TextContent):
                 user_part_content: str | Sequence[messages.UserContent] = content.text
-            else:
-                # image content
+            elif isinstance(content, (mcp_types.ImageContent, mcp_types.AudioContent)):
                 user_part_content = [
                     messages.BinaryContent(data=base64.b64decode(content.data), media_type=content.mimeType)
                 ]
+            elif isinstance(content, list):
+                raise NotImplementedError('list content type is not yet supported')
+            elif isinstance(content, (mcp_types.ToolUseContent, mcp_types.ToolResultContent)):
+                raise NotImplementedError(f'{type(content).__name__} cannot be used as user content')
+            else:
+                assert_never(content)
 
             request_parts.append(messages.UserPromptPart(content=user_part_content))
         else:
@@ -53,7 +62,10 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
                 pai_messages.append(messages.ModelRequest(parts=request_parts))
                 request_parts = []
 
-            response_parts.append(map_from_sampling_content(content))
+            if isinstance(content, (mcp_types.TextContent, mcp_types.ImageContent, mcp_types.AudioContent)):
+                response_parts.append(map_from_sampling_content(content))
+            else:
+                raise NotImplementedError(f'Unsupported assistant content type: {type(content).__name__}')
 
     if response_parts:
         pai_messages.append(messages.ModelResponse(parts=response_parts))
@@ -97,7 +109,7 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                                     'user',
                                     mcp_types.ImageContent(
                                         type='image',
-                                        data=base64.b64decode(chunk.data).decode(),
+                                        data=chunk.base64,
                                         mimeType=chunk.media_type,
                                     ),
                                 )
@@ -115,7 +127,8 @@ def map_from_model_response(model_response: messages.ModelResponse) -> mcp_types
     for part in model_response.parts:
         if isinstance(part, messages.TextPart):
             text_parts.append(part.content)
-        # TODO(Marcelo): We should ignore ThinkingPart here.
+        elif isinstance(part, messages.ThinkingPart):
+            continue
         else:
             raise exceptions.UnexpectedModelBehavior(f'Unexpected part type: {type(part).__name__}, expected TextPart')
     return mcp_types.TextContent(type='text', text=''.join(text_parts))
@@ -128,6 +141,7 @@ def map_from_sampling_content(
     if isinstance(content, mcp_types.TextContent):  # pragma: no branch
         return messages.TextPart(content=content.text)
     else:
+        # TODO: Add support for Image/Audio using FilePart.
         raise NotImplementedError('Image and Audio responses in sampling are not yet supported')
 
 

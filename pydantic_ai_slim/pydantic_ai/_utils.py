@@ -7,12 +7,23 @@ import re
 import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeGuard, TypeVar, get_args, get_origin, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    TypeAlias,
+    TypeGuard,
+    TypeVar,
+    get_args,
+    get_origin,
+    overload,
+)
 
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
@@ -41,8 +52,33 @@ if TYPE_CHECKING:
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
+_disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=False)
+
+
+@contextmanager
+def disable_threads() -> Iterator[None]:
+    """Context manager to disable thread-based execution for sync functions.
+
+    Inside this context, sync functions will execute inline rather than
+    being sent to a thread pool via [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync].
+
+    This is useful in environments where threading is restricted, such as
+    Temporal workflows which use a sandboxed event loop.
+
+    Yields:
+        None
+    """
+    token = _disable_threads.set(True)
+    try:
+        yield
+    finally:
+        _disable_threads.reset(token)
+
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
+    if _disable_threads.get():
+        return func(*args, **kwargs)
+
     wrapped_func = partial(func, *args, **kwargs)
     return await run_sync(wrapped_func)
 
@@ -124,6 +160,20 @@ def is_set(t_or_unset: T | Unset) -> TypeGuard[T]:
     return t_or_unset is not UNSET
 
 
+async def _cleanup_temporal_group(
+    task: asyncio.Task[Any] | None,
+    aiterator: AsyncIterator[Any],
+) -> None:
+    """Clean up pending task and async iterator after group_by_temporal exits."""
+    if task:
+        task.cancel('Cancelling group_by_temporal pending task')
+        with suppress(asyncio.CancelledError, StopAsyncIteration):
+            await task
+    aclose = getattr(aiterator, 'aclose', None)
+    if aclose is not None:  # pragma: no branch
+        await aclose()
+
+
 @asynccontextmanager
 async def group_by_temporal(
     aiterable: AsyncIterable[T], soft_max_interval: float | None
@@ -147,80 +197,77 @@ async def group_by_temporal(
         aiterable: The async iterable to group.
         soft_max_interval: Maximum interval over which to group items, this should avoid a trickle of items causing
             a group to never be yielded. It's a soft max in the sense that once we're over this time, we yield items
-            as soon as `aiter.__anext__()` returns. If `None`, no grouping/debouncing is performed
+            as soon as `anext(aiter)` returns. If `None`, no grouping/debouncing is performed
 
     Returns:
         A context manager usable as an async iterable of lists of items produced by the input async iterable.
     """
-    if soft_max_interval is None:
-
-        async def async_iter_groups_noop() -> AsyncIterator[list[T]]:
-            async for item in aiterable:
-                yield [item]
-
-        yield async_iter_groups_noop()
-        return
-
     # we might wait for the next item more than once, so we store the task to await next time
     task: asyncio.Task[T] | None = None
+    aiterator = aiter(aiterable)
 
-    async def async_iter_groups() -> AsyncIterator[list[T]]:
-        nonlocal task
+    if soft_max_interval is None:
 
-        assert soft_max_interval is not None and soft_max_interval >= 0, 'soft_max_interval must be a positive number'
-        buffer: list[T] = []
-        group_start_time = time.monotonic()
+        async def async_iter_groups() -> AsyncIterator[list[T]]:
+            async for item in aiterator:
+                yield [item]
 
-        aiterator = aiterable.__aiter__()
-        while True:
-            if group_start_time is None:
-                # group hasn't started, we just wait for the maximum interval
-                wait_time = soft_max_interval
-            else:
-                # wait for the time remaining in the group
-                wait_time = soft_max_interval - (time.monotonic() - group_start_time)
+    else:
 
-            # if there's no current task, we get the next one
-            if task is None:
-                # aiter.__anext__() returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
-                # so far, this doesn't seem to be a problem
-                task = asyncio.create_task(aiterator.__anext__())  # pyright: ignore[reportArgumentType]
+        async def async_iter_groups() -> AsyncIterator[list[T]]:
+            nonlocal task
 
-            # we use asyncio.wait to avoid cancelling the coroutine if it's not done
-            done, _ = await asyncio.wait((task,), timeout=wait_time)
+            assert soft_max_interval is not None and soft_max_interval >= 0, (
+                'soft_max_interval must be a positive number'
+            )
+            buffer: list[T] = []
+            group_start_time = time.monotonic()
 
-            if done:
-                # the one task we waited for completed
-                try:
-                    item = done.pop().result()
-                except StopAsyncIteration:
-                    # if the task raised StopAsyncIteration, we're done iterating
-                    if buffer:
-                        yield buffer
-                    task = None
-                    break
+            while True:
+                if group_start_time is None:
+                    # group hasn't started, we just wait for the maximum interval
+                    wait_time = soft_max_interval
                 else:
-                    # we got an item, add it to the buffer and set task to None to get the next item
-                    buffer.append(item)
-                    task = None
-                    # if this is the first item in the group, set the group start time
-                    if group_start_time is None:
-                        group_start_time = time.monotonic()
-            elif buffer:
-                # otherwise if the task timeout expired and we have items in the buffer, yield the buffer
-                yield buffer
-                # clear the buffer and reset the group start time ready for the next group
-                buffer = []
-                group_start_time = None
+                    # wait for the time remaining in the group
+                    wait_time = soft_max_interval - (time.monotonic() - group_start_time)
+
+                # if there's no current task, we get the next one
+                if task is None:
+                    # anext(aiter) returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
+                    # so far, this doesn't seem to be a problem
+                    task = asyncio.create_task(anext(aiterator))  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
+
+                # we use asyncio.wait to avoid cancelling the coroutine if it's not done
+                done, _ = await asyncio.wait((task,), timeout=wait_time)
+
+                if done:
+                    # the one task we waited for completed
+                    try:
+                        item = done.pop().result()
+                    except StopAsyncIteration:
+                        # if the task raised StopAsyncIteration, we're done iterating
+                        if buffer:
+                            yield buffer
+                        task = None
+                        break
+                    else:
+                        # we got an item, add it to the buffer and set task to None to get the next item
+                        buffer.append(item)
+                        task = None
+                        # if this is the first item in the group, set the group start time
+                        if group_start_time is None:
+                            group_start_time = time.monotonic()
+                elif buffer:
+                    # otherwise if the task timeout expired and we have items in the buffer, yield the buffer
+                    yield buffer
+                    # clear the buffer and reset the group start time ready for the next group
+                    buffer = []
+                    group_start_time = None
 
     try:
         yield async_iter_groups()
-    finally:  # pragma: no cover
-        # after iteration if a tasks still exists, cancel it, this will only happen if an error occurred
-        if task:
-            task.cancel('Cancelling due to error in iterator')
-            with suppress(asyncio.CancelledError):
-                await task
+    finally:
+        await _cleanup_temporal_group(task, aiterator)
 
 
 def sync_anext(iterator: Iterator[T]) -> T:
@@ -232,6 +279,15 @@ def sync_anext(iterator: Iterator[T]) -> T:
         return next(iterator)
     except StopIteration as e:
         raise StopAsyncIteration() from e
+
+
+def sync_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
+    loop = get_event_loop()
+    while True:
+        try:
+            yield loop.run_until_complete(anext(async_iter))
+        except StopAsyncIteration:
+            break
 
 
 def now_utc() -> datetime:
@@ -284,10 +340,10 @@ class PeekableAsyncStream(Generic[T]):
 
         # Otherwise, we need to fetch the next item from the underlying iterator.
         if self._source_iter is None:
-            self._source_iter = self._source.__aiter__()
+            self._source_iter = aiter(self._source)
 
         try:
-            self._buffer = await self._source_iter.__anext__()
+            self._buffer = await anext(self._source_iter)
         except StopAsyncIteration:
             self._exhausted = True
             return UNSET
@@ -318,10 +374,10 @@ class PeekableAsyncStream(Generic[T]):
 
         # Otherwise, fetch the next item from the source.
         if self._source_iter is None:
-            self._source_iter = self._source.__aiter__()
+            self._source_iter = aiter(self._source)
 
         try:
-            return await self._source_iter.__anext__()
+            return await anext(self._source_iter)
         except StopAsyncIteration:
             self._exhausted = True
             raise
@@ -366,7 +422,7 @@ def is_async_callable(obj: Any) -> Any:
     while isinstance(obj, functools.partial):
         obj = obj.func
 
-    return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))  # type: ignore
+    return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))
 
 
 def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
@@ -386,7 +442,7 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
 
     # Handle arrays
     if 'items' in s and isinstance(s['items'], dict):
-        items: dict[str, Any] = s['items']
+        items: dict[str, Any] = s['items']  # pyright: ignore[reportUnknownVariableType]
         _update_mapped_json_schema_refs(items, name_mapping)
     if 'prefixItems' in s:
         prefix_items: list[dict[str, Any]] = s['prefixItems']
@@ -458,12 +514,14 @@ def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
         raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
 
+_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*\})', flags=re.DOTALL)
+
+
 def strip_markdown_fences(text: str) -> str:
     if text.startswith('{'):
         return text
 
-    regex = r'```(?:\w+)?\n(\{.*\})\n```'
-    match = re.search(regex, text, re.DOTALL)
+    match = re.search(_MARKDOWN_FENCES_PATTERN, text)
     if match:
         return match.group(1)
 
@@ -489,3 +547,12 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
         return tuple(_unwrap_annotated(arg) for arg in get_args(tp))
     else:
         return ()
+
+
+def get_event_loop():
+    try:
+        event_loop = asyncio.get_event_loop()
+    except RuntimeError:  # pragma: lax no cover
+        event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(event_loop)
+    return event_loop

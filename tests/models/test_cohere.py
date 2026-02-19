@@ -3,15 +3,15 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any, cast
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import (
     Agent,
     ImageUrl,
+    ModelAPIError,
     ModelHTTPError,
     ModelRequest,
     ModelResponse,
@@ -29,7 +29,8 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsDatetime, IsInstance, IsNow, raise_if_exception, try_import
+from .._inline_snapshot import snapshot
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 
 with try_import() as imports_successful:
     import cohere
@@ -62,9 +63,19 @@ def test_init():
 
 
 @dataclass
+class MockClientWrapper:
+    def get_base_url(self) -> str:
+        return 'https://api.cohere.com'
+
+
+@dataclass
 class MockAsyncClientV2:
     completions: MockChatResponse | Sequence[MockChatResponse] | None = None
     index = 0
+    _client_wrapper: MockClientWrapper = None  # type: ignore
+
+    def __post_init__(self):
+        self._client_wrapper = MockClientWrapper()
 
     @classmethod
     def create_mock(cls, completions: MockChatResponse | Sequence[MockChatResponse]) -> AsyncClientV2:
@@ -115,23 +126,35 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.usage() == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
-            ModelResponse(
-                parts=[TextPart(content='world')],
-                model_name='command-r7b-12-2024',
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
-                provider_name='cohere',
-                provider_details={'finish_reason': 'COMPLETE'},
-                finish_reason='stop',
+                run_id=IsStr(),
             ),
-            ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                model_name='command-r7b-12-2024',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='cohere',
+                provider_url='https://api.cohere.com',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -189,7 +212,11 @@ async def test_request_structured_response(allow_model_requests: None):
     assert result.output == [1, 2, 123]
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -201,8 +228,10 @@ async def test_request_structured_response(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -212,7 +241,9 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -277,7 +308,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -290,8 +323,10 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -301,7 +336,9 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -315,8 +352,10 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -326,15 +365,19 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -380,6 +423,20 @@ def test_model_status_error(allow_model_requests: None) -> None:
     assert str(exc_info.value) == snapshot("status_code: 500, model_name: command-r, body: {'error': 'test error'}")
 
 
+def test_model_non_http_error(allow_model_requests: None) -> None:
+    mock_client = MockAsyncClientV2.create_mock(
+        ApiError(
+            status_code=None,
+            body={'error': 'connection error'},
+        )
+    )
+    m = CohereModel('command-r', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        agent.run_sync('hello')
+    assert exc_info.value.model_name == 'command-r'
+
+
 @pytest.mark.vcr()
 async def test_request_simple_success_with_vcr(allow_model_requests: None, co_api_key: str):
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
@@ -402,7 +459,9 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -416,8 +475,10 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                 model_name='command-r7b-12-2024',
                 timestamp=IsDatetime(),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -446,7 +507,11 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
     )
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     IsInstance(ThinkingPart),
@@ -458,9 +523,14 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_details={'finish_reason': 'completed'},
+                provider_url='https://api.openai.com/v1/',
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 5, 22, 7, 17, tzinfo=timezone.utc),
+                },
                 provider_response_id='resp_68bb5f153efc81a2b3958ddb1f257ff30886f4f20524f3b9',
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -478,7 +548,9 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -491,8 +563,10 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 model_name='command-a-reasoning-08-2025',
                 timestamp=IsDatetime(),
                 provider_name='cohere',
+                provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -501,5 +575,5 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
 async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key: str):
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
-    with pytest.raises(UserError, match='Cohere does not support built-in tools'):
+    with pytest.raises(UserError, match=r"Builtin tool\(s\) \['WebSearchTool'\] not supported by this model"):
         await agent.run('Hello')

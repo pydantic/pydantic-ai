@@ -1,14 +1,16 @@
+import base64
 import uuid
+from datetime import timezone
 
 import anyio
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -21,7 +23,8 @@ from pydantic_ai import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsStr, try_import
+from ._inline_snapshot import snapshot
+from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from fasta2a.client import A2AClient
@@ -332,7 +335,7 @@ async def test_a2a_file_message_with_file():
             )
 
 
-async def test_a2a_file_message_with_file_content():
+async def test_a2a_file_message_with_file_content(image_content: BinaryContent):
     agent = Agent(model=model, output_type=tuple[str, str])
     app = agent.to_a2a()
 
@@ -341,10 +344,11 @@ async def test_a2a_file_message_with_file_content():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
+            base64_image = base64.b64encode(image_content.data).decode('utf-8')
             message = Message(
                 role='user',
                 parts=[
-                    FilePart(file={'bytes': 'foo', 'mime_type': 'text/plain'}, kind='file'),
+                    FilePart(file={'bytes': base64_image, 'mime_type': image_content.media_type}, kind='file'),
                 ],
                 kind='message',
                 message_id=str(uuid.uuid4()),
@@ -363,7 +367,9 @@ async def test_a2a_file_message_with_file_content():
                     'history': [
                         {
                             'role': 'user',
-                            'parts': [{'kind': 'file', 'file': {'bytes': 'foo', 'mime_type': 'text/plain'}}],
+                            'parts': [
+                                {'kind': 'file', 'file': {'bytes': base64_image, 'mime_type': image_content.media_type}}
+                            ],
                             'kind': 'message',
                             'message_id': IsStr(),
                             'context_id': IsStr(),
@@ -391,7 +397,12 @@ async def test_a2a_file_message_with_file_content():
                         'history': [
                             {
                                 'role': 'user',
-                                'parts': [{'kind': 'file', 'file': {'bytes': 'foo', 'mime_type': 'text/plain'}}],
+                                'parts': [
+                                    {
+                                        'kind': 'file',
+                                        'file': {'bytes': base64_image, 'mime_type': image_content.media_type},
+                                    }
+                                ],
                                 'kind': 'message',
                                 'message_id': IsStr(),
                                 'context_id': IsStr(),
@@ -515,8 +526,14 @@ async def test_a2a_error_handling():
             task_id = result['id']
 
             # Wait for task to fail
-            await anyio.sleep(0.1)
-            task = await a2a_client.get_task(task_id)
+            max_attempts = 50  # 5 seconds total
+            for _ in range(max_attempts):
+                task = await a2a_client.get_task(task_id)
+                if 'result' in task and task['result']['status']['state'] == 'failed':
+                    break
+                await anyio.sleep(0.1)
+            else:  # pragma: no cover
+                raise AssertionError(f'Task did not fail within {max_attempts * 0.1} seconds')
 
             assert 'result' in task
             assert task['result']['status']['state'] == 'failed'
@@ -560,17 +577,23 @@ async def test_a2a_multiple_tasks_same_context():
             task1_id = result1['id']
             context_id = result1['context_id']
 
-            # Wait for first task to complete
-            await anyio.sleep(0.1)
-            task1 = await a2a_client.get_task(task1_id)
-            assert 'result' in task1
-            assert task1['result']['status']['state'] == 'completed'
+            while task1 := await a2a_client.get_task(task1_id):  # pragma: no branch
+                if 'result' in task1 and task1['result']['status']['state'] == 'completed':
+                    result1 = task1['result']
+                    break
+                await anyio.sleep(0.1)
 
             # Verify the model received at least one message
             assert len(messages_received) == 1
             first_run_history = messages_received[0]
             assert first_run_history == snapshot(
-                [ModelRequest(parts=[UserPromptPart(content='First message', timestamp=IsDatetime())])]
+                [
+                    ModelRequest(
+                        parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
+                        timestamp=IsNow(tz=timezone.utc),
+                        run_id=IsStr(),
+                    )
+                ]
             )
 
             # Second message - reuse the same context_id
@@ -605,7 +628,11 @@ async def test_a2a_multiple_tasks_same_context():
 
             assert second_run_history == snapshot(
                 [
-                    ModelRequest(parts=[UserPromptPart(content='First message', timestamp=IsDatetime())]),
+                    ModelRequest(
+                        parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
+                        timestamp=IsNow(tz=timezone.utc),
+                        run_id=IsStr(),
+                    ),
                     ModelResponse(
                         parts=[
                             ToolCallPart(
@@ -615,6 +642,7 @@ async def test_a2a_multiple_tasks_same_context():
                         usage=RequestUsage(input_tokens=52, output_tokens=7),
                         model_name='function:track_messages:',
                         timestamp=IsDatetime(),
+                        run_id=IsStr(),
                     ),
                     ModelRequest(
                         parts=[
@@ -626,6 +654,8 @@ async def test_a2a_multiple_tasks_same_context():
                             ),
                             UserPromptPart(content='Second message', timestamp=IsDatetime()),
                         ],
+                        timestamp=IsNow(tz=timezone.utc),
+                        run_id=IsStr(),
                     ),
                 ]
             )
@@ -668,11 +698,13 @@ async def test_a2a_thinking_response():
             task_id = result['id']
 
             # Wait for completion
-            await anyio.sleep(0.1)
-            task = await a2a_client.get_task(task_id)
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    result = task['result']
+                    break
+                await anyio.sleep(0.1)
 
-            assert 'result' in task
-            assert task['result'] == snapshot(
+            assert result == snapshot(
                 {
                     'id': IsStr(),
                     'context_id': IsStr(),
@@ -893,9 +925,13 @@ async def test_a2a_multiple_send_task_messages():
             task_id = result['id']
             context_id = result['context_id']
 
-            await anyio.sleep(0.1)
-            response = await a2a_client.get_task(task_id)
-            assert response.get('result') == snapshot(
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    result = task['result']
+                    break
+                await anyio.sleep(0.1)
+
+            assert result == snapshot(
                 {
                     'id': IsStr(),
                     'context_id': IsStr(),
@@ -958,9 +994,13 @@ async def test_a2a_multiple_send_task_messages():
                 }
             )
 
-            await anyio.sleep(0.1)
-            response = await a2a_client.get_task(task_id)
-            assert response.get('result') == snapshot(
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    result = task['result']
+                    break
+                await anyio.sleep(0.1)  # pragma: lax no cover
+
+            assert result == snapshot(
                 {
                     'id': IsStr(),
                     'context_id': IsStr(),

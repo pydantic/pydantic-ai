@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 import pytest
@@ -17,20 +18,14 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
-    FinalResultEvent,
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelSettings,
-    PartDeltaEvent,
-    PartStartEvent,
     RetryPromptPart,
     RunContext,
     TextPart,
     ToolCallPart,
-    ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -42,17 +37,13 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsNow, IsStr
 
 try:
-    import importlib.metadata
-
     from dbos import DBOS, DBOSConfig, SetWorkflowID
-    from packaging.version import Version
 
     from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSMCPServer, DBOSModel
 
-    dbos_version = Version(importlib.metadata.version('dbos'))
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
 
@@ -67,6 +58,10 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
+try:
+    from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+except ImportError:  # pragma: lax no cover
+    pytest.skip('fastmcp not installed', allow_module_level=True)
 
 try:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -74,10 +69,10 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
-from inline_snapshot import snapshot
-
 from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+
+from ._inline_snapshot import snapshot
 
 pytestmark = [
     pytest.mark.anyio,
@@ -105,6 +100,15 @@ def setup_logfire_instrumentation() -> Iterator[None]:
     yield
 
 
+@pytest.fixture(autouse=True)
+def _clear_mcp_tool_cache() -> None:
+    """Clear cached tool defs on module-level DBOSMCPServer instances between tests."""
+    for agent in (complex_dbos_agent, seq_complex_dbos_agent):
+        for toolset in agent.toolsets:
+            if isinstance(toolset, DBOSMCPServer):
+                toolset._cached_tool_defs = None  # pyright: ignore[reportPrivateUsage]
+
+
 @contextmanager
 def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[None]:
     """Helper for asserting that a DBOS workflow fails with the expected error."""
@@ -114,36 +118,21 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[Non
     assert str(exc_info.value) == exc_message
 
 
-DBOS_SQLITE_FILE = 'dbostest.sqlite'
-DBOS_CONFIG: DBOSConfig = {
-    'name': 'pydantic_dbos_tests',
-    'system_database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
-    'run_admin_server': False,
-    # enable_otlp requires dbos>1.14
-    'enable_otlp': True,
-}
-
-
 @pytest.fixture(scope='module')
-def dbos() -> Generator[DBOS, Any, None]:
-    dbos = DBOS(config=DBOS_CONFIG)
+def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]:
+    dbos_sqlite_file = tmp_path_factory.mktemp('dbos') / 'dbostest.sqlite'
+    dbos_config: DBOSConfig = {
+        'name': 'pydantic_dbos_tests',
+        'system_database_url': f'sqlite:///{dbos_sqlite_file}',
+        'run_admin_server': False,
+        'enable_otlp': True,
+    }
+    dbos = DBOS(config=dbos_config)
     DBOS.launch()
     try:
         yield dbos
     finally:
         DBOS.destroy()
-
-
-# Automatically clean up old DBOS sqlite files
-@pytest.fixture(autouse=True, scope='module')
-def cleanup_test_sqlite_file() -> Iterator[None]:
-    if os.path.exists(DBOS_SQLITE_FILE):
-        os.remove(DBOS_SQLITE_FILE)  # pragma: lax no cover
-    try:
-        yield
-    finally:
-        if os.path.exists(DBOS_SQLITE_FILE):
-            os.remove(DBOS_SQLITE_FILE)  # pragma: lax no cover
 
 
 model = OpenAIChatModel(
@@ -217,7 +206,7 @@ class Response:
 @dataclass
 class BasicSpan:
     content: str
-    children: list[BasicSpan] = field(default_factory=list)
+    children: list[BasicSpan] = field(default_factory=list['BasicSpan'])
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 
@@ -236,6 +225,7 @@ complex_agent = Agent(
     name='complex_agent',
 )
 complex_dbos_agent = DBOSAgent(complex_agent)
+seq_complex_dbos_agent = DBOSAgent(complex_agent, parallel_execution_mode='sequential', name='seq_complex_agent')
 
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
@@ -264,15 +254,13 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             'complex_agent__model.request_stream',
             'event_stream_handler',
             'event_stream_handler',
-            'event_stream_handler',
             'complex_agent__mcp_server__mcp.call_tool',
             'event_stream_handler',
-            'complex_agent__mcp_server__mcp.get_tools',
+            'event_stream_handler',
             'complex_agent__model.request_stream',
             'event_stream_handler',
             'get_weather',
             'event_stream_handler',
-            'complex_agent__mcp_server__mcp.get_tools',
             'complex_agent__model.request_stream',
         ]
     )
@@ -316,16 +304,22 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"part_start"}'
+                                            content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_kind":"tool-call"},"event_kind":"part_start"}'
+                                            content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","event_kind":"part_end"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","event_kind":"part_start"}'
+                                        ),
+                                        BasicSpan(
+                                            content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                        ),
+                                        BasicSpan(
+                                            content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                         ),
                                     ],
                                 )
@@ -336,7 +330,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                    content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                 ),
                             ],
                         ),
@@ -345,7 +339,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                    content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                 ),
                             ],
                         ),
@@ -353,17 +347,6 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             content='running 2 tools',
                             children=[
                                 BasicSpan(content='running tool: get_country'),
-                                BasicSpan(
-                                    content='event_stream_handler',
-                                    children=[
-                                        BasicSpan(content='ctx.run_step=1'),
-                                        BasicSpan(
-                                            content=IsStr(
-                                                regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
-                                            )
-                                        ),
-                                    ],
-                                ),
                                 BasicSpan(
                                     content='running tool: get_product_name',
                                     children=[BasicSpan(content='complex_agent__mcp_server__mcp.call_tool')],
@@ -374,14 +357,24 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                                                regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                            )
+                                        ),
+                                    ],
+                                ),
+                                BasicSpan(
+                                    content='event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content=IsStr(
+                                                regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
                                             )
                                         ),
                                     ],
                                 ),
                             ],
                         ),
-                        BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
                         BasicSpan(
                             content='chat gpt-4o',
                             children=[
@@ -390,25 +383,28 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_kind":"tool-call"},"event_kind":"part_start"}'
+                                            content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"city","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"city","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                        ),
+                                        BasicSpan(
+                                            content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                         ),
                                     ],
                                 )
@@ -419,7 +415,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=2'),
                                 BasicSpan(
-                                    content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                    content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                                 ),
                             ],
                         ),
@@ -435,14 +431,13 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                                                regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
                                             )
                                         ),
                                     ],
                                 ),
                             ],
                         ),
-                        BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
                         BasicSpan(
                             content='chat gpt-4o',
                             children=[
@@ -451,130 +446,133 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_kind":"tool-call"},"event_kind":"part_start"}'
+                                            content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"event_kind":"part_start"}'
                                         ),
                                         BasicSpan(
                                             content='{"tool_name":"final_result","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","event_kind":"final_result"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answers","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answers","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":[","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":[","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Capital","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Capital","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" of","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" of","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" country","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" country","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Weather","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Weather","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" in","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" in","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" the","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" capital","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" capital","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Sunny","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Sunny","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"},{\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"label","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Product","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Product","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Name","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" Name","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\",\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"answer","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\":\\"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"P","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"P","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"yd","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"yd","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"antic","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"antic","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                         ),
                                         BasicSpan(
-                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                            content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
+                                        ),
+                                        BasicSpan(
+                                            content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"event_kind":"part_end"}'
                                         ),
                                     ],
                                 )
@@ -587,270 +585,77 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
     )
 
 
-# Note: since we wrap the agent run in a DBOS workflow, we cannot just use a DBOS agent without DBOS. This test shows we can use a complex agent with DBOS decorated tools. Without DBOS workflows, those steps are just normal functions.
-async def test_complex_agent_run(allow_model_requests: None) -> None:
-    events: list[AgentStreamEvent] = []
+async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None, dbos: DBOS) -> None:
+    """Verify that wrapper-level caching is skipped when cache_tools=False.
 
-    async def event_stream_handler(
-        ctx: RunContext[Deps],
-        stream: AsyncIterable[AgentStreamEvent],
-    ):
-        async for event in stream:
-            events.append(event)
+    With caching disabled, every model request should be preceded by a get_tools step,
+    rather than only the first one populating the cache.
+    """
+    mcp_toolset = next(ts for ts in complex_dbos_agent.toolsets if isinstance(ts, DBOSMCPServer))
+    server = mcp_toolset._server  # pyright: ignore[reportPrivateUsage]
 
-    with complex_agent.override(deps=Deps(country='Mexico')):
-        result = await complex_agent.run(
-            'Tell me: the capital of the country; the weather there; the product name',
-            deps=Deps(country='The Netherlands'),
-            event_stream_handler=event_stream_handler,
+    original_cache_tools = server.cache_tools
+    server.cache_tools = False
+
+    try:
+        wfid = str(uuid.uuid4())
+        with SetWorkflowID(wfid):
+            result = await complex_dbos_agent.run(
+                'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
+            )
+        assert result.output == snapshot(
+            Response(
+                answers=[
+                    Answer(label='Capital of the country', answer='Mexico City'),
+                    Answer(label='Weather in the capital', answer='Sunny'),
+                    Answer(label='Product Name', answer='Pydantic AI'),
+                ]
+            )
+        )
+
+        steps = await dbos.list_workflow_steps_async(wfid)
+        step_names = [step['function_name'] for step in steps]
+        # Without caching, get_tools should be called 3 times (once per model request)
+        assert step_names.count('complex_agent__mcp_server__mcp.get_tools') == 3
+    finally:
+        server.cache_tools = original_cache_tools
+
+
+# Test sequential tool call works
+async def test_complex_agent_run_sequential_tool(allow_model_requests: None, dbos: DBOS) -> None:
+    # Set a workflow ID for testing list steps
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        # DBOSAgent already wraps the `run` function as a DBOS workflow, so we can just call it directly.
+        result = await seq_complex_dbos_agent.run(
+            'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
         )
     assert result.output == snapshot(
         Response(
             answers=[
-                Answer(label='Capital', answer='The capital of Mexico is Mexico City.'),
-                Answer(label='Weather', answer='The weather in Mexico City is currently sunny.'),
-                Answer(label='Product Name', answer='The product name is Pydantic AI.'),
+                Answer(label='Capital of the country', answer='Mexico City'),
+                Answer(label='Weather in the capital', answer='Sunny'),
+                Answer(label='Product Name', answer='Pydantic AI'),
             ]
         )
     )
 
-    assert events == snapshot(
+    # Make sure the steps are persisted correctly in the DBOS database.
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(
         [
-            PartStartEvent(
-                index=0,
-                part=ToolCallPart(tool_name='get_country', args='', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z')
-            ),
-            PartStartEvent(
-                index=1,
-                part=ToolCallPart(tool_name='get_product_name', args='', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'),
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5')
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z')
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5')
-            ),
-            FunctionToolResultEvent(
-                result=ToolReturnPart(
-                    tool_name='get_country',
-                    content='Mexico',
-                    tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z',
-                    timestamp=IsDatetime(),
-                )
-            ),
-            FunctionToolResultEvent(
-                result=ToolReturnPart(
-                    tool_name='get_product_name',
-                    content='Pydantic AI',
-                    tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5',
-                    timestamp=IsDatetime(),
-                )
-            ),
-            PartStartEvent(
-                index=0,
-                part=ToolCallPart(tool_name='get_weather', args='', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'),
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='city', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='Mexico', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
-            ),
-            FunctionToolCallEvent(
-                part=ToolCallPart(
-                    tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
-                )
-            ),
-            FunctionToolResultEvent(
-                result=ToolReturnPart(
-                    tool_name='get_weather',
-                    content='sunny',
-                    tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv',
-                    timestamp=IsDatetime(),
-                )
-            ),
-            PartStartEvent(
-                index=0,
-                part=ToolCallPart(tool_name='final_result', args='', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn'),
-            ),
-            FinalResultEvent(tool_name='final_result', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn'),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='answers', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":[', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='Capital', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='The', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' capital', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' of', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' Mexico', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' Mexico', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='},{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='Weather', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='The', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' weather', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' in', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' Mexico', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' currently', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' sunny', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='},{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='Product', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' Name', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='The', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' product', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' name', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' P', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='yd', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='antic', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' AI', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='}', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=']}', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
-            ),
+            'seq_complex_agent__mcp_server__mcp.get_tools',
+            'seq_complex_agent__model.request_stream',
+            'event_stream_handler',
+            'event_stream_handler',
+            'event_stream_handler',
+            'seq_complex_agent__mcp_server__mcp.call_tool',
+            'event_stream_handler',
+            'seq_complex_agent__model.request_stream',
+            'event_stream_handler',
+            'get_weather',
+            'event_stream_handler',
+            'seq_complex_agent__model.request_stream',
         ]
     )
 
@@ -968,6 +773,18 @@ async def test_dbos_agent_run_stream(allow_model_requests: None):
         )
 
 
+async def test_dbos_agent_run_stream_events(allow_model_requests: None):
+    # This doesn't work because `run_stream_events` calls `run` internally, which is automatically wrapped in a DBOS workflow.
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            '`agent.run_stream_events()` cannot be used with DBOS. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+        ),
+    ):
+        async for _ in simple_dbos_agent.run_stream_events('What is the capital of Mexico?'):
+            pass
+
+
 async def test_dbos_agent_iter(allow_model_requests: None):
     output: list[str] = []
     async with simple_dbos_agent.iter('What is the capital of Mexico?') as run:
@@ -1011,12 +828,25 @@ async def test_dbos_agent_run_stream_in_workflow(allow_model_requests: None, dbo
     with workflow_raises(
         UserError,
         snapshot(
-            '`agent.run_stream()` cannot currently be used inside a DBOS workflow. '
-            'Set an `event_stream_handler` on the agent and use `agent.run()` instead. '
-            'Please file an issue if this is not sufficient for your use case.'
+            '`agent.run_stream()` cannot be used inside a DBOS workflow. '
+            'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
         ),
     ):
         await run_stream_workflow()
+
+
+async def test_dbos_agent_run_stream_events_in_workflow(allow_model_requests: None, dbos: DBOS):
+    @DBOS.workflow()
+    async def run_stream_events_workflow():
+        return [event async for event in simple_dbos_agent.run_stream_events('What is the capital of Mexico?')]
+
+    with workflow_raises(
+        UserError,
+        snapshot(
+            '`agent.run_stream_events()` cannot be used with DBOS. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+        ),
+    ):
+        await run_stream_events_workflow()
 
 
 async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBOS):
@@ -1053,15 +883,9 @@ async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_
     with pytest.raises(Exception) as exc_info:
         await simple_dbos_agent.run('What is the capital of Mexico?', event_stream_handler=simple_event_stream_handler)
 
-    if dbos_version <= Version('1.14'):  # pragma: lax no cover
-        # Older DBOS versions used jsonpickle
-        assert str(exc_info.value) == snapshot('Serialized function should be defined at the top level of a module')
-    else:
-        # Newer DBOS versions use pickle
-        assert (
-            "local object 'test_dbos_agent_run_in_workflow_with_event_stream_handler.<locals>.simple_event_stream_handler'"
-            in str(exc_info.value)
-        )
+    # 3.14+: _pickle.PicklingError("Can't pickle local object <function ...>")
+    # <=3.13: AttributeError("Can't get local object '...<locals>...'")
+    assert 'local object' in str(exc_info.value) and 'simple_event_stream_handler' in str(exc_info.value)
 
 
 async def test_dbos_agent_run_in_workflow_with_model(allow_model_requests: None, dbos: DBOS):
@@ -1166,12 +990,7 @@ async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: No
             logfire.instrument_httpx(client, capture_all=True)
             await unserializable_deps_dbos_agent.run('What is the model name?', deps=UnserializableDeps(client=client))
 
-    if dbos_version <= Version('1.14'):  # pragma: lax no cover
-        # Older DBOS versions used jsonpickle
-        assert str(exc_info.value) == snapshot('object proxy must define __reduce_ex__()')
-    else:
-        # Newer DBOS versions use pickle
-        assert str(exc_info.value) == snapshot("cannot pickle '_thread.RLock' object")
+    assert str(exc_info.value) == snapshot("cannot pickle '_thread.RLock' object")
 
 
 # Test dynamic toolsets in an agent with DBOS
@@ -1335,7 +1154,9 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1363,9 +1184,14 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 model_name=IsStr(),
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_details={'finish_reason': 'tool_calls'},
+                provider_url='https://api.openai.com/v1/',
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1382,7 +1208,9 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1401,9 +1229,14 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.openai.com/v1/',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1462,7 +1295,9 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         timestamp=IsDatetime(),
                     )
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1490,9 +1325,14 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 model_name=IsStr(),
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_details={'finish_reason': 'tool_calls'},
+                provider_url='https://api.openai.com/v1/',
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1509,7 +1349,9 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         timestamp=IsDatetime(),
                     ),
                 ],
+                timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1528,9 +1370,14 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.openai.com/v1/',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1564,7 +1411,9 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         content='What is the weather in CDMX?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1587,9 +1436,14 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_details={'finish_reason': 'tool_calls'},
+                provider_url='https://api.openai.com/v1/',
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1599,7 +1453,9 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1622,9 +1478,14 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_details={'finish_reason': 'tool_calls'},
+                provider_url='https://api.openai.com/v1/',
+                provider_details={
+                    'finish_reason': 'tool_calls',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1634,7 +1495,9 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The weather in Mexico City is currently sunny.')],
@@ -1651,9 +1514,14 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_details={'finish_reason': 'stop'},
+                provider_url='https://api.openai.com/v1/',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )
@@ -1668,12 +1536,58 @@ def return_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> Mode
 
 
 model_settings = CustomModelSettings(max_tokens=123, custom_setting='custom_value')
-model = FunctionModel(return_settings, settings=model_settings)
+return_settings_model = FunctionModel(return_settings, settings=model_settings)
 
-settings_agent = Agent(model, name='settings_agent')
+settings_agent = Agent(return_settings_model, name='settings_agent')
 settings_dbos_agent = DBOSAgent(settings_agent)
 
 
 async def test_custom_model_settings(allow_model_requests: None, dbos: DBOS):
     result = await settings_dbos_agent.run('Give me those settings')
     assert result.output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")
+
+
+fastmcp_agent = Agent(
+    model,
+    name='fastmcp_agent',
+    toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+)
+
+fastmcp_dbos_agent = DBOSAgent(fastmcp_agent)
+
+
+async def test_fastmcp_toolset(allow_model_requests: None, dbos: DBOS):
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        result = await fastmcp_dbos_agent.run(
+            'Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'
+        )
+    assert result.output == snapshot(
+        'The `pydantic/pydantic-ai` repository is a Python agent framework designed for building production-grade Generative AI applications. It emphasizes type-safety, a model-agnostic design, and an ergonomic developer experience. Key features include type-safe agents using Pydantic, support for over 15 LLM providers, structured outputs with automatic validation, comprehensive observability, and production-ready tooling. The framework is structured as a UV workspace monorepo with core and supporting packages for defining and executing complex applications.'
+    )
+
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(
+        [
+            'fastmcp_agent__mcp_server__deepwiki.get_tools',
+            'fastmcp_agent__model.request',
+            'fastmcp_agent__mcp_server__deepwiki.call_tool',
+            'fastmcp_agent__mcp_server__deepwiki.get_tools',
+            'fastmcp_agent__model.request',
+        ]
+    )
+
+
+def test_dbos_mcp_wrapper_visit_and_replace():
+    """DBOS MCP wrapper toolsets should not be replaced by visit_and_replace."""
+    from pydantic_ai.durable_exec.dbos._fastmcp_toolset import DBOSFastMCPToolset
+
+    toolsets = fastmcp_dbos_agent._toolsets  # pyright: ignore[reportPrivateUsage]
+    dbos_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, DBOSFastMCPToolset)]
+    assert len(dbos_mcp_toolsets) >= 1
+
+    dbos_mcp_toolset = dbos_mcp_toolsets[0]
+
+    # visit_and_replace should return self for DBOS wrappers
+    result = dbos_mcp_toolset.visit_and_replace(lambda t: FunctionToolset(id='replaced'))
+    assert result is dbos_mcp_toolset

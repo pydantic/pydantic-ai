@@ -58,7 +58,7 @@ interactions:
           parameters:
             properties: {}
             type: OBJECT
-    uri: https://us-central1-aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/us-central1/publishers/google/models/gemini-2.0-flash:countTokens
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.0-flash:countTokens
   response:
     headers:
       alt-svc:

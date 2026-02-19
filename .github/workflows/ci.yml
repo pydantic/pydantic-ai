@@ -18,13 +18,16 @@ permissions:
 
 jobs:
   lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
+          python-version: "3.13"
           enable-cache: true
+          cache-suffix: lint
 
       - name: Install dependencies
         run: uv sync --all-extras --all-packages --group lint
@@ -42,11 +45,12 @@ jobs:
   mypy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: mypy
 
       - name: Install dependencies
         run: uv sync --no-dev --group lint
@@ -56,21 +60,16 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: docs
 
       - run: uv sync --group docs
 
-        # always build docs to check it works without insiders packages
       - run: make docs
-
-      - run: make docs-insiders
-        if: github.event.pull_request.head.repo.full_name == github.repository || github.ref == 'refs/heads/main'
-        env:
-          PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
 
       - run: tree -sh site
       - uses: actions/setup-node@v4
@@ -88,52 +87,26 @@ jobs:
       # check all docs images are tinified, You'll need an API key from https://tinify.com/ to fix this if it fails
       - run: uvx tinicly docs --check
 
-  test-live:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - uses: pydantic/ollama-action@v3
-        with:
-          model: qwen2:0.5b
-
-      - run: uv sync --only-dev
-      - run: >
-          uv run
-          --package pydantic-ai-slim
-          --extra openai
-          --extra vertexai
-          --extra google
-          --extra groq
-          --extra anthropic
-          --extra mistral
-          --extra cohere
-          pytest tests/test_live.py -v
-          --durations=100
-        env:
-          PYDANTIC_AI_LIVE_TEST_DANGEROUS: "CHARGE-ME!"
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GOOGLE_SERVICE_ACCOUNT_CONTENT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_CONTENT }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          CO_API_KEY: ${{ secrets.COHERE_API_KEY }}
-
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Use Depot 4-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
+    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Depot outages)
+    runs-on: >-
+      ${{
+        !contains(github.event.pull_request.labels.*.name, 'ci:slow')
+        && matrix.install.name == 'all-extras'
+        && (
+          github.event.pull_request.head.repo.full_name == github.repository
+          || contains(github.event.pull_request.labels.*.name, 'ci:fast')
+        )
+        && 'depot-ubuntu-24.04-4'
+        || 'ubuntu-latest'
+      }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         install:
           - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
@@ -142,24 +115,29 @@ jobs:
           - name: all-extras
             command: "--all-extras"
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
-
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
+          cache-suffix: ${{ matrix.install.name }}
 
       - run: mkdir .coverage
 
-      - run: uv run mcp-run-python example --deps=numpy
       - run: uv sync --only-dev
+
+      - name: cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            hf-${{ runner.os }}-
+
       - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
@@ -173,31 +151,46 @@ jobs:
 
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Use Depot 4-core runners for maintainers or opted in via 'ci:fast' label
+    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Depot outages)
+    runs-on: >-
+      ${{
+        !contains(github.event.pull_request.labels.*.name, 'ci:slow')
+        && (
+          github.event.pull_request.head.repo.full_name == github.repository
+          || contains(github.event.pull_request.labels.*.name, 'ci:fast')
+        )
+        && 'depot-ubuntu-24.04-4'
+        || 'ubuntu-latest'
+      }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
-
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
+          cache-suffix: lowest-versions
 
       - run: mkdir .coverage
 
       - run: uv sync --group dev
-      - run: uv run mcp-run-python example --deps=numpy
+
+      - name: cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            hf-${{ runner.os }}-
 
       - run: unset UV_FROZEN
 
@@ -219,16 +212,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     env:
-      UV_PYTHON: ${{ matrix.python-version }}
       CI: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
+          cache-suffix: examples
+
+      - name: cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            hf-${{ runner.os }}-
 
       - run: uv run --all-extras python tests/import_examples.py
 
@@ -236,7 +238,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, test-lowest-versions]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # needed for diff-cover
           fetch-depth: 0
@@ -250,6 +252,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: dev
 
       - run: uv sync --group dev
       - run: uv run coverage combine
@@ -273,7 +276,6 @@ jobs:
       - lint
       - mypy
       - docs
-      - test-live
       - test
       - test-lowest-versions
       - test-examples
@@ -285,7 +287,6 @@ jobs:
         uses: re-actors/alls-green@release/v1
         with:
           jobs: ${{ toJSON(needs) }}
-          allowed-skips: test-live
 
   deploy-docs:
     needs: [check]
@@ -296,7 +297,7 @@ jobs:
       url: https://ai.pydantic.dev
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
       - run: npm install
@@ -305,6 +306,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: docs-upload
 
       - uses: actions/download-artifact@v4
         with:
@@ -337,7 +339,7 @@ jobs:
       statuses: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
       - run: npm install
@@ -346,6 +348,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: deploy-docs-preview
 
       - uses: actions/download-artifact@v4
         with:
@@ -388,11 +391,12 @@ jobs:
       package-version: ${{ steps.inspect_package.outputs.version }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: release
 
       - run: uv build --all-packages
 

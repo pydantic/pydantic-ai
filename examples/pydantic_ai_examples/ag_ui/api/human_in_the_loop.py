@@ -8,9 +8,10 @@ from __future__ import annotations
 from textwrap import dedent
 
 from pydantic_ai import Agent
+from pydantic_ai.ui.ag_ui.app import AGUIApp
 
 agent = Agent(
-    'openai:gpt-4o-mini',
+    'openai:gpt-5-mini',
     instructions=dedent(
         """
         When planning tasks use tools only, without any other messages.
@@ -23,4 +24,4 @@ agent = Agent(
     ),
 )
 
-app = agent.to_ag_ui()
+app = AGUIApp(agent)

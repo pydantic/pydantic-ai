@@ -62,7 +62,10 @@ class OllamaProvider(Provider[AsyncOpenAI]):
 
         # As OllamaProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        return OpenAIModelProfile(
+            json_schema_transformer=OpenAIJsonSchemaTransformer,
+            openai_chat_thinking_field='reasoning',
+        ).update(profile)
 
     def __init__(
         self,

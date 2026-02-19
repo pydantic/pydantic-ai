@@ -32,7 +32,7 @@ class Deps:
 
 
 weather_agent = Agent(
-    'openai:gpt-4.1-mini',
+    'openai:gpt-5-mini',
     # 'Be concise, reply with one sentence.' is enough for some models (like openai) to use
     # the below tools appropriately, but others like anthropic and gemini require a bit more direction.
     instructions='Be concise, reply with one sentence.',
