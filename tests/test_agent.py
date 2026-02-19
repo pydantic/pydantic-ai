@@ -7762,3 +7762,87 @@ async def test_central_content_filter_with_partial_content():
     # Should NOT raise ContentFilterError
     result = await agent.run('Trigger filter')
     assert result.output == 'Partially generated content...'
+
+
+async def test_agent_allows_none_output_empty_response():
+    """Test that Agent(output_type=str | None) succeeds on empty response."""
+
+    async def empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    model = FunctionModel(function=empty_model)
+    agent = Agent(model, output_type=str | None)
+
+    result = await agent.run('hello')
+    assert result.output is None
+
+
+async def test_agent_allows_none_output_after_tool():
+    """Test that Agent(output_type=str | None) succeeds after tool call with no final text."""
+    call_count = 0
+
+    async def tool_then_empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')])
+        return ModelResponse(parts=[])
+
+    model = FunctionModel(function=tool_then_empty_model)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.tool_plain
+    def noop() -> str:
+        return 'done'
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert call_count == 2
+
+
+async def test_agent_still_fails_if_none_not_allowed():
+    """Test that Agent(output_type=str) still fails on empty response."""
+
+    async def empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    model = FunctionModel(function=empty_model)
+    agent = Agent(model, output_type=str)
+
+    # It should raise an error after retries.
+    # Current codebase behavior is to raise UnexpectedModelBehavior or IncompleteToolCall
+    # after max retries are exceeded.
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+        await agent.run('hello')
+
+
+async def test_agent_allows_none_with_real_model_scenario():
+    """Test a real scenario where the model is instructed not to say anything after calling a tool."""
+    call_count = 0
+
+    async def realistic_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        """Simulates a model that calls a tool and then returns nothing when instructed."""
+        nonlocal call_count
+        call_count += 1
+
+        # First call: model decides to call the tool
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='read_file', args={'path': 'README.md'}, tool_call_id='call_1')]
+            )
+
+        # Second call: model follows instruction to not speak after tool execution
+        return ModelResponse(parts=[])
+
+    model = FunctionModel(function=realistic_model)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.tool_plain
+    def read_file(path: str) -> str:
+        """Read a file and return its contents."""
+        return 'File contents here'
+
+    # Instruction similar to issue #3735
+    result = await agent.run('read the readme file. then dont speak. just stop')
+    assert result.output is None
+    assert call_count == 2
