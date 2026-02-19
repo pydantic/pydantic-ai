@@ -23,7 +23,7 @@ from pydantic_ai import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata, Instructions
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.settings import ModelSettings
@@ -124,6 +124,17 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     accept: str | None = None
     """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
+
+    accept_frontend_system_prompt: bool = False
+    """Whether to accept system prompts sent by the frontend.
+
+    When `False` (default), any `SystemPromptPart` found in the frontend messages will be stripped
+    and a warning emitted. The agent's own system prompt (if any) will be used instead.
+    This is a security measure to prevent users from injecting system prompts via crafted API requests.
+
+    When `True`, frontend system prompts are accepted and take precedence over the agent's
+    configured system prompt.
+    """
 
     @classmethod
     async def from_request(
@@ -250,7 +261,32 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools to use for this run.
         """
-        message_history = [*(message_history or []), *self.messages]
+        frontend_messages = self.messages
+        has_frontend_system_prompt = any(
+            isinstance(part, SystemPromptPart)
+            for msg in frontend_messages
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+        )
+        if has_frontend_system_prompt and not self.accept_frontend_system_prompt:
+            warnings.warn(
+                'Frontend system prompts were provided but `accept_frontend_system_prompt` is False '
+                '(the default for security reasons), so they will be stripped. '
+                'Set `accept_frontend_system_prompt=True` to accept frontend system prompts.',
+                UserWarning,
+                stacklevel=2,
+            )
+            filtered: list[ModelMessage] = []
+            for msg in frontend_messages:
+                if isinstance(msg, ModelRequest):
+                    filtered_parts = [part for part in msg.parts if not isinstance(part, SystemPromptPart)]
+                    if filtered_parts:
+                        filtered.append(ModelRequest(parts=filtered_parts, instructions=msg.instructions))
+                else:
+                    filtered.append(msg)
+            frontend_messages = filtered
+
+        message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset
         if toolset:
