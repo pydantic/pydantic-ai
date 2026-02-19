@@ -7,7 +7,10 @@ from . import ModelProfile
 
 @dataclass(kw_only=True)
 class AnthropicModelProfile(ModelProfile):
-    """Profile for models used with `AnthropicModel`."""
+    """Profile for models used with `AnthropicModel`.
+
+    ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
 
     anthropic_supports_fast_speed: bool = False
     """Whether the model supports fast inference speed (`anthropic_speed='fast'`).

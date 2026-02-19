@@ -241,6 +241,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """The inference speed mode for this request.
 
     `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6).
+    On unsupported models, this setting is silently ignored.
     Fast mode is a research preview; see [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for details.
     """
 
