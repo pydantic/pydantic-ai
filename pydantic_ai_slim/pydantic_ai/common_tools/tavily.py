@@ -1,7 +1,7 @@
 from dataclasses import KW_ONLY, dataclass
-from functools import partial, update_wrapper
+from functools import partial
 from inspect import signature
-from typing import Literal
+from typing import Literal, overload
 
 from pydantic import TypeAdapter
 from typing_extensions import Any, TypedDict
@@ -88,9 +88,36 @@ class TavilySearchTool:
         return tavily_search_ta.validate_python(results['results'])
 
 
+@overload
 def tavily_search_tool(
     api_key: str,
     *,
+    max_results: int | None = None,
+    search_depth: Literal['basic', 'advanced', 'fast', 'ultra-fast'] = _UNSET,
+    topic: Literal['general', 'news', 'finance'] = _UNSET,
+    time_range: Literal['day', 'week', 'month', 'year'] | None = _UNSET,
+    include_domains: list[str] | None = _UNSET,
+    exclude_domains: list[str] | None = _UNSET,
+) -> Tool[Any]: ...
+
+
+@overload
+def tavily_search_tool(
+    *,
+    client: AsyncTavilyClient,
+    max_results: int | None = None,
+    search_depth: Literal['basic', 'advanced', 'fast', 'ultra-fast'] = _UNSET,
+    topic: Literal['general', 'news', 'finance'] = _UNSET,
+    time_range: Literal['day', 'week', 'month', 'year'] | None = _UNSET,
+    include_domains: list[str] | None = _UNSET,
+    exclude_domains: list[str] | None = _UNSET,
+) -> Tool[Any]: ...
+
+
+def tavily_search_tool(
+    api_key: str | None = None,
+    *,
+    client: AsyncTavilyClient | None = None,
     max_results: int | None = None,
     search_depth: Literal['basic', 'advanced', 'fast', 'ultra-fast'] = _UNSET,
     topic: Literal['general', 'news', 'finance'] = _UNSET,
@@ -105,9 +132,11 @@ def tavily_search_tool(
     tool schema. Parameters left unset remain available for the LLM to set per-call.
 
     Args:
-        api_key: The Tavily API key.
+        api_key: The Tavily API key. Required if `client` is not provided.
 
             You can get one by signing up at [https://app.tavily.com/home](https://app.tavily.com/home).
+        client: An existing AsyncTavilyClient. If provided, `api_key` is ignored.
+            This is useful for sharing a client across multiple tool instances.
         max_results: The maximum number of results. If None, the Tavily default is used.
         search_depth: The depth of the search.
         topic: The category of the search.
@@ -115,7 +144,11 @@ def tavily_search_tool(
         include_domains: List of domains to specifically include in the search results.
         exclude_domains: List of domains to specifically exclude from the search results.
     """
-    func = TavilySearchTool(client=AsyncTavilyClient(api_key), max_results=max_results).__call__
+    if client is None:
+        if api_key is None:
+            raise ValueError('Either api_key or client must be provided')
+        client = AsyncTavilyClient(api_key)
+    func = TavilySearchTool(client=client, max_results=max_results).__call__
 
     kwargs: dict[str, Any] = {}
     if search_depth is not _UNSET:
@@ -132,10 +165,8 @@ def tavily_search_tool(
     if kwargs:
         original = func
         func = partial(func, **kwargs)
-        update_wrapper(func, original)
-        # update_wrapper sets __wrapped__, which makes inspect.signature()
-        # see the original full signature instead of the partial's reduced one.
-        del func.__wrapped__  # type: ignore[attr-defined]
+        func.__name__ = original.__name__  # type: ignore[union-attr]
+        func.__qualname__ = original.__qualname__
         # partial with keyword args only updates defaults, not removes params.
         # Set __signature__ explicitly to exclude bound params from the tool schema.
         orig_sig = signature(original)
