@@ -2189,6 +2189,13 @@ def test_load_mcp_servers_with_complex_default_values(tmp_path: Path, monkeypatc
     assert isinstance(server, MCPServerStdio)
     assert server.command == '/usr/local/bin/python-3.10'
 
+async def test_instructions(mcp_server: MCPServerStdio) -> None:
+    with pytest.raises(
+        AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
+    ):
+        mcp_server.instructions
+    async with mcp_server:
+        assert mcp_server.instructions == 'Be a helpful assistant.'
 
 def test_load_mcp_servers_with_mixed_syntax(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Test mixing ${VAR} and ${VAR:-default} syntax in the same config."""
