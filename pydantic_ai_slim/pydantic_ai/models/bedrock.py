@@ -43,6 +43,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
@@ -720,7 +721,9 @@ class BedrockConverseModel(Model):
                             'str' if profile.bedrock_tool_result_format == 'text' else 'json'
                         )
                         for item in part.content_items(mode=content_mode):
-                            if isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
+                            if is_multi_modal_content(item):
+                                if isinstance(item, AudioUrl):
+                                    raise NotImplementedError('AudioUrl is not supported in Bedrock tool returns')
                                 file_block = await self._map_file_to_content_block(item, document_count)
                                 if file_block is not None:
                                     kind = next(k for k in ('image', 'document', 'video') if k in file_block)
@@ -730,12 +733,10 @@ class BedrockConverseModel(Model):
                                         tool_result_content.append({'text': f'See file {item.identifier}.'})
                                         sibling_content.append({'text': f'This is file {item.identifier}:'})
                                         sibling_content.append(file_block)  # pyright: ignore[reportArgumentType]
-                                elif isinstance(item, BinaryContent):
+                                else:
                                     raise NotImplementedError(
                                         f'Unsupported binary content type in Bedrock tool returns: {item.media_type}'
                                     )
-                            elif isinstance(item, AudioUrl):
-                                raise NotImplementedError('AudioUrl is not supported in Bedrock tool returns')
                             elif content_mode == 'str':
                                 assert isinstance(item, str)
                                 tool_result_content.append({'text': item})
@@ -785,12 +786,13 @@ class BedrockConverseModel(Model):
                             and item.signature
                             and BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts
                         ):
+                            reasoning_content: ReasoningContentBlockOutputTypeDef
                             if item.id == 'redacted_content':
-                                reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                reasoning_content = {
                                     'redactedContent': item.signature.encode('utf-8'),
                                 }
                             else:
-                                reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                reasoning_content = {
                                     'reasoningText': {
                                         'text': item.content,
                                         'signature': item.signature,

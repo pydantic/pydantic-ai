@@ -740,9 +740,11 @@ class GoogleModel(Model):
         See also `_map_file_to_function_response_part` which uses the same resolution
         logic but returns `FunctionResponsePartDict` (no `video_metadata` support).
         """
+        part_dict: PartDict
+        file_data_dict: FileDataDict
         if isinstance(file, BinaryContent):
             inline_data_dict: BlobDict = {'data': file.data, 'mime_type': file.media_type}
-            part_dict: PartDict = {'inline_data': inline_data_dict}
+            part_dict = {'inline_data': inline_data_dict}
             if file.vendor_metadata:
                 part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
             return part_dict
@@ -755,8 +757,8 @@ class GoogleModel(Model):
             # Other URLs fall through to FileUrl handling (download for google-gla)
             # Note: force_download is not checked here, mirroring the original YouTube behavior.
             # GCS URIs cannot be downloaded anyway ("gs://" protocol not supported for download).
-            file_data_dict: FileDataDict = {'file_uri': file.url, 'mime_type': file.media_type}
-            part_dict: PartDict = {'file_data': file_data_dict}
+            file_data_dict = {'file_uri': file.url, 'mime_type': file.media_type}
+            part_dict = {'file_data': file_data_dict}
             if file.vendor_metadata:
                 part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
             return part_dict
@@ -772,14 +774,14 @@ class GoogleModel(Model):
                     'data': downloaded_item['data'],
                     'mime_type': downloaded_item['data_type'],
                 }
-                part_dict: PartDict = {'inline_data': inline_data}
+                part_dict = {'inline_data': inline_data}
                 # VideoUrl is a subclass of FileUrl - include video_metadata if present
                 if isinstance(file, VideoUrl) and file.vendor_metadata:
                     part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
                 return part_dict
             else:
-                file_data_dict: FileDataDict = {'file_uri': file.url, 'mime_type': file.media_type}
-                part_dict: PartDict = {'file_data': file_data_dict}
+                file_data_dict = {'file_uri': file.url, 'mime_type': file.media_type}
+                part_dict = {'file_data': file_data_dict}
                 # VideoUrl is a subclass of FileUrl - include video_metadata if present
                 if isinstance(file, VideoUrl) and file.vendor_metadata:
                     part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
@@ -797,8 +799,10 @@ class GoogleModel(Model):
         the google-genai SDK's `_live_converters.py` rejects it at runtime. We omit it until the
         SDK supports it, at which point we could also add `$ref` identifiers in the response dict.
         """
+        blob_dict: FunctionResponseBlobDict
+        file_data_dict: FunctionResponseFileDataDict
         if isinstance(file, BinaryContent):
-            blob_dict: FunctionResponseBlobDict = {
+            blob_dict = {
                 'data': file.data,
                 'mime_type': file.media_type,
             }
@@ -806,7 +810,7 @@ class GoogleModel(Model):
         elif isinstance(file, VideoUrl) and (
             file.is_youtube or (file.url.startswith('gs://') and self.system == 'google-vertex')
         ):
-            file_data_dict: FunctionResponseFileDataDict = {
+            file_data_dict = {
                 'file_uri': file.url,
                 'mime_type': file.media_type,
             }
@@ -817,13 +821,13 @@ class GoogleModel(Model):
                 and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
             ):
                 downloaded_item = await download_item(file, data_format='bytes')
-                blob_dict: FunctionResponseBlobDict = {
+                blob_dict = {
                     'data': downloaded_item['data'],
                     'mime_type': downloaded_item['data_type'],
                 }
                 return FunctionResponsePartDict(inline_data=blob_dict)
             else:
-                file_data_dict: FunctionResponseFileDataDict = {
+                file_data_dict = {
                     'file_uri': file.url,
                     'mime_type': file.media_type,
                 }
