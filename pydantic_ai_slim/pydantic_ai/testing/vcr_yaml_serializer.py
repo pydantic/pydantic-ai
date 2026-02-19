@@ -207,8 +207,9 @@ def serialize(cassette_dict: Any) -> str:  # pragma: lax no cover
                     parsed = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
                     # Normalize smart quotes and special characters
                     data['parsed_body'] = _normalize_body(parsed)
-                    if 'access_token' in data['parsed_body']:
-                        data['parsed_body']['access_token'] = 'scrubbed'
+                    for token_key in ('access_token', 'id_token'):
+                        if token_key in data['parsed_body']:
+                            data['parsed_body'][token_key] = 'scrubbed'
                     del data['body']
                     # Update content-length to match the body that will be produced during deserialize.
                     # This is necessary because decompression changes the body size, and botocore
