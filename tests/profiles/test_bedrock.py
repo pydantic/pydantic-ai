@@ -142,7 +142,6 @@ def test_strict_false_preserves_schema():
     transformer = BedrockJsonSchemaTransformer(User.model_json_schema(), strict=False)
     transformed = transformer.walk()
 
-    assert transformer.is_strict_compatible is False
     assert transformed == snapshot(
         {
             'type': 'object',
@@ -161,7 +160,7 @@ def test_strict_false_preserves_schema():
 
 
 def test_strict_none_preserves_schema():
-    """With strict=None (default), schema is preserved, is_strict_compatible=False."""
+    """With strict=None (default), schema is preserved, is_strict_compatible=True when compatible."""
 
     class User(BaseModel):
         username: Annotated[str, Field(min_length=3)]
@@ -170,7 +169,7 @@ def test_strict_none_preserves_schema():
     transformer = BedrockJsonSchemaTransformer(User.model_json_schema(), strict=None)
     transformed = transformer.walk()
 
-    assert transformer.is_strict_compatible is False
+    assert transformer.is_strict_compatible is True
     assert transformed == snapshot(
         {
             'type': 'object',
@@ -185,7 +184,7 @@ def test_strict_none_preserves_schema():
 
 
 def test_strict_none_simple_schema():
-    """With strict=None, simple schemas are preserved, is_strict_compatible=False."""
+    """With strict=None, simple schemas are strict-compatible."""
 
     class Person(BaseModel):
         name: str
@@ -194,7 +193,7 @@ def test_strict_none_simple_schema():
     transformer = BedrockJsonSchemaTransformer(Person.model_json_schema(), strict=None)
     transformed = transformer.walk()
 
-    assert transformer.is_strict_compatible is False
+    assert transformer.is_strict_compatible is True
     assert transformed == snapshot(
         {
             'type': 'object',
@@ -532,7 +531,6 @@ def test_strict_false_preserves_numeric_constraints():
     transformer = BedrockJsonSchemaTransformer(Task.model_json_schema(), strict=False)
     transformed = transformer.walk()
 
-    assert transformer.is_strict_compatible is False
     assert transformed == snapshot(
         {
             'type': 'object',

@@ -63,17 +63,12 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
     - ``minItems`` of 0 or 1 on arrays
     """
 
-    def walk(self) -> JsonSchema:
-        schema = super().walk()
-        self.is_strict_compatible = self.strict is True
-        return schema
-
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)
         schema.pop('$schema', None)
 
         if schema.get('type') == 'object':
-            if self.strict is True:
+            if self.strict:
                 schema['additionalProperties'] = False
             elif self.strict is None:
                 if schema.get('additionalProperties', None) not in (None, False):
@@ -81,22 +76,22 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
                 else:
                     schema['additionalProperties'] = False
 
-        if self.strict is True:
-            # Collect and strip Bedrock-incompatible constraints
-            incompatible: dict[str, Any] = {}
-            schema_type = schema.get('type')
+        # Track Bedrock-incompatible constraints
+        incompatible: dict[str, Any] = {}
+        schema_type = schema.get('type')
 
-            if schema_type in ('number', 'integer'):
-                for key in _STRICT_INCOMPATIBLE_KEYS:
-                    if key in schema:
-                        incompatible[key] = schema[key]
-            elif schema_type == 'array':
-                if 'maxItems' in schema:
-                    incompatible['maxItems'] = schema['maxItems']
-                if 'minItems' in schema and schema['minItems'] > 1:
-                    incompatible['minItems'] = schema['minItems']
+        if schema_type in ('number', 'integer'):
+            for key in _STRICT_INCOMPATIBLE_KEYS:
+                if key in schema:
+                    incompatible[key] = schema[key]
+        elif schema_type == 'array':
+            if 'maxItems' in schema:
+                incompatible['maxItems'] = schema['maxItems']
+            if 'minItems' in schema and schema['minItems'] > 1:
+                incompatible['minItems'] = schema['minItems']
 
-            if incompatible:
+        if incompatible:
+            if self.strict:
                 notes: list[str] = []
                 for key, value in incompatible.items():
                     schema.pop(key)
@@ -104,6 +99,8 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
                 notes_str = ', '.join(notes)
                 desc = schema.get('description')
                 schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
+            elif self.strict is None:  # pragma: no branch
+                self.is_strict_compatible = False
 
         return schema
 
