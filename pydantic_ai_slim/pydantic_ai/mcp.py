@@ -339,9 +339,14 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     When enabled (default), tools are fetched once and cached until either:
     - The server sends a `notifications/tools/list_changed` notification
-    - The connection is closed
+    - [`MCPServer.__aexit__`][pydantic_ai.mcp.MCPServer.__aexit__] is called (when the last context exits)
 
     Set to `False` for servers that change tools dynamically without sending notifications.
+
+    Note: When using durable execution (Temporal, DBOS), tool definitions are additionally cached
+    at the wrapper level across activities/steps, to avoid redundant MCP connections. This
+    wrapper-level cache is not invalidated by `tools/list_changed` notifications.
+    Set to `False` to disable all caching if tools may change during a workflow.
     """
 
     cache_resources: bool
@@ -349,7 +354,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     When enabled (default), resources are fetched once and cached until either:
     - The server sends a `notifications/resources/list_changed` notification
-    - The connection is closed
+    - [`MCPServer.__aexit__`][pydantic_ai.mcp.MCPServer.__aexit__] is called (when the last context exits)
 
     Set to `False` for servers that change resources dynamically without sending notifications.
     """
@@ -479,20 +484,18 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         Tools are cached by default, with cache invalidation on:
         - `notifications/tools/list_changed` notifications from the server
-        - Connection close (cache is cleared in `__aexit__`)
+        - `__aexit__` when the last context exits
 
         Set `cache_tools=False` for servers that change tools without sending notifications.
         """
+        if self.cache_tools and self._cached_tools is not None:
+            return self._cached_tools
+
         async with self:
+            result = await self._client.list_tools()
             if self.cache_tools:
-                if self._cached_tools is not None:
-                    return self._cached_tools
-                result = await self._client.list_tools()
                 self._cached_tools = result.tools
-                return result.tools
-            else:
-                result = await self._client.list_tools()
-                return result.tools
+            return result.tools
 
     async def direct_call_tool(
         self,
@@ -600,27 +603,25 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         Resources are cached by default, with cache invalidation on:
         - `notifications/resources/list_changed` notifications from the server
-        - Connection close (cache is cleared in `__aexit__`)
+        - `__aexit__` when the last context exits
 
         Set `cache_resources=False` for servers that change resources without sending notifications.
 
         Raises:
             MCPError: If the server returns an error.
         """
+        if self.cache_resources and self._cached_resources is not None:
+            return self._cached_resources
+
         async with self:
             if not self.capabilities.resources:
                 return []
             try:
+                result = await self._client.list_resources()
+                resources = [Resource.from_mcp_sdk(r) for r in result.resources]
                 if self.cache_resources:
-                    if self._cached_resources is not None:
-                        return self._cached_resources
-                    result = await self._client.list_resources()
-                    resources = [Resource.from_mcp_sdk(r) for r in result.resources]
                     self._cached_resources = resources
-                    return resources
-                else:
-                    result = await self._client.list_resources()
-                    return [Resource.from_mcp_sdk(r) for r in result.resources]
+                return resources
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
 
