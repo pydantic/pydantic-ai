@@ -3960,33 +3960,26 @@ async def test_base_run_python_success():
     from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
 
     class _ShellEnv(BaseEnv):
-        """Env with shell and write_file that delegates to the OS."""
+        """Env that records write_file/shell calls and returns canned results."""
+
+        written: dict[str, str | bytes] = {}
 
         @property
         def capabilities(self) -> frozenset[EnvCapability]:
             return frozenset({'shell', 'write_file', 'run_python'})
 
         async def write_file(self, path: str, content: str | bytes) -> None:
-            p = Path(path)
-            if isinstance(content, str):
-                p.write_text(content, encoding='utf-8')
-            else:
-                p.write_bytes(content)
+            self.written[path] = content
 
         async def shell(
             self, command: str, *, timeout: float | None = 120, env: dict[str, str] | None = None
         ) -> ExecuteResult:
-            import asyncio as _asyncio
-
-            proc = await _asyncio.create_subprocess_shell(
-                command, stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.STDOUT
-            )
-            stdout, _ = await proc.communicate()
-            return ExecuteResult(output=stdout.decode(), exit_code=proc.returncode or 0)
+            return ExecuteResult(output='hello world\n', exit_code=0)
 
     env = _ShellEnv()
     result = await env.run_python('print("hello world")')
-    assert 'hello world' in result
+    assert result == 'hello world\n'
+    assert env.written['/tmp/_pydantic_ai_code.py'] == 'print("hello world")'
 
 
 async def test_base_run_python_error():
@@ -4000,25 +3993,15 @@ async def test_base_run_python_error():
             return frozenset({'shell', 'write_file', 'run_python'})
 
         async def write_file(self, path: str, content: str | bytes) -> None:
-            p = Path(path)
-            if isinstance(content, str):
-                p.write_text(content, encoding='utf-8')
-            else:
-                p.write_bytes(content)
+            pass
 
         async def shell(
             self, command: str, *, timeout: float | None = 120, env: dict[str, str] | None = None
         ) -> ExecuteResult:
-            import asyncio as _asyncio
-
-            proc = await _asyncio.create_subprocess_shell(
-                command, stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.STDOUT
-            )
-            stdout, _ = await proc.communicate()
-            return ExecuteResult(output=stdout.decode(), exit_code=proc.returncode or 0)
+            return ExecuteResult(output='Exception: fail\n', exit_code=1)
 
     env = _ShellEnv()
-    with pytest.raises(CodeRuntimeError):
+    with pytest.raises(CodeRuntimeError, match='Exception: fail'):
         await env.run_python('raise Exception("fail")')
 
 
