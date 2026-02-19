@@ -1,7 +1,7 @@
 import datetime
 import json
 from collections.abc import Sequence
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -27,8 +27,16 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.openrouter import (
+    OpenRouterModel,
+    OpenRouterModelSettings,
+    _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
+    _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
+    _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
+)
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -524,15 +532,8 @@ async def test_openrouter_validate_error_response(openrouter_api_key: str) -> No
 
 
 async def test_openrouter_with_provider_details_but_no_parent_details(openrouter_api_key: str) -> None:
-    from typing import Any
-
     class TestOpenRouterModel(OpenRouterModel):
         def _process_provider_details(self, response: ChatCompletion) -> dict[str, Any] | None:
-            from pydantic_ai.models.openrouter import (
-                _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
-                _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
-            )
-
             assert isinstance(response, _OpenRouterChatCompletion)
             openrouter_details = _map_openrouter_provider_details(response)
             return openrouter_details or None
@@ -877,9 +878,6 @@ async def test_openrouter_supported_builtin_tools() -> None:
 
 async def test_openrouter_web_search_prepare_request(openrouter_api_key: str) -> None:
     """Test that prepare_request injects web search plugins when WebSearchTool is present."""
-    from typing import Any
-
-    from pydantic_ai.builtin_tools import WebSearchTool
 
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/gpt-4.1', provider=provider)
@@ -900,9 +898,6 @@ async def test_openrouter_web_search_prepare_request(openrouter_api_key: str) ->
 
 async def test_openrouter_web_search_with_settings(openrouter_api_key: str) -> None:
     """Test that OpenRouter-specific WebSearchTool fields are applied to the plugin."""
-    from typing import Any
-
-    from pydantic_ai.builtin_tools import WebSearchTool
 
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/gpt-4.1', provider=provider)
@@ -938,7 +933,6 @@ async def test_openrouter_web_search_with_settings(openrouter_api_key: str) -> N
 
 async def test_openrouter_no_web_search_without_tool(openrouter_api_key: str) -> None:
     """Test that no plugins are added when WebSearchTool is not present."""
-    from typing import Any
 
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/gpt-4.1', provider=provider)
@@ -955,13 +949,6 @@ async def test_openrouter_no_web_search_without_tool(openrouter_api_key: str) ->
 
 async def test_openrouter_settings_to_openai_settings_no_web_search_options() -> None:
     """Test _openrouter_settings_to_openai_settings when WebSearchTool has no provider_metadata."""
-    from typing import Any
-
-    from pydantic_ai.builtin_tools import WebSearchTool
-    from pydantic_ai.models.openrouter import (
-        _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
-    )
-
     settings = OpenRouterModelSettings()
     model_request_parameters = ModelRequestParameters(
         builtin_tools=[WebSearchTool(search_context_size='high')],

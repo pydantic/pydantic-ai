@@ -35,6 +35,26 @@ ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '
 """Supported aspect ratios for image generation tools."""
 
 
+class WebSearchToolOpenRouterMetadata(TypedDict, total=False):
+    """OpenRouter specific metadata for web search configuration."""
+
+    engine: Literal['native', 'exa']
+    """Which search engine to use."""
+
+    max_results: int
+    """Maximum number of search results to return."""
+
+    search_prompt: str
+    """Custom prompt for attaching web search results."""
+
+
+class WebSearchToolProviderMetadata(TypedDict, total=False):
+    """Provider-specific metadata for web search configuration."""
+
+    openrouter: WebSearchToolOpenRouterMetadata
+    """OpenRouter specific configuration."""
+
+
 @dataclass(kw_only=True)
 class AbstractBuiltinTool(ABC):
     """A builtin tool that can be used by an agent.
@@ -151,7 +171,7 @@ class WebSearchTool(AbstractBuiltinTool):
     * Anthropic
     """
 
-    provider_metadata: dict[str, dict[str, Any]] | None = None
+    provider_metadata: WebSearchToolProviderMetadata | None = None
     """Provider-specific metadata for web search configuration.
 
     This field allows you to pass provider-specific settings that are not part of the common interface.

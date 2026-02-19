@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BaseModel, Discriminator
 from typing_extensions import Required, TypedDict, assert_never, override
 
-from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
+from ..builtin_tools import AbstractBuiltinTool, WebSearchTool, WebSearchToolOpenRouterMetadata
 from ..exceptions import ModelHTTPError
 from ..messages import BinaryContent, FinishReason, ModelResponseStreamEvent, ThinkingPart, VideoUrl
 from ..profiles import ModelProfileSpec
@@ -575,8 +575,9 @@ def _openrouter_settings_to_openai_settings(
         if isinstance(builtin_tool, WebSearchTool):
             web_search_plugin: OpenRouterWebSearchPlugin = {'id': 'web'}
 
-            openrouter_metadata = (
-                builtin_tool.provider_metadata.get('openrouter', {}) if builtin_tool.provider_metadata else {}
+            openrouter_metadata = cast(
+                WebSearchToolOpenRouterMetadata,
+                builtin_tool.provider_metadata.get('openrouter', {}) if builtin_tool.provider_metadata else {},
             )
 
             if 'engine' in openrouter_metadata:
@@ -586,7 +587,7 @@ def _openrouter_settings_to_openai_settings(
             if 'search_prompt' in openrouter_metadata:
                 web_search_plugin['search_prompt'] = openrouter_metadata['search_prompt']
 
-            extra_body['plugins'] = [web_search_plugin]
+            extra_body.setdefault('plugins', []).append(web_search_plugin)
 
             web_search_options: OpenRouterWebSearchOptions = {'search_context_size': builtin_tool.search_context_size}
             extra_body['web_search_options'] = web_search_options
