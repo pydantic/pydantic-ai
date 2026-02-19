@@ -40,7 +40,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
-from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
+from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -64,12 +64,15 @@ with try_import() as imports_successful:
         ResponseQueuedEvent,
     )
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
+    from openai.types.responses.response_output_refusal import ResponseOutputRefusal
     from openai.types.responses.response_output_text import ResponseOutputText
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
         ResponseReasoningItem,
         Summary,
     )
+    from openai.types.responses.response_refusal_delta_event import ResponseRefusalDeltaEvent
+    from openai.types.responses.response_refusal_done_event import ResponseRefusalDoneEvent
     from openai.types.responses.response_status import ResponseStatus
     from openai.types.responses.response_usage import ResponseUsage
 
@@ -10036,6 +10039,39 @@ def _text_response(text: str, *, status: ResponseStatus = 'completed') -> respon
     return r
 
 
+async def test_openai_responses_refusal_non_streaming(allow_model_requests: None):
+    """Test that ResponseOutputRefusal in content triggers ContentFilterError."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_001',
+                content=[ResponseOutputRefusal(refusal="I can't help with that request.", type='refusal')],
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    c.model = 'gpt-4o'
+
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        ContentFilterError,
+        match=re.escape('Content filter triggered. Refusal: "I can\'t help with that request."'),
+    ) as exc_info:
+        await agent.run('harmful prompt')
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['refusal'] == "I can't help with that request."
+
+
 @pytest.mark.vcr()
 async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: str):
     """VCR test: background mode with a simple prompt.
@@ -10528,3 +10564,80 @@ async def test_stream_handles_queued_event(allow_model_requests: None):
 
     assert events == []
     assert request_stream.state == 'suspended'
+
+
+async def test_openai_responses_refusal_streaming(allow_model_requests: None):
+    """Test that ResponseRefusalDeltaEvent/DoneEvent in streaming triggers ContentFilterError."""
+    from openai.types import responses as resp
+
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base_response, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        ResponseRefusalDeltaEvent(
+            content_index=0,
+            delta="I can't help ",
+            item_id='msg_001',
+            output_index=0,
+            type='response.refusal.delta',
+            sequence_number=3,
+        ),
+        ResponseRefusalDeltaEvent(
+            content_index=0,
+            delta='with that.',
+            item_id='msg_001',
+            output_index=0,
+            type='response.refusal.delta',
+            sequence_number=4,
+        ),
+        ResponseRefusalDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            refusal="I can't help with that.",
+            type='response.refusal.done',
+            sequence_number=5,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=6,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    with pytest.raises(ContentFilterError, match='Content filter triggered') as exc_info:
+        async with agent.run_stream('harmful prompt'):
+            pass
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['refusal'] == "I can't help with that."

@@ -112,9 +112,8 @@ dev = [
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
-    "pip>=25.2",
+    "pip>=26.0",
     "genai-prices>=0.0.28",
-    "mcp-run-python>=0.0.20",
     "brotli>=1.2.0",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
@@ -251,12 +250,18 @@ filterwarnings = [
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed <ssl.SSLSocket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
+    # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
+    # happens only for python < 3.12 because of vllms pins
+    "ignore:The 'default' attribute with value 'UTC' was provided.*:UserWarning",
     # This is because of cohere.
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
     # TODO(Marcelo): Drop this once voyageai stops using Pydantic V1 functionality.
-    "ignore: Core Pydantic V1 functionality:UserWarning"
+    "ignore: Core Pydantic V1 functionality:UserWarning",
+    # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
+    # happens only for python < 3.12 because of vllms pins
+    "ignore:UnsupportedFieldAttributeWarning:UserWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
@@ -344,4 +349,4 @@ skip = '.git*,*.svg,*.lock,*.css,*.yaml'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
-ignore-words-list = 'asend,aci'
+ignore-words-list = 'asend,aci,fpr'
