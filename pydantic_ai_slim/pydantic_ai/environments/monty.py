@@ -116,7 +116,9 @@ class MontyEnvironment(ExecutionEnvironment):
             )
             monty_state = monty.start(limits=limits)
             if not isinstance(monty_state, MontyComplete):
-                raise CodeRuntimeError('Unexpected external function call in code without functions.')
+                raise CodeRuntimeError(
+                    'Unexpected external function call in code without functions.'
+                )  # pragma: no cover
         except MontyRuntimeError as e:
             self._raise_if_timeout(e)
             raise CodeRuntimeError(e.display()) from e

@@ -117,7 +117,7 @@ def _docker_is_available() -> bool:
     """Check whether Docker is installed and the daemon is reachable."""
     if not shutil.which('docker'):  # pragma: lax no cover
         return False
-    try:
+    try:  # pragma: lax no cover
         subprocess.run(['docker', 'info'], check=True, capture_output=True)  # pragma: lax no cover
     except (subprocess.CalledProcessError, FileNotFoundError):  # pragma: lax no cover
         return False

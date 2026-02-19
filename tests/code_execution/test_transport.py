@@ -81,7 +81,7 @@ class _ScriptedTransport(DriverTransport):
         # Wait for any pending result write before yielding the next line
         await self._result_event.wait()
         if self._index >= len(self._lines):
-            return b''
+            return b''  # pragma: no cover
         line = self._lines[self._index]
         self._index += 1
         # If this was a call message, block until the host writes a result
@@ -95,7 +95,7 @@ class _ScriptedTransport(DriverTransport):
         self._result_event.set()
 
     async def read_stderr(self) -> bytes:
-        return self._stderr
+        return self._stderr  # pragma: no cover
 
     async def kill(self) -> None:
         self._killed = True
@@ -109,7 +109,7 @@ class _ScriptedEnvironment(DriverBasedEnvironment):
 
     @property
     def capabilities(self) -> frozenset[Any]:
-        return frozenset({'run_python', 'run_python_with_functions'})
+        return frozenset({'run_python', 'run_python_with_functions'})  # pragma: no cover
 
     async def _copy_driver(self) -> None:
         pass
@@ -159,7 +159,7 @@ class _BlockingTransport(DriverTransport):
         pass  # pragma: no cover
 
     async def read_stderr(self) -> bytes:
-        return b''
+        return b''  # pragma: no cover
 
     async def kill(self) -> None:
         pass
@@ -172,7 +172,7 @@ class _TimeoutEnvironment(DriverBasedEnvironment):
 
     @property
     def capabilities(self) -> frozenset[Any]:
-        return frozenset({'run_python', 'run_python_with_functions'})
+        return frozenset({'run_python', 'run_python_with_functions'})  # pragma: no cover
 
     async def _copy_driver(self) -> None:
         pass
@@ -447,7 +447,7 @@ async def test_default_start_driver():
     class _FakeDriverEnvironment(DriverBasedEnvironment):
         @property
         def capabilities(self) -> frozenset[Any]:
-            return frozenset({'run_python', 'run_python_with_functions'})
+            return frozenset({'run_python', 'run_python_with_functions'})  # pragma: no cover
 
         async def _copy_driver(self) -> None:
             pass
