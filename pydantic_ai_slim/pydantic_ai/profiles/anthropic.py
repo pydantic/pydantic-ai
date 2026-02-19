@@ -15,7 +15,7 @@ class AnthropicModelProfile(ModelProfile):
     anthropic_supports_fast_speed: bool = False
     """Whether the model supports fast inference speed (`anthropic_speed='fast'`).
 
-    Currently only Claude Opus 4.6 supports fast mode. See the Anthropic docs for the latest list.
+    Currently Claude Opus 4.6 and Claude Sonnet 4.6 support fast mode. See the Anthropic docs for the latest list.
     """
 
 
@@ -34,7 +34,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile:
     # https://docs.claude.com/en/docs/build-with-claude/structured-outputs#example-usage
 
     supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
-    anthropic_supports_fast_speed = model_name.startswith('claude-opus-4-6')
+    models_that_support_fast_speed = ('claude-opus-4-6', 'claude-sonnet-4-6')
+    anthropic_supports_fast_speed = model_name.startswith(models_that_support_fast_speed)
 
     return AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
