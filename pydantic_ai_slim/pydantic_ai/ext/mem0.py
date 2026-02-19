@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from pydantic_ai import FunctionToolset
+from pydantic_ai.exceptions import UserError
 
 
 class Mem0Client(Protocol):
@@ -14,6 +15,7 @@ class Mem0Client(Protocol):
         *,
         user_id: str | None = None,
         agent_id: str | None = None,
+        run_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Any: ...
 
@@ -23,6 +25,7 @@ class Mem0Client(Protocol):
         *,
         user_id: str | None = None,
         agent_id: str | None = None,
+        run_id: str | None = None,
         limit: int = 5,
     ) -> Any: ...
 
@@ -39,12 +42,18 @@ class Mem0Toolset(FunctionToolset):
         *,
         user_id: str | None = None,
         agent_id: str | None = None,
-        id: str | None = None,
-    ):
+        run_id: str | None = None,
+    ) -> None:
+        if user_id is None and agent_id is None and run_id is None:
+            raise UserError(
+                'Mem0Toolset requires at least one of user_id, agent_id, or run_id '
+                '(Mem0 add/search require an identifier).'
+            )
         self._client = client
         self._user_id = user_id
         self._agent_id = agent_id
-        super().__init__([], id=id)
+        self._run_id = run_id
+        super().__init__([])
 
         def save_memory(
             content: str,
@@ -60,6 +69,7 @@ class Mem0Toolset(FunctionToolset):
                 [{'role': 'user', 'content': content}],
                 user_id=self._user_id,
                 agent_id=self._agent_id,
+                run_id=self._run_id,
                 metadata=metadata,
             )
             return {'result': result}
@@ -78,6 +88,7 @@ class Mem0Toolset(FunctionToolset):
                 query,
                 user_id=self._user_id,
                 agent_id=self._agent_id,
+                run_id=self._run_id,
                 limit=limit,
             )
             return {'results': results}
