@@ -320,6 +320,12 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     openai_top_logprobs: int
     """Include log probabilities of the top n tokens in the response."""
 
+    openai_store: bool | None
+    """Whether or not to store the output of this request in OpenAI's systems.
+
+    If `False`, OpenAI will not store the request for its own internal review or training.
+    See [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create#chat-create-store)."""
+
     openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
 
@@ -722,6 +728,7 @@ class OpenAIChatModel(Model):
                 logit_bias=model_settings.get('logit_bias', OMIT),
                 logprobs=model_settings.get('openai_logprobs', OMIT),
                 top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                store=model_settings.get('openai_store', OMIT),
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                 prompt_cache_retention=prompt_cache_retention,
                 extra_headers=extra_headers,
@@ -924,7 +931,7 @@ class OpenAIChatModel(Model):
         _model: OpenAIChatModel
 
         texts: list[str] = field(default_factory=list[str])
-        thinkings: list[str] = field(default_factory=list[str])
+        thinkings: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
         tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = field(
             default_factory=list[ChatCompletionMessageFunctionToolCallParam]
         )
@@ -954,14 +961,12 @@ class OpenAIChatModel(Model):
             Returns:
                 An OpenAI `ChatCompletionAssistantMessageParam` object representing the assistant's response.
             """
-            profile = OpenAIModelProfile.from_profile(self._model.profile)
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
             # Note: model responses from this model should only have one text item, so the following
             # shouldn't merge multiple texts into one unless you switch models between runs:
-            if profile.openai_chat_send_back_thinking_parts == 'field' and self.thinkings:
-                field = profile.openai_chat_thinking_field
-                if field:  # pragma: no branch (handled by profile validation)
-                    message_param[field] = '\n\n'.join(self.thinkings)
+            if self.thinkings:
+                for field_name, contents in self.thinkings.items():
+                    message_param[field_name] = '\n\n'.join(contents)
             if self.texts:
                 message_param['content'] = '\n\n'.join(self.texts)
             else:
@@ -986,11 +991,33 @@ class OpenAIChatModel(Model):
             """
             profile = OpenAIModelProfile.from_profile(self._model.profile)
             include_method = profile.openai_chat_send_back_thinking_parts
-            if include_method == 'tags':
+
+            # Auto-detect: if thinking came from a custom field and from the same provider, use field mode
+            # id='content' means it came from tags in content, not a custom field
+            if include_method == 'auto':
+                # Check if thinking came from a custom field from the same provider
+                custom_field = profile.openai_chat_thinking_field
+                matches_custom_field = (not custom_field) or (item.id == custom_field)
+
+                if (
+                    item.id
+                    and item.id != 'content'
+                    and item.provider_name == self._model.system
+                    and matches_custom_field
+                ):
+                    # Store both content and field name for later use in _into_message_param
+                    self.thinkings.setdefault(item.id, []).append(item.content)
+                else:
+                    # Fall back to tags mode
+                    start_tag, end_tag = self._model.profile.thinking_tags
+                    self.texts.append('\n'.join([start_tag, item.content, end_tag]))
+            elif include_method == 'tags':
                 start_tag, end_tag = self._model.profile.thinking_tags
                 self.texts.append('\n'.join([start_tag, item.content, end_tag]))
             elif include_method == 'field':
-                self.thinkings.append(item.content)
+                field = profile.openai_chat_thinking_field
+                if field:  # pragma: no branch
+                    self.thinkings.setdefault(field, []).append(item.content)
 
         def _map_response_tool_call_part(self, item: ToolCallPart) -> None:
             """Maps a `ToolCallPart` to the response context.
@@ -1116,107 +1143,127 @@ class OpenAIChatModel(Model):
             else:
                 assert_never(part)
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:  # noqa: C901
+    async def _map_image_url_item(self, item: ImageUrl) -> ChatCompletionContentPartImageParam:
+        """Map an ImageUrl to a chat completion image content part."""
+        image_url: ImageURL = {'url': item.url}
+        if metadata := item.vendor_metadata:
+            image_url['detail'] = metadata.get('detail', 'auto')
+        if item.force_download:
+            image_content = await download_item(item, data_format='base64_uri', type_format='extension')
+            image_url['url'] = image_content['data']
+        return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
+
+    async def _map_binary_content_item(self, item: BinaryContent) -> ChatCompletionContentPartParam:
+        """Map a BinaryContent item to a chat completion content part."""
         profile = OpenAIModelProfile.from_profile(self.profile)
+        if self._is_text_like_media_type(item.media_type):
+            # Inline text-like binary content as a text block
+            return self._inline_text_file_part(
+                item.data.decode('utf-8'),
+                media_type=item.media_type,
+                identifier=item.identifier,
+            )
+        elif item.is_image:
+            image_url = ImageURL(url=item.data_uri)
+            if metadata := item.vendor_metadata:
+                image_url['detail'] = metadata.get('detail', 'auto')
+            return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
+        elif item.is_audio:
+            assert item.format in ('wav', 'mp3')
+            if profile.openai_chat_audio_input_encoding == 'uri':
+                audio = InputAudio(data=item.data_uri, format=item.format)
+            else:
+                audio = InputAudio(data=item.base64, format=item.format)
+            return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
+        elif item.is_document:
+            return File(
+                file=FileFile(
+                    file_data=item.data_uri,
+                    filename=f'filename.{item.format}',
+                ),
+                type='file',
+            )
+        else:  # pragma: no cover
+            raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
+
+    async def _map_audio_url_item(self, item: AudioUrl) -> ChatCompletionContentPartInputAudioParam:
+        """Map an AudioUrl to a chat completion audio content part."""
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        data_format = 'base64_uri' if profile.openai_chat_audio_input_encoding == 'uri' else 'base64'
+        downloaded_item = await download_item(item, data_format=data_format, type_format='extension')
+        assert downloaded_item['data_type'] in (
+            'wav',
+            'mp3',
+        ), f'Unsupported audio format: {downloaded_item["data_type"]}'
+        audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
+        return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
+
+    async def _map_document_url_item(self, item: DocumentUrl) -> ChatCompletionContentPartParam:
+        """Map a DocumentUrl to a chat completion content part."""
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        # OpenAI Chat API's FileFile only supports base64-encoded data, not URLs.
+        # Some providers (e.g., OpenRouter) support URLs via the profile flag.
+        if not item.force_download and profile.openai_chat_supports_file_urls:
+            return File(
+                file=FileFile(
+                    file_data=item.url,
+                    filename=f'filename.{item.format}',
+                ),
+                type='file',
+            )
+        if self._is_text_like_media_type(item.media_type):
+            downloaded_text = await download_item(item, data_format='text')
+            return self._inline_text_file_part(
+                downloaded_text['data'],
+                media_type=item.media_type,
+                identifier=item.identifier,
+            )
+        else:
+            downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
+            return File(
+                file=FileFile(
+                    file_data=downloaded_item['data'],
+                    filename=f'filename.{downloaded_item["data_type"]}',
+                ),
+                type='file',
+            )
+
+    async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:  # pragma: no cover
+        """Map a VideoUrl to a chat completion content part."""
+        raise NotImplementedError('VideoUrl is not supported for OpenAI')
+
+    async def _map_content_item(
+        self, item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | CachePoint
+    ) -> ChatCompletionContentPartParam | None:
+        """Map a single content item to a chat completion content part, or None to filter it out."""
+        if isinstance(item, str):
+            return ChatCompletionContentPartTextParam(text=item, type='text')
+        elif isinstance(item, ImageUrl):
+            return await self._map_image_url_item(item)
+        elif isinstance(item, BinaryContent):
+            return await self._map_binary_content_item(item)
+        elif isinstance(item, AudioUrl):
+            return await self._map_audio_url_item(item)
+        elif isinstance(item, DocumentUrl):
+            return await self._map_document_url_item(item)
+        elif isinstance(item, VideoUrl):
+            return await self._map_video_url_item(item)
+        elif isinstance(item, CachePoint):
+            # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
+            return None
+        else:
+            assert_never(item)
+
+    async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
         content: str | list[ChatCompletionContentPartParam]
         if isinstance(part.content, str):
             content = part.content
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(ChatCompletionContentPartTextParam(text=item, type='text'))
-                elif isinstance(item, ImageUrl):
-                    image_url: ImageURL = {'url': item.url}
-                    if metadata := item.vendor_metadata:
-                        image_url['detail'] = metadata.get('detail', 'auto')
-                    if item.force_download:
-                        image_content = await download_item(item, data_format='base64_uri', type_format='extension')
-                        image_url['url'] = image_content['data']
-                    content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
-                elif isinstance(item, BinaryContent):
-                    if self._is_text_like_media_type(item.media_type):
-                        # Inline text-like binary content as a text block
-                        content.append(
-                            self._inline_text_file_part(
-                                item.data.decode('utf-8'),
-                                media_type=item.media_type,
-                                identifier=item.identifier,
-                            )
-                        )
-                    elif item.is_image:
-                        image_url = ImageURL(url=item.data_uri)
-                        if metadata := item.vendor_metadata:
-                            image_url['detail'] = metadata.get('detail', 'auto')
-                        content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
-                    elif item.is_audio:
-                        assert item.format in ('wav', 'mp3')
-                        if profile.openai_chat_audio_input_encoding == 'uri':
-                            audio = InputAudio(data=item.data_uri, format=item.format)
-                        else:
-                            audio = InputAudio(data=item.base64, format=item.format)
-                        content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
-                    elif item.is_document:
-                        content.append(
-                            File(
-                                file=FileFile(
-                                    file_data=item.data_uri,
-                                    filename=f'filename.{item.format}',
-                                ),
-                                type='file',
-                            )
-                        )
-                    else:  # pragma: no cover
-                        raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
-                elif isinstance(item, AudioUrl):
-                    data_format = 'base64_uri' if profile.openai_chat_audio_input_encoding == 'uri' else 'base64'
-                    downloaded_item = await download_item(item, data_format=data_format, type_format='extension')
-                    assert downloaded_item['data_type'] in (
-                        'wav',
-                        'mp3',
-                    ), f'Unsupported audio format: {downloaded_item["data_type"]}'
-                    audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
-                    content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
-                elif isinstance(item, DocumentUrl):
-                    # OpenAI Chat API's FileFile only supports base64-encoded data, not URLs.
-                    # Some providers (e.g., OpenRouter) support URLs via the profile flag.
-                    if not item.force_download and profile.openai_chat_supports_file_urls:
-                        content.append(
-                            File(
-                                file=FileFile(
-                                    file_data=item.url,
-                                    filename=f'filename.{item.format}',
-                                ),
-                                type='file',
-                            )
-                        )
-                    elif self._is_text_like_media_type(item.media_type):
-                        downloaded_text = await download_item(item, data_format='text')
-                        content.append(
-                            self._inline_text_file_part(
-                                downloaded_text['data'],
-                                media_type=item.media_type,
-                                identifier=item.identifier,
-                            )
-                        )
-                    else:
-                        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
-                        content.append(
-                            File(
-                                file=FileFile(
-                                    file_data=downloaded_item['data'],
-                                    filename=f'filename.{downloaded_item["data_type"]}',
-                                ),
-                                type='file',
-                            )
-                        )
-                elif isinstance(item, VideoUrl):  # pragma: no cover
-                    raise NotImplementedError('VideoUrl is not supported for OpenAI')
-                elif isinstance(item, CachePoint):
-                    # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
-                    pass
-                else:
-                    assert_never(item)
+                mapped_item = await self._map_content_item(item)
+                if mapped_item is not None:
+                    content.append(mapped_item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
     @staticmethod
@@ -1636,6 +1683,7 @@ class OpenAIResponsesModel(Model):
                 service_tier=model_settings.get('openai_service_tier', OMIT),
                 previous_response_id=previous_response_id or OMIT,
                 top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                store=model_settings.get('openai_store', OMIT),
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', OMIT),
                 text=text or OMIT,
@@ -2775,7 +2823,7 @@ def _map_usage(
         api_flavor = 'responses'
 
         if getattr(response_usage, 'output_tokens_details', None) is not None:
-            details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
+            details['reasoning_tokens'] = getattr(response_usage.output_tokens_details, 'reasoning_tokens', 0)
         else:
             details['reasoning_tokens'] = 0
     else:
