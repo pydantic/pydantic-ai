@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
@@ -12,12 +12,16 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError
+from ..messages import ModelRequest, ModelResponse
 from ..profiles import ModelProfile
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
-    from ..messages import ModelMessage, ModelResponse
+    from ..messages import ModelMessage
     from ..settings import ModelSettings
+
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
+_FALLBACK_MODEL_NAME_KEY = 'fallback_model_name'
 
 
 @dataclass(init=False)
@@ -29,7 +33,6 @@ class FallbackModel(Model):
 
     models: list[Model]
 
-    _model_name: str = field(repr=False)
     _fallback_on: Callable[[Exception], bool]
 
     def __init__(
@@ -80,8 +83,30 @@ class FallbackModel(Model):
         """Try each model in sequence until one succeeds.
 
         In case of failure, raise a FallbackExceptionGroup with all exceptions.
+
+        If a previous response set `state='suspended'`, the request is routed directly
+        to the pinned continuation model, bypassing the fallback chain. If the pinned model
+        raises a fallback-eligible error during continuation, the messages are rewound
+        (stripping the suspended response and trailing continuation request) and the
+        normal fallback chain is tried.
         """
         exceptions: list[Exception] = []
+
+        if pinned := self._get_continuation_model(messages):
+            try:
+                _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
+                response = await pinned.request(messages, model_settings, model_request_parameters)
+            except Exception as exc:
+                if not self._fallback_on(exc):
+                    raise
+                messages = _rewind_messages(messages)
+                exceptions.append(exc)
+                # Fall through to normal chain below
+            else:
+                if response.state == 'suspended':
+                    _stamp_continuation(response, pinned)
+                self._set_span_attributes(pinned, prepared_parameters)
+                return response
 
         for model in self.models:
             try:
@@ -93,6 +118,8 @@ class FallbackModel(Model):
                     continue
                 raise exc
 
+            if response.state == 'suspended':
+                _stamp_continuation(response, model)
             self._set_span_attributes(model, prepared_parameters)
             return response
 
@@ -106,14 +133,40 @@ class FallbackModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        """Try each model in sequence until one succeeds."""
+        """Try each model in sequence until one succeeds.
+
+        If a previous response set `state='suspended'`, the request is routed directly
+        to the pinned continuation model, bypassing the fallback chain. If the pinned model
+        raises a fallback-eligible error while opening the stream, the messages are rewound
+        and the normal fallback chain is tried. Mid-stream failures still propagate.
+        """
         exceptions: list[Exception] = []
+
+        if pinned := self._get_continuation_model(messages):
+            async with AsyncExitStack() as stack:
+                try:
+                    _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
+                    streamed_response = await stack.enter_async_context(
+                        pinned.request_stream(messages, model_settings, model_request_parameters, run_context)
+                    )
+                except Exception as exc:
+                    if not self._fallback_on(exc):
+                        raise
+                    messages = _rewind_messages(messages)
+                    exceptions.append(exc)
+                    # Fall through to normal chain below
+                else:
+                    self._set_span_attributes(pinned, prepared_parameters)
+                    yield streamed_response
+                    if streamed_response.state == 'suspended':
+                        _stamp_continuation(streamed_response, pinned)
+                    return
 
         for model in self.models:
             async with AsyncExitStack() as stack:
                 try:
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
-                    response = await stack.enter_async_context(
+                    streamed_response = await stack.enter_async_context(
                         model.request_stream(messages, model_settings, model_request_parameters, run_context)
                     )
                 except Exception as exc:
@@ -123,7 +176,9 @@ class FallbackModel(Model):
                     raise exc  # pragma: no cover
 
                 self._set_span_attributes(model, prepared_parameters)
-                yield response
+                yield streamed_response
+                if streamed_response.state == 'suspended':
+                    _stamp_continuation(streamed_response, model)
                 return
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
@@ -140,6 +195,26 @@ class FallbackModel(Model):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return model_settings, model_request_parameters
 
+    def _get_continuation_model(self, messages: list[ModelMessage]) -> Model | None:
+        """Find the model that should handle continuation from message history.
+
+        When a model returns `state='suspended'`, its `model_name` is stamped into
+        the response's `metadata` (under a `__pydantic_ai__` key). On the next request,
+        we extract that name and match it back to the correct model in `self.models`.
+        """
+        for message in reversed(messages):
+            if isinstance(message, ModelResponse):
+                if message.state != 'suspended':
+                    return None
+                pydantic_ai_meta = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY, {})
+                name = pydantic_ai_meta.get(_FALLBACK_MODEL_NAME_KEY)
+                if name:
+                    for model in self.models:
+                        if model.model_name == name:
+                            return model
+                return None
+        return None
+
     def _set_span_attributes(self, model: Model, model_request_parameters: ModelRequestParameters):
         with suppress(Exception):
             span = get_current_span()
@@ -152,6 +227,33 @@ class FallbackModel(Model):
                             **InstrumentedModel.model_request_parameters_attributes(model_request_parameters),
                         }
                     )
+
+
+def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:
+    """Stamp the model's name into metadata for stateless continuation routing.
+
+    Uses `metadata['__pydantic_ai__']` to avoid conflating framework-level routing state
+    with provider-specific data in `provider_details`.
+    """
+    if response.metadata is None:
+        response.metadata = {}
+    pydantic_ai_meta = response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})
+    pydantic_ai_meta[_FALLBACK_MODEL_NAME_KEY] = model.model_name
+
+
+def _rewind_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Strip suspended response and trailing continuation request from message end.
+
+    When a pinned continuation model fails, the messages still contain the suspended
+    response and the continuation request that triggered the failure. Before falling
+    through to the normal chain, we need to remove these so models see a clean history.
+    """
+    rewound = list(messages)
+    if rewound and isinstance(rewound[-1], ModelRequest):
+        rewound.pop()
+    if rewound and isinstance(rewound[-1], ModelResponse) and rewound[-1].state == 'suspended':
+        rewound.pop()
+    return rewound
 
 
 def _default_fallback_condition_factory(exceptions: tuple[type[Exception], ...]) -> Callable[[Exception], bool]:

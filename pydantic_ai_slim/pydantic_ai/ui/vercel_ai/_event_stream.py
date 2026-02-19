@@ -63,6 +63,7 @@ _FINISH_REASON_MAP: dict[PydanticFinishReason, FinishReason] = {
     'length': 'length',
     'content_filter': 'content-filter',
     'tool_call': 'tool-calls',
+    'incomplete': 'other',
     'error': 'error',
 }
 

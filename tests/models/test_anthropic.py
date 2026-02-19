@@ -45,7 +45,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -274,6 +274,93 @@ async def test_sync_request_text_response(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_pause_turn_continues_run(allow_model_requests: None):
+    c1 = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    c1.stop_reason = 'pause_turn'
+    c2 = completion_message([BetaTextBlock(text='final', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+
+    mock_client = MockAnthropic.create_mock([c1, c2])
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    result = await agent.run('test prompt')
+
+    assert result.output == 'final'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test prompt', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5, details={'input_tokens': 10, 'output_tokens': 5}),
+                model_name='claude-3-5-haiku-123',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_pause_turn_exceeds_max_continuations(allow_model_requests: None):
+    """Test that exceeding the default max continuations (50) raises UnexpectedModelBehavior."""
+    responses: list[BetaMessage | Exception] = []
+    for _ in range(51):
+        c = completion_message([BetaTextBlock(text='paused', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+        c.stop_reason = 'pause_turn'
+        responses.append(c)
+
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum continuations \\(50\\)'):
+        await agent.run('test prompt')
+
+
+@pytest.mark.vcr()
+async def test_pause_turn_web_search_vcr(allow_model_requests: None, anthropic_api_key: str):
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 4096}, max_tokens=15000)
+    agent = Agent(model, builtin_tools=[WebSearchTool()], model_settings=settings)
+
+    prompt = (
+        'Run a series of web searches to gather up-to-date context. '
+        'Do 6 separate searches, one at a time, and do not answer until all searches are complete. '
+        'Queries: '
+        '1) "San Francisco weather today", '
+        '2) "San Francisco sunrise time today", '
+        '3) "Golden Gate Bridge traffic today", '
+        '4) "San Francisco air quality today", '
+        '5) "San Francisco events this week", '
+        '6) "San Francisco ferry schedule today". '
+        '7) "prevailing information on quantum computing today", '
+        '8) "latest news on the stock market today", '
+        '9) "latest news on the weather in San Francisco today", '
+        '10) "latest news on the traffic in San Francisco today", '
+        '11) "latest news on the air quality in San Francisco today", '
+        '12) "latest news on the events in San Francisco this week", '
+        '13) "latest news on the ferry schedule in San Francisco today", '
+        '14) "latest news on the quantum computing in San Francisco today", '
+        '15) "latest news on the stock market in San Francisco today", '
+        'After the searches, provide a concise summary.'
+    )
+
+    result = await agent.run(prompt)
+
+    # With ContinueRequestNode, pause_turn responses are merged into the final response
+    # and no longer appear as separate messages in the history.
+    # Verify the agent completed successfully (which exercises the continuation path).
+    assert result.output
 
 
 async def test_async_request_prompt_caching(allow_model_requests: None):

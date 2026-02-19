@@ -3,6 +3,7 @@ from importlib.metadata import version as _metadata_version
 from .agent import (
     Agent,
     CallToolsNode,
+    ContinueRequestNode,
     EndStrategy,
     InstrumentationSettings,
     ModelRequestNode,
@@ -134,6 +135,7 @@ __all__ = (
     'Agent',
     'EndStrategy',
     'CallToolsNode',
+    'ContinueRequestNode',
     'ModelRequestNode',
     'UserPromptNode',
     'capture_run_messages',

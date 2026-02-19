@@ -334,6 +334,16 @@ print(result2.all_messages())
 """
 ```
 
+### Continuation Responses
+
+Some models may pause mid-turn and expect a follow-up request to continue generating.
+This can happen, for example, with Anthropic's `pause_turn` stop reason or OpenAI's background mode.
+
+The agent handles these automatically by sending continuation requests, so no user action is required.
+In the message history, continuations are merged transparently — you will see a single
+[`ModelResponse`][pydantic_ai.messages.ModelResponse] containing the combined parts from all
+continuation rounds, rather than separate entries for each pause and follow-up.
+
 ## Processing Message History
 
 Sometimes you may want to modify the message history before it's sent to the model. This could be for privacy

@@ -19,6 +19,7 @@ from pydantic_ai import (
     AgentRunResult,
     AgentRunResultEvent,
     AgentStreamEvent,
+    BuiltinToolCallPart,
     ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -2363,6 +2364,172 @@ async def test_iter_stream_output():
             'The bat sat on the mat.',
         ]
     )
+
+
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+async def test_continue_request_node_cached_run_reused() -> None:
+    request_calls = 0
+
+    def continuation_with_builtin_events(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal request_calls
+        request_calls += 1
+        if request_calls == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended', finish_reason='incomplete')
+        if request_calls == 2:
+            return ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(tool_name='web_search', args={'query': 'latest weather'}, tool_call_id='w_1')
+                ],
+                state='suspended',
+                finish_reason='incomplete',
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(continuation_with_builtin_events))
+
+    async with agent.iter('test continuation cache') as run:
+        node = run.next_node
+        while not Agent.is_continue_request_node(node):
+            assert not Agent.is_end_node(node)
+            node = await run.next(node)
+
+        primed_next_node = await node.run(run.ctx)
+        next_node = await run.next(node)
+        assert next_node is primed_next_node
+
+        while not Agent.is_end_node(next_node):
+            next_node = await run.next(next_node)
+
+    assert request_calls == 3
+    assert run.result is not None
+    assert run.result.output == 'done'
+
+
+async def test_continue_request_node_streams_events() -> None:
+    """ContinueRequestNode.stream() uses request_stream() and yields ModelResponseStreamEvents."""
+    request_calls = 0
+    stream_calls = 0
+
+    def result_func(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal request_calls
+        request_calls += 1
+        # First call returns suspended; continuation is handled by stream
+        return ModelResponse(parts=[TextPart('paused')], state='suspended')
+
+    async def stream_func(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal stream_calls
+        stream_calls += 1
+        yield 'continuation '
+        yield 'content'
+
+    agent = Agent(FunctionModel(result_func, stream_function=stream_func))
+
+    streamed_events: list[AgentStreamEvent] = []
+
+    async with agent.iter('test streaming continuation') as run:
+        node = run.next_node
+        while not Agent.is_continue_request_node(node):
+            assert not Agent.is_end_node(node)
+            node = await run.next(node)
+
+        # Use stream() to get streaming events from continuation
+        async with node.stream(run.ctx) as stream:
+            async for event in stream:
+                streamed_events.append(event)
+
+        next_node = await run.next(node)
+        while not Agent.is_end_node(next_node):
+            next_node = await run.next(next_node)
+
+    # Verify we got model response stream events (PartStartEvent, PartDeltaEvent, etc.)
+    assert any(isinstance(e, PartStartEvent) for e in streamed_events)
+    assert any(isinstance(e, PartDeltaEvent) for e in streamed_events)
+    # Non-streaming request() was called once (initial), then request_stream() for continuation
+    assert request_calls == 1
+    assert stream_calls == 1
+    assert run.result is not None
+
+
+async def test_continue_request_node_streams_multiple_continuations() -> None:
+    """ContinueRequestNode._run_stream loops when streaming continuation returns state='suspended'."""
+    from contextlib import asynccontextmanager
+
+    request_calls = 0
+    stream_calls = 0
+
+    def result_func(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal request_calls
+        request_calls += 1
+        return ModelResponse(parts=[TextPart('paused')], state='suspended')
+
+    async def stream_func(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal stream_calls
+        stream_calls += 1
+        yield f'chunk {stream_calls}'
+
+    inner = FunctionModel(result_func, stream_function=stream_func)
+
+    class _SuspendOnceStreamModel(models.Model):
+        """Wraps FunctionModel so the first streaming call returns state='suspended'."""
+
+        _call_index: int = 0
+
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+        ) -> ModelResponse:
+            return await inner.request(messages, model_settings, model_request_parameters)
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+            run_context: RunContext[Any] | None = None,
+        ) -> AsyncIterator[models.StreamedResponse]:
+            async with inner.request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as streamed:
+                if self._call_index == 0:
+                    streamed.state = 'suspended'
+                self._call_index += 1
+                yield streamed
+
+        @property
+        def model_name(self) -> str:
+            return inner.model_name
+
+        @property
+        def system(self) -> str:
+            return inner.system  # pragma: no cover
+
+    agent = Agent(_SuspendOnceStreamModel())
+
+    streamed_events: list[AgentStreamEvent] = []
+
+    async with agent.iter('test multi-continuation streaming') as run:
+        node = run.next_node
+        while not Agent.is_continue_request_node(node):
+            assert not Agent.is_end_node(node)
+            node = await run.next(node)
+
+        async with node.stream(run.ctx) as stream:
+            async for event in stream:
+                streamed_events.append(event)
+
+        next_node = await run.next(node)
+        while not Agent.is_end_node(next_node):
+            next_node = await run.next(next_node)
+
+    assert request_calls == 1
+    # stream_func was called twice: first returned 'suspended', second returned 'complete'
+    assert stream_calls == 2
+    assert run.result is not None
 
 
 async def test_streamed_run_result_metadata_available() -> None:

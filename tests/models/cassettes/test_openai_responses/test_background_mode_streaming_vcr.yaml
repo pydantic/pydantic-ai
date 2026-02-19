@@ -1,0 +1,102 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '113'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      background: true
+      input:
+      - content: What is 2 + 2?
+        role: user
+      model: gpt-4o
+      stream: true
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0da443d9ee8333600069950a0635d88196b2d9243b08e8cc01","object":"response","created_at":1771375110,"status":"queued","background":true,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-2024-08-06","output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.queued
+        data: {"type":"response.queued","response":{"id":"resp_0da443d9ee8333600069950a0635d88196b2d9243b08e8cc01","object":"response","created_at":1771375110,"status":"queued","background":true,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-4o-2024-08-06","output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","sequence_number":2,"response":{"truncation":"disabled","id":"resp_0da443d9ee8333600069950a0635d88196b2d9243b08e8cc01","tool_choice":"auto","status":"in_progress","usage":null,"top_p":1.0,"temperature":1.0,"top_logprobs":0,"object":"response","created_at":1771375110,"prompt_cache_key":null,"text":{"verbosity":"medium","format":{"type":"text"}},"incomplete_details":null,"frequency_penalty":0.0,"previous_response_id":null,"model":"gpt-4o-2024-08-06","safety_identifier":null,"metadata":{},"store":false,"output":[],"parallel_tool_calls":true,"error":null,"instructions":null,"max_output_tokens":null,"service_tier":"auto","max_tool_calls":null,"prompt_cache_retention":null,"tools":[],"user":null,"presence_penalty":0.0,"reasoning":{"effort":null,"summary":null},"background":true,"completed_at":null}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a","content":[],"role":"assistant","status":"in_progress","type":"message"},"output_index":0,"sequence_number":3}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","item_id":"msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a","part":{"text":"","logprobs":[],"type":"output_text","annotations":[]},"content_index":0,"output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","delta":"2","logprobs":[],"item_id":"msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a","content_index":0,"output_index":0,"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","delta":" +","logprobs":[],"item_id":"msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a","content_index":0,"output_index":0,"sequence_number":6}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","delta":" ","logprobs":[],"item_id":"msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a","content_index":0,"output_index":0,"sequence_number":7}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","delta":"2","logprobs":[],"item_id":"msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a","content_index":0,"output_index":0,"sequence_number":8}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","delta":" equals","logprobs":[],"item_id":"msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a","content_index":0,"output_index":0,"sequence_number":9}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","delta":" ","logprobs":[],"item_id":"msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a","content_index":0,"output_index":0,"sequence_number":10}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","delta":"4","logprobs":[],"item_id":"msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a","content_index":0,"output_index":0,"sequence_number":11}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","delta":".","logprobs":[],"item_id":"msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a","content_index":0,"output_index":0,"sequence_number":12}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","text":"2 + 2 equals 4.","logprobs":[],"item_id":"msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a","content_index":0,"output_index":0,"sequence_number":13}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","item_id":"msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a","part":{"text":"2 + 2 equals 4.","logprobs":[],"type":"output_text","annotations":[]},"content_index":0,"output_index":0,"sequence_number":14}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a","content":[{"text":"2 + 2 equals 4.","logprobs":[],"type":"output_text","annotations":[]}],"role":"assistant","status":"completed","type":"message"},"output_index":0,"sequence_number":15}
+
+        event: response.completed
+        data: {"type":"response.completed","sequence_number":16,"response":{"truncation":"disabled","id":"resp_0da443d9ee8333600069950a0635d88196b2d9243b08e8cc01","tool_choice":"auto","status":"completed","usage":{"input_tokens":15,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0},"output_tokens":9,"total_tokens":24},"top_p":1.0,"temperature":1.0,"top_logprobs":0,"object":"response","created_at":1771375110,"prompt_cache_key":null,"text":{"format":{"type":"text"},"verbosity":"medium"},"incomplete_details":null,"frequency_penalty":0.0,"previous_response_id":null,"model":"gpt-4o-2024-08-06","safety_identifier":null,"metadata":{},"store":false,"output":[{"id":"msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a","content":[{"text":"2 + 2 equals 4.","logprobs":[],"type":"output_text","annotations":[]}],"role":"assistant","status":"completed","type":"message"}],"parallel_tool_calls":true,"error":null,"instructions":null,"max_output_tokens":null,"service_tier":"default","max_tool_calls":null,"prompt_cache_retention":null,"tools":[],"user":null,"presence_penalty":0.0,"reasoning":{"effort":null,"summary":null},"background":true,"completed_at":1771375112}}
+
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - XXXXXX
+      openai-processing-ms:
+      - '852'
+      openai-project:
+      - proj_kGBnNoxZLwrofr0DRC3DVVYV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...
