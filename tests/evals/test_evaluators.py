@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import to_jsonable_python
 
@@ -12,6 +11,7 @@ from pydantic_ai import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsStr, try_import
 
 with try_import() as imports_successful:

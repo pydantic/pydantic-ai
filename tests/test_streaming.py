@@ -11,7 +11,6 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
 
@@ -56,6 +55,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApp
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
