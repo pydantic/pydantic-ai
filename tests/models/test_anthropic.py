@@ -49,6 +49,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -1949,6 +1950,149 @@ async def test_text_document_as_binary_content_input(
 
     result = await agent.run(['What does this text file say?', text_document_content])
     assert result.output == snapshot('The text file says "Dummy TXT file".')
+
+
+async def test_uploaded_file_with_text(allow_model_requests: None) -> None:
+    """Test that UploadedFile is correctly mapped to a document block with file source."""
+    c = completion_message(
+        [BetaTextBlock(text='The file contains important data.', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=8),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
+
+    assert result.output == 'The file contains important data.'
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Analyze this file', 'type': 'text'},
+                    {'source': {'file_id': 'file-abc123', 'type': 'file'}, 'type': 'document'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_only(allow_model_requests: None) -> None:
+    """Test UploadedFile as the only content in a message."""
+    c = completion_message(
+        [BetaTextBlock(text='This is a PDF document.', type='text')],
+        usage=BetaUsage(input_tokens=5, output_tokens=6),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run([UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
+
+    assert result.output == 'This is a PDF document.'
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    content = completion_kwargs['messages'][0]['content']
+    assert content == snapshot([{'source': {'file_id': 'file-xyz789', 'type': 'file'}, 'type': 'document'}])
+
+
+async def test_multiple_uploaded_files(allow_model_requests: None) -> None:
+    """Test multiple UploadedFiles in a single message."""
+    c = completion_message(
+        [BetaTextBlock(text='Both files contain similar data.', type='text')],
+        usage=BetaUsage(input_tokens=15, output_tokens=7),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'Compare these files',
+            UploadedFile(file_id='file-001', provider_name='anthropic'),
+            UploadedFile(file_id='file-002', provider_name='anthropic'),
+        ]
+    )
+
+    assert result.output == 'Both files contain similar data.'
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    content = completion_kwargs['messages'][0]['content']
+    assert content == snapshot(
+        [
+            {'text': 'Compare these files', 'type': 'text'},
+            {'source': {'file_id': 'file-001', 'type': 'file'}, 'type': 'document'},
+            {'source': {'file_id': 'file-002', 'type': 'file'}, 'type': 'document'},
+        ]
+    )
+
+
+async def test_uploaded_file_image(allow_model_requests: None) -> None:
+    """Test that UploadedFile with image media type is mapped to an image block."""
+    c = completion_message(
+        [BetaTextBlock(text='The image shows a cat.', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=6),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(
+        ['Describe this image', UploadedFile(file_id='file-img123', provider_name='anthropic', media_type='image/png')]
+    )
+
+    assert result.output == 'The image shows a cat.'
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Describe this image', 'type': 'text'},
+                    {'source': {'file_id': 'file-img123', 'type': 'file'}, 'type': 'image'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_wrong_provider(allow_model_requests: None) -> None:
+    """Test that UploadedFile with wrong provider raises an error."""
+    c = completion_message(
+        [BetaTextBlock(text='Should not reach here.', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=8),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(UserError, match="provider_name='openai'.*cannot be used with AnthropicModel"):
+        await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='openai')])
+
+
+async def test_uploaded_file_unsupported_media_type(allow_model_requests: None) -> None:
+    """Test that UploadedFile with unsupported media type (e.g. audio) raises an error."""
+    c = completion_message(
+        [BetaTextBlock(text='Should not reach here.', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=8),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(UserError, match='Unsupported media type.*audio/mpeg'):
+        await agent.run(
+            [
+                'Analyze this file',
+                UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='audio/mpeg'),
+            ]
+        )
 
 
 def test_init_with_provider():

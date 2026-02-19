@@ -14,6 +14,7 @@ from pydantic_ai import (
     DocumentUrl,
     FilePart,
     ImageUrl,
+    InstrumentationSettings,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -24,6 +25,7 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -739,6 +741,209 @@ def test_binary_content_from_path(tmp_path: Path):
     test_toml_file.write_text('[project]\nname = "test"', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_toml_file)
     assert binary_content == snapshot(BinaryContent(data=b'[project]\nname = "test"', media_type='application/toml'))
+
+
+def test_uploaded_file_identifier_property():
+    """Test that UploadedFile.identifier hashes the file_id."""
+    # Test basic identifier (should be hashed)
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic')
+    assert uploaded_file.identifier == snapshot('3a1a6c')
+
+    # Test with custom identifier
+    uploaded_file_with_id = UploadedFile(file_id='file-xyz789', provider_name='anthropic', identifier='my-custom-id')
+    assert uploaded_file_with_id.identifier == 'my-custom-id'
+
+    # Test with URL file_id (should still be hashed)
+    uploaded_file_url = UploadedFile(
+        file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
+        provider_name='google-gla',
+    )
+    assert uploaded_file_url.identifier == snapshot('d8d637')
+
+
+def test_uploaded_file_format():
+    """Test UploadedFile.format property for different media types."""
+    # Test with no media_type - defaults to 'application/octet-stream' which has no format
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic')
+    assert uploaded_file.media_type == 'application/octet-stream'
+    with pytest.raises(ValueError, match='Unknown media type'):
+        uploaded_file.format
+
+    # Test with image media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='image/png')
+    assert uploaded_file.format == 'png'
+
+    # Test with video media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='video/mp4')
+    assert uploaded_file.format == 'mp4'
+
+    # Test with audio media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='audio/wav')
+    assert uploaded_file.format == 'wav'
+
+    # Test with document media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/pdf')
+    assert uploaded_file.format == 'pdf'
+
+    # Test with unknown media_type - should raise ValueError
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/custom')
+    with pytest.raises(ValueError, match='Unknown media type'):
+        uploaded_file.format
+
+
+def test_uploaded_file_in_otel_message_parts():
+    """Test that UploadedFile is handled correctly in otel message parts conversion.
+
+    Per OTel GenAI spec, UploadedFile maps to FilePart with type='file', modality, and file_id.
+    See: https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-input-messages.json
+    """
+    # Test with file ID (OTel FilePart format) - no media_type defaults to 'application/octet-stream'
+    part = UserPromptPart(
+        content=['text before', UploadedFile(file_id='file-abc123', provider_name='anthropic'), 'text after']
+    )
+    settings = InstrumentationSettings(include_content=True)
+    otel_parts = part.otel_message_parts(settings)
+    assert otel_parts == snapshot(
+        [
+            {'type': 'text', 'content': 'text before'},
+            {'type': 'file', 'modality': 'document', 'file_id': 'file-abc123', 'mime_type': 'application/octet-stream'},
+            {'type': 'text', 'content': 'text after'},
+        ]
+    )
+
+    # Test with URL file_id (still uses file_id field per spec) - no extension defaults to 'application/octet-stream'
+    part_url = UserPromptPart(
+        content=[
+            'analyze this',
+            UploadedFile(
+                file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
+                provider_name='google-gla',
+            ),
+        ]
+    )
+    otel_parts_url = part_url.otel_message_parts(settings)
+    assert otel_parts_url == snapshot(
+        [
+            {'type': 'text', 'content': 'analyze this'},
+            {
+                'type': 'file',
+                'modality': 'document',
+                'file_id': 'https://generativelanguage.googleapis.com/v1beta/files/abc123',
+                'mime_type': 'application/octet-stream',
+            },
+        ]
+    )
+
+    # Test with S3 URL and media_type - should include modality and mime_type
+    part_s3 = UserPromptPart(
+        content=[
+            'process this',
+            UploadedFile(file_id='s3://my-bucket/my-file.pdf', provider_name='bedrock', media_type='application/pdf'),
+        ]
+    )
+    otel_parts_s3 = part_s3.otel_message_parts(settings)
+    assert otel_parts_s3 == snapshot(
+        [
+            {'type': 'text', 'content': 'process this'},
+            {
+                'type': 'file',
+                'modality': 'document',
+                'file_id': 's3://my-bucket/my-file.pdf',
+                'mime_type': 'application/pdf',
+            },
+        ]
+    )
+
+    # Test with image media_type - should have image modality
+    part_image = UserPromptPart(
+        content=[UploadedFile(file_id='img-123', provider_name='openai', media_type='image/png')]
+    )
+    otel_parts_image = part_image.otel_message_parts(settings)
+    assert otel_parts_image == snapshot(
+        [{'type': 'file', 'modality': 'image', 'file_id': 'img-123', 'mime_type': 'image/png'}]
+    )
+
+    # Test with audio media_type - should have audio modality
+    part_audio = UserPromptPart(
+        content=[UploadedFile(file_id='audio-123', provider_name='openai', media_type='audio/mp3')]
+    )
+    otel_parts_audio = part_audio.otel_message_parts(settings)
+    assert otel_parts_audio == snapshot(
+        [{'type': 'file', 'modality': 'audio', 'file_id': 'audio-123', 'mime_type': 'audio/mp3'}]
+    )
+
+    # Test with video media_type - should have video modality
+    part_video = UserPromptPart(
+        content=[UploadedFile(file_id='video-123', provider_name='openai', media_type='video/mp4')]
+    )
+    otel_parts_video = part_video.otel_message_parts(settings)
+    assert otel_parts_video == snapshot(
+        [{'type': 'file', 'modality': 'video', 'file_id': 'video-123', 'mime_type': 'video/mp4'}]
+    )
+
+    # Test without include_content (should have type, modality, and mime_type but not file_id)
+    settings_no_content = InstrumentationSettings(include_content=False)
+    otel_parts_no_content = part.otel_message_parts(settings_no_content)
+    assert otel_parts_no_content == snapshot(
+        [
+            {'type': 'text'},
+            {'type': 'file', 'modality': 'document', 'mime_type': 'application/octet-stream'},
+            {'type': 'text'},
+        ]
+    )
+
+
+def test_uploaded_file_serialization_roundtrip():
+    """Verify that UploadedFile survives a ModelMessagesTypeAdapter serialization roundtrip.
+
+    UploadedFile uses `exclude=True` on private fields (`_media_type`, `_identifier`) and exposes
+    them via computed fields — this test ensures those computed values are preserved through
+    serialization and deserialization.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'analyze this file',
+                        UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/pdf'),
+                    ]
+                )
+            ]
+        )
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+    assert deserialized == messages
+
+
+def test_uploaded_file_custom_identifier_and_media_type_roundtrip():
+    """Verify that custom `identifier` and `media_type` survive serialization roundtrip."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        UploadedFile(
+                            file_id='file-abc123',
+                            provider_name='anthropic',
+                            media_type='image/png',
+                            identifier='my-id',
+                        ),
+                    ]
+                )
+            ]
+        )
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+    part = deserialized[0].parts[0]
+    assert isinstance(part, UserPromptPart)
+    uploaded = part.content[0]
+    assert isinstance(uploaded, UploadedFile)
+    assert uploaded.identifier == 'my-id'
+    assert uploaded.media_type == 'image/png'
+    assert deserialized == messages
 
 
 def test_tool_return_content_with_url_field_not_coerced_to_image_url():

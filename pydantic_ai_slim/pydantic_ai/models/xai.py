@@ -37,6 +37,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -470,6 +471,13 @@ class XaiModel(Model):
                 content_items.append(file(file_id))
             elif isinstance(item, VideoUrl):
                 raise NotImplementedError('VideoUrl is not supported by xAI SDK')
+            elif isinstance(item, UploadedFile):
+                if item.provider_name != self.system:
+                    raise UserError(
+                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with XaiModel. '
+                        f'Expected `provider_name` to be `{self.system!r}`.'
+                    )
+                content_items.append(file(item.file_id))
             elif isinstance(item, CachePoint):
                 # xAI doesn't support prompt caching via CachePoint, so we filter it out
                 pass

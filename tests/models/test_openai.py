@@ -41,7 +41,7 @@ from pydantic_ai import (
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import SystemPromptPart
+from pydantic_ai.messages import SystemPromptPart, UploadedFile
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -1474,6 +1474,104 @@ async def test_document_as_binary_content_input_with_tool(
     )
 
     assert result.output == snapshot('The main content of the document is "DUMMY PDF FILE" in uppercase.')
+
+
+async def test_uploaded_file_chat_model(allow_model_requests: None) -> None:
+    """Test that UploadedFile is correctly mapped in OpenAIChatModel."""
+    c = completion_message(
+        ChatCompletionMessage(content='The file contains important data.', role='assistant'),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='openai')])
+
+    assert result.output == 'The file contains important data.'
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Analyze this file', 'type': 'text'},
+                    {'file': {'file_id': 'file-abc123'}, 'type': 'file'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_responses_model(allow_model_requests: None) -> None:
+    """Test that UploadedFile is correctly mapped in OpenAIResponsesModel."""
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    output_item = ResponseOutputMessage(
+        id='msg_123',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='The document says hello.', type='output_text', annotations=[])],
+    )
+    r = response_message([output_item])
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(
+        ['What does this document say?', UploadedFile(file_id='file-xyz789', provider_name='openai')]
+    )
+
+    assert result.output == 'The document says hello.'
+
+    responses_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    input_content = responses_kwargs['input']
+    assert input_content == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What does this document say?', 'type': 'input_text'},
+                    {'file_id': 'file-xyz789', 'type': 'input_file'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_wrong_provider_chat(allow_model_requests: None) -> None:
+    """Test that UploadedFile with wrong provider raises an error in OpenAIChatModel."""
+    c = completion_message(
+        ChatCompletionMessage(content='Should not reach here.', role='assistant'),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIChatModel"):
+        await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
+
+
+async def test_uploaded_file_wrong_provider_responses(allow_model_requests: None) -> None:
+    """Test that UploadedFile with wrong provider raises an error in OpenAIResponsesModel."""
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    output_item = ResponseOutputMessage(
+        id='msg_123',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Should not reach here.', type='output_text', annotations=[])],
+    )
+    r = response_message([output_item])
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
+        await agent.run(['Analyze this file', UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
@@ -3709,8 +3807,10 @@ async def test_cache_point_filtering(allow_model_requests: None):
 
 async def test_cache_point_filtering_responses_model():
     """Test that CachePoint is filtered out in OpenAI Responses API requests."""
-    # Test the static method directly to trigger line 1680
-    msg = await OpenAIResponsesModel._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+    m = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(api_key='test-key'))
+
+    # Test the instance method directly to ensure CachePoint filtering
+    msg = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
         UserPromptPart(content=['text before', CachePoint(), 'text after'])
     )
 

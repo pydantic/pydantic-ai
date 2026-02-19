@@ -42,6 +42,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
@@ -86,6 +87,8 @@ try:
         BetaContainerParams,
         BetaContentBlock,
         BetaContentBlockParam,
+        BetaFileDocumentSourceParam,
+        BetaFileImageSourceParam,
         BetaImageBlockParam,
         BetaInputJSONDelta,
         BetaJSONOutputFormatParam,
@@ -1094,8 +1097,8 @@ class AnthropicModel(Model):
         else:
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
-    @staticmethod
-    async def _map_user_prompt(
+    async def _map_user_prompt(  # noqa: C901
+        self,
         part: UserPromptPart,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):
@@ -1135,6 +1138,28 @@ class AnthropicModel(Model):
                         )
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
+                elif isinstance(item, UploadedFile):
+                    # Verify provider matches
+                    if item.provider_name != self.system:
+                        raise UserError(
+                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
+                            f'Expected `provider_name` to be `{self.system!r}`.'
+                        )
+                    if item.media_type.startswith('image/'):
+                        yield BetaImageBlockParam(
+                            source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
+                            type='image',
+                        )
+                    elif item.media_type.startswith(('text/', 'application/')):
+                        yield BetaRequestDocumentBlockParam(
+                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                            type='document',
+                        )
+                    else:
+                        raise UserError(
+                            f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
+                            'Only image and document (text/application) types are supported.'
+                        )
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 

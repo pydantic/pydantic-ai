@@ -42,6 +42,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles import DEFAULT_PROFILE
@@ -2853,6 +2854,222 @@ async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockPro
     )
 
 
+async def test_uploaded_file_wrong_provider(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with wrong provider raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match="provider_name='openai'.*cannot be used with BedrockConverseModel"):
+        await agent.run(['Analyze this file', UploadedFile(file_id='s3://bucket/file.pdf', provider_name='openai')])
+
+
+async def test_uploaded_file_non_s3_url(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with non-S3 URL raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='UploadedFile for Bedrock must use an S3 URL'):
+        await agent.run(
+            [
+                'Analyze this file',
+                UploadedFile(
+                    file_id='https://example.com/file.pdf', provider_name='bedrock', media_type='application/pdf'
+                ),
+            ]
+        )
+
+
+async def test_uploaded_file_no_extension_defaults_to_octet_stream(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that UploadedFile without extension defaults to application/octet-stream which is unsupported."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='Unsupported media type for Bedrock UploadedFile: application/octet-stream'):
+        await agent.run(
+            [
+                'Analyze this file',
+                UploadedFile(
+                    file_id='s3://bucket/file', provider_name='bedrock'
+                ),  # No extension, defaults to octet-stream
+            ]
+        )
+
+
+async def test_uploaded_file_unsupported_media_type(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with unsupported media type raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='Unsupported media type for Bedrock UploadedFile'):
+        await agent.run(
+            [
+                'Analyze this file',
+                UploadedFile(
+                    file_id='s3://bucket/file.bin', provider_name='bedrock', media_type='application/octet-stream'
+                ),
+            ]
+        )
+
+
+async def test_uploaded_file_image(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with image media type is correctly mapped."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    uploaded_file = UploadedFile(file_id='s3://my-bucket/image.png', provider_name='bedrock', media_type='image/png')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this image?', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this image?'},
+                    {
+                        'image': {
+                            'format': 'png',
+                            'source': {'s3Location': {'uri': 's3://my-bucket/image.png'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_video(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with video media type is correctly mapped."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    uploaded_file = UploadedFile(file_id='s3://my-bucket/video.mp4', provider_name='bedrock', media_type='video/mp4')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Describe this video', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Describe this video'},
+                    {
+                        'video': {
+                            'format': 'mp4',
+                            'source': {'s3Location': {'uri': 's3://my-bucket/video.mp4'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_document(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with document media type is correctly mapped."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    uploaded_file = UploadedFile(
+        file_id='s3://my-bucket/report.pdf', provider_name='bedrock', media_type='application/pdf'
+    )
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this document?', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this document?'},
+                    {
+                        'document': {
+                            'format': 'pdf',
+                            'name': IsStr(),
+                            'source': {'s3Location': {'uri': 's3://my-bucket/report.pdf'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_s3_with_bucket_owner(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile S3 URLs with bucketOwner parameter are parsed correctly."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    uploaded_file = UploadedFile(
+        file_id='s3://my-bucket/image.png?bucketOwner=123456789012', provider_name='bedrock', media_type='image/png'
+    )
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this image?', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this image?'},
+                    {
+                        'image': {
+                            'format': 'png',
+                            'source': {
+                                's3Location': {
+                                    'uri': 's3://my-bucket/image.png',
+                                    'bucketOwner': '123456789012',
+                                }
+                            },
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_media_type_inference(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile infers media type from file extension."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    # No media_type provided, should infer from .pdf extension
+    uploaded_file = UploadedFile(file_id='s3://my-bucket/report.pdf', provider_name='bedrock')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this document?', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this document?'},
+                    {
+                        'document': {
+                            'format': 'pdf',
+                            'name': IsStr(),
+                            'source': {'s3Location': {'uri': 's3://my-bucket/report.pdf'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
 async def test_bedrock_map_messages_builtin_tool_provider_filtering(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
@@ -3244,3 +3461,75 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
         ]
     )
+
+
+async def test_image_url_unsupported_format(bedrock_provider: BedrockProvider):
+    """Test that ImageUrl with unsupported image format raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    image_url = ImageUrl(url='s3://bucket/image.bmp', media_type='image/bmp')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this image?', image_url])]),
+    ]
+
+    with pytest.raises(UserError, match='Unsupported image format: bmp'):
+        await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+
+async def test_video_url_unsupported_format(bedrock_provider: BedrockProvider):
+    """Test that VideoUrl with unsupported video format raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    video_url = VideoUrl(url='s3://bucket/video.avi', media_type='video/avi')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Describe this video', video_url])]),
+    ]
+
+    with pytest.raises(UserError, match='Unsupported video format: avi'):
+        await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+
+async def test_document_url_unsupported_format(bedrock_provider: BedrockProvider):
+    """Test that DocumentUrl with unsupported document format raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    doc_url = DocumentUrl(url='s3://bucket/file.rtf', media_type='application/rtf')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Summarize this document', doc_url])]),
+    ]
+
+    with pytest.raises(UserError, match='Unsupported document format: rtf'):
+        await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+
+async def test_uploaded_file_unsupported_video_media_type(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that UploadedFile with unsupported video media type raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='Unsupported media type for Bedrock UploadedFile: video/avi'):
+        await agent.run(
+            [
+                'Describe this video',
+                UploadedFile(file_id='s3://bucket/video.avi', provider_name='bedrock', media_type='video/avi'),
+            ]
+        )
+
+
+async def test_uploaded_file_audio_not_supported(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with audio media type raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='Audio files are not supported for Bedrock UploadedFile'):
+        await agent.run(
+            [
+                'Transcribe this audio',
+                UploadedFile(file_id='s3://bucket/audio.wav', provider_name='bedrock', media_type='audio/wav'),
+            ]
+        )

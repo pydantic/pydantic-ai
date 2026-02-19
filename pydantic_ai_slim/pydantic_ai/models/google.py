@@ -42,6 +42,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -707,7 +708,7 @@ class GoogleModel(Model):
 
         return system_instruction, contents
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> list[PartDict]:
+    async def _map_user_prompt(self, part: UserPromptPart) -> list[PartDict]:  # noqa: C901
         if isinstance(part.content, str):
             return [{'text': part.content}]
         else:
@@ -759,6 +760,24 @@ class GoogleModel(Model):
                         if isinstance(item, VideoUrl) and item.vendor_metadata:
                             part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
                         content.append(part_dict)  # pragma: lax no cover
+                elif isinstance(item, UploadedFile):
+                    # Verify provider matches
+                    if item.provider_name != self.system:
+                        raise UserError(
+                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with GoogleModel. '
+                            f'Expected `provider_name` to be `{self.system!r}`.'
+                        )
+                    # UploadedFile.file_id should be a URI from the Google Files API
+                    if not item.file_id.startswith('https://'):
+                        raise UserError(
+                            f'UploadedFile for GoogleModel must use a file URI from the Google Files API, got: {item.file_id}'
+                        )
+                    file_data_dict: FileDataDict = {'file_uri': item.file_id, 'mime_type': item.media_type}
+                    part_dict: PartDict = {'file_data': file_data_dict}
+                    # Include video_metadata if present in vendor_metadata
+                    if item.vendor_metadata:
+                        part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                    content.append(part_dict)
                 elif isinstance(item, CachePoint):
                     # Google doesn't support inline CachePoint markers. Google's caching requires
                     # pre-creating cache objects via the API, then referencing them by name using

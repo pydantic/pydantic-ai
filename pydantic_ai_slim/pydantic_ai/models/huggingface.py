@@ -33,6 +33,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -446,6 +447,8 @@ class HuggingFaceModel(Model):
                     raise NotImplementedError('DocumentUrl is not supported for Hugging Face')
                 elif isinstance(item, VideoUrl):
                     raise NotImplementedError('VideoUrl is not supported for Hugging Face')
+                elif isinstance(item, UploadedFile):
+                    raise NotImplementedError('UploadedFile is not supported for Hugging Face')
                 elif isinstance(item, CachePoint):
                     # Hugging Face doesn't support prompt caching via CachePoint
                     pass
