@@ -102,7 +102,7 @@ jobs:
         && 'depot-ubuntu-24.04-4'
         || 'ubuntu-latest'
       }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -163,7 +163,7 @@ jobs:
         && 'depot-ubuntu-24.04-4'
         || 'ubuntu-latest'
       }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
