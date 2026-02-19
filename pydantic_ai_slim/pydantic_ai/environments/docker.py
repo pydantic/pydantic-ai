@@ -17,7 +17,7 @@ from typing import Any, Literal, cast
 
 import anyio
 import anyio.to_thread
-from typing_extensions import Self
+from typing_extensions import Self, assert_never
 
 from ._base import (
     IMAGE_EXTENSIONS,
@@ -50,7 +50,7 @@ except ImportError as _import_error:
 def _build_dockerfile(
     base_image: str,
     packages: Sequence[str],
-    package_manager: str,
+    package_manager: Literal['pip', 'apt', 'npm'],
     setup_commands: Sequence[str],
 ) -> str:
     """Generate a Dockerfile from configuration."""
@@ -68,6 +68,8 @@ def _build_dockerfile(
         elif package_manager == 'npm':
             pkg_list = ' '.join(packages)
             lines.append(f'RUN npm install -g {pkg_list}')
+        else:
+            assert_never(package_manager)
 
     for cmd in setup_commands:
         lines.append(f'RUN {cmd}')
@@ -334,7 +336,7 @@ class DockerEnvironment(DriverBasedEnvironment):
         """
         self._image = image
         self._packages = tuple(packages)
-        self._package_manager = package_manager
+        self._package_manager: Literal['pip', 'apt', 'npm'] = package_manager
         self._setup_commands = tuple(setup_commands)
         self._env_vars = env_vars or {}
         self._work_dir = work_dir
