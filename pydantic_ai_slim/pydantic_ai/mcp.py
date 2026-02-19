@@ -476,7 +476,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             )
         return self._server_capabilities
 
-    async def instructions(self, ctx: RunContext[Any]) -> str | None:
+    async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         """Return instructions to inject into the agent's system prompt.
 
         If ``use_server_instructions`` is ``True``, returns the instructions
@@ -494,10 +494,9 @@ class MCPServer(AbstractToolset[Any], ABC):
                 has not been initialized yet.
         """
         if self.use_server_instructions:
-            # Access internal attribute directly to avoid triggering deprecation warning
             if not hasattr(self, '_instructions'):
                 raise AttributeError(
-                    f'The `{self.__class__.__name__}.instructions` is only instantiated after initialization.'
+                    f'The `{self.__class__.__name__}.get_instructions` is only instantiated after initialization.'
                 )
             return self._instructions
         return None

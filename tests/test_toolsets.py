@@ -56,7 +56,7 @@ class MockToolsetWithInstructions(AbstractToolset[Any]):
     def id(self) -> str | None:
         return self._id
 
-    async def instructions(self, ctx: RunContext[Any]) -> str | None:
+    async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         return self.custom_instructions
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
@@ -72,7 +72,7 @@ async def test_function_toolset_instructions():
     """Test that FunctionToolset returns None for instructions by default."""
     toolset = FunctionToolset[None]()
     ctx = build_run_context(None)
-    instructions = await toolset.instructions(ctx)
+    instructions = await toolset.get_instructions(ctx)
     assert instructions is None
 
 
@@ -182,7 +182,7 @@ async def test_abstract_toolset_instructions_default():
     """Test that the default instructions method returns None."""
     toolset = MockToolsetWithInstructions(instructions=None)
     ctx = build_run_context(None)
-    instructions = await toolset.instructions(ctx)
+    instructions = await toolset.get_instructions(ctx)
     assert instructions is None
 
 
@@ -191,7 +191,7 @@ async def test_abstract_toolset_instructions_custom():
     custom_instructions = 'Use these tools carefully and always validate inputs.'
     toolset = MockToolsetWithInstructions(instructions=custom_instructions)
     ctx = build_run_context(None)
-    instructions = await toolset.instructions(ctx)
+    instructions = await toolset.get_instructions(ctx)
     assert instructions == custom_instructions
 
 
@@ -199,7 +199,7 @@ async def test_abstract_toolset_instructions_empty_string():
     """Test that instructions can return an empty string."""
     toolset = MockToolsetWithInstructions(instructions="")
     ctx = build_run_context(None)
-    instructions = await toolset.instructions(ctx)
+    instructions = await toolset.get_instructions(ctx)
     assert instructions == ""
 
 
@@ -926,30 +926,30 @@ async def test_wrapper_toolsets_delegate_instructions():
 
     # Test PrefixedToolset delegation
     prefixed_toolset = base_toolset.prefixed('test')
-    assert await prefixed_toolset.instructions(ctx) == base_instructions
+    assert await prefixed_toolset.get_instructions(ctx) == base_instructions
 
     # Test FilteredToolset delegation
     def allow_all_filter(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
         return True
     
     filtered_toolset = base_toolset.filtered(allow_all_filter)
-    assert await filtered_toolset.instructions(ctx) == base_instructions
+    assert await filtered_toolset.get_instructions(ctx) == base_instructions
 
     # Test RenamedToolset delegation
     rename_map = {'old_name': 'new_name'}
     renamed_toolset = base_toolset.renamed(rename_map)
-    assert await renamed_toolset.instructions(ctx) == base_instructions
+    assert await renamed_toolset.get_instructions(ctx) == base_instructions
 
     # Test ApprovalRequiredToolset delegation
     approval_toolset = base_toolset.approval_required()
-    assert await approval_toolset.instructions(ctx) == base_instructions
+    assert await approval_toolset.get_instructions(ctx) == base_instructions
 
     # Test PreparedToolset delegation
     async def prepare_func(ctx: RunContext[Any], tools: list[ToolDefinition]) -> list[ToolDefinition]:
         return tools
 
     prepared_toolset = base_toolset.prepared(prepare_func)
-    assert await prepared_toolset.instructions(ctx) == base_instructions
+    assert await prepared_toolset.get_instructions(ctx) == base_instructions
 
 
 async def test_combined_toolset_instructions():
@@ -966,7 +966,7 @@ async def test_combined_toolset_instructions():
     
     # CombinedToolset uses the default implementation which returns None
     # Individual toolsets' instructions are not automatically combined
-    instructions = await combined.instructions(ctx)
+    instructions = await combined.get_instructions(ctx)
     assert instructions is None
 
 
@@ -978,7 +978,7 @@ async def test_combined_toolset_instructions_all_none():
     combined = CombinedToolset([toolset1, toolset2])
     ctx = build_run_context(None)
     
-    instructions = await combined.instructions(ctx)
+    instructions = await combined.get_instructions(ctx)
     assert instructions is None
 
 
@@ -987,7 +987,7 @@ async def test_combined_toolset_instructions_empty():
     combined = CombinedToolset([])
     ctx = build_run_context(None)
     
-    instructions = await combined.instructions(ctx)
+    instructions = await combined.get_instructions(ctx)
     assert instructions is None
 
 

@@ -648,7 +648,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolset_instructions: list[str | None] = []
 
             async def collect_toolset_instructions(ts: AbstractToolset[AgentDepsT]) -> None:
-                instruction = await ts.instructions(run_context)
+                instruction = await ts.get_instructions(run_context)
                 if instruction:
                     toolset_instructions.append(instruction)
 
