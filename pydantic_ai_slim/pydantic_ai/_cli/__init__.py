@@ -286,7 +286,7 @@ def _run_chat_command(
     if args.mcp_config:
         try:
             from ..mcp import load_mcp_servers
-        except ImportError as e:
+        except ImportError as e:  # pragma: no cover
             raise ImportError(
                 'Please install the `mcp` package to use --mcp-config, '
                 'you can use the `mcp` optional group - `pip install "pydantic-ai-slim[mcp]"`'
@@ -435,7 +435,7 @@ async def ask_agent(
                                     tool_name = event.part.tool_name
                                     display = '\n\n'.join(content_pieces + [f'> _Calling tool `{tool_name}`..._'])
                                     live.update(Markdown(display, code_theme=code_theme))
-                                elif isinstance(event, FunctionToolResultEvent) and isinstance(
+                                elif isinstance(event, FunctionToolResultEvent) and isinstance(  # pragma: no branch
                                     event.result, ToolReturnPart
                                 ):
                                     tool_name = event.result.tool_name
