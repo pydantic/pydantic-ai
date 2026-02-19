@@ -282,6 +282,28 @@ Since `app` is an ASGI application, it can be used with any ASGI server:
 uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 ```
 
+### Message history
+
+[`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] converts Pydantic AI
+[`ModelMessage`][pydantic_ai.messages.ModelMessage] objects into AG-UI
+[`Message`](https://docs.ag-ui.com/sdk/python/core/types#message) objects, complementing
+[`load_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.load_messages] which does the reverse.
+
+This is useful for persisting agent message history and replaying it in future runs:
+
+```python {title="ag_ui_message_history.py" test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+agent = Agent('openai:gpt-5.2')
+
+# Dump messages to AG-UI format for storage or transmission
+messages = AGUIAdapter.dump_messages(agent_run.new_messages())
+
+# Later, restore them as Pydantic AI messages
+prior_messages = AGUIAdapter.load_messages(messages)
+```
+
 ## Examples
 
 For more examples of how to use [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] see
