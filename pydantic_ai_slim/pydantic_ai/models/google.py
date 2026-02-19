@@ -572,6 +572,16 @@ class GoogleModel(Model):
             if candidate.safety_ratings:
                 vendor_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+        elif candidate is None and response.prompt_feedback and response.prompt_feedback.block_reason:
+            block_reason = response.prompt_feedback.block_reason
+            vendor_details['block_reason'] = block_reason.value
+            if response.prompt_feedback.block_reason_message:
+                vendor_details['block_reason_message'] = response.prompt_feedback.block_reason_message
+            if response.prompt_feedback.safety_ratings:
+                vendor_details['safety_ratings'] = [
+                    r.model_dump(by_alias=True) for r in response.prompt_feedback.safety_ratings
+                ]
+            finish_reason = 'content_filter'
 
         if response.create_time is not None:  # pragma: no branch
             vendor_details['timestamp'] = response.create_time
@@ -780,6 +790,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
+    _has_content_filter: bool = field(default=False, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
@@ -788,7 +799,23 @@ class GeminiStreamedResponse(StreamedResponse):
             self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
             if not chunk.candidates:
-                continue  # pragma: no cover
+                if chunk.prompt_feedback and chunk.prompt_feedback.block_reason:
+                    self._has_content_filter = True
+                    block_reason = chunk.prompt_feedback.block_reason
+                    self.provider_details = {
+                        **(self.provider_details or {}),
+                        'block_reason': block_reason.value,
+                    }
+                    if chunk.prompt_feedback.block_reason_message:
+                        self.provider_details['block_reason_message'] = chunk.prompt_feedback.block_reason_message
+                    if chunk.prompt_feedback.safety_ratings:
+                        self.provider_details['safety_ratings'] = [
+                            r.model_dump(by_alias=True) for r in chunk.prompt_feedback.safety_ratings
+                        ]
+                    self.finish_reason = 'content_filter'
+                    if chunk.response_id:  # pragma: no branch
+                        self.provider_response_id = chunk.response_id
+                continue
 
             candidate = chunk.candidates[0]
 
@@ -796,8 +823,8 @@ class GeminiStreamedResponse(StreamedResponse):
                 self.provider_response_id = chunk.response_id
 
             raw_finish_reason = candidate.finish_reason
-            if raw_finish_reason:
-                self.provider_details = {'finish_reason': raw_finish_reason.value}
+            if raw_finish_reason and not self._has_content_filter:
+                self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason.value}
 
                 if candidate.safety_ratings:
                     self.provider_details['safety_ratings'] = [

@@ -6,8 +6,6 @@ from datetime import datetime
 from typing import Literal
 
 import pytest
-from inline_snapshot import snapshot
-from inline_snapshot.extra import warns
 from opentelemetry._logs import NoOpLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
 
@@ -44,6 +42,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import snapshot, warns
 from ..conftest import IsDatetime, IsInt, IsStr, try_import
 
 with try_import() as imports_successful:
