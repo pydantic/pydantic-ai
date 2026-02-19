@@ -33,6 +33,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import (
     AgentDepsT,
     BuiltinToolFunc,
+    DeferredToolHandler,
     DeferredToolResults,
     RunContext,
     Tool,
@@ -149,6 +150,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             output_type: OutputSpec[RunOutputDataT] | None = None,
             message_history: Sequence[_messages.ModelMessage] | None = None,
             deferred_tool_results: DeferredToolResults | None = None,
+            deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
             model: models.Model | models.KnownModelName | str | None = None,
             instructions: Instructions[AgentDepsT] = None,
             deps: AgentDepsT,
@@ -168,6 +170,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     output_type=output_type,
                     message_history=message_history,
                     deferred_tool_results=deferred_tool_results,
+                    deferred_tool_handler=deferred_tool_handler,
                     model=model,
                     instructions=instructions,
                     deps=deps,
@@ -192,6 +195,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             output_type: OutputSpec[RunOutputDataT] | None = None,
             message_history: Sequence[_messages.ModelMessage] | None = None,
             deferred_tool_results: DeferredToolResults | None = None,
+            deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
             model: models.Model | models.KnownModelName | str | None = None,
             deps: AgentDepsT,
             model_settings: ModelSettings | None = None,
@@ -211,6 +215,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     output_type=output_type,
                     message_history=message_history,
                     deferred_tool_results=deferred_tool_results,
+                    deferred_tool_handler=deferred_tool_handler,
                     model=model,
                     instructions=instructions,
                     deps=deps,
@@ -287,6 +292,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -308,6 +314,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -328,6 +335,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -364,6 +372,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            deferred_tool_handler: Optional handler to resolve deferred tool calls inline.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -389,6 +398,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             output_type=output_type,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
+            deferred_tool_handler=deferred_tool_handler,
             model=model,
             instructions=instructions,
             deps=deps,
@@ -411,6 +421,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -432,6 +443,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -452,6 +464,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -487,6 +500,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            deferred_tool_handler: Optional handler to resolve deferred tool calls inline.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -512,6 +526,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             output_type=output_type,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
+            deferred_tool_handler=deferred_tool_handler,
             model=model,
             instructions=instructions,
             deps=deps,
@@ -534,6 +549,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -555,6 +571,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         instructions: Instructions[AgentDepsT] = None,
@@ -576,6 +593,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -609,6 +627,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            deferred_tool_handler: Optional handler to resolve deferred tool calls inline.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -636,6 +655,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             output_type=output_type,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
+            deferred_tool_handler=deferred_tool_handler,
             model=model,
             instructions=instructions,
             deps=deps,
@@ -659,6 +679,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -679,6 +700,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -698,6 +720,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -749,6 +772,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            deferred_tool_handler: Optional handler to resolve deferred tool calls inline.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -778,6 +802,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -799,6 +824,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: OutputSpec[RunOutputDataT],
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -820,6 +846,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
+        deferred_tool_handler: DeferredToolHandler[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
@@ -899,6 +926,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
+            deferred_tool_handler: Optional handler to resolve deferred tool calls inline.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -925,6 +953,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 output_type=output_type,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
+                deferred_tool_handler=deferred_tool_handler,
                 model=model,
                 instructions=instructions,
                 deps=deps,
