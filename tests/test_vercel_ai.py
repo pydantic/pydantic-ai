@@ -4140,11 +4140,11 @@ async def test_adapter_dump_messages_deterministic_ids():
     result1 = VercelAIAdapter.dump_messages(messages)
     result2 = VercelAIAdapter.dump_messages(messages)
 
-    # run_id-based IDs for request parts (output_index 0 and 1)
+    # run_id-based IDs for request parts (message_index 0 and 1)
     assert result1[0].id == 'run-abc-0'
     assert result1[1].id == 'run-abc-1'
-    # provider_response_id used directly for response
-    assert result1[2].id == 'resp-123'
+    # provider_response_id with message_index for response
+    assert result1[2].id == 'resp-123-2'
     # Deterministic across calls
     assert result1[0].id == result2[0].id
     assert result1[1].id == result2[1].id
@@ -4169,8 +4169,8 @@ async def test_adapter_dump_messages_custom_id_generator():
 
     generated_ids: list[str] = []
 
-    def custom_id_generator(msg: ModelRequest | ModelResponse, role: str, output_index: int) -> str:
-        msg_id = f'custom-{output_index}-{msg.kind}-{role}'
+    def custom_id_generator(msg: ModelRequest | ModelResponse, role: str, message_index: int) -> str:
+        msg_id = f'custom-{message_index}-{msg.kind}-{role}'
         generated_ids.append(msg_id)
         return msg_id
 
@@ -4248,6 +4248,7 @@ async def test_adapter_dump_messages_with_invalid_json_args():
                         'provider_executed': False,
                         'input': '{invalid json',
                         'call_provider_metadata': None,
+                        'approval': None,
                     }
                 ],
             }

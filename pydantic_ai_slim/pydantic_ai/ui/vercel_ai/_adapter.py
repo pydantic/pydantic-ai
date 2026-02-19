@@ -38,7 +38,13 @@ from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
 from ._event_stream import VercelAIEventStream
-from ._utils import dump_provider_metadata, iter_metadata_chunks, iter_tool_approval_responses, load_provider_metadata, tool_return_output
+from ._utils import (
+    dump_provider_metadata,
+    iter_metadata_chunks,
+    iter_tool_approval_responses,
+    load_provider_metadata,
+    tool_return_output,
+)
 from .request_types import (
     DataUIPart,
     DynamicToolUIPart,
@@ -81,20 +87,22 @@ __all__ = ['VercelAIAdapter']
 request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
 
 
-def _generate_message_id(msg: ModelRequest | ModelResponse, role: str, output_index: int) -> str:
+def _generate_message_id(
+    msg: ModelRequest | ModelResponse, role: Literal['system', 'user', 'assistant'], message_index: int
+) -> str:
     """Generate a deterministic message ID based on message content and position.
 
     Priority order:
-    1. For `ModelResponse` with `provider_response_id` set, use it directly.
-    2. For any message with run_id set, use '{run_id}-{output_index}'.
-    3. Fallback: UUID5 from 'timestamp-kind-role-output_index'.
+    1. For `ModelResponse` with `provider_response_id` set, use '{provider_response_id}-{message_index}'.
+    2. For any message with run_id set, use '{run_id}-{message_index}'.
+    3. Fallback: UUID5 from 'timestamp-kind-role-message_index'.
     """
     if isinstance(msg, ModelResponse) and msg.provider_response_id:
-        return msg.provider_response_id
+        return f'{msg.provider_response_id}-{message_index}'
     if msg.run_id:
-        return f'{msg.run_id}-{output_index}'
+        return f'{msg.run_id}-{message_index}'
     ts_str = msg.timestamp.isoformat() if msg.timestamp else ''
-    return str(uuid.uuid5(uuid.NAMESPACE_OID, f'{ts_str}-{msg.kind}-{role}-{output_index}'))
+    return str(uuid.uuid5(uuid.NAMESPACE_OID, f'{ts_str}-{msg.kind}-{role}-{message_index}'))
 
 
 def _safe_args_as_dict(part: ToolCallPart | BuiltinToolCallPart) -> dict[str, Any] | str:
@@ -598,7 +606,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         cls,
         messages: Sequence[ModelMessage],
         *,
-        generate_message_id: Callable[[ModelRequest | ModelResponse, str, int], str] | None = None,
+        generate_message_id: Callable[[ModelRequest | ModelResponse, Literal['system', 'user', 'assistant'], int], str]
+        | None = None,
     ) -> list[UIMessage]:
         """Transform Pydantic AI messages into Vercel AI messages.
 
@@ -606,8 +615,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             messages: A sequence of ModelMessage objects to convert
             generate_message_id: Optional custom function to generate message IDs. If provided,
                 it receives the message, the role ('system', 'user', or 'assistant'), and the
-                output position index (incremented per UIMessage appended), and should return
-                a unique string ID. If not provided, uses `provider_response_id` for responses,
+                message index (incremented per UIMessage appended), and should return a unique
+                string ID. If not provided, uses `provider_response_id` for responses,
                 run_id-based IDs for messages with run_id, or a deterministic UUID5 fallback.
 
         Returns:
@@ -625,22 +634,22 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
         id_generator = generate_message_id or _generate_message_id
         result: list[UIMessage] = []
-        output_index = 0
+        message_index = 0
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
                 system_ui_parts, user_ui_parts = cls._dump_request_message(msg)
                 if system_ui_parts:
                     result.append(
-                        UIMessage(id=id_generator(msg, 'system', output_index), role='system', parts=system_ui_parts)
+                        UIMessage(id=id_generator(msg, 'system', message_index), role='system', parts=system_ui_parts)
                     )
-                    output_index += 1
+                    message_index += 1
 
                 if user_ui_parts:
                     result.append(
-                        UIMessage(id=id_generator(msg, 'user', output_index), role='user', parts=user_ui_parts)
+                        UIMessage(id=id_generator(msg, 'user', message_index), role='user', parts=user_ui_parts)
                     )
-                    output_index += 1
+                    message_index += 1
 
             elif isinstance(  # pragma: no branch
                 msg, ModelResponse
@@ -648,9 +657,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results)
                 if ui_parts:  # pragma: no branch
                     result.append(
-                        UIMessage(id=id_generator(msg, 'assistant', output_index), role='assistant', parts=ui_parts)
+                        UIMessage(id=id_generator(msg, 'assistant', message_index), role='assistant', parts=ui_parts)
                     )
-                    output_index += 1
+                    message_index += 1
             else:
                 assert_never(msg)
 
