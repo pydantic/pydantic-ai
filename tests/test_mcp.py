@@ -2445,7 +2445,11 @@ async def test_agent_to_mcp_list_tools():
 
     tool = tools_result.tools[0]
     assert tool.name == 'my_agent'
-    assert tool.inputSchema == {'type': 'object', 'properties': {'prompt': {'type': 'string'}}}
+    assert tool.inputSchema == {
+        'type': 'object',
+        'properties': {'prompt': {'type': 'string'}},
+        'required': ['prompt'],
+    }
     assert tool.outputSchema == {
         'type': 'object',
         'properties': {'result': {'type': 'string'}},
@@ -2480,7 +2484,8 @@ async def test_agent_to_mcp_missing_prompt():
 
     result = await _call_tool(server, 'my_agent', {})
     assert result.isError is True
-    assert _error_text(result) == "Expected 'prompt' argument to be a string, got NoneType"
+    # MCP server's input validation catches the missing required property
+    assert "'prompt' is a required property" in _error_text(result)
 
 
 async def test_agent_to_mcp_non_string_prompt():

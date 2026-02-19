@@ -1417,6 +1417,28 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         tool_description: str | None = None,
         deps: AgentDepsT = None,
     ) -> Server:
+        """Convert the agent to an MCP server, exposing it as a tool.
+
+        !!! warning "Experimental"
+            This method is experimental and may change in the future.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-5.2')
+        server = agent.to_mcp()
+        ```
+
+        Args:
+            server_name: Custom name for the MCP server. Defaults to the agent name.
+            tool_name: Custom name for the tool. Defaults to the agent name.
+            tool_description: Custom description for the tool.
+            deps: Dependencies to pass to the agent on each tool call.
+
+        Returns:
+            An MCP `Server` instance with the agent registered as a tool.
+        """
         from .._mcp import agent_to_mcp
 
         warnings.warn('The `to_mcp` method is experimental, and may change in the future.', UserWarning)

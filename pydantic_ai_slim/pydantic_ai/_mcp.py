@@ -161,7 +161,11 @@ def agent_to_mcp(
             Tool(
                 name=tool_name,
                 description=tool_description,
-                inputSchema={'type': 'object', 'properties': {'prompt': {'type': 'string'}}},
+                inputSchema={
+                    'type': 'object',
+                    'properties': {'prompt': {'type': 'string'}},
+                    'required': ['prompt'],
+                },
                 outputSchema={
                     'type': 'object',
                     'properties': {'result': agent.output_json_schema()},
