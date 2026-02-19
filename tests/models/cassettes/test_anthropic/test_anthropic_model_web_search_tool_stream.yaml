@@ -1,0 +1,390 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '396'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the weather in San Francisco today?
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: true
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - allowed_domains: null
+        blocked_domains: null
+        max_uses: null
+        name: web_search
+        type: web_search_20250305
+        user_location: null
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    body:
+      string: |+
+        event: message_start
+        data: {"type":"message_start","message":{"id":"msg_01QmxBSdEbD9ZeBWDVgFDoQ5","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":2068,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard"}}         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user is asking about the weather"}     }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" in San Francisco today. This is clearly a request"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" for current, real-time information"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" that changes daily, so I should use"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" web search to get up-to-date weather"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" information. According to the guidelines, today"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"'s date is September 16, "}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"2025.\n\nI should search for current"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" weather in San Francisco. I'll include \""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"today\" in the search query to get the most current"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" information."}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"Er8ECkYIBxgCKkDp29haxwUos3j9hg3HNQI8e4jcFtinIsLxpzaQR/MhPnIpHkUpSNPatD/C2EVyiEGg2LIO1lhkU/P8XLgiyejFEgzinYyrRtGe03DeFEIaDL63CVUOAo1v/57lpSIw+msm1NHv1h+xLzkbu2YqlXPwjza0tVjwAj7RLUFwB1HpPbdv6hlityaMFb/SwKZZKqYDwbYu36cdPpUcpirpZaKZ/DITzfWJkX93BXmRl5au50mxAiFe9B8XxreADaofra5cmevEaaLH0b5Ze/IC0ja/cJdo9NoVlyHlqdXmex22CAkg0Y/HnsZr8MbnE6GyG9bOqAEhwb6YgKHMaMLDVmElbNSsD7luWtsbw5BDvRaqSSROzTxH4s0dqjUqJsoOBeUXuUqWHSl2KwQi8akELKUnvlDz15ZwFI1yVTHA5nSMFIhjB0jECs1g8PjFkAYTHkHddYR5/SLruy1ENpKU0xjc/hd/O41xnI3PxHBGDKv/hdeSVBKjJ0SDYIwXW96QS5vzlKxYGCqtibj2VxPzUlDITvhn1oO+cjCXClo1lE+ul//+nk7jk7fRkvl1/+pscYCpBoGKprA7CU1kpiggO9pAVUrpZM9vC2jF5/VVVYEoY3CyC+hrNpDWXTUdGdCTofhp2wdWVZzCmO7/+L8SUnlu64YYe9PWsRDuHRe8Lvl0M9EyBrhWnGWQkkk9b+O5uNU5xgE0sjbuGzgYswhwSd7Powb8XbtbW6h7lTbo1M2IQ3Ok0kdt0RAYAQ=="}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h","name":"web_search","input":{}}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\": "}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"Sa"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"n Fr"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"anc"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"isc"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"o weather"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" tod"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ay\"}"}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h","content":[{"type":"web_search_result","title":"San Francisco, CA Weather Forecast | AccuWeather","url":"https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629","encrypted_content":"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","page_age":"6 days ago"},{"type":"web_search_result","title":"10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com","url":"https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US","encrypted_content":"EqsCCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLTOmzU6o2IFyelIDxoMpBI6ydDK/wwgkMRXIjAm+0O5fpxZFLA08gCLYc2s2emPmaUTCPPIMuecseNQJxE2fEEEHIZhaA92poJuL4cqrgEH6wmAzVTb8MFWgqH4lXYAEei4SLnGtDXaMJ4CWgKxqdNbwHqgncCLzIsUtTQx8lv3hfetXrVRbGGLUJ0RfhdSbykJTCSzI/23em8I11xKi9W+thDH7w/aujj8d0vhLSf35UeGo2+VNpwFSiuNhUOrPH6MfqYmzrT2jYYVDbjK9ndqrsXBiXTqvgILvrl/+l+13DCXkwfE0xcyCgwJ1o8SxbSGpTo3WPXAX/zCUxcYAw==","page_age":"6 days ago"},{"type":"web_search_result","title":"Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com","url":"https://weather.com/weather/today/l/USCA0987:1:US","encrypted_content":"EpsCCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDPdRJgWfAROo9/vXwhoMM7M05zjidI1J3upEIjBfedfsWm2an6Wse3Thj6GAFYPOK8/kAcoU9H02bWqwf+bhkS97Iclko2uBm7woQJMqngG0x06jamHmqaJKrfwo3CuE3BUj4WeMQmtSdz0B5qwDL5NhWHpFIgcuyz5sJRDWNvlKHUNrXiPotMOvjD3/bigF2jzx2bRGj3Do7E7iv7r9Ne9JRuK2oSPF3sGR61v+8Z/WK6wHdHz69BUtjzaQ01MWz3KAcpX0zEWkUGcVJ0h+LhGmFl+VSy1O086l3WPpVypfDDB/fiYzsW5AAL0h3xgD","page_age":null},{"type":"web_search_result","title":"San Francisco, CA 10-Day Weather Forecast | Weather Underground","url":"https://www.wunderground.com/forecast/us/ca/san-francisco","encrypted_content":"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","page_age":null},{"type":"web_search_result","title":"National Weather Service","url":"https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196","encrypted_content":"ErgBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDP9OLadJrGp5B0DSKhoMgp/XmmKSbz9TF++pIjAkpViRLY9iQAx4lMZcA/BCyc0UUwFmzHTe3ET1bbvsSfx2KGU+IpS9oJgmK8eRRJ0qPBHXYyrILxqe1g/KhyyytqxgIOSBTQmWAn5Xc948TAnT9hmVUAx4qXcIA1iB4c5VtvWafXzAG4ju+dJSARgD","page_age":"1 week ago"},{"type":"web_search_result","title":"San Francisco Bay Area weather forecast – NBC Bay Area","url":"https://www.nbcbayarea.com/weather/","encrypted_content":"EsAECioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDIC57jccAgUeWO+CmRoMiXwQw/UZ+ZUqJBgnIjBZQrLFpduzQDmOBDmD4zJH7XN4Xhlm+4I8k5HXbtWRSQqmRnk7qv6LHDUggBXpm/EqwwOcJ+yN3KaBJfiMu1/qiV8LEdmf6tCtpcAfAluL+fdu5KV4R3WHb1bDJ8IjgXxvajYyad8cHuzTPQkTZv5i30jSavz9bdSoZV/xf9tLfD+Wi1wmWpc1SfZPqKqO2qeqBDdK9a5SSbKcCpBIlwCpnPOP4CkjVuZ9QENvxDkH+uUwT1QDAeiM0m7QAFpHbosyC+QHejiTWC5jRPdZ90nxtqAk1A6MIkYb6xJh+K/XleAMM5Ym4rWhhu4nIx8MmOjLrbZkw+QuOKJKXqfzqnbEkBPqXOndkTJWPl7TvmU7j3eNDZMNlOdi1wjhDxPmjtVbktbPhuTfXc7WAUTB2PPETC9zWfaJrUBKe1XOfh35Xh2Bi54xV0MulfckJ6uuU8W1VEMgCYkIadiNwfUPE9PCqOh2WzX8e9A2FGyUI6zG/8XDf9vJqDL34xX98PagCMBxHrE/tRr7VCDWMyfrMrdr1JLAQMY1Ct6hwVjqGkY2fShTfFCBveMIqsQQC7kZJMhko7ZP5CzXUCfIEdSA3+sM8s9UMqNBjyalWoqeeR2axAkz/2Y5oW0kcy6vUxDAxyoS08YGIu5t4ER3vWElTIq3DWd1GhJfGAM=","page_age":"1 week ago"},{"type":"web_search_result","title":"San Francisco, CA Current Weather - The Weather Network","url":"https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1","encrypted_content":"EocJCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDN80njAMFvO4fs5sFxoM10XYtICHmzbKOFHzIjAq5T+fi5l4yDykxiu5UqfFN0uTjIf9E9i3dYRlJb8bgPOiwapXvCdzZfYh9xGR8R8qigggVEEJ4G2xaOyV4YYD1SZ6FKWcKW/uALuPmDFs1Vrz78UHhPGgG12HpqX6AEdBon2VRf5DL899r/nNYfWM7o1jkkDpnUvWliv/OLGvd6QGFlSxGpdrmhn50y8SmuDyRNIBA6HSw6J6oR6BuwtIX3t1uGhY53UH9y7Rc5lRmWJ6CDaThLUPwuNw+W8KNAnIVX80yWXqwiP3hbR9J4xrkUirmxYtxpkJY+4qkifPfMaGuoeqrH2ahznFXEsew9GZ/Uw3nZvwF5PNrNzgamMme6KTb1Puo/QRvpGdKssn0ZhS7b9p1ZSdHndplapAk1pu4WtDCIM1ICyYeLlaIxGOI9tOMSIbPObj+OUisvXfkYRmTBJ7tIGNxr2KqWdJdKyBIo8+L/IFWIqPWicT/JZTe3cGVUy5YzRgJcX34fjtNwkcRuTteTk/gQjypbxfQHH+2RItQrP2anBWW/IYsS/4IMDUc7TI5os/x79PoWai/G9tPEEwdYGVmMaa6te/kUHyrWC6PVckP9o5OLdLqYlQpHLxOvMkuicX7m9dCs5HA4EAkAK00jSa7ppHvDsJzzVPBrseeCR8dSJ8+DuR4ScQUShKUbBFFq6A8LNI6ZRExyUud06sJ1wvHFzssbmPAIc5Te3Hb21juR0gQCWYdlyosTIXB53pGkbvKhJkf/2GG30cNsjVXStIqNUQdn1Vaa+M+dmaoYFMbuYrLmWZCmKochX/SB32fbcEyzO9mRvoKoVjgTPUbELKeNnJLZqgErtJlqY7R79Dhe154r0yASCTEjLNf/ZMfcwmq6alW0yJEB+ss6D2HI3yr02eVra8KP04jVcwAa0M3r+deeJE0dZ+8Bv2n2gyTlQjeYPFGCJtjfqbLXu/M1R9TqLgfSHD7qm3hMq+IOiKzuDZJRQPsQgMotcDFwxIbqRa0shoGchKkLWUxYsIzg922W7QCJLZ3ktWm0WzVmT9MC7uVhUBDQlCdIvJh83DEshiC+dzdJO5qJ3ptNIVDCuHEX7R8OMqFaJrsmNe+r/TPpws3flmOY7anQ/rE1d4ZgrG+YJIKuACrkTmvX8K3xhow8RCZyY6pt6ByHaTdMwNnqibkUp4wLw1lXej506+vkcSXkHXHAuoAERWPd64iGj/qsITKJWSpaGsc2thj+HcT6iSq1L6FM8CtTOwV8mHatww+X9MqemBodyOTlHbuB5MNKqDBXNzEok5h2ReH4lV9PzC3t+3udt40lLcVwmGSDXWS3/3Z28Bgj1ONO7PruP3mGhCeieNalfcip6BAYW796FkpeFlgdjnETmwNMm9a/01ZECZ1WTq+iJPNmbyB8H9PnGbx7wE0pRcR76vvfppJl2l3tUNklQniZVuJMlT7KRBD4OIjBgD","page_age":null},{"type":"web_search_result","title":"San Francisco, CA Weather Conditions | Weather Underground","url":"https://www.wunderground.com/weather/us/ca/san-francisco","encrypted_content":"EvYECioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDJclKOc/QrTZQcScnxoMKCMLc4tGWeLQtqCSIjDl1WFSU5z9na9UJsXNuveNAbmnpHIhfZjZZO9VljfquIJpwvmTwcfPcXKcekK0kk8q+QOsr55hKGaocZhAiwWcPNav8OToBxbAZEo6WUYTJdJrTVLncg7S/1DBDFTBNHj69BvGRQ1GZywBkjGIpRTkuaMkO4WjwnkZ3kgH8O98GE49cjCcjeodZCvA3haKvRCEaXj/13AiNmwxUS7oPUKTl0Q49g3Zmzry8DdYwdh3tVOkN5l0DgvxeDvCJLe6plFmS90QcZx4qHmLWn4YqmgCzjyi+iRz4gnUE4/gXrhM9NZyAor9m5DFiYXtKtYx1hCC9LujrhTGR162Pxouuxl3OIV4DJBLHuLgFZP9SeODWMMz9kgGWEHLftRg5y5hZw6lnXTKoZrt4op6VrAidQfbPtCBXf2iN+wGN4+0dPdo5y6eG6EtwIUme/CR2tK8gSNpoXDEv7hhrWZZ3VG9ir5ZHlxJSz3WISZFEz6/3KLNQZd2Atm3wl7dPVjxyvFIxdnb2+r+aJosxV150PvnIZwQyYQF1r0DSFKunuzSTnOLx5WJglS5vmOH3SZV3nJfT7ZpvT2X92w6Esj6EjDs8JY5t4Ntiq7mq7f9WUK99NCyn+N+w2yx9OLc9pAP+rR1BUQBudVD8B9epjdK0nLj+nzk1b2sfhVbHnJ1TFvabdqk9PB0PKlil4K9brMJsWhIumfc60+ZB3B7SqmfUsl4TLqHJLgbBP9MtImoX2VhGAM=","page_age":"6 days ago"},{"type":"web_search_result","title":"San Francisco, CA Hourly Weather Forecast | Weather Underground","url":"https://www.wunderground.com/hourly/us/ca/san-francisco","encrypted_content":"Eo8HCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCAiv4YyS/RGnL8pvxoM3On/lSOioN+plaJSIjBkpdohA0+FeGQuOkjLJ9UmjxEnxIkUCIg88eToABjuo2Ssm18X+rCS0zNrbIcwxLgqkgZrTw2AWM6oMe5S5Cb7QtlfBYsgR2YZgAGLel0S4oUDcneQ8hSYjf+kxDbXRo/DyyNm4b4xIW68gZeOYMVoZsZ5q5RTaVbo0D/PC9SxRziI3KYheqznnn5MbsVRPZNp6u3+YjpPtM6l/GS/tEOIXIMaOIW7pG2UHpNMRwIfy6AncQWny8TNE8hksgurWFFHjr5MZgMDrl6co6jsQnyRTz7sW8Y8gmUh99oRofSJiiTsnUA8kwbKBDbco6y3TMOxV1T6I4dyyUtGAhhnaQi4mrnhFK3qrCxsb2BsF6NDTTkL3IyBAdcdcwkahfvh7Je1aqIKdKH/qX1NWjeNLOp/lo3ZmRf4GGEDC/oBoFsNkI0OthzujJmguXg3lB3+k6KpsYYfxE3jZz4PzZ1LEyNToyjkC8ZeM52aMIIYErBSl8XLwAo6Ai/8qdMDvY0iIeBZ7ypJd21rVQLIOZv0j2SRozZh2zNc0WFOfwJWUNBljvCoHKa9NINct4xeNOLWPtM550FaywVfg5g0EGwzs+W7hZcsqBJOvh8gp7Hu4PWt9fOXX6l/Dd7g9pPKGPSdXa4Zwo9RsRO2A7a/GvGnJUrM0h3Hlr6GBDbpQFNv5FSipmVLv3+OQU88wvZl5juIcHzdslu/RdRE7AA4vIhKHqqAVqvvl4JXd4d1M9fYhICCaql88qnsOPyVPZCDNAO0o/AoIi9CvneE/WT4IDoenyjCmhGCIsEXdUGYzI1WFtMEBs93224M2/obIBUQZ6VB12r2ME5yPhpAU1LIVB8Xd2Ahuy/1+yPBQwYY9eMV/p8F3w42lO9SQuP0JPy6Wvxs8LFq9lQBD7mm4ClnmdaK7jTlyVS8bMwFhQI1O7tqwF7WtULxRxmSy1NLYpJZokebulzDLq38+/ucO+pqQwPo/7d6KgObgX6l2YYAjl/glgOwyOJ3EabFNXWgIK5zq4kWFK4cq9DoqgPzfDkbbL8iE7mD3YjNqs/n6sWYn9de9kPt/5dO0M4oq7y8RMRyNbUWTUlY6M6MjDF0tCPrBqKZmCvV4wx76OgYAw==","page_age":null},{"type":"web_search_result","title":"Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco","url":"https://abc7news.com/weather/","encrypted_content":"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","page_age":"1 week ago"}]}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"Base"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"d on the search results, I can see"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" that the information is a bit date"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"d (most results are from about 6"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" days to a week ago), but I can provide"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" you with the available weather information for San Francisco."}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" Let me search for more current"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" information."}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"server_tool_use","id":"srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx","name":"web_search","input":{}}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"{\""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"quer"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"y\": "}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"\"San"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":" Fra"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"nci"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"sco w"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"eather S"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"ep"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"tember 16 2"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"025\"}"}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":5,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx","content":[{"type":"web_search_result","title":"San Francisco weather in September 2025 | Weather25.com","url":"https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September","encrypted_content":"Eq4DCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDPwU0Py1Q9iYNDDdhoM2qNBTnxjtd4cRn9VIjC/dZ8Ce/L8p7E9+XDGXxJOo08FcIolDYKMESXmzZ4qpTujOuYI3WINvKibmIIvpgMqsQLSU9R+vb7BJhe7mgv03VKaUqcSqu1/GtEQ2guIaydusW+HcIvamqUX9f69j/g31g7qJyK2JD26s3KEdFAqzjS7ttSXF0s5BAgIkBXn5eV/FFMxYGMiY0t3EDBM/9OOk7Of9I5RAbxYYPslJKsAovc8IuMIA/eLjYyM2wCpna+2g3VmPexJlJVJTdJPGH0Qup8HVHK3ZX563qPYXOJ2/D9ClF++e9h98EXBehmZlP/EU3zNmvX1P5XySAfILOJjiGszXjbER0E+cyY6qmJnzo8NgazPJXh+byIwsPn/UN6eHFWcA1YRtpvMzrx9Hr+AZSNhce4/Kwpwx65H5jJdY5UXDpIDXKoQf3PyaSSN9M3mcq07YgALVHBnHkldU06/472LRs+3psQaIGAwzWgeLWUW6xgD","page_age":null},{"type":"web_search_result","title":"Weather in San Francisco in September 2025 (California) - detailed Weather Forecast for a month","url":"https://world-weather.info/forecast/usa/san_francisco/september-2025/","encrypted_content":"Eo8ECioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDNvtL6qJi8oFPXxieBoMJyFMKhdDLlHV9SCoIjC2y7zYuNlMHte8L+NnfsfrRyVmxGxNGTkwavA8xhyVYv8iFQUW8InuIa96o1QboVwqkgNQfYn+/Grceq+O1uBFfrfVP3GI86X2OXNYFx+OWWPmnWO+koYYI0UwiU7tF4BM2DWqL1uBMVabqiekDi04iKbVgrxDieEctEebaeY+cMa3fGtxlN8VyGdfKqfcHpBVt+VM81ShI/wSrc1BBtjuVRSGE9F57Ddv2T1WCfSqP8kYpV47hggTgpIPE0tJb84AIhy8jpYoRFA2JLs+MmRMVKbxLJcMrX/G5VAXmQ3HIo1dXN8JbR2JrCLGNfBmM3Yxb/HeGqGpAa1rrpKnTGOKEOTXSQYh9XTzxUBsR0SwvG7myGFwv5u8SDeaKwrmxIBe5+81o1jlCJacHXYW9ryilYavV9l8WqXuGqdty4IKU4hIKRn2v7Cm2wzr3Gt97XUcsV9RMiXEz1a6yNTl9vvhd3EzD7ivSpxxhUO6AdW3rreH0PflUub3Nt62Y8vb3HdqeWQnVzVWXD6dd3B7RuaTxC9LOiFPTw9HAeiw5lrImVPaa8FDOpP3wTG/1OybTpvAX3LirmuJMLBh21cltxZ+HDn0mmwYAw==","page_age":null},{"type":"web_search_result","title":"San Francisco, CA Monthly Weather | AccuWeather","url":"https://www.accuweather.com/en/us/san-francisco/94103/september-weather/347629","encrypted_content":"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","page_age":null},{"type":"web_search_result","title":"Weather San Francisco in September 2025: Temperature & Climate","url":"https://en.climate-data.org/north-america/united-states-of-america/california/san-francisco-385/t/september-9/","encrypted_content":"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","page_age":null},{"type":"web_search_result","title":"San Francisco weather in September 2025 | California","url":"https://www.weather2travel.com/california/san-francisco/september/","encrypted_content":"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","page_age":null},{"type":"web_search_result","title":"San Francisco, Weather for September, USA","url":"https://www.holiday-weather.com/san_francisco/averages/september/","encrypted_content":"EqUKCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDE+3Ec8CLk6MLjz5fxoMlOJu5maBtSxHmxWLIjAQZ4b84syNFqEdmtSPXJbEeF5Ys1P3KeNJI0ZmZCgluBBTWXJtO5r0w2XLH3p5VJcqqAl6QkMfWWb+g4Qo9OetCUKXoD5UXG0/qv4eochXMgwITxRcGKgKdflIr53B1dXtCZAydP73o5MC9YajdqO73XvbtbSUespTAZjH8jHMGUGVZ1wgVG/NWY4NEO1pSdNMkGBly1dAW7QBFR3RPIyoMnfQRT86nDaJrPasdrupMlRgvcDdy+AgHZiCXMNSl1BH057q2HEnAFQHBRuKZ8Xpq5Z7ykHzbvGcXl54ciq4xev2yLmiWHNeRb3fbln1PSV4MND1dElUv0bR7DGjruUcrxAfB6Bbln4ntmYh3QFRq0azmYmFDimbVE454LANmmLtEiSQ1EgTUJIjoAKbtBB4Y3cko3S3pWs0tfyE5IonmXbQryozu433Bwy02KrJKbJ4ldHf20jzNN9FxXzXLQJhM+F91sUkeiKiNw+hSefErMSU4S4fFf4+f5ybcAGpuADxJQpr9pWdeypLGCz52trX1u2IHImg8BlUqCWgcuy6v2cFm470dMIi0M74YGi1T29NlP8mFuzthChvcRk2g/9HfwsRwNOCwy/Zn6De7MLZ/K+tnnxZMDhaZ19iWoNzf0kDcliKbdsLT82waauY37YfBaFKdbNdZBFnNGt+1bHO0db8s2AYcq/Yh4e5e1wMXrEcAnIY/IfQD2bePnqLwSAxXZ/1+4A4wQ3sDrZ/pWIKeGLfCgVw5y1MS5O/J6BZLJPcGNjtKI/FStTUGy9i/UOz9GN6jkJVzKErtZmAihbLjErnpFXBWCSlFKBGJqp+4Ob/GN0J4La7E5dA1Lx8PJHiHgUT1A3KmWk4om941EoDdf728U3L9bMSUgZSDgMoYOmLaVEhEFyu+zQZ2dC3dC9Uz5w8ltH67y7fILZzRbHxByXWeea/ObVrIqEzVjUD92/dHerMvadvZzWtmWRy+VGJETVNnxSfd2sXoRqJC+rG9o8e8YOw2o+NYeOyWInFUyGEr37zWGH+7jjMlyKIZztg/QEUmiP67zMD+ESfY7o06DEoJkyPXv/YJ3/U1vIE2n57UFSeU6tSJDgQyTZ0tgeb4ShhpEykyH8yWLFkbOyxim+Zqy0gtwjNTBXB2VqSCuXo9TwUp/RmNqE/6imUBg+ge91JZoJy1rbx3EZVHsorwHP+IQcSq4C4AMfeIFXXKHOMVUsEN9H5wt0a20SjLC/A4kM5eLQYKnpiU5bN/4OoK4VkolnanEnIywkX96Ni+zP2DQktxiKeeG4rZAYLYxF4Zei0LJhMmgD7gM8M6aH8dwMTCZME+sh2E1xoHdEa82SVQFP3Qmufk21jlFNFVzquDq9LeOY9/34yYABBraTKqtJZwf0JG/q0thvKUrLsaIJzLyz7kDuK5rMqJQ2hMJ7hP/UeQzHqXHviOMToA0PkBQ8nlPpE2Boyt2UWSI6LQKpeH/KMeYg0DmXlZ4cUv3r1gi1VxbYk7ElzhvrJKdkAU+FD1Rl+l1dL+2oQPhBQHeSQ23X/XncyXAoJNgzpnr3nEl9k0Dp4IIB9+P2B/vK2Qw3JfJyEl87ZTVfc+/DEduBOXBFEWiXZgwJ8qe6OgehBdvP5MWLM6HWcK0bgtlyR69uiDbwanNlYI2u4GAM=","page_age":null},{"type":"web_search_result","title":"Monthly Weather Forecast for San Francisco, CA - weather.com","url":"https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87","encrypted_content":"Eq4CCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDB6I5l6MjKm/aCsr3hoM3n+M/m30nyfMY84mIjCOP9C1UyILIixxasmAh/zltTWIVfTkytzb85vshiTzhDGObYcEkNYBOQAuuRoj3WUqsQGTZn1oat3g8FhrHraTeG6Y4nb6j6GRZpnxKBCW9BjH2HiCR0flF8dYX39xqu088M24d03PSDGijE5j1U9IM0Fn6OjypOqUnBy1T8SfvRFTge5XGJ0bCKT/4qIEYVWA+GyrvtJXVMakQIDzD9rlA6F5j+PTqBz/Yu6joq+Zv17zvpXv9HRvrhwZdG0caTFvWPXIiHKHmxiqXg9yu0pJr6zsIrNcqpnAfNP26v+G3dGBMFoYAw==","page_age":null},{"type":"web_search_result","title":"September 2025 Weather - San Francisco","url":"https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september","encrypted_content":"EtELCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDGpIuvOc/2zW1bt9AhoMSZxepELZpi9PBadZIjBd7J2Mr8lh0oo4ExNG292oZNyK6cYxZ91tp3ytI5vH6314M3twVG+ktzO0UUmXMMMq1Aq69HOggxg913hY5e9VfnWw6U0naNq/RJOfk6JbRygMDfBB1Ifip6bf7prOgdq/eZkrjfFiPbZAEMxxQqvm5kBj6yHZ5Vh2wo3GcGW5vEeOarlB7Y56+D3RJQB1RGhUASRGKB/nuFVkBPFm6Zt8kJoacoFzlmG4IIMzrRyfjq5WmdJ5ACjnRaikxn/glfz5PTK7hNY0a62pI31RLgOfAeYL1OKleiEsa9UBDRf/AsJVp6UGoMxQrbOhlAtlhTJvOUz+uifCcYtAo6BHvaEP7FqgASp5lMzh0bcbyEhCV/xxKHmmM0f38wMbvmjJ4JoxqNohvKO603RQ94qPkSKs585viz4+8jOel6AjS/spGGRHApNurKgFZO+WyPuQCXIW5uc3fFcYicYNwBhWiY29Z8g7mooR7siJKnNmr+D4//16WJjzz9y3ZjCBlQ/A7zCl8WnAKckXHWcZtse+ff22Qr4wk6plyGRv6RLQay92ceZnmSETzXm0jfxFD4Go2EaKapt8CaZFvpPvoZTD6iUFJlTqbSfupZfw7pY61ckwfOnIppNI27q8cwtn1Q2XwyJ1ydmISNpp2HbGG2bVtA1B/biHgjImcmygv/CKOBWdPg/e7s4BrKl72gayEZIt4g11/cBj9245HoqeCckoQhQNdBThA5milDg6mkKfQ7LlPzTJp3B294GY/rCU9X8Njzd3Chrt7h2ShxflXBWP8s4RKZYdfPNMx66lSvMZO2OyjcIv9JYKhxPqmWZeAT8BFDa/1vtsnmGS6LoVi1+NCQ/0EgUUB6Ma4QYBbmAPgHp4zoGfp3AjTmusvNyEKJUnGAt1q1m+NF/pkMbS9UwGnNz8kQvooyfRGIX/mP4yYwsKpwDHhyxFsUMUur3Tln7wWAJNRsj45WjSStwTPH7/BHYcYFnAj+T0YHd9hJvwrV+0dBUcQ3DFiws7ZTG845sP50pIALZLYh5ylw4lr9WF58CUMISUuYTQ9CClAiLr2iogI8tkI35k/FE0UuOl+ahy8a/LbO32BStJreIWPZxx8194W5Nl7u7Xpiui1odieIgLSPycMXokdys9CqFdnzvootk/J92Ms5ZfBXEPAd24H0YFU+z5bv7pBRWVx+upIwGQuxZWKAmdijmCHaZB40aD+wGZ762Gf6+n6DM1bHCdHcrZo2cRO0efAFSQGAFyEtzIlLpAaJ9+K8ryvJLDrj6MF18O4DqeHdyenQNfZk6P1i/Qce9gyeLyBE0G0jtqQ10RqAFWi9vF7CWiIvvsVu8cCz5apznJHj83BHCAUnF+GNPx8TCPAaP/YhCZW1DpOWnG1PqpT+4cPQKBFWOceCdjHExeT6YQ2AdE07tttvbTj/lna4zRNkN1iWwCn2yVx7UTXW7wO94WXXg5NDqcusBV8f/3I726QoMAf91UP8Mmb0nHPR4iPLWIcsVGwvapXmro0vCyc8tf6/JhyPguUnmXnvSydK6I1dIp9fn4W6NtF+HPfg2dtdPhjpRsElJHV3JyBQSDoSl4XlTX1s5hEAfrMJyPac6gUD8L5Ho5JGfUPOP5Xc39P4O8BA/MQIyLQjNMw2WJJ6e0oDlbinVzoXitHQpRBWsfyuTDibTZuOY1kcKYQKw3YxxLVJnEnxkdJ9kDGPbdV0iJsbJegEjFW/kUedyPcxC8TcGuFUU5ifn8/4nQdBC4B/v3/C5+nkwf/3QgVNPlAsMzFSDGcV0viaVBPLhlD2c8kgXZCLCgdK39ZvsYWFROzwldDb1yQjQckV/iPCZ1IiW5rzcXxb+2fvaPWPqRvuPlS81WdPjgZj52Ir1QK8tWzGOlfBgD","page_age":"3 weeks ago"},{"type":"web_search_result","title":"San Francisco Weather in September | Thomas Cook","url":"https://www.thomascook.com/holidays/weather/usa/california/san-francisco/september/","encrypted_content":"EpQKCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDOzsJ63XiM4kdNQKKhoMms7RjD9KsfN4+DYCIjBXx/iuCtyufbha9IZZqlBC5L8E3bf/dc4kwCjI6cYVptGJoNvghh8Taz38xbenGxEqlwml9hrrHT/E8A5yecu42wEaPY2k4U5JFRKAagmna9+Zx96FgTZCyixjzc9rqX3yFDmAE/6kOZrXVA3Bd322tlHf77xcRksgtkW4tq8c9N+u4io6oF0O6TC1ROhkuvwR8gHHZH6yfSPUA2adqO0a2mk8tKd6MTW259BkrGoMDo4AiZIQbeR+4UJBMW7j1/HWZSJYym7Jge/snL0e/4y7WZSi9u9O5mdeGjt1NnC/Wardgjml43Z/B2ovYtsYekKtoYsG8LorZxhpZYJ/Flk8EOnt6zBFO6AoCkruWm8QA2aBmsF7TUwweUf59zXz3NIa6WF72Rdub3TZKI26tv+Oo36Wb6CBEoOY3y5RgppayvADwPh7PTpBj6JWvij+yjNEbQK75K45scmnjkJMzfGCuNpOVJCGAvQG6Yd9DwBdCdWGSVz20j6+9xkJK142rbiHKjLabb3NGFC/WsEpWA7GdpoKMN0mDkb1p8A6V0tjfkbvAswBcY0OrLBwd96aafNGBQHI3CNbNF1VU+kbm47A6DcQj9OB0kN7nPsz/GqpTGoLamFqVzYzwlUxuPVMhV1kAino9Po0log7xSyciDoTOiiMgPED3OqJpMNy/Q6++nMkrlUlvGQduiKF+WCLrdqPcQSTVGGXfC4fcX2DVtrPNiRCn9UhrntBkjmX9nKcCcIAndEsRaeMVBDLPa0NIpbBeldl7v3Hj3LVZonpDChTRn1sLZftfGhhc0nSN5pS6k4cM1YRwPGvbBIbiWcpDMlWM9F66MiAVE0eFr/8vvtRW2Bkr+4xmm6W/iivvMdlFCBJwdeIDMaENrg8Brqmc3RH0kenYn2GPviSRAjZM2+XnQE5GZ0qfeEgLgDDipdd25ojbCGuyb6Ox/UHIoCOkyrHCa8vb3oxefaYzk0fYUhP9QSN4IDojG/INx7HP0EeIeNJCIj1UqKeffWCFamnxZYQ/2JmAH27cMu5WVmbAmo66lzMTLvSy3jOS4kYJBjyf98aHzIuAI4rriBguB4zunvnJKl+js+/rqrt10Su5H21wt4QCJbenMl0Df9TYu4zYb7WypO5GbgxWYQUjPfZ489wi9ZiBAlr+kzULa7SRWVDrLMnKjemtE3v2yRY+XStLHLWoUB9YBu7hP8RbtA1sA3gr4D5qMfulYkhCT0Mj4DBAhfrTAkoY4UPQJz8xexo87bCAsIZlu7Ahk933CE+ml5o1Ml9ujgrmEvxKQgoiUopeQ4jR0Rizsqqnhbxvu0KuzdvlZkGIJxPgPNyoV1C1SoAxUHz2oDH9oGHo5ZFhRTaKgiE5SJPy7O0H2DSznlnAUHyTCHtFAvqVXpO3OnO2zX1QAItwUd/IksDbO0XKXhcTRpbhTwErz3qJNlxrUUwCZ+2/3cFnVfJ6xUKEBvvuacQ/pmf5l35izltd2m50z/h6wjBfpuLH7cdQeSmTlBYQMfYsbmpL0CzS+3cpom0AvQbrKUdYmFudGmAiwdIOtfcziVeppyOhajYAR3gGANdBIaOZGm/EVE69VXSTfmwJj/24s0+FDYjXMC5e285TzB90MsW9Lsun6yQ7xgD","page_age":null},{"type":"web_search_result","title":"Here’s when S.F. weather could hit 90 degrees next week","url":"https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php","encrypted_content":"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","page_age":"4 days ago"}]}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":5             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":6,"content_block":{"type":"text","text":""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"Base"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"d on the search results, I can provide you with information about San Francisco's weather"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" today (September 16, 2025):\n\nAccording"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" to AccuWeather's forecast, "}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":6        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":7,"content_block":{"citations":[],"type":"text","text":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","cited_text":"San Francisco, CA Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast® Monthly Air Quality Health & Activities · News · F...","url":"https://www.accuweather.com/en/us/san-francisco/94103/september-weather/347629","title":"San Francisco, CA Monthly Weather | AccuWeather","encrypted_index":"EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDF40DRRSNnVV3UQhMhoME3fVNuLj0UFoYnjZIjCgodwR9nJs5Ax0wYOB3qnP6aRoPSxxmbCs88auNlqqTGUqZRWBAI4N0By5bOAFJF4qFK0WEkiPPIMDb4tVJTRA9sSl86GQGAQ="}}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":7,"delta":{"type":"text_delta","text":"today (September 16) shows a high of 76°F and low of 59°F"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":7     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":8,"content_block":{"type":"text","text":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":8,"delta":{"type":"text_delta","text":" for San Francisco.\n\nFrom the recent San"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":8,"delta":{"type":"text_delta","text":" Francisco Chronicle weather report, "}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":8      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":9,"content_block":{"citations":[],"type":"text","text":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","cited_text":"Average mid-September highs in San Francisco are around 70 degrees. ","url":"https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php","title":"Here’s when S.F. weather could hit 90 degrees next week","encrypted_index":"EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDH3EgputwhrYmTSWkBoMR1g/HqJaXbK1bsBQIjCWmKqwNmnpvSdJS5cG8TKXe2SbNjMAZO8j7W7YteGkOGvLBxnrcMOTh9TjRvXjm28qFPP2EEUPRVdFRg/khJM0JcBYs/ceGAQ="}}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","cited_text":"Average mid-September highs in San Francisco are around 70 degrees. ","url":"https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php","title":"Here’s when S.F. weather could hit 90 degrees next week","encrypted_index":"EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFDx+f2Hj6wkNpswqhoMCeUDlHiMe0i9t1e6IjBRNMm9hMzr3lAuli5aRzDN/kyG28rjZyS0CUffCkSklmI0hunp67hVGP/tbzeZgYUqFGKgbS6TfBOX/a6hKPiL14JUl/udGAQ="}}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":9,"delta":{"type":"text_delta","text":"average mid-September highs in San Francisco are around 70 degrees"}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":9            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":10,"content_block":{"type":"text","text":""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":10,"delta":{"type":"text_delta","text":", so today's forecast of 76°F is"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":10,"delta":{"type":"text_delta","text":" slightly above the typical temperature for this time of year.\n\nThe"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":10,"delta":{"type":"text_delta","text":" general weather pattern for San Francisco in September includes:\n- "}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":10}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":11,"content_block":{"citations":[],"type":"text","text":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","cited_text":"... Daytime temperatures usually reach 22°C in San Francisco in September, falling to 13°C at night. ","url":"https://www.weather2travel.com/california/san-francisco/september/","title":"San Francisco weather in September 2025 | California","encrypted_index":"EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDJbvWTEObIENPeg2jxoMXGlxzP1Uyuc+2hsWIjAg8u0sUvYEYFdEYiwBb1GkAx1RkamSZ0KreMTOu5X4ZNGOYwWkVPANKEnI7gqrSlcqFPffLYpNc62cyXWiS6+fTmf3sSo5GAQ="}}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","cited_text":"... Daytime temperatures usually reach 22°C in San Francisco in September, falling to 13°C at night. ","url":"https://www.weather2travel.com/california/san-francisco/september/","title":"San Francisco weather in September 2025 | California","encrypted_index":"EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDHzLg5l+tM/ffc+sIxoMu0XLITxRs9iGUiOZIjCVw6Spvws/dkAngK7JhGYyexOac5AFH1ay+7P5X7uzdQ45HenkLIIQGQFGTbWtxREqFKwjsGwPjTRTli9ipIJTUqNLTKAZGAQ="}}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":"Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":11,"delta":{"type":"text_delta","text":" (55°F) at night"}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":11               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":12,"content_block":{"type":"text","text":""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":12,"delta":{"type":"text_delta","text":"\n- "}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":12           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":13,"content_block":{"citations":[],"type":"text","text":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":13,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","cited_text":"There are normally 9 hours of bright sunshine each day in San Francisco in September - that's 73% of daylight hours. ","url":"https://www.weather2travel.com/california/san-francisco/september/","title":"San Francisco weather in September 2025 | California","encrypted_index":"EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLsYD2oWQxpWeTy+hRoMIGR+pZTWCOBtK8vuIjDPGODqF/O0ikxRjnXzksLRdiadJh+z0bD0mNgSUQkpukodMk8Mj7njCWAzjKIvtSIqFDBrpyn6zsCYYFCGRmOozHbz/hmLGAQ="}}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":13,"delta":{"type":"text_delta","text":"There are normally 9 hours of bright sunshine each day in San Francisco in"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":13,"delta":{"type":"text_delta","text":" September"}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":13      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":14,"content_block":{"type":"text","text":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":14,"delta":{"type":"text_delta","text":"\n- "}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":14            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":15,"content_block":{"citations":[],"type":"text","text":""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":15,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","cited_text":"San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this mon...","url":"https://en.climate-data.org/north-america/united-states-of-america/california/san-francisco-385/t/september-9/","title":"Weather San Francisco in September 2025: Temperature & Climate","encrypted_index":"EpQBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMgXE4UZcyDxqPN/kxoMMZjABtflMw7yLqFFIjDsML/HQ1FAol5ql8svI/FEaOrOVDUaus1aZb492kQtvkH86qCbMJUTQ73GGcmRQz8qGIZij1uOCYKSArWfTnyncHgnP0CtoNGo0RgE"}}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":15,"delta":{"type":"text_delta","text":"San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm."}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":15,"delta":{"type":"text_delta","text":" Typically, there are no rainy days"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":15,"delta":{"type":"text_delta","text":" during this month"}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":15            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":16,"content_block":{"type":"text","text":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":16,"delta":{"type":"text_delta","text":"\n\nSo for today, you can expect partly sunny to sunny skies with a"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":16,"delta":{"type":"text_delta","text":" high around 76°F (24°C)"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":16,"delta":{"type":"text_delta","text":" and a low around 59°F (15°C),"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":16,"delta":{"type":"text_delta","text":" with very little chance of rain. It's sh"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":16,"delta":{"type":"text_delta","text":"aping up to be a pleasant day in San Francisco!"}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":16            }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":22397,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":637,"server_tool_use":{"web_search_requests":2,"web_fetch_requests":0}}   }
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

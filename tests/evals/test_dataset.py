@@ -1,32 +1,36 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any, Literal
 
 import pytest
-from dirty_equals import HasRepr
-from inline_snapshot import snapshot
-from pydantic import BaseModel
+import yaml
+from dirty_equals import HasRepr, IsNumber
+from pydantic import BaseModel, TypeAdapter
 
-from ..conftest import try_import
+from .._inline_snapshot import snapshot
+from ..conftest import IsStr, try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
-    from pydantic_evals import Case, Dataset
-    from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
-    from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, LLMJudge, Python
-    from pydantic_evals.evaluators.context import EvaluatorContext
-    from pydantic_evals.reporting import ReportCase
-
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
-
-if TYPE_CHECKING or imports_successful():
     import logfire
     from logfire.testing import CaptureLogfire
+
+    from pydantic_evals import Case, Dataset
+    from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
+    from pydantic_evals.evaluators import (
+        EvaluationResult,
+        Evaluator,
+        EvaluatorFailure,
+        EvaluatorOutput,
+        EvaluatorSpec,
+        LLMJudge,
+    )
+    from pydantic_evals.evaluators.context import EvaluatorContext
+    from pydantic_evals.reporting import EvaluationReport, ReportCase, ReportCaseAdapter, ReportCaseFailure
 
     @dataclass
     class MockEvaluator(Evaluator[object, object, object]):
@@ -37,11 +41,29 @@ if TYPE_CHECKING or imports_successful():
         def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
             return self.output
 
+    @dataclass(repr=False)
+    class Python(Evaluator[object, object, object]):
+        expression: str
+        evaluation_name: str | None = field(default=None)
+
+        def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+            # Evaluate the condition, exposing access to the evaluator context as `ctx`.
+            return eval(self.expression, {'ctx': ctx})
+
+
+with try_import() as tenacity_import_successful:
+    from tenacity import stop_after_attempt
+
+    from pydantic_ai.retries import RetryConfig
+
+
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+
 
 if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup
+    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
 else:
-    ExceptionGroup = ExceptionGroup
+    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 
 @pytest.fixture(autouse=True)
@@ -85,7 +107,7 @@ def example_cases() -> list[Case[TaskInput, TaskOutput, TaskMetadata]]:
 def example_dataset(
     example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
 ) -> Dataset[TaskInput, TaskOutput, TaskMetadata]:
-    return Dataset[TaskInput, TaskOutput, TaskMetadata](cases=example_cases)
+    return Dataset[TaskInput, TaskOutput, TaskMetadata](name='example', cases=example_cases)
 
 
 @pytest.fixture
@@ -122,6 +144,7 @@ async def test_add_evaluator(
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
 ):
     """Test adding evaluators to a dataset."""
+
     assert len(example_dataset.evaluators) == 0
 
     example_dataset.add_evaluator(simple_evaluator())
@@ -178,25 +201,25 @@ async def test_add_evaluator(
     }
 
 
-async def test_evaluate(
+async def test_evaluate_async(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
 ):
     """Test evaluating a dataset."""
     example_dataset.add_evaluator(simple_evaluator())
 
-    async def mock_task(inputs: TaskInput) -> TaskOutput:
+    async def mock_async_task(inputs: TaskInput) -> TaskOutput:
         if inputs.query == 'What is 2+2?':
             return TaskOutput(answer='4')
         elif inputs.query == 'What is the capital of France?':
             return TaskOutput(answer='Paris')
         return TaskOutput(answer='Unknown')  # pragma: no cover
 
-    report = await example_dataset.evaluate(mock_task)
+    report = await example_dataset.evaluate(mock_async_task)
 
     assert report is not None
     assert len(report.cases) == 2
-    assert report.cases[0].model_dump() == snapshot(
+    assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
         {
             'assertions': {
                 'correct': {
@@ -207,6 +230,7 @@ async def test_evaluate(
                 }
             },
             'attributes': {},
+            'evaluator_failures': [],
             'expected_output': {'answer': '4', 'confidence': 1.0},
             'inputs': {'query': 'What is 2+2?'},
             'labels': {},
@@ -223,8 +247,145 @@ async def test_evaluate(
                 }
             },
             'span_id': '0000000000000003',
+            'source_case_name': None,
             'task_duration': 1.0,
-            'total_duration': 6.0,
+            'total_duration': 10.0,
+            'trace_id': '00000000000000000000000000000001',
+        }
+    )
+
+
+async def test_evaluate_sync(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+):
+    """Test evaluating a dataset."""
+    example_dataset.add_evaluator(simple_evaluator())
+
+    def mock_sync_task(inputs: TaskInput) -> TaskOutput:
+        if inputs.query == 'What is 2+2?':
+            return TaskOutput(answer='4')
+        elif inputs.query == 'What is the capital of France?':
+            return TaskOutput(answer='Paris')
+        return TaskOutput(answer='Unknown')  # pragma: no cover
+
+    report = await example_dataset.evaluate(mock_sync_task)
+
+    assert report is not None
+    assert len(report.cases) == 2
+    assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
+        {
+            'assertions': {
+                'correct': {
+                    'name': 'correct',
+                    'reason': None,
+                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                    'value': True,
+                }
+            },
+            'attributes': {},
+            'evaluator_failures': [],
+            'expected_output': {'answer': '4', 'confidence': 1.0},
+            'inputs': {'query': 'What is 2+2?'},
+            'labels': {},
+            'metadata': {'category': 'general', 'difficulty': 'easy'},
+            'metrics': {},
+            'name': 'case1',
+            'output': {'answer': '4', 'confidence': 1.0},
+            'scores': {
+                'confidence': {
+                    'name': 'confidence',
+                    'reason': None,
+                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                    'value': 1.0,
+                }
+            },
+            'span_id': '0000000000000003',
+            'source_case_name': None,
+            'task_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
+            'total_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
+            'trace_id': '00000000000000000000000000000001',
+        }
+    )
+
+
+@pytest.mark.skipif(not tenacity_import_successful(), reason='tenacity not installed')
+async def test_evaluate_with_retried_task_and_evaluator(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+):
+    task_attempt = 0
+
+    async def mock_async_task(inputs: TaskInput) -> TaskOutput:
+        nonlocal task_attempt
+        if task_attempt < 3:
+            task_attempt += 1
+            raise RuntimeError(f'task failure {task_attempt}')
+        if inputs.query == 'What is 2+2?':
+            return TaskOutput(answer='4')
+        elif inputs.query == 'What is the capital of France?':
+            return TaskOutput(answer='Paris')
+        return TaskOutput(answer='Unknown')  # pragma: no cover
+
+    evaluator_attempt = 0
+
+    @dataclass
+    class RetryEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
+            nonlocal evaluator_attempt
+            if evaluator_attempt < 3:
+                evaluator_attempt += 1
+                raise RuntimeError(f'evaluator failure {evaluator_attempt}')
+            if ctx.expected_output is None:  # pragma: no cover
+                return {'result': 'no_expected_output'}
+            return {
+                'correct': ctx.output.answer == ctx.expected_output.answer,
+                'confidence': ctx.output.confidence,
+            }
+
+    example_dataset.add_evaluator(RetryEvaluator())
+
+    report = await example_dataset.evaluate(
+        mock_async_task,
+        retry_task=RetryConfig(stop=stop_after_attempt(3)),
+        retry_evaluators=RetryConfig(stop=stop_after_attempt(3)),
+    )
+
+    assert task_attempt == 3
+    assert evaluator_attempt == 3
+
+    assert report is not None
+    assert len(report.cases) == 2
+    assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
+        {
+            'assertions': {
+                'correct': {
+                    'name': 'correct',
+                    'reason': None,
+                    'source': {'name': 'RetryEvaluator', 'arguments': None},
+                    'value': True,
+                }
+            },
+            'attributes': {},
+            'evaluator_failures': [],
+            'expected_output': {'answer': '4', 'confidence': 1.0},
+            'inputs': {'query': 'What is 2+2?'},
+            'labels': {},
+            'metadata': {'category': 'general', 'difficulty': 'easy'},
+            'metrics': {},
+            'name': 'case1',
+            'output': {'answer': '4', 'confidence': 1.0},
+            'scores': {
+                'confidence': {
+                    'name': 'confidence',
+                    'reason': None,
+                    'source': {'name': 'RetryEvaluator', 'arguments': None},
+                    'value': 1.0,
+                }
+            },
+            'span_id': '0000000000000003',
+            'source_case_name': None,
+            'task_duration': 1.0,
+            'total_duration': 19.0,
             'trace_id': '00000000000000000000000000000001',
         }
     )
@@ -248,7 +409,7 @@ async def test_evaluate_with_concurrency(
 
     assert report is not None
     assert len(report.cases) == 2
-    assert report.cases[0].model_dump() == snapshot(
+    assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
         {
             'assertions': {
                 'correct': {
@@ -259,6 +420,7 @@ async def test_evaluate_with_concurrency(
                 }
             },
             'attributes': {},
+            'evaluator_failures': [],
             'expected_output': {'answer': '4', 'confidence': 1.0},
             'inputs': {'query': 'What is 2+2?'},
             'labels': {},
@@ -275,8 +437,9 @@ async def test_evaluate_with_concurrency(
                 }
             },
             'span_id': '0000000000000003',
+            'source_case_name': None,
             'task_duration': 1.0,
-            'total_duration': 3.0,
+            'total_duration': 5.0,
             'trace_id': '00000000000000000000000000000001',
         }
     )
@@ -294,11 +457,49 @@ async def test_evaluate_with_failing_task(
             raise ValueError('Task error')
         return TaskOutput(answer='Paris')
 
-    # TODO: Should we include the exception in the result rather than bubbling up the error?
-    with pytest.raises(ExceptionGroup) as exc_info:
-        await example_dataset.evaluate(failing_task)
-    assert exc_info.value == HasRepr(
-        repr(ExceptionGroup('unhandled errors in a TaskGroup', [ValueError('Task error')]))
+    report = await example_dataset.evaluate(failing_task)
+    assert report.cases == snapshot(
+        [
+            ReportCase(
+                name='case2',
+                inputs=TaskInput(query='What is the capital of France?'),
+                metadata=TaskMetadata(difficulty='medium', category='geography'),
+                expected_output=TaskOutput(answer='Paris', confidence=1.0),
+                output=TaskOutput(answer='Paris', confidence=1.0),
+                metrics={},
+                attributes={},
+                scores={
+                    'confidence': EvaluationResult(
+                        name='confidence', value=1.0, reason=None, source=simple_evaluator().as_spec()
+                    )
+                },
+                labels={},
+                assertions={
+                    'correct': EvaluationResult(
+                        name='correct', value=True, reason=None, source=simple_evaluator().as_spec()
+                    )
+                },
+                task_duration=1.0,
+                total_duration=5.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000007',
+                evaluator_failures=[],
+            )
+        ]
+    )
+    assert report.failures == snapshot(
+        [
+            ReportCaseFailure(
+                name='case1',
+                inputs=TaskInput(query='What is 2+2?'),
+                metadata=TaskMetadata(difficulty='easy', category='general'),
+                expected_output=TaskOutput(answer='4', confidence=1.0),
+                error_message='ValueError: Task error',
+                error_stacktrace=IsStr(),
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000003',
+            )
+        ]
     )
 
 
@@ -314,20 +515,60 @@ async def test_evaluate_with_failing_evaluator(example_dataset: Dataset[TaskInpu
     async def mock_task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer='4')
 
-    with pytest.raises(ExceptionGroup) as exc_info:
-        await example_dataset.evaluate(mock_task)
-
-    assert exc_info.value == HasRepr(
-        repr(
-            ExceptionGroup(
-                'unhandled errors in a TaskGroup',
-                [
-                    ExceptionGroup('unhandled errors in a TaskGroup', [ValueError('Evaluator error')]),
-                    ExceptionGroup('unhandled errors in a TaskGroup', [ValueError('Evaluator error')]),
+    report = await example_dataset.evaluate(mock_task)
+    assert report.cases == snapshot(
+        [
+            ReportCase(
+                name='case1',
+                inputs=TaskInput(query='What is 2+2?'),
+                metadata=TaskMetadata(difficulty='easy', category='general'),
+                expected_output=TaskOutput(answer='4', confidence=1.0),
+                output=TaskOutput(answer='4', confidence=1.0),
+                metrics={},
+                attributes={},
+                scores={},
+                labels={},
+                assertions={},
+                task_duration=1.0,
+                total_duration=12.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000003',
+                evaluator_failures=[
+                    EvaluatorFailure(
+                        name='FailingEvaluator',
+                        error_message='ValueError: Evaluator error',
+                        error_stacktrace=IsStr(),
+                        source=FailingEvaluator().as_spec(),
+                    )
                 ],
-            )
-        )
+            ),
+            ReportCase(
+                name='case2',
+                inputs=TaskInput(query='What is the capital of France?'),
+                metadata=TaskMetadata(difficulty='medium', category='geography'),
+                expected_output=TaskOutput(answer='Paris', confidence=1.0),
+                output=TaskOutput(answer='4', confidence=1.0),
+                metrics={},
+                attributes={},
+                scores={},
+                labels={},
+                assertions={},
+                task_duration=1.0,
+                total_duration=10.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000007',
+                evaluator_failures=[
+                    EvaluatorFailure(
+                        name='FailingEvaluator',
+                        error_message='ValueError: Evaluator error',
+                        error_stacktrace=IsStr(),
+                        source=FailingEvaluator().as_spec(),
+                    )
+                ],
+            ),
+        ]
     )
+    assert report.failures == snapshot([])
 
 
 async def test_increment_eval_metric(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
@@ -405,18 +646,18 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
                 scores={},
                 labels={
                     'output': EvaluationResult(
-                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'})
+                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'}).as_spec()
                     ),
                     'output_2': EvaluationResult(
-                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'})
+                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'}).as_spec()
                     ),
                     'output_3': EvaluationResult(
-                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'})
+                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'}).as_spec()
                     ),
                 },
                 assertions={},
                 task_duration=1.0,
-                total_duration=6.0,
+                total_duration=18.0,
                 trace_id='00000000000000000000000000000001',
                 span_id='0000000000000003',
             ),
@@ -431,23 +672,92 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
                 scores={},
                 labels={
                     'output': EvaluationResult(
-                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'})
+                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'}).as_spec()
                     ),
                     'output_2': EvaluationResult(
-                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'})
+                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'}).as_spec()
                     ),
                     'output_3': EvaluationResult(
-                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'})
+                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'}).as_spec()
                     ),
                 },
                 assertions={},
                 task_duration=1.0,
-                total_duration=4.0,
+                total_duration=16.0,
                 trace_id='00000000000000000000000000000001',
                 span_id='0000000000000007',
             ),
         ]
     )
+
+
+async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test the increment_eval_metric function."""
+
+    async def my_task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=f'answer to {inputs.query}')
+
+    example_dataset.add_evaluator(MockEvaluator({'output': 'a'}))
+
+    report = await example_dataset.evaluate(my_task)
+    assert report == snapshot(
+        EvaluationReport(
+            name='my_task',
+            cases=[
+                ReportCase(
+                    name='case1',
+                    inputs=TaskInput(query='What is 2+2?'),
+                    metadata=TaskMetadata(difficulty='easy', category='general'),
+                    expected_output=TaskOutput(answer='4', confidence=1.0),
+                    output=TaskOutput(answer='answer to What is 2+2?', confidence=1.0),
+                    metrics={},
+                    attributes={},
+                    scores={},
+                    labels={
+                        'output': EvaluationResult(
+                            name='output',
+                            value='a',
+                            reason=None,
+                            source=EvaluatorSpec(name='MockEvaluator', arguments=({'output': 'a'},)),
+                        )
+                    },
+                    assertions={},
+                    task_duration=1.0,
+                    total_duration=10.0,
+                    trace_id='00000000000000000000000000000001',
+                    span_id='0000000000000003',
+                ),
+                ReportCase(
+                    name='case2',
+                    inputs=TaskInput(query='What is the capital of France?'),
+                    metadata=TaskMetadata(difficulty='medium', category='geography'),
+                    expected_output=TaskOutput(answer='Paris', confidence=1.0),
+                    output=TaskOutput(answer='answer to What is the capital of France?', confidence=1.0),
+                    metrics={},
+                    attributes={},
+                    scores={},
+                    labels={
+                        'output': EvaluationResult(
+                            name='output',
+                            value='a',
+                            reason=None,
+                            source=EvaluatorSpec(name='MockEvaluator', arguments=({'output': 'a'},)),
+                        )
+                    },
+                    assertions={},
+                    task_duration=1.0,
+                    total_duration=8.0,
+                    trace_id='00000000000000000000000000000001',
+                    span_id='0000000000000007',
+                ),
+            ],
+            span_id='0000000000000001',
+            trace_id='00000000000000000000000000000001',
+        )
+    )
+
+    report_adapter = TypeAdapter(EvaluationReport[TaskInput, TaskOutput, TaskMetadata])
+    assert report == report_adapter.validate_json(report_adapter.dump_json(report, indent=2))
 
 
 async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
@@ -456,9 +766,11 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
             'my chat span',
             **{  # type: ignore
                 'gen_ai.operation.name': 'chat',
+                'gen_ai.request.model': 'gpt-5-mini',
                 'gen_ai.usage.input_tokens': 1,
                 'gen_ai.usage.details.special_tokens': 2,
                 'other_attribute': 3,
+                'operation.cost': 1.23,
             },
         ):
             with logfire.span('some other span'):
@@ -474,7 +786,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
                 metadata=TaskMetadata(difficulty='easy', category='general'),
                 expected_output=TaskOutput(answer='4', confidence=1.0),
                 output=TaskOutput(answer='answer to What is 2+2?', confidence=1.0),
-                metrics={'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
+                metrics={'cost': 1.23, 'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
                 attributes={},
                 scores={},
                 labels={},
@@ -490,7 +802,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
                 metadata=TaskMetadata(difficulty='medium', category='geography'),
                 expected_output=TaskOutput(answer='Paris', confidence=1.0),
                 output=TaskOutput(answer='answer to What is the capital of France?', confidence=1.0),
-                metrics={'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
+                metrics={'cost': 1.23, 'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
                 attributes={},
                 scores={},
                 labels={},
@@ -514,8 +826,27 @@ async def test_serialization_to_yaml(example_dataset: Dataset[TaskInput, TaskOut
     # Test loading back
     loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
     assert len(loaded_dataset.cases) == 2
+    assert loaded_dataset.name == 'example'
     assert loaded_dataset.cases[0].name == 'case1'
     assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
+
+
+async def test_deserializing_without_name(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path
+):
+    """Test serializing a dataset to YAML."""
+    # Save the dataset
+    yaml_path = tmp_path / 'test_cases.yaml'
+    example_dataset.to_file(yaml_path)
+
+    # Rewrite the file _without_ a name to test deserializing a name-less file
+    obj = yaml.safe_load(yaml_path.read_text(encoding='utf-8'))
+    obj.pop('name', None)
+    yaml_path.write_text(yaml.dump(obj), encoding='utf-8')
+
+    # Test loading results in the name coming from the filename stem
+    loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
+    assert loaded_dataset.name == 'test_cases'
 
 
 async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path):
@@ -531,10 +862,42 @@ async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOut
     assert loaded_dataset.cases[0].name == 'case1'
     assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
 
-    raw = json.loads(json_path.read_text())
+    raw = json.loads(json_path.read_text(encoding='utf-8'))
     schema = raw['$schema']
     assert isinstance(schema, str)
     assert (tmp_path / schema).exists()
+
+
+def test_serializing_parts_with_discriminators(tmp_path: Path):
+    class Foo(BaseModel):
+        foo: str
+        kind: Literal['foo'] = 'foo'
+
+    class Bar(BaseModel):
+        bar: str
+        kind: Literal['bar'] = 'bar'
+
+    items = [Foo(foo='foo'), Bar(bar='bar')]
+
+    dataset = Dataset[list[Foo | Bar]](cases=[Case(inputs=items)])
+    yaml_path = tmp_path / 'test_cases.yaml'
+    dataset.to_file(yaml_path)
+
+    loaded_dataset = Dataset[list[Foo | Bar]].from_file(yaml_path)
+    assert loaded_dataset == snapshot(
+        Dataset(
+            name='test_cases',
+            cases=[
+                Case(
+                    name=None,
+                    inputs=[
+                        Foo(foo='foo'),
+                        Bar(bar='bar'),
+                    ],
+                )
+            ],
+        )
+    )
 
 
 def test_serialization_errors(tmp_path: Path):
@@ -549,6 +912,7 @@ def test_serialization_errors(tmp_path: Path):
 async def test_from_text():
     """Test creating a dataset from text."""
     dataset_dict = {
+        'name': 'my dataset',
         'cases': [
             {
                 'name': '1',
@@ -568,6 +932,7 @@ async def test_from_text():
     }
 
     loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
+    assert loaded_dataset.name == 'my dataset'
     assert loaded_dataset.cases == snapshot(
         [
             Case(
@@ -635,38 +1000,21 @@ async def test_from_text_failure():
     }
     with pytest.raises(ExceptionGroup) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
-    if sys.version_info >= (3, 10):
-        assert exc_info.value == HasRepr(
-            repr(
-                ExceptionGroup(
-                    '2 error(s) loading evaluators from registry',
-                    [
-                        ValueError(
-                            "Failed to instantiate evaluator 'LLMJudge' for dataset: LLMJudge.__init__() missing 1 required positional argument: 'rubric'"
-                        ),
-                        ValueError(
-                            "Failed to instantiate evaluator 'LLMJudge' for case 'text_case': LLMJudge.__init__() missing 1 required positional argument: 'rubric'"
-                        ),
-                    ],
-                )
+    assert exc_info.value == HasRepr(  # pragma: lax no cover
+        repr(
+            ExceptionGroup(
+                '2 error(s) loading evaluators from registry',
+                [
+                    ValueError(
+                        "Failed to instantiate evaluator 'LLMJudge' for dataset: LLMJudge.__init__() missing 1 required positional argument: 'rubric'"
+                    ),
+                    ValueError(
+                        "Failed to instantiate evaluator 'LLMJudge' for case 'text_case': LLMJudge.__init__() missing 1 required positional argument: 'rubric'"
+                    ),
+                ],
             )
         )
-    else:
-        assert exc_info.value == HasRepr(
-            repr(
-                ExceptionGroup(
-                    '2 error(s) loading evaluators from registry',
-                    [
-                        ValueError(
-                            "Failed to instantiate evaluator 'LLMJudge' for dataset: __init__() missing 1 required positional argument: 'rubric'"
-                        ),
-                        ValueError(
-                            "Failed to instantiate evaluator 'LLMJudge' for case 'text_case': __init__() missing 1 required positional argument: 'rubric'"
-                        ),
-                    ],
-                )
-            )
-        )
+    )
 
 
 async def test_duplicate_evaluator_failure(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
@@ -688,41 +1036,76 @@ async def test_duplicate_evaluator_failure(example_dataset: Dataset[TaskInput, T
     assert str(exc_info.value) == snapshot("Duplicate evaluator class name: 'FirstEvaluator'")
 
 
-async def test_invalid_evaluator_result_type(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
-    """Test that an invalid evaluator result type raises an error."""
+async def test_invalid_evaluator_output_type(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that an invalid evaluator output type raises an error."""
     invalid_evaluator = Python(expression='...')
     example_dataset.add_evaluator(invalid_evaluator)
 
     async def mock_task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer='4')
 
-    with pytest.raises(ExceptionGroup) as exc_info:
-        await example_dataset.evaluate(mock_task)
-    assert exc_info.value == HasRepr(
-        repr(
-            ExceptionGroup(
-                'unhandled errors in a TaskGroup',
-                [
-                    ExceptionGroup(
-                        'unhandled errors in a TaskGroup',
-                        [
-                            ValueError(
-                                "Python(expression='...').evaluate returned a value of an invalid type: Ellipsis."
-                            )
-                        ],
-                    ),
-                    ExceptionGroup(
-                        'unhandled errors in a TaskGroup',
-                        [
-                            ValueError(
-                                "Python(expression='...').evaluate returned a value of an invalid type: Ellipsis."
-                            )
-                        ],
-                    ),
+    report = await example_dataset.evaluate(mock_task)
+    assert report.cases == snapshot(
+        [
+            ReportCase(
+                name='case1',
+                inputs=TaskInput(query='What is 2+2?'),
+                metadata=TaskMetadata(difficulty='easy', category='general'),
+                expected_output=TaskOutput(answer='4', confidence=1.0),
+                output=TaskOutput(answer='4', confidence=1.0),
+                metrics={},
+                attributes={},
+                scores={},
+                labels={},
+                assertions={},
+                task_duration=1.0,
+                total_duration=12.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000003',
+                evaluator_failures=[
+                    EvaluatorFailure(
+                        name='Python',
+                        error_message='ValueError: '
+                        "Python(expression='...').evaluate "
+                        'returned a value '
+                        'of an invalid '
+                        'type: Ellipsis.',
+                        error_stacktrace=IsStr(),
+                        source=Python(expression='...').as_spec(),
+                    )
                 ],
-            )
-        )
+            ),
+            ReportCase(
+                name='case2',
+                inputs=TaskInput(query='What is the capital of France?'),
+                metadata=TaskMetadata(difficulty='medium', category='geography'),
+                expected_output=TaskOutput(answer='Paris', confidence=1.0),
+                output=TaskOutput(answer='4', confidence=1.0),
+                metrics={},
+                attributes={},
+                scores={},
+                labels={},
+                assertions={},
+                task_duration=1.0,
+                total_duration=10.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000007',
+                evaluator_failures=[
+                    EvaluatorFailure(
+                        name='Python',
+                        error_message='ValueError: '
+                        "Python(expression='...').evaluate "
+                        'returned a value '
+                        'of an invalid '
+                        'type: Ellipsis.',
+                        error_stacktrace=IsStr(),
+                        source=Python(expression='...').as_spec(),
+                    )
+                ],
+            ),
+        ]
     )
+    assert report.failures == snapshot([])
 
 
 async def test_dataset_evaluate_with_failing_task(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
@@ -731,10 +1114,31 @@ async def test_dataset_evaluate_with_failing_task(example_dataset: Dataset[TaskI
     async def failing_task(inputs: TaskInput) -> TaskOutput:
         raise ValueError('Task failed')
 
-    with pytest.raises(ExceptionGroup) as exc_info:
-        await example_dataset.evaluate(failing_task)
-    assert exc_info.value == HasRepr(
-        repr(ExceptionGroup('unhandled errors in a TaskGroup', [ValueError('Task failed'), ValueError('Task failed')]))
+    report = await example_dataset.evaluate(failing_task)
+    assert report.cases == snapshot([])
+    assert report.failures == snapshot(
+        [
+            ReportCaseFailure(
+                name='case1',
+                inputs=TaskInput(query='What is 2+2?'),
+                metadata=TaskMetadata(difficulty='easy', category='general'),
+                expected_output=TaskOutput(answer='4', confidence=1.0),
+                error_message='ValueError: Task failed',
+                error_stacktrace=IsStr(),
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000003',
+            ),
+            ReportCaseFailure(
+                name='case2',
+                inputs=TaskInput(query='What is the capital of France?'),
+                metadata=TaskMetadata(difficulty='medium', category='geography'),
+                expected_output=TaskOutput(answer='Paris', confidence=1.0),
+                error_message='ValueError: Task failed',
+                error_stacktrace=IsStr(),
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000007',
+            ),
+        ]
     )
 
 
@@ -750,19 +1154,60 @@ async def test_dataset_evaluate_with_failing_evaluator(example_dataset: Dataset[
     async def task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer=inputs.query.upper())
 
-    with pytest.raises(ExceptionGroup) as exc_info:
-        await example_dataset.evaluate(task)
-    assert exc_info.value == HasRepr(
-        repr(
-            ExceptionGroup(
-                'unhandled errors in a TaskGroup',
-                [
-                    ExceptionGroup('unhandled errors in a TaskGroup', [ValueError('Evaluator failed')]),
-                    ExceptionGroup('unhandled errors in a TaskGroup', [ValueError('Evaluator failed')]),
+    report = await example_dataset.evaluate(task)
+    assert report.cases == snapshot(
+        [
+            ReportCase(
+                name='case1',
+                inputs=TaskInput(query='What is 2+2?'),
+                metadata=TaskMetadata(difficulty='easy', category='general'),
+                expected_output=TaskOutput(answer='4', confidence=1.0),
+                output=TaskOutput(answer='WHAT IS 2+2?', confidence=1.0),
+                metrics={},
+                attributes={},
+                scores={},
+                labels={},
+                assertions={},
+                task_duration=1.0,
+                total_duration=12.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000003',
+                evaluator_failures=[
+                    EvaluatorFailure(
+                        name='FailingEvaluator',
+                        error_message='ValueError: Evaluator failed',
+                        error_stacktrace=IsStr(),
+                        source=FailingEvaluator().as_spec(),
+                    )
                 ],
-            )
-        )
+            ),
+            ReportCase(
+                name='case2',
+                inputs=TaskInput(query='What is the capital of France?'),
+                metadata=TaskMetadata(difficulty='medium', category='geography'),
+                expected_output=TaskOutput(answer='Paris', confidence=1.0),
+                output=TaskOutput(answer='WHAT IS THE CAPITAL OF FRANCE?', confidence=1.0),
+                metrics={},
+                attributes={},
+                scores={},
+                labels={},
+                assertions={},
+                task_duration=1.0,
+                total_duration=10.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000007',
+                evaluator_failures=[
+                    EvaluatorFailure(
+                        name='FailingEvaluator',
+                        error_message='ValueError: Evaluator failed',
+                        error_stacktrace=IsStr(),
+                        source=FailingEvaluator().as_spec(),
+                    )
+                ],
+            ),
+        ]
     )
+    assert report.failures == snapshot([])
 
 
 async def test_dataset_evaluate_with_invalid_evaluator_result(
@@ -783,33 +1228,70 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
     async def task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer=inputs.query.upper())
 
-    with pytest.raises(ExceptionGroup) as exc_info:
-        await example_dataset.evaluate(task)
-    assert exc_info.value == HasRepr(
-        repr(
-            ExceptionGroup(
-                'unhandled errors in a TaskGroup',
-                [
-                    ExceptionGroup(
-                        'unhandled errors in a TaskGroup',
-                        [
-                            ValueError(
-                                'test_dataset_evaluate_with_invalid_evaluator_result.<locals>.InvalidEvaluator().evaluate returned a value of an invalid type: test_dataset_evaluate_with_invalid_evaluator_result.<locals>.MyObject().'
-                            )
-                        ],
-                    ),
-                    ExceptionGroup(
-                        'unhandled errors in a TaskGroup',
-                        [
-                            ValueError(
-                                'test_dataset_evaluate_with_invalid_evaluator_result.<locals>.InvalidEvaluator().evaluate returned a value of an invalid type: test_dataset_evaluate_with_invalid_evaluator_result.<locals>.MyObject().'
-                            )
-                        ],
-                    ),
+    report = await example_dataset.evaluate(task)
+    assert report.cases == snapshot(
+        [
+            ReportCase(
+                name='case1',
+                inputs=TaskInput(query='What is 2+2?'),
+                metadata=TaskMetadata(difficulty='easy', category='general'),
+                expected_output=TaskOutput(answer='4', confidence=1.0),
+                output=TaskOutput(answer='WHAT IS 2+2?', confidence=1.0),
+                metrics={},
+                attributes={},
+                scores={},
+                labels={},
+                assertions={},
+                task_duration=1.0,
+                total_duration=12.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000003',
+                evaluator_failures=[
+                    EvaluatorFailure(
+                        name='InvalidEvaluator',
+                        error_message='ValueError: '
+                        'test_dataset_evaluate_with_invalid_evaluator_result.<locals>.InvalidEvaluator().evaluate '
+                        'returned a value '
+                        'of an invalid '
+                        'type: '
+                        'test_dataset_evaluate_with_invalid_evaluator_result.<locals>.MyObject().',
+                        error_stacktrace=IsStr(),
+                        source=InvalidEvaluator().as_spec(),
+                    )
                 ],
-            )
-        )
+            ),
+            ReportCase(
+                name='case2',
+                inputs=TaskInput(query='What is the capital of France?'),
+                metadata=TaskMetadata(difficulty='medium', category='geography'),
+                expected_output=TaskOutput(answer='Paris', confidence=1.0),
+                output=TaskOutput(answer='WHAT IS THE CAPITAL OF FRANCE?', confidence=1.0),
+                metrics={},
+                attributes={},
+                scores={},
+                labels={},
+                assertions={},
+                task_duration=1.0,
+                total_duration=10.0,
+                trace_id='00000000000000000000000000000001',
+                span_id='0000000000000007',
+                evaluator_failures=[
+                    EvaluatorFailure(
+                        name='InvalidEvaluator',
+                        error_message='ValueError: '
+                        'test_dataset_evaluate_with_invalid_evaluator_result.<locals>.InvalidEvaluator().evaluate '
+                        'returned a value '
+                        'of an invalid '
+                        'type: '
+                        'test_dataset_evaluate_with_invalid_evaluator_result.<locals>.MyObject().',
+                        error_stacktrace=IsStr(),
+                        source=InvalidEvaluator().as_spec(),
+                    )
+                ],
+            ),
+        ]
     )
+    assert report.failures == snapshot([])
 
 
 async def test_dataset_evaluate_with_custom_name(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
@@ -818,7 +1300,7 @@ async def test_dataset_evaluate_with_custom_name(example_dataset: Dataset[TaskIn
     async def task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer=inputs.query.upper())
 
-    report = await example_dataset.evaluate(task, name='custom_task')
+    report = await example_dataset.evaluate(task, task_name='custom_task')
     assert report.name == 'custom_task'
 
 
@@ -828,8 +1310,8 @@ async def test_dataset_evaluate_with_sync_task(example_dataset: Dataset[TaskInpu
     def sync_task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer=inputs.query.upper())
 
-    report = await example_dataset.evaluate(lambda x: asyncio.sleep(0, sync_task(x)))
-    assert report.name == '<lambda>'
+    report = await example_dataset.evaluate(sync_task)
+    assert report.name == 'sync_task'
     assert len(report.cases) == 2
 
 
@@ -996,31 +1478,31 @@ def test_import_generate_dataset():
 def test_evaluate_non_serializable_inputs():
     @dataclass
     class MyInputs:
-        result_type: type[str] | type[int]
+        output_type: type[str] | type[int]
 
     my_dataset = Dataset[MyInputs, Any, Any](
         cases=[
             Case(
                 name='str',
-                inputs=MyInputs(result_type=str),
+                inputs=MyInputs(output_type=str),
                 expected_output='abc',
             ),
             Case(
                 name='int',
-                inputs=MyInputs(result_type=int),
+                inputs=MyInputs(output_type=int),
                 expected_output=123,
             ),
         ],
     )
 
     async def my_task(my_inputs: MyInputs) -> int | str:
-        if issubclass(my_inputs.result_type, str):
-            return my_inputs.result_type('abc')
+        if issubclass(my_inputs.output_type, str):
+            return my_inputs.output_type('abc')
         else:
-            return my_inputs.result_type(123)
+            return my_inputs.output_type(123)
 
     report = my_dataset.evaluate_sync(task=my_task)
-    assert [c.inputs for c in report.cases] == snapshot([MyInputs(result_type=str), MyInputs(result_type=int)])
+    assert [c.inputs for c in report.cases] == snapshot([MyInputs(output_type=str), MyInputs(output_type=int)])
 
     table = report.console_table(include_input=True)
     assert render_table(table) == snapshot("""\
@@ -1028,10 +1510,482 @@ def test_evaluate_non_serializable_inputs():
 ┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ Case ID  ┃ Inputs                                                                             ┃ Duration ┃
 ┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ str      │ test_evaluate_non_serializable_inputs.<locals>.MyInputs(result_type=<class 'str'>) │     1.0s │
+│ str      │ test_evaluate_non_serializable_inputs.<locals>.MyInputs(output_type=<class 'str'>) │     1.0s │
 ├──────────┼────────────────────────────────────────────────────────────────────────────────────┼──────────┤
-│ int      │ test_evaluate_non_serializable_inputs.<locals>.MyInputs(result_type=<class 'int'>) │     1.0s │
+│ int      │ test_evaluate_non_serializable_inputs.<locals>.MyInputs(output_type=<class 'int'>) │     1.0s │
 ├──────────┼────────────────────────────────────────────────────────────────────────────────────┼──────────┤
 │ Averages │                                                                                    │     1.0s │
 └──────────┴────────────────────────────────────────────────────────────────────────────────────┴──────────┘
 """)
+
+
+async def test_evaluate_async_logfire(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+    capfire: CaptureLogfire,
+):  # pragma: lax no cover
+    """Test evaluating a dataset."""
+    example_dataset.add_evaluator(simple_evaluator())
+
+    async def mock_async_task(inputs: TaskInput) -> TaskOutput:
+        if inputs.query == 'What is 2+2?':
+            return TaskOutput(answer='4')
+        elif inputs.query == 'What is the capital of France?':
+            return TaskOutput(answer='Paris')
+        return TaskOutput(answer='Unknown')  # pragma: no cover
+
+    await example_dataset.evaluate(mock_async_task, metadata={'key': 'value'})
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    spans.sort(key=lambda s: s['start_time'])
+
+    for span in spans:
+        # These may or may not be present and may have weird values due to things running in async
+        span['attributes'].pop('code.filepath', None)
+        span['attributes'].pop('code.function', None)
+        span['attributes'].pop('code.lineno', None)
+
+    assert [(span['name'], span['attributes']) for span in spans] == snapshot(
+        [
+            (
+                'evaluate {name}',
+                {
+                    'assertion_pass_rate': 1.0,
+                    'dataset_name': 'example',
+                    'gen_ai.operation.name': 'experiment',
+                    'logfire.json_schema': {
+                        'properties': {
+                            'assertion_pass_rate': {},
+                            'dataset_name': {},
+                            'gen_ai.operation.name': {},
+                            'n_cases': {},
+                            'name': {},
+                            'metadata': {'type': 'object'},
+                            'logfire.experiment.metadata': {
+                                'type': 'object',
+                                'properties': {
+                                    'averages': {
+                                        'type': 'object',
+                                        'title': 'ReportCaseAggregate',
+                                        'x-python-datatype': 'PydanticModel',
+                                    }
+                                },
+                            },
+                            'task_name': {},
+                        },
+                        'type': 'object',
+                    },
+                    'logfire.msg': 'evaluate mock_async_task',
+                    'metadata': {'key': 'value'},
+                    'logfire.msg_template': 'evaluate {name}',
+                    'logfire.span_type': 'span',
+                    'n_cases': 2,
+                    'logfire.experiment.metadata': {
+                        'n_cases': 2,
+                        'metadata': {'key': 'value'},
+                        'averages': {
+                            'name': 'Averages',
+                            'scores': {'confidence': 1.0},
+                            'labels': {},
+                            'metrics': {},
+                            'assertions': 1.0,
+                            'task_duration': 1.0,
+                            'total_duration': 9.0,
+                        },
+                    },
+                    'name': 'mock_async_task',
+                    'task_name': 'mock_async_task',
+                },
+            ),
+            (
+                'case: {case_name}',
+                {
+                    'task_name': 'mock_async_task',
+                    'case_name': 'case1',
+                    'inputs': {'query': 'What is 2+2?'},
+                    'metadata': {'difficulty': 'easy', 'category': 'general'},
+                    'expected_output': {'answer': '4', 'confidence': 1.0},
+                    'logfire.msg_template': 'case: {case_name}',
+                    'logfire.msg': 'case: case1',
+                    'logfire.span_type': 'span',
+                    'output': {'answer': '4', 'confidence': 1.0},
+                    'task_duration': 1.0,
+                    'metrics': {},
+                    'attributes': {},
+                    'assertions': {
+                        'correct': {
+                            'name': 'correct',
+                            'value': True,
+                            'reason': None,
+                            'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                        }
+                    },
+                    'scores': {
+                        'confidence': {
+                            'name': 'confidence',
+                            'value': 1.0,
+                            'reason': None,
+                            'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                        }
+                    },
+                    'labels': {},
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'task_name': {},
+                            'case_name': {},
+                            'inputs': {'type': 'object', 'title': 'TaskInput', 'x-python-datatype': 'PydanticModel'},
+                            'metadata': {
+                                'type': 'object',
+                                'title': 'TaskMetadata',
+                                'x-python-datatype': 'PydanticModel',
+                            },
+                            'expected_output': {
+                                'type': 'object',
+                                'title': 'TaskOutput',
+                                'x-python-datatype': 'PydanticModel',
+                            },
+                            'output': {'type': 'object', 'title': 'TaskOutput', 'x-python-datatype': 'PydanticModel'},
+                            'task_duration': {},
+                            'metrics': {'type': 'object'},
+                            'attributes': {'type': 'object'},
+                            'assertions': {'type': 'object'},
+                            'scores': {'type': 'object'},
+                            'labels': {'type': 'object'},
+                        },
+                    },
+                },
+            ),
+            (
+                'execute {task}',
+                {
+                    'task': 'mock_async_task',
+                    'logfire.msg_template': 'execute {task}',
+                    'logfire.msg': 'execute mock_async_task',
+                    'logfire.json_schema': {'type': 'object', 'properties': {'task': {}}},
+                    'logfire.span_type': 'span',
+                },
+            ),
+            (
+                'case: {case_name}',
+                {
+                    'task_name': 'mock_async_task',
+                    'case_name': 'case2',
+                    'inputs': {'query': 'What is the capital of France?'},
+                    'metadata': {'difficulty': 'medium', 'category': 'geography'},
+                    'expected_output': {'answer': 'Paris', 'confidence': 1.0},
+                    'logfire.msg_template': 'case: {case_name}',
+                    'logfire.msg': 'case: case2',
+                    'logfire.span_type': 'span',
+                    'output': {'answer': 'Paris', 'confidence': 1.0},
+                    'task_duration': 1.0,
+                    'metrics': {},
+                    'attributes': {},
+                    'assertions': {
+                        'correct': {
+                            'name': 'correct',
+                            'value': True,
+                            'reason': None,
+                            'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                        }
+                    },
+                    'scores': {
+                        'confidence': {
+                            'name': 'confidence',
+                            'value': 1.0,
+                            'reason': None,
+                            'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                        }
+                    },
+                    'labels': {},
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'task_name': {},
+                            'case_name': {},
+                            'inputs': {'type': 'object', 'title': 'TaskInput', 'x-python-datatype': 'PydanticModel'},
+                            'metadata': {
+                                'type': 'object',
+                                'title': 'TaskMetadata',
+                                'x-python-datatype': 'PydanticModel',
+                            },
+                            'expected_output': {
+                                'type': 'object',
+                                'title': 'TaskOutput',
+                                'x-python-datatype': 'PydanticModel',
+                            },
+                            'output': {'type': 'object', 'title': 'TaskOutput', 'x-python-datatype': 'PydanticModel'},
+                            'task_duration': {},
+                            'metrics': {'type': 'object'},
+                            'attributes': {'type': 'object'},
+                            'assertions': {'type': 'object'},
+                            'scores': {'type': 'object'},
+                            'labels': {'type': 'object'},
+                        },
+                    },
+                },
+            ),
+            (
+                'execute {task}',
+                {
+                    'task': 'mock_async_task',
+                    'logfire.msg_template': 'execute {task}',
+                    'logfire.msg': 'execute mock_async_task',
+                    'logfire.json_schema': {'type': 'object', 'properties': {'task': {}}},
+                    'logfire.span_type': 'span',
+                },
+            ),
+            (
+                'evaluator: {evaluator_name}',
+                {
+                    'evaluator_name': 'SimpleEvaluator',
+                    'logfire.msg_template': 'evaluator: {evaluator_name}',
+                    'logfire.msg': 'evaluator: SimpleEvaluator',
+                    'logfire.json_schema': {'type': 'object', 'properties': {'evaluator_name': {}}},
+                    'logfire.span_type': 'span',
+                },
+            ),
+            (
+                'evaluator: {evaluator_name}',
+                {
+                    'evaluator_name': 'SimpleEvaluator',
+                    'logfire.msg_template': 'evaluator: {evaluator_name}',
+                    'logfire.msg': 'evaluator: SimpleEvaluator',
+                    'logfire.json_schema': {'type': 'object', 'properties': {'evaluator_name': {}}},
+                    'logfire.span_type': 'span',
+                },
+            ),
+        ]
+    )
+
+
+async def test_evaluate_with_experiment_metadata(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that experiment metadata passed to evaluate() appears in the report."""
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    # Pass experiment metadata to evaluate()
+    experiment_metadata = {
+        'model': 'gpt-4o',
+        'prompt_version': 'v2.1',
+        'temperature': 0.7,
+        'max_tokens': 1000,
+    }
+
+    report = await example_dataset.evaluate(task, metadata=experiment_metadata)
+
+    # Verify that the report contains the experiment metadata
+    assert report.experiment_metadata == experiment_metadata
+
+
+# --- Report evaluator serialization/deserialization tests ---
+
+
+async def test_serialization_to_yaml_with_report_evaluators(tmp_path: Path):
+    """Round-trip through YAML with built-in report evaluators."""
+    from pydantic_evals.evaluators import ConfusionMatrixEvaluator
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='with_report_evals',
+        cases=[
+            Case(
+                name='case1',
+                inputs=TaskInput(query='test'),
+                expected_output=TaskOutput(answer='result'),
+            ),
+        ],
+        report_evaluators=[ConfusionMatrixEvaluator()],
+    )
+
+    yaml_path = tmp_path / 'test_report_eval.yaml'
+    dataset.to_file(yaml_path)
+
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
+    assert len(loaded.report_evaluators) == 1
+    assert isinstance(loaded.report_evaluators[0], ConfusionMatrixEvaluator)
+    assert loaded.name == 'with_report_evals'
+
+
+async def test_serialization_to_json_with_report_evaluators(tmp_path: Path):
+    """Round-trip through JSON with built-in report evaluators."""
+    from pydantic_evals.evaluators import ConfusionMatrixEvaluator, PrecisionRecallEvaluator
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='json_report_evals',
+        cases=[
+            Case(
+                name='case1',
+                inputs=TaskInput(query='test'),
+                expected_output=TaskOutput(answer='result'),
+            ),
+        ],
+        report_evaluators=[
+            ConfusionMatrixEvaluator(),
+            PrecisionRecallEvaluator(score_key='confidence', positive_from='assertions', positive_key='is_correct'),
+        ],
+    )
+
+    json_path = tmp_path / 'test_report_eval.json'
+    dataset.to_file(json_path)
+
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(json_path)
+    assert len(loaded.report_evaluators) == 2
+    assert isinstance(loaded.report_evaluators[0], ConfusionMatrixEvaluator)
+    assert isinstance(loaded.report_evaluators[1], PrecisionRecallEvaluator)
+    assert loaded.report_evaluators[1].score_key == 'confidence'
+    assert loaded.report_evaluators[1].positive_key == 'is_correct'
+
+
+async def test_from_text_with_report_evaluators():
+    """Deserialize report_evaluators from YAML text."""
+    from pydantic_evals.evaluators import ConfusionMatrixEvaluator
+
+    yaml_text = """\
+cases:
+  - name: c1
+    inputs:
+      query: hello
+report_evaluators:
+  - ConfusionMatrixEvaluator
+"""
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
+    assert len(loaded.report_evaluators) == 1
+    assert isinstance(loaded.report_evaluators[0], ConfusionMatrixEvaluator)
+
+
+async def test_from_text_with_report_evaluators_and_args():
+    """Deserialize report_evaluators with arguments from YAML text."""
+    from pydantic_evals.evaluators import ConfusionMatrixEvaluator
+
+    yaml_text = """\
+cases:
+  - name: c1
+    inputs:
+      query: hello
+report_evaluators:
+  - ConfusionMatrixEvaluator:
+      predicted_from: labels
+      predicted_key: pred
+      title: Custom CM
+"""
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
+    assert len(loaded.report_evaluators) == 1
+    cm = loaded.report_evaluators[0]
+    assert isinstance(cm, ConfusionMatrixEvaluator)
+    assert cm.predicted_from == 'labels'
+    assert cm.predicted_key == 'pred'
+    assert cm.title == 'Custom CM'
+
+
+async def test_custom_report_evaluator_round_trip(tmp_path: Path):
+    """Custom @dataclass report evaluator round-trip via custom_report_evaluator_types."""
+    from pydantic_evals.evaluators import ReportEvaluator, ReportEvaluatorContext
+    from pydantic_evals.reporting.analyses import ScalarResult
+
+    @dataclass
+    class MyAccuracy(ReportEvaluator):
+        threshold: float = 0.5
+
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:  # pragma: no cover
+            return ScalarResult(title='Accuracy', value=100.0)
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='custom_re',
+        cases=[Case(name='c1', inputs=TaskInput(query='hi'))],
+        report_evaluators=[MyAccuracy(threshold=0.8)],
+    )
+
+    yaml_path = tmp_path / 'custom_re.yaml'
+    dataset.to_file(yaml_path, custom_report_evaluator_types=[MyAccuracy])
+
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(
+        yaml_path, custom_report_evaluator_types=[MyAccuracy]
+    )
+    assert len(loaded.report_evaluators) == 1
+    assert isinstance(loaded.report_evaluators[0], MyAccuracy)
+    assert loaded.report_evaluators[0].threshold == 0.8
+
+
+async def test_report_evaluator_json_schema():
+    """Verify model_json_schema_with_evaluators includes report_evaluators property."""
+    schema = Dataset[TaskInput, TaskOutput, TaskMetadata].model_json_schema_with_evaluators()
+    assert 'report_evaluators' in schema['properties']
+
+
+def test_invalid_report_evaluator_type():
+    """Error on non-ReportEvaluator subclass or non-@dataclass."""
+    from pydantic_evals.evaluators import ReportEvaluator
+
+    class NotAReportEvaluator:
+        pass
+
+    with pytest.raises(ValueError, match='must be subclasses of ReportEvaluator'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
+            {'cases': []},
+            custom_report_evaluator_types=(NotAReportEvaluator,),  # type: ignore
+        )
+
+    class NotADataclass(ReportEvaluator):
+        def evaluate(self, ctx: Any) -> Any:  # pragma: no cover
+            pass
+
+    with pytest.raises(ValueError, match='must be decorated with `@dataclass`'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
+            {'cases': []}, custom_report_evaluator_types=(NotADataclass,)
+        )
+
+
+async def test_from_text_with_unknown_report_evaluator():
+    """Loading a YAML with an unknown report evaluator name raises an error."""
+    yaml_text = """\
+cases:
+  - name: c1
+    inputs:
+      query: hello
+report_evaluators:
+  - NonExistentEvaluator
+"""
+    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
+
+
+async def test_from_text_with_invalid_report_evaluator_args():
+    """Loading a report evaluator with invalid constructor args raises an error."""
+    yaml_text = """\
+cases:
+  - name: c1
+    inputs:
+      query: hello
+report_evaluators:
+  - ConfusionMatrixEvaluator:
+      nonexistent_param: true
+"""
+    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
+
+
+async def test_duplicate_report_evaluator_class_name():
+    """Duplicate custom report evaluator class names raise an error."""
+    from pydantic_evals.evaluators import ReportEvaluator, ReportEvaluatorContext
+    from pydantic_evals.reporting.analyses import ScalarResult
+
+    @dataclass
+    class DupeEvaluator(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:  # pragma: no cover
+            return ScalarResult(title='x', value=0)
+
+    @dataclass
+    class DupeEvaluator2(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:  # pragma: no cover
+            return ScalarResult(title='x', value=0)
+
+        @classmethod
+        def get_serialization_name(cls) -> str:
+            return 'DupeEvaluator'
+
+    with pytest.raises(ValueError, match='Duplicate report evaluator class name'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
+            {'cases': []},
+            custom_report_evaluator_types=(DupeEvaluator, DupeEvaluator2),
+        )

@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import TypeAdapter
-from typing_extensions import TypedDict
+from typing_extensions import Any, TypedDict
 
 from pydantic_ai.tools import Tool
 
@@ -50,7 +50,7 @@ class TavilySearchTool:
         search_deep: Literal['basic', 'advanced'] = 'basic',
         topic: Literal['general', 'news'] = 'general',
         time_range: Literal['day', 'week', 'month', 'year', 'd', 'w', 'm', 'y'] | None = None,
-    ):
+    ) -> list[TavilySearchResult]:
         """Searches Tavily for the given query and returns the results.
 
         Args:
@@ -60,11 +60,9 @@ class TavilySearchTool:
             time_range: The time range back from the current date to filter results.
 
         Returns:
-            The search results.
+            A list of search results from Tavily.
         """
         results = await self.client.search(query, search_depth=search_deep, topic=topic, time_range=time_range)  # type: ignore[reportUnknownMemberType]
-        if not results['results']:
-            raise RuntimeError('No search results found.')
         return tavily_search_ta.validate_python(results['results'])
 
 
@@ -76,7 +74,7 @@ def tavily_search_tool(api_key: str):
 
             You can get one by signing up at [https://app.tavily.com/home](https://app.tavily.com/home).
     """
-    return Tool(
+    return Tool[Any](
         TavilySearchTool(client=AsyncTavilyClient(api_key)).__call__,
         name='tavily_search',
         description='Searches Tavily for the given query and returns the results.',

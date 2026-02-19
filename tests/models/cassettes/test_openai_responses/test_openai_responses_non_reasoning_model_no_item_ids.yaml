@@ -1,0 +1,250 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '319'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the meaning of life?
+        role: user
+      model: gpt-4.1
+      previous_response_id: null
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_meaning_of_life
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1582'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1079'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1758220197
+      error: null
+      id: resp_68cc4fa5603481958e2143685133fe530548824120ffcf74
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - arguments: '{}'
+        call_id: call_3WCunBU7lCG1HHaLmnnRJn8I
+        id: fc_68cc4fa649ac8195b0c6c239cd2c14470548824120ffcf74
+        name: get_meaning_of_life
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_meaning_of_life
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 36
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 15
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 51
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '520'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=YI5In51XbQNZpt_mBtyMc6O0Pci8G.hkbqZFEWO.3.k-1758220198-1.0.1.1-p4O2urDd35HLxqyMaRXCKX4sikzWXueCzd2uwA2ParH1KuPQ0ERMIioAUS0Uxwl_q2RTDvgwus77kTI_np9kW2zRrsCQvIEetlQmf8IuH5E;
+        _cfuvid=DfgGpWxEPtt9KaLYpGJqErHQ81Ow1nzWn1Ap_w4r.NM-1758220198467-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the meaning of life?
+        role: user
+      - arguments: '{}'
+        call_id: call_3WCunBU7lCG1HHaLmnnRJn8I
+        name: get_meaning_of_life
+        type: function_call
+      - call_id: call_3WCunBU7lCG1HHaLmnnRJn8I
+        output: '42'
+        type: function_call_output
+      model: gpt-4.1
+      previous_response_id: null
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_meaning_of_life
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1908'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1327'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1758220198
+      error: null
+      id: resp_68cc4fa6a8a881a187b0fe1603057bff0307c6d4d2ee5985
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            The meaning of life, according to popular culture and famously in Douglas Adams' "The Hitchhiker's Guide to the Galaxy," is 42!
+
+            If you're looking for a deeper or philosophical answer, let me know your perspective or context, and I can elaborate further.
+          type: output_text
+        id: msg_68cc4fa7693081a184ff6f32e5209ab00307c6d4d2ee5985
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_meaning_of_life
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 61
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 56
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 117
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

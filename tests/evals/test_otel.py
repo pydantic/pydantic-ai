@@ -3,9 +3,9 @@ from __future__ import annotations as _annotations
 import asyncio
 
 import pytest
-from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -65,9 +65,10 @@ async def test_context_subtree_concurrent():
     task1_root = tree1.roots[0]
     assert len(task1_root.children) == 2, 'task1 should have exactly two children'
     task1_child_names = {child.name for child in task1_root.children}
-    assert task1_child_names == {'task1_child1', 'task1_child2'}, (
-        "task1's children should be task1_child1 and task1_child2"
-    )
+    assert task1_child_names == {
+        'task1_child1',
+        'task1_child2',
+    }, "task1's children should be task1_child1 and task1_child2"
 
     # Verify that tree2 only contains spans from task2
     assert len(tree2.roots) == 1, 'tree2 should have exactly one root span'
@@ -335,9 +336,6 @@ async def test_span_node_repr(span_tree: SpanTree):
 
 async def test_span_tree_ancestors_methods():
     """Test the ancestor traversal methods in SpanNode."""
-    # Configure logfire
-    logfire.configure()
-
     # Create spans with a deep structure for testing ancestor methods
     with context_subtree() as tree:
         with logfire.span('root', depth=0):
@@ -397,9 +395,6 @@ async def test_span_tree_ancestors_methods():
 
 async def test_span_tree_descendants_methods():
     """Test the descendant traversal methods in SpanNode."""
-    # Configure logfire
-    logfire.configure()
-
     # Create spans with a deep structure for testing descendant methods
     with context_subtree() as tree:
         with logfire.span('root', depth=0):
@@ -487,9 +482,6 @@ async def test_span_tree_descendants_methods():
 
 async def test_log_levels_and_exceptions():
     """Test recording different log levels and exceptions in spans."""
-    # Configure logfire
-    logfire.configure()
-
     with context_subtree() as tree:
         # Test different log levels
         with logfire.span('parent_span'):
@@ -879,7 +871,7 @@ async def test_context_subtree_invalid_tracer_provider(mocker: MockerFixture):
 
     mocker.patch('pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=None)
     with pytest.raises(TypeError) as exc_info:
-        with context_subtree():  # pragma: no cover
+        with context_subtree():
             pass
     assert str(exc_info.value) == snapshot(
         "Expected `tracer_provider` to have an `add_span_processor` method; got an instance of <class 'NoneType'>. For help resolving this, please create an issue at https://github.com/pydantic/pydantic-ai/issues."
@@ -890,7 +882,6 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
     """Test that context_subtree correctly records spans in independent async contexts."""
     from opentelemetry.trace import ProxyTracerProvider
 
-    # from opentelemetry.sdk.trace import TracerProvider
     mocker.patch(
         'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=ProxyTracerProvider()
     )

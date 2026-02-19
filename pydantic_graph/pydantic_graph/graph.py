@@ -6,33 +6,19 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any, Generic, cast
+from pathlib import Path
+from typing import Any, Generic, cast, overload
 
-import logfire_api
 import typing_extensions
-from logfire_api import LogfireSpan
-from typing_extensions import deprecated
 from typing_inspection import typing_objects
 
 from . import _utils, exceptions, mermaid
+from ._utils import AbstractSpan, get_traceparent, logfire_span
 from .nodes import BaseNode, DepsT, End, GraphRunContext, NodeDef, RunEndT, StateT
 from .persistence import BaseStatePersistence
 from .persistence.in_mem import SimpleStatePersistence
 
-# while waiting for https://github.com/pydantic/logfire/issues/745
-try:
-    import logfire._internal.stack_info
-except ImportError:
-    pass
-else:
-    from pathlib import Path
-
-    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)  # pyright: ignore[reportPrivateImportUsage]
-
-
 __all__ = 'Graph', 'GraphRun', 'GraphRunResult'
-
-_logfire = logfire_api.Logfire(otel_scope='pydantic-graph')
 
 
 @dataclass(init=False)
@@ -45,7 +31,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
     Here's a very simple example of a graph which increments a number by 1, but makes sure the number is never
     42 at the end.
 
-    ```py {title="never_42.py" noqa="I001" py="3.10"}
+    ```py {title="never_42.py" noqa="I001"}
     from __future__ import annotations
 
     from dataclasses import dataclass
@@ -125,7 +111,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         deps: DepsT = None,
         persistence: BaseStatePersistence[StateT, RunEndT] | None = None,
         infer_name: bool = True,
-        span: LogfireSpan | None = None,
     ) -> GraphRunResult[StateT, RunEndT]:
         """Run the graph from a starting node until it ends.
 
@@ -137,15 +122,13 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             persistence: State persistence interface, defaults to
                 [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
             infer_name: Whether to infer the graph name from the calling frame.
-            span: The span to use for the graph run. If not provided, a span will be created depending on the value of
-                the `auto_instrument` field.
 
         Returns:
             A `GraphRunResult` containing information about the run, including its final result.
 
         Here's an example of running the graph from [above][pydantic_graph.graph.Graph]:
 
-        ```py {title="run_never_42.py" noqa="I001" py="3.10"}
+        ```py {title="run_never_42.py" noqa="I001" requires="never_42.py"}
         from never_42 import Increment, MyState, never_42_graph
 
         async def main():
@@ -164,14 +147,14 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             self._infer_name(inspect.currentframe())
 
         async with self.iter(
-            start_node, state=state, deps=deps, persistence=persistence, span=span, infer_name=False
+            start_node, state=state, deps=deps, persistence=persistence, infer_name=False
         ) as graph_run:
             async for _node in graph_run:
                 pass
 
-        final_result = graph_run.result
-        assert final_result is not None, 'GraphRun should have a final result'
-        return final_result
+        result = graph_run.result
+        assert result is not None, 'GraphRun should have a result'
+        return result
 
     def run_sync(
         self,
@@ -184,7 +167,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
     ) -> GraphRunResult[StateT, RunEndT]:
         """Synchronously run the graph.
 
-        This is a convenience method that wraps [`self.run`][pydantic_graph.Graph.run] with `loop.run_until_complete(...)`.
+        This is a convenience method that wraps [`self.run`][pydantic_graph.graph.Graph.run] with `loop.run_until_complete(...)`.
         You therefore can't use this method inside async code or if there's an active event loop.
 
         Args:
@@ -199,7 +182,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         Returns:
             The result type from ending the run and the history of the run.
         """
-        if infer_name and self.name is None:
+        if infer_name and self.name is None:  # pragma: no branch
             self._infer_name(inspect.currentframe())
 
         return _utils.get_event_loop().run_until_complete(
@@ -214,7 +197,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         state: StateT = None,
         deps: DepsT = None,
         persistence: BaseStatePersistence[StateT, RunEndT] | None = None,
-        span: AbstractContextManager[Any] | None = None,
+        span: AbstractContextManager[AbstractSpan] | None = None,
         infer_name: bool = True,
     ) -> AsyncIterator[GraphRun[StateT, DepsT, RunEndT]]:
         """A contextmanager which can be used to iterate over the graph's nodes as they are executed.
@@ -252,14 +235,25 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
             persistence = SimpleStatePersistence()
         persistence.set_graph_types(self)
 
-        if self.auto_instrument and span is None:
-            span = logfire_api.span('run graph {graph.name}', graph=self)
-
         with ExitStack() as stack:
-            if span is not None:
-                stack.enter_context(span)
+            entered_span: AbstractSpan | None = None
+            if span is None:
+                if self.auto_instrument:  # pragma: no branch
+                    # Separate variable because we actually don't want logfire's f-string magic here,
+                    # we want the span_name to be preformatted for other backends
+                    # as requested in https://github.com/pydantic/pydantic-ai/issues/3173.
+                    span_name = f'run graph {self.name}'
+                    entered_span = stack.enter_context(logfire_span(span_name, graph=self))
+            else:
+                entered_span = stack.enter_context(span)
+            traceparent = None if entered_span is None else get_traceparent(entered_span)
             yield GraphRun[StateT, DepsT, RunEndT](
-                graph=self, start_node=start_node, persistence=persistence, state=state, deps=deps
+                graph=self,
+                start_node=start_node,
+                persistence=persistence,
+                state=state,
+                deps=deps,
+                traceparent=traceparent,
             )
 
     @asynccontextmanager
@@ -268,7 +262,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         persistence: BaseStatePersistence[StateT, RunEndT],
         *,
         deps: DepsT = None,
-        span: AbstractContextManager[Any] | None = None,
+        span: AbstractContextManager[AbstractSpan] | None = None,
         infer_name: bool = True,
     ) -> AsyncIterator[GraphRun[StateT, DepsT, RunEndT]]:
         """A contextmanager to iterate over the graph's nodes as they are executed, created from a persistence object.
@@ -297,12 +291,12 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
         snapshot.node.set_snapshot_id(snapshot.id)
 
-        if self.auto_instrument and span is None:
-            span = logfire_api.span('run graph {graph.name}', graph=self)
+        if self.auto_instrument and span is None:  # pragma: no branch
+            span = logfire_span('run graph {graph.name}', graph=self)
 
         with ExitStack() as stack:
-            if span is not None:
-                stack.enter_context(span)
+            entered_span = None if span is None else stack.enter_context(span)
+            traceparent = None if entered_span is None else get_traceparent(entered_span)
             yield GraphRun[StateT, DepsT, RunEndT](
                 graph=self,
                 start_node=snapshot.node,
@@ -310,6 +304,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                 state=snapshot.state,
                 deps=deps,
                 snapshot_id=snapshot.id,
+                traceparent=traceparent,
             )
 
     async def initialize(
@@ -336,42 +331,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
         persistence.set_graph_types(self)
         await persistence.snapshot_node(state, node)
-
-    @deprecated('`next` is deprecated, use `async with graph.iter(...) as run:  run.next()` instead')
-    async def next(
-        self,
-        node: BaseNode[StateT, DepsT, RunEndT],
-        persistence: BaseStatePersistence[StateT, RunEndT],
-        *,
-        state: StateT = None,
-        deps: DepsT = None,
-        infer_name: bool = True,
-    ) -> BaseNode[StateT, DepsT, Any] | End[RunEndT]:
-        """Run a node in the graph and return the next node to run.
-
-        Args:
-            node: The node to run.
-            persistence: State persistence interface, defaults to
-                [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
-            state: The current state of the graph.
-            deps: The dependencies of the graph.
-            infer_name: Whether to infer the graph name from the calling frame.
-
-        Returns:
-            The next node to run or [`End`][pydantic_graph.nodes.End] if the graph has finished.
-        """
-        if infer_name and self.name is None:
-            self._infer_name(inspect.currentframe())
-
-        persistence.set_graph_types(self)
-        run = GraphRun[StateT, DepsT, RunEndT](
-            graph=self,
-            start_node=node,
-            persistence=persistence,
-            state=state,
-            deps=deps,
-        )
-        return await run.next(node)
 
     def mermaid_code(
         self,
@@ -404,7 +363,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
         Here's an example of generating a diagram for the graph from [above][pydantic_graph.graph.Graph]:
 
-        ```py {title="mermaid_never_42.py" py="3.10"}
+        ```py {title="mermaid_never_42.py" requires="never_42.py"}
         from never_42 import Increment, never_42_graph
 
         print(never_42_graph.mermaid_code(start_node=Increment))
@@ -525,7 +484,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                     # break the inner (bases) loop
                     break
 
-        if not _utils.is_set(state_type):
+        if not _utils.is_set(state_type):  # pragma: no branch
             # state defaults to None, so use that if we can't infer it
             state_type = None
         if not _utils.is_set(run_end_type):
@@ -578,9 +537,9 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
                 if item is self:
                     self.name = name
                     return
-            if parent_frame.f_locals != parent_frame.f_globals:
+            if parent_frame.f_locals != parent_frame.f_globals:  # pragma: no branch
                 # if we couldn't find the agent in locals and globals are a different dict, try globals
-                for name, item in parent_frame.f_globals.items():
+                for name, item in parent_frame.f_globals.items():  # pragma: no branch
                     if item is self:
                         self.name = name
                         return
@@ -594,7 +553,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
     through nodes as they run, either by `async for` iteration or by repeatedly calling `.next(...)`.
 
     Here's an example of iterating over the graph from [above][pydantic_graph.graph.Graph]:
-    ```py {title="iter_never_42.py" noqa="I001" py="3.10"}
+    ```py {title="iter_never_42.py" noqa="I001" requires="never_42.py"}
     from copy import deepcopy
     from never_42 import Increment, MyState, never_42_graph
 
@@ -607,6 +566,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             print(node_states)
             '''
             [
+                (Increment(), MyState(number=1)),
                 (Increment(), MyState(number=1)),
                 (Check42(), MyState(number=2)),
                 (End(data=2), MyState(number=2)),
@@ -621,6 +581,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             print(node_states)
             '''
             [
+                (Increment(), MyState(number=41)),
                 (Increment(), MyState(number=41)),
                 (Check42(), MyState(number=42)),
                 (Increment(), MyState(number=42)),
@@ -642,6 +603,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         persistence: BaseStatePersistence[StateT, RunEndT],
         state: StateT,
         deps: DepsT,
+        traceparent: str | None,
         snapshot_id: str | None = None,
     ):
         """Create a new run for a given graph, starting at the specified node.
@@ -656,6 +618,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
                 to all nodes via `ctx.state`.
             deps: Optional dependencies that each node can access via `ctx.deps`, e.g. database connections,
                 configuration, or logging clients.
+            traceparent: The traceparent for the span used for the graph run.
             snapshot_id: The ID of the snapshot the node came from.
         """
         self.graph = graph
@@ -664,7 +627,18 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         self.state = state
         self.deps = deps
 
+        self.__traceparent = traceparent
         self._next_node: BaseNode[StateT, DepsT, RunEndT] | End[RunEndT] = start_node
+        self._is_started: bool = False
+
+    @overload
+    def _traceparent(self, *, required: typing_extensions.Literal[False]) -> str | None: ...
+    @overload
+    def _traceparent(self) -> str: ...
+    def _traceparent(self, *, required: bool = True) -> str | None:
+        if self.__traceparent is None and required:  # pragma: no cover
+            raise exceptions.GraphRuntimeError('No span was created for this graph run')
+        return self.__traceparent
 
     @property
     def next_node(self) -> BaseNode[StateT, DepsT, RunEndT] | End[RunEndT]:
@@ -679,10 +653,11 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         """The final result of the graph run if the run is completed, otherwise `None`."""
         if not isinstance(self._next_node, End):
             return None  # The GraphRun has not finished running
-        return GraphRunResult(
+        return GraphRunResult[StateT, RunEndT](
             self._next_node.data,
             state=self.state,
             persistence=self.persistence,
+            traceparent=self._traceparent(required=False),
         )
 
     async def next(
@@ -694,7 +669,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
         under dynamic conditions. The graph run should stop when you return an [`End`][pydantic_graph.nodes.End] node.
 
         Here's an example of using `next` to drive the graph from [above][pydantic_graph.graph.Graph]:
-        ```py {title="next_never_42.py" noqa="I001" py="3.10"}
+        ```py {title="next_never_42.py" noqa="I001" requires="never_42.py"}
         from copy import deepcopy
         from pydantic_graph import End
         from never_42 import Increment, MyState, never_42_graph
@@ -752,11 +727,15 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
             raise exceptions.GraphRuntimeError(f'Node `{node}` is not in the graph.')
 
         with ExitStack() as stack:
-            if self.graph.auto_instrument:
-                stack.enter_context(_logfire.span('run node {node_id}', node_id=node_id, node=node))
+            if self.graph.auto_instrument:  # pragma: no branch
+                # Separate variable because we actually don't want logfire's f-string magic here,
+                # we want the span_name to be preformatted for other backends
+                # as requested in https://github.com/pydantic/pydantic-ai/issues/3173.
+                span_name = f'run node {node_id}'
+                stack.enter_context(logfire_span(span_name, node_id=node_id, node=node))
 
             async with self.persistence.record_run(node_snapshot_id):
-                ctx = GraphRunContext(self.state, self.deps)
+                ctx = GraphRunContext(state=self.state, deps=self.deps)
                 self._next_node = await node.run(ctx)
 
         if isinstance(self._next_node, End):
@@ -777,18 +756,44 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
 
     async def __anext__(self) -> BaseNode[StateT, DepsT, RunEndT] | End[RunEndT]:
         """Use the last returned node as the input to `Graph.next`."""
+        if not self._is_started:
+            self._is_started = True
+            return self._next_node
+
         if isinstance(self._next_node, End):
             raise StopAsyncIteration
+
         return await self.next(self._next_node)
 
     def __repr__(self) -> str:
         return f'<GraphRun graph={self.graph.name or "[unnamed]"}>'
 
 
-@dataclass
+@dataclass(init=False)
 class GraphRunResult(Generic[StateT, RunEndT]):
     """The final result of running a graph."""
 
     output: RunEndT
     state: StateT
     persistence: BaseStatePersistence[StateT, RunEndT] = field(repr=False)
+
+    def __init__(
+        self,
+        output: RunEndT,
+        state: StateT,
+        persistence: BaseStatePersistence[StateT, RunEndT],
+        traceparent: str | None = None,
+    ):
+        self.output = output
+        self.state = state
+        self.persistence = persistence
+        self.__traceparent = traceparent
+
+    @overload
+    def _traceparent(self, *, required: typing_extensions.Literal[False]) -> str | None: ...
+    @overload
+    def _traceparent(self) -> str: ...
+    def _traceparent(self, *, required: bool = True) -> str | None:  # pragma: no cover
+        if self.__traceparent is None and required:
+            raise exceptions.GraphRuntimeError('No span was created for this graph run.')
+        return self.__traceparent

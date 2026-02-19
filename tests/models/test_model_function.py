@@ -6,14 +6,15 @@ from datetime import timezone
 
 import pydantic_core
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
+    RunContext,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -22,9 +23,11 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.result import Usage
+from pydantic_ai.result import RunUsage
+from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsNow, IsStr
+from .._inline_snapshot import snapshot
+from ..conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -60,40 +63,58 @@ async def return_last(messages: list[ModelMessage], _: AgentInfo) -> ModelRespon
 def test_simple():
     agent = Agent(FunctionModel(return_last))
     result = agent.run_sync('Hello')
-    assert result.data == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
+    assert result.output == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
+                usage=RequestUsage(input_tokens=51, output_tokens=3),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
 
     result2 = agent.run_sync('World', message_history=result.all_messages())
-    assert result2.data == snapshot("content='World' part_kind='user-prompt' message_count=3")
+    assert result2.output == snapshot("content='World' part_kind='user-prompt' message_count=3")
     assert result2.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
+                usage=RequestUsage(input_tokens=51, output_tokens=3),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
-            ModelRequest(parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content="content='World' part_kind='user-prompt' message_count=3")],
+                usage=RequestUsage(input_tokens=52, output_tokens=6),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
 
 
-async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
-    assert info.allow_text_result
+async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
+    assert info.allow_text_output
     assert {t.name for t in info.function_tools} == {'get_location', 'get_weather'}
     last = messages[-1].parts[-1]
     if isinstance(last, UserPromptPart):
@@ -144,18 +165,24 @@ async def get_weather(_: RunContext[None], lat: int, lng: int):
 
 def test_weather():
     result = weather_agent.run_sync('London')
-    assert result.data == 'Raining in London'
+    assert result.output == 'Raining in London'
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     ToolCallPart(
                         tool_name='get_location', args='{"location_description": "London"}', tool_call_id=IsStr()
                     )
                 ],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -165,12 +192,16 @@ def test_weather():
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_weather', args='{"lat": 51, "lng": 0}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=56, output_tokens=11),
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -180,21 +211,25 @@ def test_weather():
                         timestamp=IsNow(tz=timezone.utc),
                         tool_call_id=IsStr(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Raining in London')],
+                usage=RequestUsage(input_tokens=57, output_tokens=14),
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
 
     result = weather_agent.run_sync('Ipswich')
-    assert result.data == 'Sunny in Ipswich'
+    assert result.output == 'Sunny in Ipswich'
 
 
-async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: no cover
+async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: lax no cover
     last = messages[-1].parts[-1]
     if isinstance(last, UserPromptPart):
         if isinstance(last.content, str) and last.content.startswith('{'):
@@ -217,7 +252,7 @@ def get_var_args(ctx: RunContext[int], *args: int):
 
 def test_var_args():
     result = var_args_agent.run_sync('{"function": "get_var_args", "arguments": {"args": [1, 2, 3]}}', deps=123)
-    response_data = json.loads(result.data)
+    response_data = json.loads(result.output)
     # Can't parse ISO timestamps with trailing 'Z' in older versions of python:
     response_data['timestamp'] = re.sub('Z$', '+00:00', response_data['timestamp'])
     assert response_data == snapshot(
@@ -225,6 +260,7 @@ def test_var_args():
             'tool_name': 'get_var_args',
             'content': '{"args": [1, 2, 3]}',
             'tool_call_id': IsStr(),
+            'metadata': None,
             'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),  # type: ignore[reportUnknownMemberType]
             'part_kind': 'tool-return',
         }
@@ -278,7 +314,7 @@ def test_deps_init():
 def test_model_arg():
     agent = Agent()
     result = agent.run_sync('Hello', model=FunctionModel(return_last))
-    assert result.data == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
+    assert result.output == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
 
     with pytest.raises(RuntimeError, match='`model` must either be set on the agent or included when calling it.'):
         agent.run_sync('Hello')
@@ -322,25 +358,27 @@ def test_register_all():
         return ModelResponse(
             parts=[
                 TextPart(
-                    f'messages={len(messages)} allow_text_result={info.allow_text_result} tools={len(info.function_tools)}'
+                    f'messages={len(messages)} allow_text_output={info.allow_text_output} tools={len(info.function_tools)}'
                 )
-            ]
+            ],
         )
 
     result = agent_all.run_sync('Hello', model=FunctionModel(f))
-    assert result.data == snapshot('messages=1 allow_text_result=True tools=5')
+    assert result.output == snapshot('messages=1 allow_text_output=True tools=5')
 
 
 def test_call_all():
     result = agent_all.run_sync('Hello', model=TestModel())
-    assert result.data == snapshot('{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')
+    assert result.output == snapshot('{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     SystemPromptPart(content='foobar', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -350,8 +388,10 @@ def test_call_all():
                     ToolCallPart(tool_name='qux', args={'x': 0}, tool_call_id=IsStr()),
                     ToolCallPart(tool_name='quz', args={'x': 'a'}, tool_call_id=IsStr()),
                 ],
+                usage=RequestUsage(input_tokens=52, output_tokens=21),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -370,12 +410,16 @@ def test_call_all():
                     ToolReturnPart(
                         tool_name='quz', content='a', timestamp=IsNow(tz=timezone.utc), tool_call_id=IsStr()
                     ),
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')],
+                usage=RequestUsage(input_tokens=57, output_tokens=33),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -392,15 +436,15 @@ def test_retry_str():
 
     agent = Agent(FunctionModel(try_again))
 
-    @agent.result_validator
-    async def validate_result(r: str) -> str:
-        if r == '1':
+    @agent.output_validator
+    async def validate_output(o: str) -> str:
+        if o == '1':
             raise ModelRetry('Try again')
         else:
-            return r
+            return o
 
     result = agent.run_sync('')
-    assert result.data == snapshot('2')
+    assert result.output == snapshot('2')
 
 
 def test_retry_result_type():
@@ -415,17 +459,17 @@ def test_retry_result_type():
     class Foo(BaseModel):
         x: int
 
-    agent = Agent(FunctionModel(try_again), result_type=Foo)
+    agent = Agent(FunctionModel(try_again), output_type=Foo)
 
-    @agent.result_validator
-    async def validate_result(r: Foo) -> Foo:
-        if r.x == 1:
+    @agent.output_validator
+    async def validate_output(o: Foo) -> Foo:
+        if o.x == 1:
             raise ModelRetry('Try again')
         else:
-            return r
+            return o
 
     result = agent.run_sync('')
-    assert result.data == snapshot(Foo(x=2))
+    assert result.output == snapshot(Foo(x=2))
 
 
 async def stream_text_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
@@ -436,18 +480,24 @@ async def stream_text_function(_messages: list[ModelMessage], _: AgentInfo) -> A
 async def test_stream_text():
     agent = Agent(FunctionModel(stream_function=stream_text_function))
     async with agent.run_stream('') as result:
-        assert await result.get_data() == snapshot('hello world')
+        assert await result.get_output() == snapshot('hello world')
         assert result.all_messages() == snapshot(
             [
-                ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
+                ModelRequest(
+                    parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::stream_text_function',
                     timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
                 ),
             ]
         )
-        assert result.usage() == snapshot(Usage(requests=1, request_tokens=50, response_tokens=2, total_tokens=52))
+        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=50, output_tokens=2))
 
 
 class Foo(BaseModel):
@@ -458,22 +508,22 @@ async def test_stream_structure():
     async def stream_structured_function(
         _messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls]:
-        assert agent_info.result_tools is not None
-        assert len(agent_info.result_tools) == 1
-        name = agent_info.result_tools[0].name
-        yield {0: DeltaToolCall(name=name)}
+        assert agent_info.output_tools is not None
+        assert len(agent_info.output_tools) == 1
+        name = agent_info.output_tools[0].name
+        # Args don't typically come before the tool name, but it's technically possible and this ensures test coverage
         yield {0: DeltaToolCall(json_args='{"x": ')}
+        yield {0: DeltaToolCall(name=name)}
         yield {0: DeltaToolCall(json_args='1}')}
 
-    agent = Agent(FunctionModel(stream_function=stream_structured_function), result_type=Foo)
+    agent = Agent(FunctionModel(stream_function=stream_structured_function), output_type=Foo)
     async with agent.run_stream('') as result:
-        assert await result.get_data() == snapshot(Foo(x=1))
+        assert await result.get_output() == snapshot(Foo(x=1))
         assert result.usage() == snapshot(
-            Usage(
+            RunUsage(
                 requests=1,
-                request_tokens=50,
-                response_tokens=4,
-                total_tokens=54,
+                input_tokens=50,
+                output_tokens=4,
             )
         )
 

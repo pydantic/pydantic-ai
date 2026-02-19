@@ -1,11 +1,11 @@
 from __future__ import annotations as _annotations
 
 import json
-import os
 
 from httpx import AsyncClient
+from pydantic import BaseModel
 
-from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from pydantic_ai import ToolCallPart, ToolReturnPart
 from pydantic_ai_examples.weather_agent import Deps, weather_agent
 
 try:
@@ -18,10 +18,7 @@ except ImportError as e:
 TOOL_TO_DISPLAY_NAME = {'get_lat_lng': 'Geocoding API', 'get_weather': 'Weather API'}
 
 client = AsyncClient()
-weather_api_key = os.getenv('WEATHER_API_KEY')
-# create a free API key at https://geocode.maps.co/
-geo_api_key = os.getenv('GEO_API_KEY')
-deps = Deps(client=client, weather_api_key=weather_api_key, geo_api_key=geo_api_key)
+deps = Deps(client=client)
 
 
 async def stream_from_agent(prompt: str, chatbot: list[dict], past_messages: list):
@@ -33,16 +30,12 @@ async def stream_from_agent(prompt: str, chatbot: list[dict], past_messages: lis
         for message in result.new_messages():
             for call in message.parts:
                 if isinstance(call, ToolCallPart):
-                    call_args = (
-                        call.args.args_json
-                        if hasattr(call.args, 'args_json')
-                        else json.dumps(call.args.args_dict)
-                    )
+                    call_args = call.args_as_json_str()
                     metadata = {
                         'title': f'🛠️ Using {TOOL_TO_DISPLAY_NAME[call.tool_name]}',
                     }
                     if call.tool_call_id is not None:
-                        metadata['id'] = {call.tool_call_id}
+                        metadata['id'] = call.tool_call_id
 
                     gr_message = {
                         'role': 'assistant',
@@ -56,9 +49,11 @@ async def stream_from_agent(prompt: str, chatbot: list[dict], past_messages: lis
                             gr_message.get('metadata', {}).get('id', '')
                             == call.tool_call_id
                         ):
-                            gr_message['content'] += (
-                                f'\nOutput: {json.dumps(call.content)}'
-                            )
+                            if isinstance(call.content, BaseModel):
+                                json_content = call.content.model_dump_json()
+                            else:
+                                json_content = json.dumps(call.content)
+                            gr_message['content'] += f'\nOutput: {json_content}'
                 yield gr.skip(), chatbot, gr.skip()
         chatbot.append({'role': 'assistant', 'content': ''})
         async for message in result.stream_text():
@@ -104,7 +99,6 @@ with gr.Blocks() as demo:
     past_messages = gr.State([])
     chatbot = gr.Chatbot(
         label='Packing Assistant',
-        type='messages',
         avatar_images=(None, 'https://ai.pydantic.dev/img/logo-white.svg'),
         examples=[
             {'text': 'What is the weather like in Miami?'},

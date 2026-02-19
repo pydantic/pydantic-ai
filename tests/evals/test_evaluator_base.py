@@ -1,13 +1,14 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -17,6 +18,7 @@ with try_import() as imports_successful:
         EvaluationReason,
         EvaluationResult,
         Evaluator,
+        EvaluatorFailure,
     )
     from pydantic_evals.otel._errors import SpanTreeRecordingError
 
@@ -52,11 +54,11 @@ def test_evaluation_result():
     evaluator = DummyEvaluator()
 
     # Test basic result
-    result = EvaluationResult(name='test', value=True, reason='Success', source=evaluator)
+    result = EvaluationResult(name='test', value=True, reason='Success', source=evaluator.as_spec())
     assert result.name == 'test'
     assert result.value is True
     assert result.reason == 'Success'
-    assert result.source == evaluator
+    assert result.source == evaluator.as_spec()
 
     # Test downcast with matching type
     downcast = result.downcast(bool)
@@ -75,18 +77,40 @@ def test_evaluation_result():
 
 def test_strict_abc_meta():
     """Test _StrictABCMeta metaclass."""
-    # Test that abstract methods must be implemented
-    with pytest.raises(TypeError) as exc_info:
+    from abc import abstractmethod
+
+    from pydantic_evals.evaluators.report_evaluator import ReportEvaluator
+
+    # Subclasses that don't implement inherited abstract methods are rejected at definition time
+    with pytest.raises(TypeError, match="must implement all abstract methods.*'evaluate'"):
 
         @dataclass
         class InvalidEvaluator(Evaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
             pass
 
-    assert 'must implement all abstract methods' in str(exc_info.value)
-    assert 'evaluate' in str(exc_info.value)
+    with pytest.raises(TypeError, match="must implement all abstract methods.*'evaluate'"):
+
+        @dataclass
+        class InvalidReportEvaluator(ReportEvaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
+            pass
+
+    # Subclasses that add new abstract methods but don't implement inherited ones are also rejected
+    with pytest.raises(TypeError, match="must implement all abstract methods.*'evaluate'"):
+
+        @dataclass
+        class PartialAbstract(Evaluator[Any, Any, Any]):  # pyright: ignore[reportUnusedClass]
+            @abstractmethod
+            def other(self) -> None: ...
+
+    # Classes that define their own abstract methods (new abstract layers) are allowed
+    # — this is how Evaluator and ReportEvaluator themselves work
+    assert hasattr(Evaluator, '__abstractmethods__')
+    assert 'evaluate' in Evaluator.__abstractmethods__
+    assert hasattr(ReportEvaluator, '__abstractmethods__')
+    assert 'evaluate' in ReportEvaluator.__abstractmethods__
 
 
-if TYPE_CHECKING or imports_successful():
+if TYPE_CHECKING or imports_successful():  # pragma: no branch
 
     @dataclass
     class SimpleEvaluator(Evaluator[Any, Any, Any]):
@@ -172,10 +196,11 @@ async def test_evaluator_async():
     assert result is True
 
 
-async def test_evaluator_name():
+async def test_evaluation_name():
     """Test evaluator name method."""
     evaluator = SimpleEvaluator()
-    assert evaluator.name() == 'SimpleEvaluator'
+    assert evaluator.get_serialization_name() == 'SimpleEvaluator'
+    assert evaluator.get_default_evaluation_name() == 'SimpleEvaluator'
 
 
 async def test_evaluator_serialization():
@@ -186,7 +211,7 @@ async def test_evaluator_serialization():
         value: int = 42
         optional: str | None = None
         default_value: bool = False
-        default_factory_value: list[int] = field(default_factory=list)
+        default_factory_value: list[int] = field(default_factory=list[int])
 
         def evaluate(self, ctx: EvaluatorContext) -> bool:
             raise NotImplementedError
@@ -197,10 +222,21 @@ async def test_evaluator_serialization():
     assert adapter.dump_python(evaluator, context=None) == snapshot({'arguments': None, 'name': 'ExampleEvaluator'})
     assert adapter.dump_python(evaluator, context={'use_short_form': True}) == snapshot('ExampleEvaluator')
 
-    # Test with a single non-default value
+    # Test with a single non-default value (first field) — uses tuple form
     evaluator = ExampleEvaluator(value=100)
     assert adapter.dump_python(evaluator, context=None) == snapshot({'arguments': [100], 'name': 'ExampleEvaluator'})
     assert adapter.dump_python(evaluator, context={'use_short_form': True}) == snapshot({'ExampleEvaluator': 100})
+
+    # Test with a single non-default value (non-first field) — uses dict form
+    evaluator = ExampleEvaluator(optional='test')
+    spec = evaluator.as_spec()
+    assert spec.arguments == {'optional': 'test'}
+    assert adapter.dump_python(evaluator, context=None) == snapshot(
+        {'arguments': {'optional': 'test'}, 'name': 'ExampleEvaluator'}
+    )
+    assert adapter.dump_python(evaluator, context={'use_short_form': True}) == snapshot(
+        {'ExampleEvaluator': {'optional': 'test'}}
+    )
 
     # Test with multiple non-default values
     evaluator = ExampleEvaluator(value=100, optional='test', default_value=True)
@@ -239,7 +275,7 @@ async def test_run_evaluator():
     # Test with simple boolean result
     evaluator = SimpleEvaluator()
     results = await run_evaluator(evaluator, ctx)
-    adapter = TypeAdapter(list[EvaluationResult])
+    adapter = TypeAdapter[Sequence[EvaluationResult] | EvaluatorFailure](Sequence[EvaluationResult] | EvaluatorFailure)
     assert adapter.dump_python(results) == snapshot(
         [
             {

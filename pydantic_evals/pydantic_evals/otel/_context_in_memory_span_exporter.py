@@ -14,11 +14,11 @@ from opentelemetry.trace import ProxyTracerProvider, get_tracer_provider
 
 try:
     from logfire._internal.tracer import (
-        ProxyTracerProvider as LogfireProxyTracerProvider,  # pyright: ignore[reportAssignmentType,reportPrivateImportUsage]
+        ProxyTracerProvider as LogfireProxyTracerProvider,  # pyright: ignore
     )
 
     _LOGFIRE_IS_INSTALLED = True
-except ImportError:  # pragma: no cover
+except ImportError:  # pragma: lax no cover
     _LOGFIRE_IS_INSTALLED = False  # pyright: ignore[reportConstantRedefinition]
 
     # Ensure that we can do an isinstance check without erroring
@@ -109,7 +109,7 @@ class _ContextInMemorySpanExporter(SpanExporter):
 
     def export(self, spans: typing.Sequence[ReadableSpan]) -> SpanExportResult:
         """Stores a list of spans in memory."""
-        if self._stopped:  # pragma: no cover
+        if self._stopped:
             return SpanExportResult.FAILURE
         with self._lock:
             context_id = _EXPORTER_CONTEXT_ID.get()

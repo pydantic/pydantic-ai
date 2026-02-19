@@ -1,0 +1,186 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '526'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: run bar for me please
+        role: user
+      generationConfig: {}
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - bar
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: bar
+          parameters:
+            properties: {}
+            type: OBJECT
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              bar:
+                type: STRING
+            required:
+            - bar
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '720'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=442
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: 2.5814981199800968e-05
+        content:
+          parts:
+          - functionCall:
+              args: {}
+              name: bar
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: LFteaOOfMaPG1PIPi5qVEA
+      usageMetadata:
+        candidatesTokenCount: 1
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 1
+        promptTokenCount: 21
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 21
+        totalTokenCount: 22
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '808'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: run bar for me please
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_e3268c26ec6340bf82ce92c8342ddad2
+            name: bar
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_e3268c26ec6340bf82ce92c8342ddad2
+            name: bar
+            response:
+              return_value: hello
+        role: user
+      generationConfig: {}
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - bar
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: bar
+          parameters:
+            properties: {}
+            type: OBJECT
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              bar:
+                type: STRING
+            required:
+            - bar
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '775'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=402
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.039950957894325255
+        content:
+          parts:
+          - functionCall:
+              args:
+                bar: hello
+              name: final_result
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: LVteaNDWD5-Yx_APw-Pt8Ao
+      usageMetadata:
+        candidatesTokenCount: 5
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 5
+        promptTokenCount: 27
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 27
+        totalTokenCount: 32
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,24 +1,24 @@
 # Unit testing
 
-Writing unit tests for PydanticAI code is just like unit tests for any other Python code.
+Writing unit tests for Pydantic AI code is just like unit tests for any other Python code.
 
 Because for the most part they're nothing new, we have pretty well established tools and patterns for writing and running these kinds of tests.
 
 Unless you're really sure you know better, you'll probably want to follow roughly this strategy:
 
-* Use [`pytest`](https://docs.pytest.org/en/stable/) as your test harness
-* If you find yourself typing out long assertions, use [inline-snapshot](https://15r10nk.github.io/inline-snapshot/latest/)
-* Similarly, [dirty-equals](https://dirty-equals.helpmanual.io/latest/) can be useful for comparing large data structures
-* Use [`TestModel`][pydantic_ai.models.test.TestModel] or [`FunctionModel`][pydantic_ai.models.function.FunctionModel] in place of your actual model to avoid the usage, latency and variability of real LLM calls
-* Use [`Agent.override`][pydantic_ai.agent.Agent.override] to replace your model inside your application logic
-* Set [`ALLOW_MODEL_REQUESTS=False`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] globally to block any requests from being made to non-test models accidentally
+- Use [`pytest`](https://docs.pytest.org/en/stable/) as your test harness
+- If you find yourself typing out long assertions, use [inline-snapshot](https://15r10nk.github.io/inline-snapshot/latest/)
+- Similarly, [dirty-equals](https://dirty-equals.helpmanual.io/latest/) can be useful for comparing large data structures
+- Use [`TestModel`][pydantic_ai.models.test.TestModel] or [`FunctionModel`][pydantic_ai.models.function.FunctionModel] in place of your actual model to avoid the usage, latency and variability of real LLM calls
+- Use [`Agent.override`][pydantic_ai.agent.Agent.override] to replace an agent's model, dependencies, or toolsets inside your application logic
+- Set [`ALLOW_MODEL_REQUESTS=False`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] globally to block any requests from being made to non-test models accidentally
 
 ### Unit testing with `TestModel`
 
 The simplest and fastest way to exercise most of your application code is using [`TestModel`][pydantic_ai.models.test.TestModel], this will (by default) call all tools in the agent, then return either plain text or a structured response depending on the return type of the agent.
 
 !!! note "`TestModel` is not magic"
-    The "clever" (but not too clever) part of `TestModel` is that it will attempt to generate valid structured data for [function tools](tools.md) and [result types](results.md#structured-result-validation) based on the schema of the registered tools.
+    The "clever" (but not too clever) part of `TestModel` is that it will attempt to generate valid structured data for [function tools](tools.md) and [output types](output.md#structured-output) based on the schema of the registered tools.
 
     There's no ML or AI in `TestModel`, it's just plain old procedural Python code that tries to generate data that satisfies the JSON schema of a tool.
 
@@ -37,9 +37,9 @@ from fake_database import DatabaseConn  # (1)!
 from weather_service import WeatherService  # (2)!
 
 weather_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5.2',
     deps_type=WeatherService,
-    system_prompt='Providing a weather forecast at the locations the user provides.',
+    instructions='Providing a weather forecast at the locations the user provides.',
 )
 
 
@@ -61,7 +61,7 @@ async def run_weather_forecast(  # (4)!
 
         async def run_forecast(prompt: str, user_id: int):
             result = await weather_agent.run(prompt, deps=weather_service)
-            await conn.store_forecast(user_id, result.data)
+            await conn.store_forecast(user_id, result.output)
 
         # run all prompts in parallel
         await asyncio.gather(
@@ -80,17 +80,16 @@ Here we have a function that takes a list of `#!python (user_prompt, user_id)` t
 
 Here's how we would write tests using [`TestModel`][pydantic_ai.models.test.TestModel]:
 
-```python {title="test_weather_app.py" call_name="test_forecast"}
+```python {title="test_weather_app.py" call_name="test_forecast" requires="weather_app.py"}
 from datetime import timezone
 import pytest
 
 from dirty_equals import IsNow, IsStr
 
-from pydantic_ai import models, capture_run_messages
+from pydantic_ai import models, capture_run_messages, RequestUsage
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.messages import (
+from pydantic_ai import (
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -119,15 +118,14 @@ async def test_forecast():
     assert messages == [  # (6)!
         ModelRequest(
             parts=[
-                SystemPromptPart(
-                    content='Providing a weather forecast at the locations the user provides.',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
                 UserPromptPart(
                     content='What will the weather be like in London on 2024-11-28?',
                     timestamp=IsNow(tz=timezone.utc),  # (7)!
                 ),
-            ]
+            ],
+            instructions='Providing a weather forecast at the locations the user provides.',
+            timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
         ),
         ModelResponse(
             parts=[
@@ -140,8 +138,13 @@ async def test_forecast():
                     tool_call_id=IsStr(),
                 )
             ],
+            usage=RequestUsage(
+                input_tokens=60,
+                output_tokens=7,
+            ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
         ),
         ModelRequest(
             parts=[
@@ -152,6 +155,9 @@ async def test_forecast():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ],
+            instructions='Providing a weather forecast at the locations the user provides.',
+            timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
         ),
         ModelResponse(
             parts=[
@@ -159,8 +165,13 @@ async def test_forecast():
                     content='{"weather_forecast":"Sunny with a chance of rain"}',
                 )
             ],
+            usage=RequestUsage(
+                input_tokens=66,
+                output_tokens=16,
+            ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
         ),
     ]
 ```
@@ -169,7 +180,7 @@ async def test_forecast():
 2. This is a safety measure to make sure we don't accidentally make real requests to the LLM while testing, see [`ALLOW_MODEL_REQUESTS`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] for more details.
 3. We're using [`Agent.override`][pydantic_ai.agent.Agent.override] to replace the agent's model with [`TestModel`][pydantic_ai.models.test.TestModel], the nice thing about `override` is that we can replace the model inside agent without needing access to the agent `run*` methods call site.
 4. Now we call the function we want to test inside the `override` context manager.
-5. But default, `TestModel` will return a JSON string summarising the tools calls made, and what was returned. If you wanted to customise the response to something more closely aligned with the domain, you could add [`custom_result_text='Sunny'`][pydantic_ai.models.test.TestModel.custom_result_text] when defining `TestModel`.
+5. But default, `TestModel` will return a JSON string summarising the tools calls made, and what was returned. If you wanted to customise the response to something more closely aligned with the domain, you could add [`custom_output_text='Sunny'`][pydantic_ai.models.test.TestModel.custom_output_text] when defining `TestModel`.
 6. So far we don't actually know which tools were called and with which values, we can use [`capture_run_messages`][pydantic_ai.capture_run_messages] to inspect messages from the most recent run and assert the exchange between the agent and the model occurred as expected.
 7. The [`IsNow`][dirty_equals.IsNow] helper allows us to use declarative asserts even with data which will contain timestamps that change over time.
 8. `TestModel` isn't doing anything clever to extract values from the prompt, so these values are hardcoded.
@@ -182,13 +193,13 @@ To fully exercise `weather_forecast`, we need to use [`FunctionModel`][pydantic_
 
 Here's an example of using `FunctionModel` to test the `weather_forecast` tool with custom inputs
 
-```python {title="test_weather_app2.py" call_name="test_forecast_future"}
+```python {title="test_weather_app2.py" call_name="test_forecast_future" requires="weather_app.py"}
 import re
 
 import pytest
 
 from pydantic_ai import models
-from pydantic_ai.messages import (
+from pydantic_ai import (
     ModelMessage,
     ModelResponse,
     TextPart,
@@ -241,11 +252,12 @@ If you're writing lots of tests that all require model to be overridden, you can
 
 Here's an example of a fixture that overrides the model with `TestModel`:
 
-```python {title="tests.py"}
+```python {title="test_agent.py" requires="weather_app.py"}
 import pytest
-from weather_app import weather_agent
 
 from pydantic_ai.models.test import TestModel
+
+from weather_app import weather_agent
 
 
 @pytest.fixture

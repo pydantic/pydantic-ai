@@ -8,20 +8,16 @@ jobs:
     # Note: this should match the `docs` job in ci.yml
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: docs
 
       - run: uv sync --group docs
 
-      # always build docs to check it works without insiders packages
       - run: make docs
-
-      - run: make docs-insiders
-        env:
-          PPPR_TOKEN: ${{ secrets.PPPR_TOKEN }}
 
       - run: tree -sh site
       - uses: actions/setup-node@v4
@@ -45,7 +41,7 @@ jobs:
       url: https://ai.pydantic.dev
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
       - run: npm install
@@ -54,6 +50,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-suffix: docs-upload
 
       - uses: actions/download-artifact@v4
         with:

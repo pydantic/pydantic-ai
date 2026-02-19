@@ -4,22 +4,21 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
+from pydantic_core import to_jsonable_python
 
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import Usage
 
-from ..conftest import try_import
+from .._inline_snapshot import snapshot
+from ..conftest import IsStr, try_import
 
 with try_import() as imports_successful:
     import logfire
     from logfire.testing import CaptureLogfire
 
     from pydantic_evals.evaluators._run_evaluator import run_evaluator
-    from pydantic_evals.evaluators._spec import EvaluatorSpec
     from pydantic_evals.evaluators.common import (
         Contains,
         Equals,
@@ -28,14 +27,16 @@ with try_import() as imports_successful:
         IsInstance,
         LLMJudge,
         MaxDuration,
-        Python,
     )
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.evaluators.evaluator import (
         EvaluationReason,
+        EvaluationResult,
         Evaluator,
+        EvaluatorFailure,
         EvaluatorOutput,
     )
+    from pydantic_evals.evaluators.spec import EvaluatorSpec
     from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
     from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
 
@@ -122,7 +123,7 @@ async def test_llm_judge_serialization():
             messages: list[ModelMessage],
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
-        ) -> tuple[ModelResponse, Usage]:
+        ) -> ModelResponse:
             raise NotImplementedError
 
         @property
@@ -132,6 +133,9 @@ async def test_llm_judge_serialization():
         @property
         def system(self) -> str:
             return 'my-system'
+
+    model = MyModel()
+    assert model.model_id == 'my-system:my-model'
 
     adapter = TypeAdapter(Evaluator)
 
@@ -158,11 +162,14 @@ async def test_evaluator_call(test_context: EvaluatorContext[TaskInput, TaskOutp
     evaluator = ExampleEvaluator()
     results = await run_evaluator(evaluator, test_context)
 
+    assert not isinstance(results, EvaluatorFailure)
     assert len(results) == 1
-    assert results[0].name == 'result'
-    assert results[0].value == 'passed'
-    assert results[0].reason is None
-    assert results[0].source is evaluator
+    first_result = results[0]
+    assert isinstance(first_result, EvaluationResult)
+    assert first_result.name == 'result'
+    assert first_result.value == 'passed'
+    assert first_result.reason is None
+    assert first_result.source == EvaluatorSpec(name='ExampleEvaluator', arguments=None)
 
 
 async def test_is_instance_evaluator():
@@ -208,12 +215,6 @@ async def test_is_instance_evaluator():
     assert result.value is False
 
 
-async def test_llm_judge_evaluator():
-    """Test the LLMJudge evaluator."""
-    # We can't easily test this without mocking the LLM, so we'll just check that it's importable
-    assert LLMJudge
-
-
 async def test_custom_evaluator(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
     """Test a custom evaluator."""
 
@@ -233,9 +234,55 @@ async def test_custom_evaluator(test_context: EvaluatorContext[TaskInput, TaskOu
 
     evaluator = CustomEvaluator()
     result = evaluator.evaluate(test_context)
-    assert isinstance(result, dict)
-    assert result['is_correct'] is True
-    assert result['difficulty'] == 'easy'
+    assert result == snapshot({'difficulty': 'easy', 'is_correct': True})
+
+
+async def test_custom_evaluator_name(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
+    @dataclass
+    class CustomNameFieldEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        result: int
+        evaluation_name: str
+
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
+            return self.result
+
+    evaluator = CustomNameFieldEvaluator(result=123, evaluation_name='abc')
+
+    assert to_jsonable_python(await run_evaluator(evaluator, test_context)) == snapshot(
+        [
+            {
+                'name': 'abc',
+                'reason': None,
+                'source': {'arguments': {'evaluation_name': 'abc', 'result': 123}, 'name': 'CustomNameFieldEvaluator'},
+                'value': 123,
+            }
+        ]
+    )
+
+    @dataclass
+    class CustomNamePropertyEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        result: int
+        my_name: str
+
+        @property
+        def evaluation_name(self) -> str:
+            return f'hello {self.my_name}'
+
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
+            return self.result
+
+    evaluator = CustomNamePropertyEvaluator(result=123, my_name='marcelo')
+
+    assert to_jsonable_python(await run_evaluator(evaluator, test_context)) == snapshot(
+        [
+            {
+                'name': 'hello marcelo',
+                'reason': None,
+                'source': {'arguments': {'my_name': 'marcelo', 'result': 123}, 'name': 'CustomNamePropertyEvaluator'},
+                'value': 123,
+            }
+        ]
+    )
 
 
 async def test_evaluator_error_handling(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
@@ -249,8 +296,13 @@ async def test_evaluator_error_handling(test_context: EvaluatorContext[TaskInput
     evaluator = FailingEvaluator()
 
     # When called directly, it should raise an error
-    with pytest.raises(ValueError, match='Simulated error'):
-        await run_evaluator(evaluator, test_context)
+    result = await run_evaluator(evaluator, test_context)
+    assert result == EvaluatorFailure(
+        name='FailingEvaluator',
+        error_message='ValueError: Simulated error',
+        error_stacktrace=IsStr(),
+        source=FailingEvaluator().as_spec(),
+    )
 
 
 async def test_evaluator_with_null_values():
@@ -437,7 +489,7 @@ async def test_contains_evaluator():
     assert evaluator.evaluate(dict_context) == snapshot(
         EvaluationReason(
             value=False,
-            reason="Output dictionary has different value for key 'key1': 'value1' != 'wrong_value'",
+            reason="Output has different value for key 'key1': 'value1' != 'wrong_value'",
         )
     )
 
@@ -455,7 +507,7 @@ async def test_contains_evaluator():
     assert evaluator.evaluate(dict_context) == snapshot(
         EvaluationReason(
             value=False,
-            reason="Output dictionary does not contain expected key 'key1key1key1ke...y1key1key1key1'",
+            reason="Output does not contain expected key 'key1key1key1ke...y1key1key1key1'",
         )
     )
 
@@ -463,7 +515,7 @@ async def test_contains_evaluator():
     assert evaluator.evaluate(dict_context) == snapshot(
         EvaluationReason(
             value=False,
-            reason="Output dictionary has different value for key 'key1': 'value1' != 'wrong_value_wrong_value_wrong_value_wrong_value_w..._wrong_value_wrong_value_wrong_value_wrong_value_'",
+            reason="Output has different value for key 'key1': 'value1' != 'wrong_value_wrong_value_wrong_value_wrong_value_w..._wrong_value_wrong_value_wrong_value_wrong_value_'",
         )
     )
 
@@ -529,34 +581,43 @@ async def test_span_query_evaluator(
     assert result is False
 
 
-async def test_python_evaluator(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
-    """Test the python evaluator."""
-    # Test with a simple condition
-    evaluator = Python(expression="ctx.output.answer == '4'")
-    assert evaluator.evaluate(test_context) == snapshot(True)
+async def test_import_errors():
+    with pytest.raises(
+        ImportError,
+        match='The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.',
+    ):
+        from pydantic_evals.evaluators import Python  # pyright: ignore[reportUnusedImport]
 
-    # Test type sensitivity
-    evaluator = Python(expression='ctx.output.answer == 4')
-    assert evaluator.evaluate(test_context) == snapshot(False)
+    with pytest.raises(
+        ImportError,
+        match='The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.',
+    ):
+        from pydantic_evals.evaluators.common import Python  # pyright: ignore[reportUnusedImport] # noqa: F401
 
-    # Test with a named condition
-    evaluator = Python(expression="{'correct_answer': ctx.output.answer == '4'}")
-    assert evaluator.evaluate(test_context) == snapshot({'correct_answer': True})
+    with pytest.raises(
+        ImportError,
+        match="cannot import name 'Foo' from 'pydantic_evals.evaluators'",
+    ):
+        from pydantic_evals.evaluators import Foo  # pyright: ignore[reportUnusedImport]
 
-    # Test with a condition that returns false
-    evaluator = Python(expression="ctx.output.answer == '5'")
-    assert evaluator.evaluate(test_context) == snapshot(False)
+    with pytest.raises(
+        ImportError,
+        match="cannot import name 'Foo' from 'pydantic_evals.evaluators.common'",
+    ):
+        from pydantic_evals.evaluators.common import Foo  # pyright: ignore[reportUnusedImport] # noqa: F401
 
-    # Test with a condition that accesses context properties
-    evaluator = Python(expression="ctx.output.answer == '4' and ctx.metadata.difficulty == 'easy'")
-    assert evaluator.evaluate(test_context) == snapshot(True)
+    with pytest.raises(
+        AttributeError,
+        match="module 'pydantic_evals.evaluators' has no attribute 'Foo'",
+    ):
+        import pydantic_evals.evaluators as _evaluators
 
-    # Test reason rendering for strings
-    evaluator = Python(expression='ctx.output.answer')
-    assert evaluator.evaluate(test_context) == snapshot('4')
+        _evaluators.Foo
 
-    # Test with a condition that returns a dict
-    evaluator = Python(
-        expression="{'is_correct': ctx.output.answer == '4', 'is_easy': ctx.metadata.difficulty == 'easy'}"
-    )
-    assert evaluator.evaluate(test_context) == snapshot({'is_correct': True, 'is_easy': True})
+    with pytest.raises(
+        AttributeError,
+        match="module 'pydantic_evals.evaluators.common' has no attribute 'Foo'",
+    ):
+        import pydantic_evals.evaluators.common as _common
+
+        _common.Foo

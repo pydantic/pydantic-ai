@@ -9,18 +9,18 @@
 This is a library for evaluating non-deterministic (or "stochastic") functions in Python. It provides a simple,
 Pythonic interface for defining and running stochastic functions, and analyzing the results of running those functions.
 
-While this library is developed as part of [PydanticAI](https://ai.pydantic.dev), it only uses PydanticAI for a small
+While this library is developed as part of [Pydantic AI](https://ai.pydantic.dev), it only uses Pydantic AI for a small
 subset of generative functionality internally, and it is designed to be used with arbitrary "stochastic function"
-implementations. In particular, it can be used with other (non-PydanticAI) AI libraries, agent frameworks, etc.
+implementations. In particular, it can be used with other (non-Pydantic AI) AI libraries, agent frameworks, etc.
 
-As with PydanticAI, this library prioritizes type safety and use of common Python syntax over esoteric, domain-specific
+As with Pydantic AI, this library prioritizes type safety and use of common Python syntax over esoteric, domain-specific
 use of Python syntax.
 
 Full documentation is available at [ai.pydantic.dev/evals](https://ai.pydantic.dev/evals).
 
 ## Example
 
-While you'd typically use Pydantic Evals with more complex functions (such as PydanticAI agents or graphs), here's a
+While you'd typically use Pydantic Evals with more complex functions (such as Pydantic AI agents or graphs), here's a
 quick example that evaluates a simple function against a test case using both custom and built-in evaluators:
 
 ```python
@@ -68,7 +68,7 @@ report.print(include_input=True, include_output=True)
 """
 ```
 
-Using the library with more complex functions, such as PydanticAI agents, is similar — all you need to do is define a
+Using the library with more complex functions, such as Pydantic AI agents, is similar — all you need to do is define a
 task function wrapping the function you want to evaluate, with a signature that matches the inputs and outputs of your
 test cases.
 

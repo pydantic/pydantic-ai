@@ -1,4 +1,4 @@
-"""Example demonstrating how to use PydanticAI to generate SQL queries based on user input.
+"""Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.
 
 Run postgres with:
 
@@ -16,21 +16,20 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date
-from typing import Annotated, Any, Union
+from typing import Annotated, Any, TypeAlias
 
 import asyncpg
 import logfire
 from annotated_types import MinLen
 from devtools import debug
 from pydantic import BaseModel, Field
-from typing_extensions import TypeAlias
 
-from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.format_as_xml import format_as_xml
+from pydantic_ai import Agent, ModelRetry, RunContext, format_as_xml
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_asyncpg()
+logfire.instrument_pydantic_ai()
 
 DB_SCHEMA = """
 CREATE TABLE records (
@@ -91,13 +90,12 @@ class InvalidRequest(BaseModel):
     error_message: str
 
 
-Response: TypeAlias = Union[Success, InvalidRequest]
-agent: Agent[Deps, Response] = Agent(
-    'google-gla:gemini-1.5-flash',
+Response: TypeAlias = Success | InvalidRequest
+agent = Agent[Deps, Response](
+    'google-gla:gemini-3-flash-preview',
     # Type ignore while we wait for PEP-0747, nonetheless unions will work fine everywhere else
-    result_type=Response,  # type: ignore
+    output_type=Response,  # type: ignore
     deps_type=Deps,
-    instrument=True,
 )
 
 
@@ -117,22 +115,22 @@ today's date = {date.today()}
 """
 
 
-@agent.result_validator
-async def validate_result(ctx: RunContext[Deps], result: Response) -> Response:
-    if isinstance(result, InvalidRequest):
-        return result
+@agent.output_validator
+async def validate_output(ctx: RunContext[Deps], output: Response) -> Response:
+    if isinstance(output, InvalidRequest):
+        return output
 
     # gemini often adds extraneous backslashes to SQL
-    result.sql_query = result.sql_query.replace('\\', '')
-    if not result.sql_query.upper().startswith('SELECT'):
+    output.sql_query = output.sql_query.replace('\\', '')
+    if not output.sql_query.upper().startswith('SELECT'):
         raise ModelRetry('Please create a SELECT query')
 
     try:
-        await ctx.deps.conn.execute(f'EXPLAIN {result.sql_query}')
+        await ctx.deps.conn.execute(f'EXPLAIN {output.sql_query}')
     except asyncpg.exceptions.PostgresError as e:
         raise ModelRetry(f'Invalid query: {e}') from e
     else:
-        return result
+        return output
 
 
 async def main():
@@ -146,7 +144,7 @@ async def main():
     ) as conn:
         deps = Deps(conn)
         result = await agent.run(prompt, deps=deps)
-    debug(result.data)
+    debug(result.output)
 
 
 # pyright: reportUnknownMemberType=false

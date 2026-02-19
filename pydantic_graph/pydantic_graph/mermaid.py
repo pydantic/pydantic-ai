@@ -5,11 +5,11 @@ import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from textwrap import indent
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
 
 import httpx
 from annotated_types import Ge, Le
-from typing_extensions import TypeAlias, TypedDict, Unpack
+from typing_extensions import TypedDict, Unpack
 
 from .nodes import BaseNode
 

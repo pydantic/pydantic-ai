@@ -4,10 +4,10 @@ import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, is_dataclass
 from functools import cache
-from typing import Any, ClassVar, Generic, get_type_hints
+from typing import Any, ClassVar, Generic, get_origin, get_type_hints
 from uuid import uuid4
 
-from typing_extensions import Never, Self, TypeVar, get_origin
+from typing_extensions import Never, Self, TypeVar
 
 from . import _utils, exceptions
 
@@ -24,11 +24,9 @@ DepsT = TypeVar('DepsT', default=None, contravariant=True)
 """Type variable for the dependencies of a graph and node."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class GraphRunContext(Generic[StateT, DepsT]):
     """Context for a graph."""
-
-    # TODO: Can we get rid of this struct and just pass both these things around..?
 
     state: StateT
     """The state of the graph."""
@@ -70,11 +68,12 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
         if snapshot_id := getattr(self, '__snapshot_id', None):
             return snapshot_id
         else:
-            self.__dict__['__snapshot_id'] = snapshot_id = generate_snapshot_id(self.get_node_id())
+            snapshot_id = generate_snapshot_id(self.get_node_id())
+            object.__setattr__(self, '__snapshot_id', snapshot_id)
             return snapshot_id
 
     def set_snapshot_id(self, snapshot_id: str) -> None:
-        self.__dict__['__snapshot_id'] = snapshot_id
+        object.__setattr__(self, '__snapshot_id', snapshot_id)
 
     @classmethod
     @cache
@@ -94,8 +93,8 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
         docstring = cls.__doc__
         # dataclasses get an automatic docstring which is just their signature, we don't want that
         if docstring and is_dataclass(cls) and docstring.startswith(f'{cls.__name__}('):
-            docstring = None
-        if docstring:
+            docstring = None  # pragma: no cover
+        if docstring:  # pragma: no branch
             # remove indentation from docstring
             import inspect
 
@@ -121,7 +120,6 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
             if return_type_origin is End:
                 end_edge = edge
             elif return_type_origin is BaseNode:
-                # TODO: Should we disallow this?
                 returns_base_node = True
             elif issubclass(return_type_origin, BaseNode):
                 next_node_edges[return_type.get_node_id()] = edge
@@ -129,12 +127,12 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
                 raise exceptions.GraphSetupError(f'Invalid return type: {return_type}')
 
         return NodeDef(
-            cls,
-            cls.get_node_id(),
-            cls.get_note(),
-            next_node_edges,
-            end_edge,
-            returns_base_node,
+            node=cls,
+            node_id=cls.get_node_id(),
+            note=cls.get_note(),
+            next_node_edges=next_node_edges,
+            end_edge=end_edge,
+            returns_base_node=returns_base_node,
         )
 
     def deep_copy(self) -> Self:
@@ -174,7 +172,7 @@ def generate_snapshot_id(node_id: str) -> str:
     return f'{node_id}:{uuid4().hex}'
 
 
-@dataclass
+@dataclass(frozen=True)
 class Edge:
     """Annotation to apply a label to an edge in a graph."""
 
@@ -182,7 +180,7 @@ class Edge:
     """Label for the edge."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class NodeDef(Generic[StateT, DepsT, NodeRunEndT]):
     """Definition of a node.
 

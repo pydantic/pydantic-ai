@@ -1,0 +1,64 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '164'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be helpful.
+        role: system
+      - content: Tell me a joke.
+        role: user
+      model: google/gemini-2.0-flash-exp:free
+      n: 1
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-length:
+      - '476'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "Why don't scientists trust atoms? \n\nBecause they make up everything!\n"
+          reasoning: null
+          refusal: null
+          role: assistant
+        native_finish_reason: STOP
+      created: 1747736401
+      id: gen-1747736401-niWjLHssb1xvyg7Ow2Nf
+      model: google/gemini-2.0-flash-exp:free
+      object: chat.completion
+      provider: Google
+      usage:
+        completion_tokens: 17
+        prompt_tokens: 8
+        total_tokens: 25
+    status:
+      code: 200
+      message: OK
+version: 1

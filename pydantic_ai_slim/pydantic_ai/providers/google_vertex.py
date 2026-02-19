@@ -1,15 +1,19 @@
 from __future__ import annotations as _annotations
 
 import functools
+from asyncio import Lock
 from collections.abc import AsyncGenerator, Mapping
 from pathlib import Path
 from typing import Literal, overload
 
 import anyio.to_thread
 import httpx
+from typing_extensions import deprecated
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -27,6 +31,7 @@ except ImportError as _import_error:
 __all__ = ('GoogleVertexProvider',)
 
 
+@deprecated('`GoogleVertexProvider` is deprecated, use `GoogleProvider` with `GoogleModel` instead.')
 class GoogleVertexProvider(Provider[httpx.AsyncClient]):
     """Provider for Vertex AI API."""
 
@@ -46,6 +51,9 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
     @property
     def client(self) -> httpx.AsyncClient:
         return self._client
+
+    def model_profile(self, model_name: str) -> ModelProfile | None:
+        return google_model_profile(model_name)
 
     @overload
     def __init__(
@@ -111,6 +119,8 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
 class _VertexAIAuth(httpx.Auth):
     """Auth class for Vertex AI API."""
 
+    _refresh_lock: Lock = Lock()
+
     credentials: BaseCredentials | ServiceAccountCredentials | None
 
     def __init__(
@@ -128,7 +138,7 @@ class _VertexAIAuth(httpx.Auth):
         self.credentials = None
 
     async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
-        if self.credentials is None:
+        if self.credentials is None:  # pragma: no branch
             self.credentials = await self._get_credentials()
         if self.credentials.token is None:  # type: ignore[reportUnknownMemberType]
             await self._refresh_token()
@@ -157,17 +167,20 @@ class _VertexAIAuth(httpx.Auth):
             creds, creds_project_id = await _async_google_auth()
             creds_source = '`google.auth.default()`'
 
-        if self.project_id is None:
+        if self.project_id is None:  # pragma: no branch
             if creds_project_id is None:
-                raise UserError(f'No project_id provided and none found in {creds_source}')
+                raise UserError(f'No project_id provided and none found in {creds_source}')  # pragma: no cover
             self.project_id = creds_project_id
         return creds
 
     async def _refresh_token(self) -> str:  # pragma: no cover
-        assert self.credentials is not None
-        await anyio.to_thread.run_sync(self.credentials.refresh, Request())  # type: ignore[reportUnknownMemberType]
-        assert isinstance(self.credentials.token, str), f'Expected token to be a string, got {self.credentials.token}'  # type: ignore[reportUnknownMemberType]
-        return self.credentials.token
+        async with self._refresh_lock:
+            assert self.credentials is not None
+            await anyio.to_thread.run_sync(self.credentials.refresh, Request())  # type: ignore[reportUnknownMemberType]
+            assert isinstance(self.credentials.token, str), (  # type: ignore[reportUnknownMemberType]
+                f'Expected token to be a string, got {self.credentials.token}'  # type: ignore[reportUnknownMemberType]
+            )
+            return self.credentials.token
 
 
 async def _async_google_auth() -> tuple[BaseCredentials, str | None]:

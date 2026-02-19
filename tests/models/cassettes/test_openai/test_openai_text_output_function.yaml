@@ -1,0 +1,191 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '303'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the largest city in the user country?
+        role: user
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_user_country
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1066'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '432'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_user_country
+            id: call_J1YabdC7G7kzEZNbbZopwenH
+            type: function
+      created: 1749504053
+      id: chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_9bddfca6e2
+      usage:
+        completion_tokens: 11
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 42
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 53
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '534'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=YTub3t5GuFdFQZLwCTHT2eGO.fT0zx3Sk2kEY.wvtik-1749504053-1.0.1.1-BMg98yRknUs3LAtnRn_3w1W2X4aoKkKWHIwaBFv.1bdfOF._ZCV0pIGVcI1saCXHR9BMUfQzhTdEPeLlXocUxVzzYQCNTOAxf21UZXcs.ks;
+        _cfuvid=u8gIns9XYwRGSqmjviw_hUFmKp.LpNqiNvoFMcyyK40-1749504053813-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the largest city in the user country?
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_user_country
+          id: call_J1YabdC7G7kzEZNbbZopwenH
+          type: function
+      - content: Mexico
+        role: tool
+        tool_call_id: call_J1YabdC7G7kzEZNbbZopwenH
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_user_country
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '844'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '449'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The largest city in Mexico is Mexico City.
+          refusal: null
+          role: assistant
+      created: 1749504054
+      id: chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_9bddfca6e2
+      usage:
+        completion_tokens: 10
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 63
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 73
+    status:
+      code: 200
+      message: OK
+version: 1

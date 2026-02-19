@@ -2,16 +2,15 @@ import asyncio
 from pathlib import Path
 from types import NoneType
 
+from pydantic_ai_examples.evals.models import TimeRangeInputs, TimeRangeResponse
 from pydantic_evals import Dataset
 from pydantic_evals.generation import generate_dataset
-
-from pydantic_ai_examples.evals.models import TimeRangeInputs, TimeRangeResponse
 
 
 async def main():
     dataset = await generate_dataset(
         dataset_type=Dataset[TimeRangeInputs, TimeRangeResponse, NoneType],
-        model='openai:o1',  # Use a smarter model since this is a more complex task that is only run once
+        model='openai:gpt-5.2',  # Use a smarter model since this is a more complex task that is only run once
         n_examples=10,
         extra_instructions="""
         Generate a dataset of test cases for the time range inference agent.

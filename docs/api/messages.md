@@ -10,6 +10,7 @@ graph RL
     RetryPromptPart(RetryPromptPart) --- ModelRequestPart
     TextPart(TextPart) --- ModelResponsePart
     ToolCallPart(ToolCallPart) --- ModelResponsePart
+    ThinkingPart(ThinkingPart) --- ModelResponsePart
     ModelRequestPart("ModelRequestPart<br>(Union)") --- ModelRequest
     ModelRequest("ModelRequest(parts=list[...])") --- ModelMessage
     ModelResponsePart("ModelResponsePart<br>(Union)") --- ModelResponse

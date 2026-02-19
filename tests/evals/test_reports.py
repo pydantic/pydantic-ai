@@ -3,18 +3,20 @@ from __future__ import annotations as _annotations
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext
     from pydantic_evals.reporting import (
         EvaluationReport,
+        EvaluationReportAdapter,
         RenderNumberConfig,
         RenderValueConfig,
         ReportCase,
+        ReportCaseAdapter,
         ReportCaseAggregate,
     )
 
@@ -55,7 +57,7 @@ def sample_evaluation_result(
         name='MockEvaluator',
         value=True,
         reason=None,
-        source=mock_evaluator,
+        source=mock_evaluator.as_spec(),
     )
 
 
@@ -157,7 +159,7 @@ async def test_report_case_aggregate():
 async def test_report_serialization(sample_report: EvaluationReport):
     """Test serializing a report to dict."""
     # Serialize the report
-    serialized = sample_report.model_dump()
+    serialized = EvaluationReportAdapter.dump_python(sample_report)
 
     # Check the serialized structure
     assert 'cases' in serialized
@@ -175,7 +177,7 @@ async def test_report_with_error(mock_evaluator: Evaluator[TaskInput, TaskOutput
         name='error_evaluator',
         value=False,  # No result
         reason='Test error message',
-        source=mock_evaluator,
+        source=mock_evaluator.as_spec(),
     )
 
     # Create a case
@@ -202,7 +204,7 @@ async def test_report_with_error(mock_evaluator: Evaluator[TaskInput, TaskOutput
         name='error_report',
     )
 
-    assert report.cases[0].model_dump() == snapshot(
+    assert ReportCaseAdapter.dump_python(report.cases[0]) == snapshot(
         {
             'assertions': {
                 'error_evaluator': {
@@ -213,6 +215,7 @@ async def test_report_with_error(mock_evaluator: Evaluator[TaskInput, TaskOutput
                 }
             },
             'attributes': {'error': 'Division by zero'},
+            'evaluator_failures': [],
             'expected_output': {'answer': 'Error'},
             'inputs': {'query': 'What is 1/0?'},
             'labels': {},
@@ -222,6 +225,7 @@ async def test_report_with_error(mock_evaluator: Evaluator[TaskInput, TaskOutput
             'output': None,
             'scores': {},
             'span_id': 'test-error-span-id',
+            'source_case_name': None,
             'task_duration': 0.05,
             'total_duration': 0.1,
             'trace_id': 'test-error-trace-id',

@@ -4,7 +4,7 @@ Demonstrates:
 
 * [agent delegation](../multi-agent-applications.md#agent-delegation)
 * [programmatic agent hand-off](../multi-agent-applications.md#programmatic-agent-hand-off)
-* [usage limits](../agents.md#usage-limits)
+* [usage limits](../agent.md#usage-limits)
 
 In this scenario, a group of agents work together to find the best flight for a user.
 
@@ -28,7 +28,7 @@ graph TD
 
 ## Running the Example
 
-With [dependencies installed and environment variables set](./index.md#usage), run:
+With [dependencies installed and environment variables set](./setup.md#usage), run:
 
 ```bash
 python/uv-run -m pydantic_ai_examples.flight_booking
@@ -36,6 +36,4 @@ python/uv-run -m pydantic_ai_examples.flight_booking
 
 ## Example Code
 
-```python {title="flight_booking.py"}
-#! examples/pydantic_ai_examples/flight_booking.py
-```
+```snippet {path="/examples/pydantic_ai_examples/flight_booking.py"}```

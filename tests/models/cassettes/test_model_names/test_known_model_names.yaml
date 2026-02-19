@@ -1,0 +1,203 @@
+interactions:
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      connection:
+      - keep-alive
+      host:
+      - api.cerebras.ai
+    method: GET
+    uri: https://api.cerebras.ai/v1/models
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      content-length:
+      - '695'
+      content-type:
+      - application/json
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=3600; includeSubDomains
+    parsed_body:
+      data:
+      - created: 0
+        id: llama3.1-8b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: llama-3.3-70b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: gpt-oss-120b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: qwen-3-235b-a22b-instruct-2507
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: qwen-3-32b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: zai-glm-4.7
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: qwen-3-coder-480b
+        object: model
+        owned_by: Cerebras
+      - created: 0
+        id: zai-glm-4.6
+        object: model
+        owned_by: Cerebras
+      object: list
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      connection:
+      - keep-alive
+      host:
+      - us.inference.heroku.com
+    method: GET
+    uri: https://us.inference.heroku.com/available-models
+  response:
+    headers:
+      content-length:
+      - '1637'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      expires:
+      - '0'
+      pragma:
+      - no-cache
+      strict-transport-security:
+      - max-age=63072000
+    parsed_body:
+    - model_id: amazon-rerank-1-0
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-score
+    - model_id: claude-3-5-haiku
+      regions:
+      - us
+      type:
+      - text-to-text
+    - model_id: claude-3-5-sonnet-latest
+      regions:
+      - us
+      type:
+      - text-to-text
+    - model_id: claude-3-7-sonnet
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-text
+    - model_id: claude-3-haiku
+      regions:
+      - eu
+      type:
+      - text-to-text
+    - model_id: claude-4-5-haiku
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-text
+    - model_id: claude-4-5-sonnet
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-text
+    - model_id: claude-4-sonnet
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-text
+    - model_id: claude-opus-4-5
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-text
+    - model_id: cohere-embed-multilingual
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-embedding
+    - model_id: cohere-rerank-3-5
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-score
+    - model_id: gpt-oss-120b
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-text
+    - model_id: kimi-k2-thinking
+      regions:
+      - us
+      type:
+      - text-to-text
+    - model_id: minimax-m2
+      regions:
+      - us
+      type:
+      - text-to-text
+    - model_id: nova-2-lite
+      regions:
+      - us
+      type:
+      - text-to-text
+    - model_id: nova-lite
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-text
+    - model_id: nova-pro
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-text
+    - model_id: qwen3-235b
+      regions:
+      - us
+      type:
+      - text-to-text
+    - model_id: qwen3-coder-480b
+      regions:
+      - us
+      type:
+      - text-to-text
+    - model_id: stable-image-ultra
+      regions:
+      - us
+      type:
+      - text-to-image
+    status:
+      code: 200
+      message: OK
+version: 1

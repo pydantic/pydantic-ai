@@ -1,39 +1,39 @@
 # Messages and chat history
 
-PydanticAI provides access to messages exchanged during an agent run. These messages can be used both to continue a coherent conversation, and to understand how an agent performed.
+Pydantic AI provides access to messages exchanged during an agent run. These messages can be used both to continue a coherent conversation, and to understand how an agent performed.
 
 ### Accessing Messages from Results
 
 After running an agent, you can access the messages exchanged during that run from the `result` object.
 
 Both [`RunResult`][pydantic_ai.agent.AgentRunResult]
-(returned by [`Agent.run`][pydantic_ai.Agent.run], [`Agent.run_sync`][pydantic_ai.Agent.run_sync])
-and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`Agent.run_stream`][pydantic_ai.Agent.run_stream]) have the following methods:
+(returned by [`Agent.run`][pydantic_ai.agent.AbstractAgent.run], [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync])
+and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream]) have the following methods:
 
-* [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages]: returns all messages, including messages from prior runs. There's also a variant that returns JSON bytes, [`all_messages_json()`][pydantic_ai.agent.AgentRunResult.all_messages_json].
-* [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages]: returns only the messages from the current run. There's also a variant that returns JSON bytes, [`new_messages_json()`][pydantic_ai.agent.AgentRunResult.new_messages_json].
+- [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages]: returns all messages, including messages from prior runs. There's also a variant that returns JSON bytes, [`all_messages_json()`][pydantic_ai.agent.AgentRunResult.all_messages_json].
+- [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages]: returns only the messages from the current run. There's also a variant that returns JSON bytes, [`new_messages_json()`][pydantic_ai.agent.AgentRunResult.new_messages_json].
 
 !!! info "StreamedRunResult and complete messages"
     On [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], the messages returned from these methods will only include the final result message once the stream has finished.
 
     E.g. you've awaited one of the following coroutines:
 
-    * [`StreamedRunResult.stream()`][pydantic_ai.result.StreamedRunResult.stream]
+    * [`StreamedRunResult.stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output]
     * [`StreamedRunResult.stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text]
-    * [`StreamedRunResult.stream_structured()`][pydantic_ai.result.StreamedRunResult.stream_structured]
-    * [`StreamedRunResult.get_data()`][pydantic_ai.result.StreamedRunResult.get_data]
+    * [`StreamedRunResult.stream_responses()`][pydantic_ai.result.StreamedRunResult.stream_responses]
+    * [`StreamedRunResult.get_output()`][pydantic_ai.result.StreamedRunResult.get_output]
 
     **Note:** The final result message will NOT be added to result messages if you use [`.stream_text(delta=True)`][pydantic_ai.result.StreamedRunResult.stream_text] since in this case the result content is never built as one string.
 
 Example of accessing methods on a [`RunResult`][pydantic_ai.agent.AgentRunResult] :
 
-```python {title="run_result_messages.py" hl_lines="10 28"}
+```python {title="run_result_messages.py" hl_lines="10"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
 
 result = agent.run_sync('Tell me a joke.')
-print(result.data)
+print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 
 # all messages from the run
@@ -42,42 +42,38 @@ print(result.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content='Be a helpful assistant.',
-                timestamp=datetime.datetime(...),
-                dynamic_ref=None,
-                part_kind='system-prompt',
-            ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
-            ),
+            )
         ],
-        kind='request',
+        timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
+        run_id='...',
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                part_kind='text',
+                content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        model_name='gpt-4o',
+        usage=RequestUsage(input_tokens=55, output_tokens=12),
+        model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
-        kind='response',
+        run_id='...',
     ),
 ]
 """
 ```
+
 _(This example is complete, it can be run "as is")_
 
 Example of accessing methods on a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] :
 
-```python {title="streamed_run_result_messages.py" hl_lines="9 31"}
+```python {title="streamed_run_result_messages.py" hl_lines="9 40"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
 
 
 async def main():
@@ -88,19 +84,14 @@ async def main():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='Be a helpful assistant.',
-                        timestamp=datetime.datetime(...),
-                        dynamic_ref=None,
-                        part_kind='system-prompt',
-                    ),
                     UserPromptPart(
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
-                        part_kind='user-prompt',
-                    ),
+                    )
                 ],
-                kind='request',
+                timestamp=datetime.datetime(...),
+                instructions='Be a helpful assistant.',
+                run_id='...',
             )
         ]
         """
@@ -118,57 +109,53 @@ async def main():
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='Be a helpful assistant.',
-                        timestamp=datetime.datetime(...),
-                        dynamic_ref=None,
-                        part_kind='system-prompt',
-                    ),
                     UserPromptPart(
                         content='Tell me a joke.',
                         timestamp=datetime.datetime(...),
-                        part_kind='user-prompt',
-                    ),
+                    )
                 ],
-                kind='request',
+                timestamp=datetime.datetime(...),
+                instructions='Be a helpful assistant.',
+                run_id='...',
             ),
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                        part_kind='text',
+                        content='Did you hear about the toothpaste scandal? They called it Colgate.'
                     )
                 ],
-                model_name='gpt-4o',
+                usage=RequestUsage(input_tokens=50, output_tokens=12),
+                model_name='gpt-5.2',
                 timestamp=datetime.datetime(...),
-                kind='response',
+                run_id='...',
             ),
         ]
         """
 ```
+
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ### Using Messages as Input for Further Agent Runs
 
-The primary use of message histories in PydanticAI is to maintain context across multiple agent runs.
+The primary use of message histories in Pydantic AI is to maintain context across multiple agent runs.
 
 To use existing messages in a run, pass them to the `message_history` parameter of
-[`Agent.run`][pydantic_ai.Agent.run], [`Agent.run_sync`][pydantic_ai.Agent.run_sync] or
-[`Agent.run_stream`][pydantic_ai.Agent.run_stream].
+[`Agent.run`][pydantic_ai.agent.AbstractAgent.run], [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync] or
+[`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream].
 
 If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt.
 
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
-print(result1.data)
+print(result1.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 
 result2 = agent.run_sync('Explain?', message_history=result1.new_messages())
-print(result2.data)
+print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 
 print(result2.all_messages())
@@ -176,55 +163,52 @@ print(result2.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content='Be a helpful assistant.',
-                timestamp=datetime.datetime(...),
-                dynamic_ref=None,
-                part_kind='system-prompt',
-            ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
-            ),
+            )
         ],
-        kind='request',
+        timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
+        run_id='...',
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                part_kind='text',
+                content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        model_name='gpt-4o',
+        usage=RequestUsage(input_tokens=55, output_tokens=12),
+        model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
-        kind='response',
+        run_id='...',
     ),
     ModelRequest(
         parts=[
             UserPromptPart(
                 content='Explain?',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
             )
         ],
-        kind='request',
+        timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
+        run_id='...',
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
-                part_kind='text',
+                content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        model_name='gpt-4o',
+        usage=RequestUsage(input_tokens=56, output_tokens=26),
+        model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
-        kind='response',
+        run_id='...',
     ),
 ]
 """
 ```
+
 _(This example is complete, it can be run "as is")_
 
 ## Storing and loading messages (to JSON)
@@ -240,10 +224,12 @@ Here's an example showing how:
 ```python {title="serialize messages to json"}
 from pydantic_core import to_jsonable_python
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessagesTypeAdapter  # (1)!
+from pydantic_ai import (
+    Agent,
+    ModelMessagesTypeAdapter,  # (1)!
+)
 
-agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 history_step_1 = result1.all_messages()
@@ -258,7 +244,7 @@ result2 = agent.run_sync(  # (3)!
 1. Alternatively, you can create a `TypeAdapter` from scratch:
    ```python {lint="skip" format="skip"}
    from pydantic import TypeAdapter
-   from pydantic_ai.messages import ModelMessage
+   from pydantic_ai import ModelMessage
    ModelMessagesTypeAdapter = TypeAdapter(list[ModelMessage])
    ```
 2. Alternatively you can serialize to/from JSON directly:
@@ -278,23 +264,23 @@ Since messages are defined by simple dataclasses, you can manually create and ma
 
 The message format is independent of the model used, so you can use messages in different agents, or the same agent with different models.
 
-In the example below, we reuse the message from the first agent run, which uses the `openai:gpt-4o` model, in a second agent run using the `google-gla:gemini-1.5-pro` model.
+In the example below, we reuse the message from the first agent run, which uses the `openai:gpt-5.2` model, in a second agent run using the `google-gla:gemini-3-pro-preview` model.
 
-```python {title="Reusing messages with a different model" hl_lines="11"}
+```python {title="Reusing messages with a different model" hl_lines="17"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-4o', system_prompt='Be a helpful assistant.')
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
-print(result1.data)
+print(result1.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 
 result2 = agent.run_sync(
     'Explain?',
-    model='google-gla:gemini-1.5-pro',
+    model='google-gla:gemini-3-pro-preview',
     message_history=result1.new_messages(),
 )
-print(result2.data)
+print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 
 print(result2.all_messages())
@@ -302,55 +288,256 @@ print(result2.all_messages())
 [
     ModelRequest(
         parts=[
-            SystemPromptPart(
-                content='Be a helpful assistant.',
-                timestamp=datetime.datetime(...),
-                dynamic_ref=None,
-                part_kind='system-prompt',
-            ),
             UserPromptPart(
                 content='Tell me a joke.',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
-            ),
+            )
         ],
-        kind='request',
+        timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
+        run_id='...',
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content='Did you hear about the toothpaste scandal? They called it Colgate.',
-                part_kind='text',
+                content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        model_name='gpt-4o',
+        usage=RequestUsage(input_tokens=55, output_tokens=12),
+        model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
-        kind='response',
+        run_id='...',
     ),
     ModelRequest(
         parts=[
             UserPromptPart(
                 content='Explain?',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
             )
         ],
-        kind='request',
+        timestamp=datetime.datetime(...),
+        instructions='Be a helpful assistant.',
+        run_id='...',
     ),
     ModelResponse(
         parts=[
             TextPart(
-                content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
-                part_kind='text',
+                content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        model_name='gemini-1.5-pro',
+        usage=RequestUsage(input_tokens=56, output_tokens=26),
+        model_name='gemini-3-pro-preview',
         timestamp=datetime.datetime(...),
-        kind='response',
+        run_id='...',
     ),
 ]
 """
 ```
+
+## Processing Message History
+
+Sometimes you may want to modify the message history before it's sent to the model. This could be for privacy
+reasons (filtering out sensitive information), to save costs on tokens, to give less context to the LLM, or
+custom processing logic.
+
+Pydantic AI provides a `history_processors` parameter on `Agent` that allows you to intercept and modify
+the message history before each model request.
+
+!!! warning "History processors replace the message history"
+    History processors replace the message history in the state with the processed messages, including the new user prompt part.
+    This means that if you want to keep the original message history, you need to make a copy of it.
+
+### Usage
+
+The `history_processors` is a list of callables that take a list of
+[`ModelMessage`][pydantic_ai.messages.ModelMessage] and return a modified list of the same type.
+
+Each processor is applied in sequence, and processors can be either synchronous or asynchronous.
+
+```python {title="simple_history_processor.py"}
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
+
+
+def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Remove all ModelResponse messages, keeping only ModelRequest messages."""
+    return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+# Create agent with history processor
+agent = Agent('openai:gpt-5.2', history_processors=[filter_responses])
+
+# Example: Create some conversation history
+message_history = [
+    ModelRequest(parts=[UserPromptPart(content='What is 2+2?')]),
+    ModelResponse(parts=[TextPart(content='2+2 equals 4')]),  # This will be filtered out
+]
+
+# When you run the agent, the history processor will filter out ModelResponse messages
+# result = agent.run_sync('What about 3+3?', message_history=message_history)
+```
+
+#### Keep Only Recent Messages
+
+You can use the `history_processor` to only keep the recent messages:
+
+```python {title="keep_recent_messages.py"}
+from pydantic_ai import Agent, ModelMessage
+
+
+async def keep_recent_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Keep only the last 5 messages to manage token usage."""
+    return messages[-5:] if len(messages) > 5 else messages
+
+agent = Agent('openai:gpt-5.2', history_processors=[keep_recent_messages])
+
+# Example: Even with a long conversation history, only the last 5 messages are sent to the model
+long_conversation_history: list[ModelMessage] = []  # Your long conversation history here
+# result = agent.run_sync('What did we discuss?', message_history=long_conversation_history)
+```
+
+!!! warning "Be careful when slicing the message history"
+    When slicing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269).
+
+#### `RunContext` parameter
+
+History processors can optionally accept a [`RunContext`][pydantic_ai.tools.RunContext] parameter to access
+additional information about the current run, such as dependencies, model information, and usage statistics:
+
+```python {title="context_aware_processor.py"}
+from pydantic_ai import Agent, ModelMessage, RunContext
+
+
+def context_aware_processor(
+    ctx: RunContext[None],
+    messages: list[ModelMessage],
+) -> list[ModelMessage]:
+    # Access current usage
+    current_tokens = ctx.usage.total_tokens
+
+    # Filter messages based on context
+    if current_tokens > 1000:
+        return messages[-3:]  # Keep only recent messages when token usage is high
+    return messages
+
+agent = Agent('openai:gpt-5.2', history_processors=[context_aware_processor])
+```
+
+This allows for more sophisticated message processing based on the current state of the agent run.
+
+#### Summarize Old Messages
+
+Use an LLM to summarize older messages to preserve context while reducing tokens.
+
+```python {title="summarize_old_messages.py"}
+from pydantic_ai import Agent, ModelMessage
+
+# Use a cheaper model to summarize old messages.
+summarize_agent = Agent(
+    'openai:gpt-5-mini',
+    instructions="""
+Summarize this conversation, omitting small talk and unrelated topics.
+Focus on the technical discussion and next steps.
+""",
+)
+
+
+async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    # Summarize the oldest 10 messages
+    if len(messages) > 10:
+        oldest_messages = messages[:10]
+        summary = await summarize_agent.run(message_history=oldest_messages)
+        # Return the last message and the summary
+        return summary.new_messages() + messages[-1:]
+
+    return messages
+
+
+agent = Agent('openai:gpt-5.2', history_processors=[summarize_old_messages])
+```
+
+!!! warning "Be careful when summarizing the message history"
+    When summarizing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269), where you can find examples of summarizing the message history.
+
+### Testing History Processors
+
+You can test what messages are actually sent to the model provider using
+[`FunctionModel`][pydantic_ai.models.function.FunctionModel]:
+
+```python {title="test_history_processor.py"}
+import pytest
+
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+@pytest.fixture
+def received_messages() -> list[ModelMessage]:
+    return []
+
+
+@pytest.fixture
+def function_model(received_messages: list[ModelMessage]) -> FunctionModel:
+    def capture_model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Capture the messages that the provider actually receives
+        received_messages.clear()
+        received_messages.extend(messages)
+        return ModelResponse(parts=[TextPart(content='Provider response')])
+
+    return FunctionModel(capture_model_function)
+
+
+def test_history_processor(function_model: FunctionModel, received_messages: list[ModelMessage]):
+    def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+    agent = Agent(function_model, history_processors=[filter_responses])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Question 1')]),
+        ModelResponse(parts=[TextPart(content='Answer 1')]),
+    ]
+
+    agent.run_sync('Question 2', message_history=message_history)
+    assert received_messages == [
+        ModelRequest(parts=[UserPromptPart(content='Question 1')]),
+        ModelRequest(parts=[UserPromptPart(content='Question 2')]),
+    ]
+```
+
+### Multiple Processors
+
+You can also use multiple processors:
+
+```python {title="multiple_history_processors.py"}
+from pydantic_ai import Agent, ModelMessage, ModelRequest
+
+
+def filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+
+def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return messages[-5:]
+
+
+agent = Agent('openai:gpt-5.2', history_processors=[filter_responses, summarize_old_messages])
+```
+
+In this case, the `filter_responses` processor will be applied first, and the
+`summarize_old_messages` processor will be applied second.
 
 ## Examples
 

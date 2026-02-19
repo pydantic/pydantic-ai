@@ -1,0 +1,79 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '218'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You are a helpful assistant.
+        role: system
+      - content: What day is today?
+        role: user
+      model: gpt-4o-search-preview
+      stream: false
+      web_search_options:
+        search_context_size: low
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '785'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '2051'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: 'May 14, 2025, 8:51:29 AM '
+          refusal: null
+          role: assistant
+      created: 1747227087
+      id: chatcmpl-e05fbf7b-44c0-406d-8662-bc7a9a518747
+      model: gpt-4o-search-preview-2025-03-11
+      object: chat.completion
+      system_fingerprint: ''
+      usage:
+        completion_tokens: 17
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 11
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 28
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -8,7 +8,7 @@ Demonstrates:
 
 ## Running the Example
 
-With [dependencies installed and environment variables set](./index.md#usage), run:
+With [dependencies installed and environment variables set](./setup.md#usage), run:
 
 ```bash
 python/uv-run -m pydantic_ai_examples.question_graph
@@ -16,9 +16,7 @@ python/uv-run -m pydantic_ai_examples.question_graph
 
 ## Example Code
 
-```python {title="question_graph.py"}
-#! examples/pydantic_ai_examples/question_graph.py
-```
+```snippet {path="/examples/pydantic_ai_examples/question_graph.py"}```
 
 The mermaid diagram generated in this example looks like this:
 

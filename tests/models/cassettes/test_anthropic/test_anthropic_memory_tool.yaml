@@ -1,0 +1,159 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '228'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Where do I live?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - name: memory
+        type: memory_20250818
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '641'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll check my memory to see if I have information about where you live.
+        type: text
+      - id: toolu_01YC8RhZeDTZRbb8n1gUFTmb
+        input:
+          command: view
+          path: /memories
+        name: memory
+        type: tool_use
+      context_management:
+        applied_edits: []
+      id: msg_01QAHQ47smZ47jGdCgd1rjE1
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 1577
+        output_tokens: 86
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '636'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Where do I live?
+          type: text
+        role: user
+      - content:
+        - text: I'll check my memory to see if I have information about where you live.
+          type: text
+        - id: toolu_01YC8RhZeDTZRbb8n1gUFTmb
+          input:
+            command: view
+            path: /memories
+          name: memory
+          type: tool_use
+        role: assistant
+      - content:
+        - content: The user lives in Mexico City.
+          is_error: false
+          tool_use_id: toolu_01YC8RhZeDTZRbb8n1gUFTmb
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - name: memory
+        type: memory_20250818
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '506'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |2-
+
+
+          According to my memory, you live in **Mexico City**.
+        type: text
+      context_management:
+        applied_edits: []
+      id: msg_01Ebk1VHiZxdtUojFrcDJGxX
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 1679
+        output_tokens: 16
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

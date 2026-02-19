@@ -1,0 +1,506 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '247'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the weather in San Francisco today?
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      tools:
+      - googleSearch: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '9827'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=8115
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |-
+              ## Weather in San Francisco is Mild and Partly Cloudy
+
+              **San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F. There is a very low chance of rain throughout the day.
+
+              According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s. Winds are predicted to come from the west at 10 to 15 mph.
+
+              As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s. There is a slight increase in the chance of rain overnight, but it remains low at 20%.
+
+              Overall, today's weather in San Francisco is pleasant, with a mix of sun and clouds and comfortable temperatures.
+          role: model
+        finishReason: STOP
+        groundingMetadata:
+          groundingChunks:
+          - web:
+              title: Weather information for San Francisco, CA, US
+              uri: https://www.google.com/search?q=weather+in+San Francisco, CA,+US
+          - web:
+              title: weather.gov
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF_uqo2G5Goeww8iF1L_dYa2sqWGhzu_UnxEZd1gQ7ZNuXEVVVYEEYcx_La3kuODFm0dPUhHeF4qGP1c6kJ86i4SKfvRqFitMCvNiDx07eC5iM7axwepoTv3FeUdIRC-ou1P-6DDykZ4QzcxcrKISa_1Q==
+          - web:
+              title: wunderground.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFywixFZicmDjijfhfLNw8ya7XdqWR31aJp8CHyULLelG8bujH1TuqeP9RAhK6Pcm1qz11ujm2yM7gM5bJXDFsZwbsubub4cnUp5ixRaloJcjVrHkyd5RHblhkDDxHGiREV9BcuqeJovdr8qhtrCKMcvJk=
+          groundingSupports:
+          - groundingChunkIndices:
+            - 0
+            segment:
+              endIndex: 216
+              startIndex: 55
+              text: '**San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with
+                partly cloudy skies and temperatures hovering around 69°F.'
+          - groundingChunkIndices:
+            - 0
+            segment:
+              endIndex: 271
+              startIndex: 217
+              text: There is a very low chance of rain throughout the day.
+          - groundingChunkIndices:
+            - 1
+            segment:
+              endIndex: 434
+              startIndex: 273
+              text: According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny,
+                with highs ranging from the mid-60s to the lower 80s.
+          - groundingChunkIndices:
+            - 2
+            segment:
+              endIndex: 493
+              startIndex: 435
+              text: Winds are predicted to come from the west at 10 to 15 mph.
+          - groundingChunkIndices:
+            - 1
+            segment:
+              endIndex: 614
+              startIndex: 495
+              text: As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping
+                to the upper 50s.
+          - groundingChunkIndices:
+            - 0
+            segment:
+              endIndex: 701
+              startIndex: 615
+              text: There is a slight increase in the chance of rain overnight, but it remains low at 20%.
+          searchEntryPoint:
+            renderedContent: |
+              <style>
+              .container {
+                align-items: center;
+                border-radius: 8px;
+                display: flex;
+                font-family: Google Sans, Roboto, sans-serif;
+                font-size: 14px;
+                line-height: 20px;
+                padding: 8px 12px;
+              }
+              .chip {
+                display: inline-block;
+                border: solid 1px;
+                border-radius: 16px;
+                min-width: 14px;
+                padding: 5px 16px;
+                text-align: center;
+                user-select: none;
+                margin: 0 8px;
+                -webkit-tap-highlight-color: transparent;
+              }
+              .carousel {
+                overflow: auto;
+                scrollbar-width: none;
+                white-space: nowrap;
+                margin-right: -12px;
+              }
+              .headline {
+                display: flex;
+                margin-right: 4px;
+              }
+              .gradient-container {
+                position: relative;
+              }
+              .gradient {
+                position: absolute;
+                transform: translate(3px, -9px);
+                height: 36px;
+                width: 9px;
+              }
+              @media (prefers-color-scheme: light) {
+                .container {
+                  background-color: #fafafa;
+                  box-shadow: 0 0 0 1px #0000000f;
+                }
+                .headline-label {
+                  color: #1f1f1f;
+                }
+                .chip {
+                  background-color: #ffffff;
+                  border-color: #d2d2d2;
+                  color: #5e5e5e;
+                  text-decoration: none;
+                }
+                .chip:hover {
+                  background-color: #f2f2f2;
+                }
+                .chip:focus {
+                  background-color: #f2f2f2;
+                }
+                .chip:active {
+                  background-color: #d8d8d8;
+                  border-color: #b6b6b6;
+                }
+                .logo-dark {
+                  display: none;
+                }
+                .gradient {
+                  background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);
+                }
+              }
+              @media (prefers-color-scheme: dark) {
+                .container {
+                  background-color: #1f1f1f;
+                  box-shadow: 0 0 0 1px #ffffff26;
+                }
+                .headline-label {
+                  color: #fff;
+                }
+                .chip {
+                  background-color: #2c2c2c;
+                  border-color: #3c4043;
+                  color: #fff;
+                  text-decoration: none;
+                }
+                .chip:hover {
+                  background-color: #353536;
+                }
+                .chip:focus {
+                  background-color: #353536;
+                }
+                .chip:active {
+                  background-color: #464849;
+                  border-color: #53575b;
+                }
+                .logo-light {
+                  display: none;
+                }
+                .gradient {
+                  background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);
+                }
+              }
+              </style>
+              <div class="container">
+                <div class="headline">
+                  <svg class="logo-light" width="18" height="18" viewBox="9 9 35 35" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z" fill="#4285F4"/>
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z" fill="#34A853"/>
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z" fill="#FBBC05"/>
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z" fill="#EA4335"/>
+                  </svg>
+                  <svg class="logo-dark" width="18" height="18" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="24" cy="23" fill="#FFF" r="22"/>
+                    <path d="M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z" fill="#4285F4"/>
+                    <path d="M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z" fill="#34A853"/>
+                    <path d="M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z" fill="#FBBC05"/>
+                    <path d="M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z" fill="#EA4335"/>
+                  </svg>
+                  <div class="gradient-container"><div class="gradient"></div></div>
+                </div>
+                <div class="carousel">
+                  <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGpaVYtZtg0AbOkyluH7ZfyxRSvLNFvK5HnFIwTqMQdOecLCFYzxIHes41UAd1GgIx1aL-q51HCGjUQXXLrnESB-F5HEvrsMB2_mb3hOwZrelCAn-F28bDl6IQvgTriNrfzd3IlnDYc42uD37aYMQjIWgznihXP-MiUdY5Cchwxn7_GcQNdbsPMQX6K9S0SQX_5GChPnOvfO48W-ULhcHTR">weather in San Francisco today</a>
+                </div>
+              </div>
+          webSearchQueries:
+          - weather in San Francisco today
+        index: 0
+      modelVersion: gemini-2.5-pro
+      responseId: btnJaOrqE4_6qtsP7bOboQs
+      usageMetadata:
+        candidatesTokenCount: 201
+        promptTokenCount: 17
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 17
+        thoughtsTokenCount: 213
+        toolUsePromptTokenCount: 119
+        toolUsePromptTokensDetails:
+        - modality: TEXT
+          tokenCount: 119
+        totalTokenCount: 550
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1184'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the weather in San Francisco today?
+        role: user
+      - parts:
+        - text: |-
+            ## Weather in San Francisco is Mild and Partly Cloudy
+
+            **San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F. There is a very low chance of rain throughout the day.
+
+            According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s. Winds are predicted to come from the west at 10 to 15 mph.
+
+            As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s. There is a slight increase in the chance of rain overnight, but it remains low at 20%.
+
+            Overall, today's weather in San Francisco is pleasant, with a mix of sun and clouds and comfortable temperatures.
+        role: model
+      - parts:
+        - text: how about Mexico City?
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      tools:
+      - googleSearch: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '8690'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=6875
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |-
+              In Mexico City today, you can expect a day of mixed sun and clouds with a high likelihood of showers and thunderstorms, particularly in the afternoon and evening.
+
+              Currently, the weather is partly cloudy with temperatures in the mid-60s Fahrenheit (around 17-18°C). As the day progresses, the temperature is expected to rise, reaching a high of around 73-75°F (approximately 23°C).
+
+              There is a significant chance of rain, with forecasts indicating a 60% to 100% probability of precipitation, especially from mid-afternoon into the evening. Winds are generally light, coming from the north-northeast at 10 to 15 mph.
+
+              Tonight, the skies will remain cloudy with a continued chance of showers, and the temperature will drop to a low of around 57°F (about 14°C).
+          role: model
+        finishReason: STOP
+        groundingMetadata:
+          groundingChunks:
+          - web:
+              title: theweathernetwork.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEvigSUuLwtMoqPNq2bvqCduH6yYQLKmhzoj0-SQbxBb2rs_ow380KClss6yfKqxmQ-3HIrmzasviLVdO2FhQ_uEIGfpv6-_r4XOSSLu57LKZgAFYTsswd5Q--VkuO2eEr4Vh8b0aK4KFi3Rt3k_r99frmOa-8mCHzWrXI_HeS58IvIpda0XNtWVEjg
+          - web:
+              title: wunderground.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFEXnJiWubQ1I2xMumZnSwxzZzhO_s2AdGg1yFakgO7GqJXU25aq3-Zl5xFEsUk9KpDtKUsS0NrBQxRNYCTkbKMknHSD5n8Yps9aAYvLOvyKgKPDFt4SkBkt1RO1nyPOweAzOzjPmnnd8AqBqOq
+          - web:
+              title: wunderground.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEDXOJgWay-hTPi0eqxph51YPv_mX15kug_vYdV3Ybx19gm4XsIFdbDN3OhP8tHbKJDheVySvDaxmXZK2lsEJlHITYidz_uKAiY38_peXIPv0Kw4LvBYLWUh4SPwHBLgHAR3CsLQo3293ZbIXZ_3A==
+          groundingSupports:
+          - groundingChunkIndices:
+            - 0
+            - 1
+            - 2
+            segment:
+              endIndex: 542
+              startIndex: 386
+              text: There is a significant chance of rain, with forecasts indicating a 60% to 100% probability of precipitation,
+                especially from mid-afternoon into the evening.
+          - groundingChunkIndices:
+            - 1
+            - 2
+            segment:
+              endIndex: 618
+              startIndex: 543
+              text: Winds are generally light, coming from the north-northeast at 10 to 15 mph.
+          searchEntryPoint:
+            renderedContent: |
+              <style>
+              .container {
+                align-items: center;
+                border-radius: 8px;
+                display: flex;
+                font-family: Google Sans, Roboto, sans-serif;
+                font-size: 14px;
+                line-height: 20px;
+                padding: 8px 12px;
+              }
+              .chip {
+                display: inline-block;
+                border: solid 1px;
+                border-radius: 16px;
+                min-width: 14px;
+                padding: 5px 16px;
+                text-align: center;
+                user-select: none;
+                margin: 0 8px;
+                -webkit-tap-highlight-color: transparent;
+              }
+              .carousel {
+                overflow: auto;
+                scrollbar-width: none;
+                white-space: nowrap;
+                margin-right: -12px;
+              }
+              .headline {
+                display: flex;
+                margin-right: 4px;
+              }
+              .gradient-container {
+                position: relative;
+              }
+              .gradient {
+                position: absolute;
+                transform: translate(3px, -9px);
+                height: 36px;
+                width: 9px;
+              }
+              @media (prefers-color-scheme: light) {
+                .container {
+                  background-color: #fafafa;
+                  box-shadow: 0 0 0 1px #0000000f;
+                }
+                .headline-label {
+                  color: #1f1f1f;
+                }
+                .chip {
+                  background-color: #ffffff;
+                  border-color: #d2d2d2;
+                  color: #5e5e5e;
+                  text-decoration: none;
+                }
+                .chip:hover {
+                  background-color: #f2f2f2;
+                }
+                .chip:focus {
+                  background-color: #f2f2f2;
+                }
+                .chip:active {
+                  background-color: #d8d8d8;
+                  border-color: #b6b6b6;
+                }
+                .logo-dark {
+                  display: none;
+                }
+                .gradient {
+                  background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);
+                }
+              }
+              @media (prefers-color-scheme: dark) {
+                .container {
+                  background-color: #1f1f1f;
+                  box-shadow: 0 0 0 1px #ffffff26;
+                }
+                .headline-label {
+                  color: #fff;
+                }
+                .chip {
+                  background-color: #2c2c2c;
+                  border-color: #3c4043;
+                  color: #fff;
+                  text-decoration: none;
+                }
+                .chip:hover {
+                  background-color: #353536;
+                }
+                .chip:focus {
+                  background-color: #353536;
+                }
+                .chip:active {
+                  background-color: #464849;
+                  border-color: #53575b;
+                }
+                .logo-light {
+                  display: none;
+                }
+                .gradient {
+                  background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);
+                }
+              }
+              </style>
+              <div class="container">
+                <div class="headline">
+                  <svg class="logo-light" width="18" height="18" viewBox="9 9 35 35" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z" fill="#4285F4"/>
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z" fill="#34A853"/>
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z" fill="#FBBC05"/>
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z" fill="#EA4335"/>
+                  </svg>
+                  <svg class="logo-dark" width="18" height="18" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="24" cy="23" fill="#FFF" r="22"/>
+                    <path d="M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z" fill="#4285F4"/>
+                    <path d="M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z" fill="#34A853"/>
+                    <path d="M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z" fill="#FBBC05"/>
+                    <path d="M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z" fill="#EA4335"/>
+                  </svg>
+                  <div class="gradient-container"><div class="gradient"></div></div>
+                </div>
+                <div class="carousel">
+                  <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGbyM4W4itB9H_ZJw2_8WIuXcL7VHN0Ek1Cm5mXlJ9nwPPb-OBVlLWqvK6Zu3T72A8yNEzw9czyIcQ6Q0d7lWJhUGqPEJj5CzI9ZG8zJs0D1p5vZxrurYFVVkH2_lSsF7OXc09V2aZ9lXKeYqweKX5UG6wDWM3Pz4UVB8QTe7iSINZaYrn_RMncMcDqXjXuxbZvLMuMtGBTtep4wuc57z9Xjw==">current weather in Mexico City</a>
+                </div>
+              </div>
+          webSearchQueries:
+          - current weather in Mexico City
+        index: 0
+      modelVersion: gemini-2.5-pro
+      responseId: dtnJaKyTAri3qtsPu4imqQs
+      usageMetadata:
+        candidatesTokenCount: 206
+        promptTokenCount: 209
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 209
+        thoughtsTokenCount: 131
+        toolUsePromptTokenCount: 286
+        toolUsePromptTokensDetails:
+        - modality: TEXT
+          tokenCount: 286
+        totalTokenCount: 832
+    status:
+      code: 200
+      message: OK
+version: 1

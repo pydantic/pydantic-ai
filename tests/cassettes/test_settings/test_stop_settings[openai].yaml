@@ -1,0 +1,78 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '202'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
+        role: user
+      model: o3-mini
+      stop:
+      - Paris
+      stream: false
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '808'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '3788'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: 'The capital of France is '
+          refusal: null
+          role: assistant
+      created: 1749229128
+      id: chatcmpl-BfUgyreG4fpnDXvHKXtRkevWb6i3p
+      model: o3-mini-2025-01-31
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_e20469f047
+      usage:
+        completion_tokens: 467
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 448
+          rejected_prediction_tokens: 0
+        prompt_tokens: 31
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 498
+    status:
+      code: 200
+      message: OK
+version: 1

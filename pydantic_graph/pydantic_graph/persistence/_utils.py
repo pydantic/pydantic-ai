@@ -31,7 +31,7 @@ class CustomNodeSchema:
             nodes_type = nodes[0]
         else:
             nodes_annotated = [Annotated[node, pydantic.Tag(node.get_node_id())] for node in nodes]
-            nodes_type = Annotated[Union[tuple(nodes_annotated)], pydantic.Discriminator(self._node_discriminator)]
+            nodes_type = Annotated[Union[tuple(nodes_annotated)], pydantic.Discriminator(self._node_discriminator)]  # noqa: UP007
 
         schema = handler(nodes_type)
         schema['serialization'] = core_schema.wrap_serializer_function_ser_schema(

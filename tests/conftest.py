@@ -2,47 +2,143 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import importlib.util
+import logging
 import os
 import re
 import secrets
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
+from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
-from typing_extensions import TypeAlias
-from vcr import VCR
+from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
-from pydantic_ai.messages import BinaryContent
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
+from pydantic_ai.models import Model
 
-__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'TestEnv', 'ClientWithHandler', 'try_import'
+from ._inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 
+__all__ = (
+    'IsDatetime',
+    'IsFloat',
+    'IsNow',
+    'IsStr',
+    'IsBytes',
+    'IsInt',
+    'IsInstance',
+    'IsList',
+    'TestEnv',
+    'ClientWithHandler',
+    'try_import',
+    'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
+)
+
+# Configure VCR logger to WARNING as it is too verbose by default
+# specifically, it logs every request and response including binary
+# content in Cassette.append, which is causing log downloads from
+# GitHub action to fail.
+logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
-if TYPE_CHECKING:
+os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
+if TYPE_CHECKING:
+    from typing import TypeVar
+
+    from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.xai import XaiProvider
+
+    T = TypeVar('T')
+
+    def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
+    def IsInt(*args: Any, **kwargs: Any) -> int: ...
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
+    def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
+    def IsBytes(*args: Any, **kwargs: Any) -> bytes: ...
+    def IsList(*args: T, **kwargs: Any) -> list[T]: ...
 else:
-    from dirty_equals import IsDatetime, IsFloat, IsNow as _IsNow, IsStr
+    from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsStr
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
         if 'delta' not in kwargs:  # pragma: no branch
             kwargs['delta'] = 10
         return _IsNow(*args, **kwargs)
+
+    class IsSameStr(IsStr):
+        """
+        Checks if the value is a string, and that subsequent uses have the same value as the first one.
+
+        Example:
+        ```python {test="skip"}
+        assert events == [
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'success '},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': '(no tool calls)',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+        ```
+        """
+
+        _first_other: str | None = None
+
+        def equals(self, other: Any) -> bool:
+            if self._first_other is None:
+                self._first_other = other
+                return super().equals(other)
+            else:
+                return other == self._first_other
+
+
+SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
+
+
+def sanitize_filename(name: str, max_len: int) -> str:
+    """Sanitize a string for safe use as a filename across platforms."""
+    # Windows does not allow these characters in paths. Linux bans slashes only.
+    return re.sub('[' + re.escape('<>:"/\\|?*') + ']', '-', name)[:max_len]
+
+
+@customize_repr
+def _(value: bytes):  # pragma: no cover
+    """Use IsBytes() for large byte sequences in snapshots."""
+    if len(value) > SNAPSHOT_BYTES_COLLAPSE_THRESHOLD:
+        return 'IsBytes()'
+    return bytes.__repr__(value)
+
+
+@customize_repr
+def _(value: datetime):  # pragma: no cover
+    """Use IsDatetime() for datetime values in snapshots."""
+    return 'IsDatetime()'
 
 
 class TestEnv:
@@ -58,12 +154,12 @@ class TestEnv:
     def remove(self, name: str) -> None:
         self.envars[name] = os.environ.pop(name, None)
 
-    def reset(self) -> None:  # pragma: no cover
+    def reset(self) -> None:
         for name, value in self.envars.items():
             if value is None:
                 os.environ.pop(name, None)
             else:
-                os.environ[name] = value
+                os.environ[name] = value  # pragma: lax no cover
 
 
 @pytest.fixture
@@ -75,7 +171,7 @@ def env() -> Iterator[TestEnv]:
     test_env.reset()
 
 
-@pytest.fixture
+@pytest.fixture(scope='session')
 def anyio_backend():
     return 'asyncio'
 
@@ -99,7 +195,7 @@ async def client_with_handler() -> AsyncIterator[ClientWithHandler]:
     try:
         yield create_client
     finally:
-        if client:  # pragma: no cover
+        if client:  # pragma: no branch
             await client.aclose()
 
 
@@ -129,11 +225,10 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
 
         # Max path length in Windows is 260. Leaving some buffer here
         max_name_len = 240 - len(str(tmp_path))
-        # Windows does not allow these characters in paths. Linux bans slashes only.
-        sanitized_name = re.sub('[' + re.escape('<>:"/\\|?*') + ']', '-', request.node.name)[:max_name_len]
+        sanitized_name = sanitize_filename(request.node.name, max_name_len)
         module_name = f'{sanitized_name}_{secrets.token_hex(5)}'
         path = tmp_path / f'{module_name}.py'
-        path.write_text(source_code)
+        path.write_text(source_code, encoding='utf-8')
         filename = str(path)
 
         if module_name_prefix:  # pragma: no cover
@@ -154,7 +249,7 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
 
 
 @contextmanager
-def try_import() -> Iterator[Callable[[], bool]]:  # pragma: no cover
+def try_import() -> Iterator[Callable[[], bool]]:
     import_success = False
 
     def check_import() -> bool:
@@ -168,12 +263,31 @@ def try_import() -> Iterator[Callable[[], bool]]:  # pragma: no cover
         import_success = True
 
 
-@pytest.fixture(autouse=True)
-def set_event_loop() -> Iterator[None]:
+@pytest.fixture(scope='session', autouse=True)
+def event_loop() -> Iterator[None]:
     new_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(new_loop)
     yield
     new_loop.close()
+
+
+@pytest.fixture(autouse=True)
+def no_instrumentation_by_default():
+    Agent.instrument_all(False)
+    Embedder.instrument_all(False)
+
+
+try:
+    import logfire
+
+    logfire.DEFAULT_LOGFIRE_INSTANCE.config.ignore_no_config = True
+
+    @pytest.fixture(autouse=True)
+    def fresh_logfire():
+        logfire.shutdown(flush=False)
+
+except ImportError:
+    pass
 
 
 def raise_if_exception(e: Any) -> None:
@@ -185,6 +299,39 @@ def pytest_recording_configure(config: Any, vcr: VCR):
     from . import json_body_serializer
 
     vcr.register_serializer('yaml', json_body_serializer)
+
+    def method_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
+        if r1.method.upper() != r2.method.upper():
+            raise AssertionError(f'{r1.method} != {r2.method}')
+
+    vcr.register_matcher('method', method_matcher)
+
+
+def pytest_addoption(parser: Any) -> None:
+    parser.addoption(
+        '--xai-proto-include-json',
+        action='store_true',
+        default=True,
+        dest='xai_proto_include_json',
+        help='Include JSON representations in xAI proto cassette YAML files.',
+    )
+
+
+@pytest.fixture(autouse=True)
+def mock_vcr_aiohttp_content(mocker: MockerFixture):
+    try:
+        from vcr.stubs import aiohttp_stubs
+    except ImportError:  # pragma: lax no cover
+        return
+
+    # google-genai calls `self.response_stream.content.readline()` where `self.response_stream` is a `MockClientResponse`,
+    # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
+    # So we turn `content` into a cached property to return the same one each time.
+    # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
+    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # type: ignore
+    cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
+    mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
+    mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
 
 
 @pytest.fixture(scope='module')
@@ -198,20 +345,61 @@ def vcr_config():
 
 
 @pytest.fixture(autouse=True)
-async def close_cached_httpx_client() -> AsyncIterator[None]:
+async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
+    """Track and close cached httpx clients created during each test.
+
+    Prevents reusing AsyncClient instances across tests (and event loops),
+    which can cause 'Event loop is closed' errors, without touching prod code.
+    """
+    created_clients: set[httpx.AsyncClient] = set()
+
+    # Patch the cached factory to record returned clients while preserving caching.
+    original_cached_func = pydantic_ai.models._cached_async_http_client  # type: ignore[reportPrivateUsage]
+
+    def tracked_cached_async_http_client(*args: Any, **kwargs: Any):
+        client = original_cached_func(*args, **kwargs)
+        created_clients.add(client)
+        return client
+
+    monkeypatch.setattr(pydantic_ai.models, '_cached_async_http_client', tracked_cached_async_http_client)
+
     yield
-    for provider in [
-        'openai',
-        'anthropic',
-        'azure',
-        'google-gla',
-        'google-vertex',
-        'groq',
-        'mistral',
-        'cohere',
-        'deepseek',
-    ]:
-        await cached_async_http_client(provider=provider).aclose()
+
+    # Close only the clients that were actually created/accessed in this test
+    for client in created_clients:
+        await client.aclose()
+
+    # Ensure no stale cached clients persist between tests (new event loop per test)
+    original_cached_func.cache_clear()
+
+
+@pytest.fixture(autouse=True, scope='session')
+def patch_google_genai_gc_crash():
+    """Work around google-genai BaseApiClient GC crash.
+
+    BaseApiClient.__del__ schedules aclose() during GC, which crashes when the
+    object was only partially initialized (_async_httpx_client never set).
+    Remove when https://github.com/googleapis/python-genai/issues/2023 closes.
+    """
+    try:
+        from google.genai._api_client import BaseApiClient
+    except ImportError:
+        yield
+        return
+
+    original_aclose = BaseApiClient.aclose
+
+    async def safe_aclose(self: BaseApiClient) -> None:
+        if hasattr(self, '_async_httpx_client'):
+            await original_aclose(self)
+        else:  # pragma: lax no cover
+            # In some test runs, the `if` above will always run, so we get an `if -> exit` branch coverage miss.
+            # This is a workaround to specify that the `else` branch may not be hit (as we don't have `lax no branch`)
+            pass
+
+    BaseApiClient.aclose = safe_aclose
+    yield
+    BaseApiClient.aclose = original_aclose
 
 
 @pytest.fixture(scope='session')
@@ -226,9 +414,15 @@ def audio_content(assets_path: Path) -> BinaryContent:
 
 
 @pytest.fixture(scope='session')
-def image_content(assets_path: Path) -> BinaryContent:
-    image_bytes = assets_path.joinpath('kiwi.png').read_bytes()
-    return BinaryContent(data=image_bytes, media_type='image/png')
+def image_content(assets_path: Path) -> BinaryImage:
+    image_bytes = assets_path.joinpath('kiwi.jpg').read_bytes()
+    return BinaryImage(data=image_bytes, media_type='image/jpeg')
+
+
+@pytest.fixture(scope='session')
+def video_content(assets_path: Path) -> BinaryContent:
+    video_bytes = assets_path.joinpath('small_video.mp4').read_bytes()
+    return BinaryContent(data=video_bytes, media_type='video/mp4')
 
 
 @pytest.fixture(scope='session')
@@ -238,13 +432,25 @@ def document_content(assets_path: Path) -> BinaryContent:
 
 
 @pytest.fixture(scope='session')
+def text_document_content(assets_path: Path) -> BinaryContent:
+    content = assets_path.joinpath('dummy.txt').read_text(encoding='utf-8')
+    bin_content = BinaryContent(data=content.encode(), media_type='text/plain')
+    return bin_content
+
+
+@pytest.fixture(scope='session')
+def deepseek_api_key() -> str:
+    return os.getenv('DEEPSEEK_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def openai_api_key() -> str:
     return os.getenv('OPENAI_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')
 def gemini_api_key() -> str:
-    return os.getenv('GEMINI_API_KEY', 'mock-api-key')
+    return os.getenv('GEMINI_API_KEY', os.getenv('GOOGLE_API_KEY', 'mock-api-key'))
 
 
 @pytest.fixture(scope='session')
@@ -263,8 +469,254 @@ def co_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def voyage_api_key() -> str:
+    return os.getenv('VOYAGE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def mistral_api_key() -> str:
     return os.getenv('MISTRAL_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def openrouter_api_key() -> str:
+    return os.getenv('OPENROUTER_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def huggingface_api_key() -> str:
+    return os.getenv('HF_TOKEN', 'hf_token')
+
+
+@pytest.fixture(autouse=True, scope='session')
+def _patch_hf_provider_mappings():
+    """Populate the SDK's hardcoded model mappings to avoid sync HTTP calls during VCR tests.
+
+    The HuggingFace SDK makes a synchronous HTTP call to resolve provider mappings at request time,
+    which is incompatible with VCR's async test infrastructure.
+    """
+    try:
+        from huggingface_hub.hf_api import InferenceProviderMapping
+        from huggingface_hub.inference._providers._common import HARDCODED_MODEL_INFERENCE_MAPPING
+    except ImportError:
+        return
+
+    models: list[tuple[str, str, str]] = [
+        ('together', 'deepseek-ai/DeepSeek-R1', 'conversational'),
+        ('nebius', 'Qwen/Qwen2.5-VL-72B-Instruct', 'conversational'),
+        ('nebius', 'Qwen/Qwen2.5-72B-Instruct', 'conversational'),
+    ]
+
+    for provider, model_id, task in models:
+        HARDCODED_MODEL_INFERENCE_MAPPING[provider][model_id] = InferenceProviderMapping(
+            provider=provider,
+            hf_model_id=model_id,
+            providerId=model_id,
+            status='live',
+            task=task,
+        )
+
+
+@pytest.fixture(scope='session')
+def heroku_inference_key() -> str:
+    return os.getenv('HEROKU_INFERENCE_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def cerebras_api_key() -> str:
+    return os.getenv('CEREBRAS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def xai_api_key() -> str:
+    return os.getenv('XAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
+def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider]:
+    """xAI provider fixture backed by protobuf cassettes.
+
+    Mirrors the `bedrock_provider` pattern: yields a provider, and callers can use `provider.client`.
+    """
+
+    try:
+        from pydantic_ai.providers.xai import XaiProvider
+        from tests.models.xai_proto_cassettes import xai_proto_cassette_session
+    except ImportError:  # pragma: no cover
+        pytest.skip('xai_sdk not installed')
+
+    cassette_name = sanitize_filename(request.node.name, 240)
+    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / 'test_xai' / f'{cassette_name}.xai.yaml'
+    record_mode: str | None
+    try:
+        # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
+        record_mode = cast(Any, request.config).getoption('record_mode')
+    except Exception:  # pragma: no cover
+        record_mode = None
+    include_debug_json = bool(cast(Any, request.config).getoption('xai_proto_include_json'))
+    session = xai_proto_cassette_session(
+        cassette_path,
+        record_mode=record_mode,
+        include_debug_json=include_debug_json,
+    )
+    provider = XaiProvider(xai_client=cast(Any, session.client))
+    try:
+        yield provider
+    finally:
+        session.dump_if_recording()
+
+
+@pytest.fixture(scope='session')
+def bedrock_provider():
+    try:
+        import boto3
+
+        from pydantic_ai.providers.bedrock import BedrockProvider
+
+        bearer_token = os.getenv('AWS_BEARER_TOKEN_BEDROCK')
+        if bearer_token:  # pragma: no cover
+            provider = BedrockProvider(
+                api_key=bearer_token,
+                region_name=os.getenv('AWS_REGION', 'us-east-1'),
+            )
+            yield provider
+            provider.client.close()
+        else:  # pragma: lax no cover
+            bedrock_client = boto3.client(
+                'bedrock-runtime',
+                region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
+                aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
+                aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
+            )
+            yield BedrockProvider(bedrock_client=bedrock_client)
+            bedrock_client.close()
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('boto3 is not installed')
+
+
+@pytest.fixture()
+def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
+    # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
+    if not os.getenv('CI', False):
+        return  # pragma: lax no cover
+
+    try:
+        from google.genai import _api_client
+    except ImportError:
+        return  # do nothing if this isn't installed
+
+    @dataclass
+    class NoOpCredentials:
+        token = 'my-token'
+        quota_project_id = 'pydantic-ai'
+
+        def refresh(self, request: httpx.Request): ...
+
+        def expired(self) -> bool:
+            return False
+
+    return_value = (NoOpCredentials(), 'pydantic-ai')
+    mocker.patch.object(_api_client, 'load_auth', return_value=return_value)
+    mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
+
+
+@pytest.fixture()
+async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
+    # NOTE: You need to comment out this line to rewrite the cassettes locally.
+    if not os.getenv('CI', False):
+        pytest.skip('Requires properly configured local google vertex config to pass')
+
+    try:
+        from pydantic_ai.providers.google import GoogleProvider, VertexAILocation
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('google is not installed')
+
+    project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
+    location = os.getenv('GOOGLE_LOCATION', 'global')
+    yield GoogleProvider(project=project, location=cast(VertexAILocation, location))
+
+
+@pytest.fixture()
+def model(
+    request: pytest.FixtureRequest,
+    openai_api_key: str,
+    anthropic_api_key: str,
+    mistral_api_key: str,
+    groq_api_key: str,
+    co_api_key: str,
+    gemini_api_key: str,
+    huggingface_api_key: str,
+    bedrock_provider: BedrockProvider,
+) -> Model:  # pragma: lax no cover
+    try:
+        if request.param == 'test':
+            from pydantic_ai.models.test import TestModel
+
+            return TestModel()
+        elif request.param == 'openai':
+            from pydantic_ai.models.openai import OpenAIChatModel
+            from pydantic_ai.providers.openai import OpenAIProvider
+
+            return OpenAIChatModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+        elif request.param == 'anthropic':
+            from pydantic_ai.models.anthropic import AnthropicModel
+            from pydantic_ai.providers.anthropic import AnthropicProvider
+
+            return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+        elif request.param == 'mistral':
+            from pydantic_ai.models.mistral import MistralModel
+            from pydantic_ai.providers.mistral import MistralProvider
+
+            return MistralModel('ministral-8b-latest', provider=MistralProvider(api_key=mistral_api_key))
+        elif request.param == 'groq':
+            from pydantic_ai.models.groq import GroqModel
+            from pydantic_ai.providers.groq import GroqProvider
+
+            return GroqModel('llama3-8b-8192', provider=GroqProvider(api_key=groq_api_key))
+        elif request.param == 'cohere':
+            from pydantic_ai.models.cohere import CohereModel
+            from pydantic_ai.providers.cohere import CohereProvider
+
+            return CohereModel('command-r-plus', provider=CohereProvider(api_key=co_api_key))
+        elif request.param == 'gemini':
+            from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
+            from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
+
+            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
+        elif request.param == 'google':
+            from pydantic_ai.models.google import GoogleModel
+            from pydantic_ai.providers.google import GoogleProvider
+
+            return GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+        elif request.param == 'bedrock':
+            from pydantic_ai.models.bedrock import BedrockConverseModel
+
+            return BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+        elif request.param == 'huggingface':
+            from pydantic_ai.models.huggingface import HuggingFaceModel
+            from pydantic_ai.providers.huggingface import HuggingFaceProvider
+
+            return HuggingFaceModel(
+                'Qwen/Qwen2.5-72B-Instruct',
+                provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
+            )
+        elif request.param == 'outlines':
+            from outlines.models.transformers import from_transformers
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+
+            from pydantic_ai.models.outlines import OutlinesModel
+
+            return OutlinesModel(
+                from_transformers(
+                    AutoModelForCausalLM.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
+                    AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
+                )
+            )
+        else:
+            raise ValueError(f'Unknown model: {request.param}')
+    except ImportError:
+        pytest.skip(f'{request.param} is not installed')
 
 
 @pytest.fixture
@@ -277,3 +729,27 @@ def mock_snapshot_id(mocker: MockerFixture):
         return f'{node_id}:{i}'
 
     return mocker.patch('pydantic_graph.nodes.generate_snapshot_id', side_effect=generate_snapshot_id)
+
+
+@pytest.fixture
+def disable_ssrf_protection_for_vcr():
+    """Disable SSRF protection for VCR compatibility.
+
+    VCR cassettes record requests with the original hostname. Since SSRF protection
+    resolves hostnames to IPs before making requests, we need to disable the validation
+    for VCR tests to match the pre-recorded cassettes.
+
+    This fixture patches validate_and_resolve_url to return the hostname in place
+    of the resolved IP, allowing the request URL to use the original hostname.
+    """
+    from unittest.mock import patch
+
+    from pydantic_ai._ssrf import ResolvedUrl, extract_host_and_port
+
+    async def mock_validate_and_resolve(url: str, allow_local: bool) -> ResolvedUrl:
+        hostname, path, port, is_https = extract_host_and_port(url)
+        # Return hostname in place of resolved IP - this allows VCR matching
+        return ResolvedUrl(resolved_ip=hostname, hostname=hostname, port=port, is_https=is_https, path=path)
+
+    with patch('pydantic_ai._ssrf.validate_and_resolve_url', mock_validate_and_resolve):
+        yield

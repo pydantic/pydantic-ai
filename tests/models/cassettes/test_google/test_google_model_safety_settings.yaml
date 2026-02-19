@@ -1,0 +1,72 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '297'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Tell me a joke about a Brazilians.
+        role: user
+      generationConfig: {}
+      safetySettings:
+      - category: HARM_CATEGORY_HATE_SPEECH
+        threshold: BLOCK_LOW_AND_ABOVE
+      systemInstruction:
+        parts:
+        - text: You hate the world!
+        role: user
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '860'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=496
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content: {}
+        finishReason: SAFETY
+        safetyRatings:
+        - blocked: true
+          category: HARM_CATEGORY_HATE_SPEECH
+          probability: LOW
+        - category: HARM_CATEGORY_DANGEROUS_CONTENT
+          probability: NEGLIGIBLE
+        - category: HARM_CATEGORY_HARASSMENT
+          probability: NEGLIGIBLE
+        - category: HARM_CATEGORY_SEXUALLY_EXPLICIT
+          probability: NEGLIGIBLE
+      modelVersion: gemini-1.5-flash
+      responseId: 5lpeaLOIBf__698Pv8HGgAg
+      usageMetadata:
+        promptTokenCount: 14
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 14
+        totalTokenCount: 14
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -12,6 +12,8 @@ from pathlib import Path
 
 import logfire
 from groq import BaseModel
+
+from pydantic_ai import Agent, ModelMessage, format_as_xml
 from pydantic_graph import (
     BaseNode,
     End,
@@ -20,21 +22,20 @@ from pydantic_graph import (
 )
 from pydantic_graph.persistence.file import FileStatePersistence
 
-from pydantic_ai import Agent
-from pydantic_ai.format_as_xml import format_as_xml
-from pydantic_ai.messages import ModelMessage
-
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
+logfire.instrument_pydantic_ai()
 
-ask_agent = Agent('openai:gpt-4o', result_type=str, instrument=True)
+ask_agent = Agent('openai:gpt-5.2', output_type=str)
 
 
 @dataclass
 class QuestionState:
     question: str | None = None
-    ask_agent_messages: list[ModelMessage] = field(default_factory=list)
-    evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
+    ask_agent_messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    evaluate_agent_messages: list[ModelMessage] = field(
+        default_factory=list[ModelMessage]
+    )
 
 
 @dataclass
@@ -45,8 +46,8 @@ class Ask(BaseNode[QuestionState]):
             message_history=ctx.state.ask_agent_messages,
         )
         ctx.state.ask_agent_messages += result.all_messages()
-        ctx.state.question = result.data
-        return Answer(result.data)
+        ctx.state.question = result.output
+        return Answer(result.output)
 
 
 @dataclass
@@ -58,7 +59,7 @@ class Answer(BaseNode[QuestionState]):
         return Evaluate(answer)
 
 
-class EvaluationResult(BaseModel, use_attribute_docstrings=True):
+class EvaluationOutput(BaseModel, use_attribute_docstrings=True):
     correct: bool
     """Whether the answer is correct."""
     comment: str
@@ -66,8 +67,8 @@ class EvaluationResult(BaseModel, use_attribute_docstrings=True):
 
 
 evaluate_agent = Agent(
-    'openai:gpt-4o',
-    result_type=EvaluationResult,
+    'openai:gpt-5.2',
+    output_type=EvaluationOutput,
     system_prompt='Given a question and answer, evaluate if the answer is correct.',
 )
 
@@ -86,10 +87,10 @@ class Evaluate(BaseNode[QuestionState, None, str]):
             message_history=ctx.state.evaluate_agent_messages,
         )
         ctx.state.evaluate_agent_messages += result.all_messages()
-        if result.data.correct:
-            return End(result.data.comment)
+        if result.output.correct:
+            return End(result.output.comment)
         else:
-            return Reprimand(result.data.comment)
+            return Reprimand(result.output.comment)
 
 
 @dataclass

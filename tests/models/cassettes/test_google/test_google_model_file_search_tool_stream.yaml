@@ -1,0 +1,228 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '42'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      displayName: test-file-search-stream
+    uri: https://generativelanguage.googleapis.com/v1beta/fileSearchStores
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '205'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=277
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      createTime: '2025-11-28T21:53:40.468266Z'
+      displayName: test-file-search-stream
+      name: fileSearchStores/testfilesearchstream-lsy34id7fwk0
+      updateTime: '2025-11-28T21:53:40.468266Z'
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '26'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      mimeType: text/plain
+    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstream-lsy34id7fwk0:uploadToFileSearchStore
+  response:
+    body:
+      string: ''
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '0'
+      content-type:
+      - text/plain; charset=utf-8
+      x-goog-upload-status:
+      - active
+      x-goog-upload-url:
+      - https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstream-lsy34id7fwk0:uploadToFileSearchStore?upload_id=AOCedOHvwjpkJ0FX7gB-GkYoyln9VZ_H7AxB7XF5W9bme5CW92iomOE5BCUJzEbiLfuZSFKTL4jURclB3_tkTp0k6K5c4Uz9IJ1rzqKd3H8JfA&upload_protocol=resumable
+    status:
+      code: 200
+      message: OK
+- request:
+    body: Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '79'
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    uri: https://generativelanguage.googleapis.com/upload/v1beta/fileSearchStores/testfilesearchstream-lsy34id7fwk0:uploadToFileSearchStore?upload_id=AOCedOHvwjpkJ0FX7gB-GkYoyln9VZ_H7AxB7XF5W9bme5CW92iomOE5BCUJzEbiLfuZSFKTL4jURclB3_tkTp0k6K5c4Uz9IJ1rzqKd3H8JfA&upload_protocol=resumable
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '466'
+      content-type:
+      - application/json; charset=UTF-8
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-goog-upload-status:
+      - final
+    parsed_body:
+      name: fileSearchStores/testfilesearchstream-lsy34id7fwk0/upload/operations/hjv90oe8r3dy-opag1ewx3ya0
+      response:
+        '@type': type.googleapis.com/google.ai.generativelanguage.v1main.UploadToFileSearchStoreResponse
+        documentName: fileSearchStores/testfilesearchstream-lsy34id7fwk0/documents/hjv90oe8r3dy-opag1ewx3ya0
+        mimeType: text/plain
+        parent: fileSearchStores/testfilesearchstream-lsy34id7fwk0
+        sizeBytes: '79'
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '345'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: You are a helpful assistant.
+        role: user
+      tools:
+      - fileSearch:
+          file_search_store_names:
+          - fileSearchStores/testfilesearchstream-lsy34id7fwk0
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"executableCode\": {\"language\": \"PYTHON\",\"code\":
+        \"print(file_search.query(query=\\\"Capital of France\\\"))\\n\"}}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\":
+        {\"promptTokenCount\": 15,\"candidatesTokenCount\": 14,\"totalTokenCount\": 771,\"promptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 15}],\"thoughtsTokenCount\": 742},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"6hkqaYC5BbGEz7IPwb3ggA8\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The capital of France\"}],\"role\": \"model\"},\"index\":
+        0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 18,\"totalTokenCount\": 1545,\"promptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"toolUsePromptTokenCount\": 770,\"toolUsePromptTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 770}],\"thoughtsTokenCount\": 742},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\": \"6hkqaYC5BbGEz7IPwb3ggA8\"}\r\n\r\ndata:
+        {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" is Paris. The city is well-known for its\"}],\"role\":
+        \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\": 29,\"totalTokenCount\":
+        1556,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"toolUsePromptTokenCount\": 770,\"toolUsePromptTokensDetails\":
+        [{\"modality\": \"TEXT\",\"tokenCount\": 770}],\"thoughtsTokenCount\": 742},\"modelVersion\": \"gemini-2.5-pro\",\"responseId\":
+        \"6hkqaYC5BbGEz7IPwb3ggA8\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" famous landmarks,
+        including the Eiffel Tower.\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0,\"groundingMetadata\":
+        {\"groundingChunks\": [{\"retrievedContext\": {\"text\": \"Paris is the capital of France. The Eiffel Tower is a famous
+        landmark in Paris.\",\"fileSearchStore\": \"fileSearchStores/testfilesearchstream-lsy34id7fwk0\"}}],\"groundingSupports\":
+        [{\"segment\": {\"endIndex\": 30,\"text\": \"The capital of France is Paris\"},\"groundingChunkIndices\": [0]},{\"segment\":
+        {\"startIndex\": 32,\"endIndex\": 107,\"text\": \"The city is well-known for its famous landmarks, including the Eiffel
+        Tower\"},\"groundingChunkIndices\": [0]}]}}],\"usageMetadata\": {\"promptTokenCount\": 15,\"candidatesTokenCount\":
+        37,\"totalTokenCount\": 1564,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}],\"toolUsePromptTokenCount\":
+        770,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 770}],\"thoughtsTokenCount\": 742},\"modelVersion\":
+        \"gemini-2.5-pro\",\"responseId\": \"6hkqaYC5BbGEz7IPwb3ggA8\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=6577
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: DELETE
+    uri: https://generativelanguage.googleapis.com/v1beta/fileSearchStores/testfilesearchstream-lsy34id7fwk0?force=True
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '3'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=464
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body: {}
+    status:
+      code: 200
+      message: OK
+version: 1

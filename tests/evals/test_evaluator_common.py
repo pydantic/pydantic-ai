@@ -1,12 +1,17 @@
 from __future__ import annotations as _annotations
 
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from inline_snapshot import snapshot
+from pydantic import BaseModel
+from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
+from pydantic_ai.settings import ModelSettings
+
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -15,7 +20,6 @@ with try_import() as imports_successful:
 
     from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
     from pydantic_evals.evaluators.common import (
-        DEFAULT_EVALUATORS,
         Contains,
         Equals,
         EqualsExpected,
@@ -23,7 +27,7 @@ with try_import() as imports_successful:
         IsInstance,
         LLMJudge,
         MaxDuration,
-        Python,
+        OutputConfig,
     )
     from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
     from pydantic_evals.otel._errors import SpanTreeRecordingError
@@ -40,8 +44,8 @@ if TYPE_CHECKING or imports_successful():
             self.expected_output = expected_output
             self.inputs = inputs
             self.duration = duration
-else:  # pragma: no cover
-    MockContext = object
+else:
+    MockContext = object  # pragma: lax no cover
 
 
 async def test_equals():
@@ -99,20 +103,77 @@ async def test_contains_dict():
 
     # Test dictionary key missing
     assert evaluator.evaluate(MockContext(output={'different': 'value'})) == snapshot(
-        EvaluationReason(value=False, reason="Output dictionary does not contain expected key 'key'")
+        EvaluationReason(value=False, reason="Output does not contain expected key 'key'")
     )
 
     # Test dictionary value mismatch
     assert evaluator.evaluate(MockContext(output={'key': 'different'})) == snapshot(
         EvaluationReason(
             value=False,
-            reason="Output dictionary has different value for key 'key': 'different' != 'value'",
+            reason="Output has different value for key 'key': 'different' != 'value'",
         )
     )
 
     # Test non-dict value in dict
     evaluator_single = Contains(value='key')
     assert evaluator_single.evaluate(MockContext(output={'key': 'value'})) == snapshot(EvaluationReason(value=True))
+
+
+async def test_contains_basemodel():
+    """Test Contains evaluator with Pydantic BaseModel."""
+
+    class MockModel(BaseModel):
+        key: str | None = None
+        extra: str | None = None
+
+    evaluator = Contains(value={'key': 'value'})
+
+    # Test model containment
+    assert evaluator.evaluate(MockContext(output=MockModel(key='value', extra='data'))) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test model key missing
+    assert evaluator.evaluate(MockContext(output=MockModel(extra='data'))) == snapshot(
+        EvaluationReason(value=False, reason="Output has different value for key 'key': None != 'value'")
+    )
+
+    # Test model value mismatch
+    assert evaluator.evaluate(MockContext(output=MockModel(key='different'))) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output has different value for key 'key': 'different' != 'value'",
+        )
+    )
+
+
+async def test_contains_dataclass():
+    """Test Contains evaluator with dataclasses."""
+
+    @dataclass
+    class MockDataClass:
+        key: str | None = None
+        extra: str | None = None
+
+    evaluator = Contains(value={'key': 'value'})
+
+    # Test dataclass containment
+    assert evaluator.evaluate(MockContext(output=MockDataClass(key='value', extra='data'))) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test dataclass key missing
+    assert evaluator.evaluate(MockContext(output=MockDataClass(extra='data'))) == snapshot(
+        EvaluationReason(value=False, reason="Output has different value for key 'key': None != 'value'")
+    )
+
+    # Test dataclass value mismatch
+    assert evaluator.evaluate(MockContext(output=MockDataClass(key='different'))) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output has different value for key 'key': 'different' != 'value'",
+        )
+    )
 
 
 async def test_contains_list():
@@ -149,7 +210,7 @@ async def test_contains_invalid_type():
 
     result = evaluator.evaluate(MockContext(output=Unhashable()))
     assert result.value is False
-    assert result.reason == "Containment check failed: argument of type 'Unhashable' is not iterable"
+    assert result.reason and result.reason.startswith("Containment check failed: argument of type 'Unhashable'")
 
 
 async def test_is_instance():
@@ -192,6 +253,7 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     """Test LLMJudge evaluator."""
     # Create a mock GradingOutput
     mock_grading_output = mocker.MagicMock()
+    mock_grading_output.score = 1.0
     mock_grading_output.pass_ = True
     mock_grading_output.reason = 'Test passed'
 
@@ -203,11 +265,21 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
     mock_judge_input_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_input_output')
     mock_judge_input_output.return_value = mock_grading_output
 
+    # Mock the judge_input_output_expected function
+    mock_judge_input_output_expected = mocker.patch(
+        'pydantic_evals.evaluators.llm_as_a_judge.judge_input_output_expected'
+    )
+    mock_judge_input_output_expected.return_value = mock_grading_output
+
+    # Mock the judge_output_expected function
+    mock_judge_output_expected = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_output_expected')
+    mock_judge_output_expected.return_value = mock_grading_output
+
     ctx = EvaluatorContext(
         name='test',
         inputs={'prompt': 'Hello'},
         metadata=None,
-        expected_output=None,
+        expected_output='Hello',
         output='Hello world',
         duration=0.0,
         _span_tree=SpanTreeRecordingError('spans were not recorded'),
@@ -217,93 +289,167 @@ async def test_llm_judge_evaluator(mocker: MockerFixture):
 
     # Test without input
     evaluator = LLMJudge(rubric='Content contains a greeting')
-    result = await evaluator.evaluate(ctx)
-    assert isinstance(result, EvaluationReason)
-    assert result.value is True
-    assert result.reason == 'Test passed'
+    assert to_jsonable_python(await evaluator.evaluate(ctx)) == snapshot(
+        {'LLMJudge': {'value': True, 'reason': 'Test passed'}}
+    )
 
-    mock_judge_output.assert_called_once_with('Hello world', 'Content contains a greeting', None)
+    mock_judge_output.assert_called_once_with('Hello world', 'Content contains a greeting', None, None)
 
     # Test with input
     evaluator = LLMJudge(rubric='Output contains input', include_input=True, model='openai:gpt-4o')
-    result = await evaluator.evaluate(ctx)
-    assert isinstance(result, EvaluationReason)
-    assert result.value is True
-    assert result.reason == 'Test passed'
-
-    mock_judge_input_output.assert_called_once_with(
-        {'prompt': 'Hello'}, 'Hello world', 'Output contains input', 'openai:gpt-4o'
+    assert to_jsonable_python(await evaluator.evaluate(ctx)) == snapshot(
+        {'LLMJudge': {'value': True, 'reason': 'Test passed'}}
     )
 
+    mock_judge_input_output.assert_called_once_with(
+        {'prompt': 'Hello'}, 'Hello world', 'Output contains input', 'openai:gpt-4o', None
+    )
+
+    # Test with input and expected output
+    evaluator = LLMJudge(
+        rubric='Output contains input', include_input=True, include_expected_output=True, model='openai:gpt-4o'
+    )
+    assert to_jsonable_python(await evaluator.evaluate(ctx)) == snapshot(
+        {'LLMJudge': {'value': True, 'reason': 'Test passed'}}
+    )
+
+    mock_judge_input_output_expected.assert_called_once_with(
+        {'prompt': 'Hello'}, 'Hello world', 'Hello', 'Output contains input', 'openai:gpt-4o', None
+    )
+
+    # Test with output and expected output
+    evaluator = LLMJudge(
+        rubric='Output contains input', include_input=False, include_expected_output=True, model='openai:gpt-4o'
+    )
+    assert to_jsonable_python(await evaluator.evaluate(ctx)) == snapshot(
+        {'LLMJudge': {'value': True, 'reason': 'Test passed'}}
+    )
+
+    mock_judge_output_expected.assert_called_once_with(
+        'Hello world', 'Hello', 'Output contains input', 'openai:gpt-4o', None
+    )
     # Test with failing result
+    mock_grading_output.score = 0.0
     mock_grading_output.pass_ = False
     mock_grading_output.reason = 'Test failed'
-    result = await evaluator.evaluate(ctx)
-    assert isinstance(result, EvaluationReason)
-    assert result.value is False
-    assert result.reason == 'Test failed'
+    assert to_jsonable_python(await evaluator.evaluate(ctx)) == snapshot(
+        {'LLMJudge': {'value': False, 'reason': 'Test failed'}}
+    )
+
+    # Test with overridden configs
+    evaluator = LLMJudge(rubric='Mock rubric', assertion=False)
+    assert to_jsonable_python(await evaluator.evaluate(ctx)) == snapshot({})
+
+    evaluator = LLMJudge(
+        rubric='Mock rubric',
+        score=OutputConfig(evaluation_name='my_score', include_reason=True),
+        assertion=OutputConfig(evaluation_name='my_assertion'),
+    )
+    assert to_jsonable_python(await evaluator.evaluate(ctx)) == snapshot(
+        {'my_assertion': False, 'my_score': {'reason': 'Test failed', 'value': 0.0}}
+    )
 
 
-async def test_python():
-    """Test Python evaluator."""
-    evaluator = Python(expression='ctx.output > 0')
+@pytest.mark.anyio
+async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
+    """Test LLMJudge evaluator with specific model_settings."""
+    mock_grading_output = mocker.MagicMock()
+    mock_grading_output.pass_ = True
+    mock_grading_output.reason = 'Test passed with settings'
 
-    # Test with valid expression
-    assert evaluator.evaluate(MockContext(output=42)) is True
-    assert evaluator.evaluate(MockContext(output=-1)) is False
+    mock_judge_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_output')
+    mock_judge_output.return_value = mock_grading_output
 
-    # Test with invalid expression
-    evaluator_invalid = Python(expression='invalid syntax')
-    with pytest.raises(SyntaxError):
-        evaluator_invalid.evaluate(MockContext(output=42))
+    mock_judge_input_output = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_input_output')
+    mock_judge_input_output.return_value = mock_grading_output
 
+    mock_judge_input_output_expected = mocker.patch(
+        'pydantic_evals.evaluators.llm_as_a_judge.judge_input_output_expected'
+    )
+    mock_judge_input_output_expected.return_value = mock_grading_output
 
-async def test_python_evaluator():
-    """Test Python evaluator."""
+    mock_judge_output_expected = mocker.patch('pydantic_evals.evaluators.llm_as_a_judge.judge_output_expected')
+    mock_judge_output_expected.return_value = mock_grading_output
+
+    custom_model_settings = ModelSettings(temperature=0.77)
+
     ctx = EvaluatorContext(
-        name='test',
-        inputs={'x': 42},
+        name='test_custom_settings',
+        inputs={'prompt': 'Hello Custom'},
         metadata=None,
-        expected_output=None,
-        output={'y': 84},
+        expected_output='Hello',
+        output='Hello world custom settings',
         duration=0.0,
-        _span_tree=SpanTreeRecordingError('did not record spans'),
+        _span_tree=SpanTreeRecordingError('spans were not recorded'),
         attributes={},
         metrics={},
     )
 
-    # Test simple expression
-    evaluator = Python(expression='ctx.output["y"] == 84')
-    assert evaluator.evaluate(ctx) is True
+    # Test without input, with custom model_settings
+    evaluator_no_input = LLMJudge(rubric='Greeting with custom settings', model_settings=custom_model_settings)
+    assert to_jsonable_python(await evaluator_no_input.evaluate(ctx)) == snapshot(
+        {'LLMJudge': {'value': True, 'reason': 'Test passed with settings'}}
+    )
+    mock_judge_output.assert_called_once_with(
+        'Hello world custom settings', 'Greeting with custom settings', None, custom_model_settings
+    )
 
-    # Test accessing inputs
-    evaluator = Python(expression='ctx.inputs["x"] * 2 == ctx.output["y"]')
-    assert evaluator.evaluate(ctx) is True
+    # Test with input, with custom model_settings
+    evaluator_with_input = LLMJudge(
+        rubric='Output contains input with custom settings',
+        include_input=True,
+        model='openai:gpt-3.5-turbo',
+        model_settings=custom_model_settings,
+    )
+    assert to_jsonable_python(await evaluator_with_input.evaluate(ctx)) == snapshot(
+        {'LLMJudge': {'value': True, 'reason': 'Test passed with settings'}}
+    )
+    mock_judge_input_output.assert_called_once_with(
+        {'prompt': 'Hello Custom'},
+        'Hello world custom settings',
+        'Output contains input with custom settings',
+        'openai:gpt-3.5-turbo',
+        custom_model_settings,
+    )
 
-    # Test complex expression
-    evaluator = Python(expression='all(k in ctx.output for k in ["y"])')
-    assert evaluator.evaluate(ctx) is True
+    # Test with input and expected output, with custom model_settings
+    evaluator_with_input_expected = LLMJudge(
+        rubric='Output contains input with custom settings',
+        include_input=True,
+        include_expected_output=True,
+        model='openai:gpt-3.5-turbo',
+        model_settings=custom_model_settings,
+    )
+    assert to_jsonable_python(await evaluator_with_input_expected.evaluate(ctx)) == snapshot(
+        {'LLMJudge': {'value': True, 'reason': 'Test passed with settings'}}
+    )
+    mock_judge_input_output_expected.assert_called_once_with(
+        {'prompt': 'Hello Custom'},
+        'Hello world custom settings',
+        'Hello',
+        'Output contains input with custom settings',
+        'openai:gpt-3.5-turbo',
+        custom_model_settings,
+    )
 
-    # Test invalid expression
-    evaluator = Python(expression='invalid syntax')
-    with pytest.raises(SyntaxError):
-        evaluator.evaluate(ctx)
-
-    # Test expression with undefined variables
-    evaluator = Python(expression='undefined_var')
-    with pytest.raises(NameError):
-        evaluator.evaluate(ctx)
-
-    # Test expression with type error
-    evaluator = Python(expression='ctx.output + 1')  # Can't add dict and int
-    with pytest.raises(TypeError):
-        evaluator.evaluate(ctx)
-
-
-def test_default_evaluators():
-    """Test DEFAULT_EVALUATORS tuple."""
-    # Verify that Python evaluator is not included for security reasons
-    assert Python not in DEFAULT_EVALUATORS
+    # Test with output and expected output
+    evaluator_with_output_expected = LLMJudge(
+        rubric='Output contains input with custom settings',
+        include_input=False,
+        include_expected_output=True,
+        model='openai:gpt-3.5-turbo',
+        model_settings=custom_model_settings,
+    )
+    assert to_jsonable_python(await evaluator_with_output_expected.evaluate(ctx)) == snapshot(
+        {'LLMJudge': {'value': True, 'reason': 'Test passed with settings'}}
+    )
+    mock_judge_output_expected.assert_called_once_with(
+        'Hello world custom settings',
+        'Hello',
+        'Output contains input with custom settings',
+        'openai:gpt-3.5-turbo',
+        custom_model_settings,
+    )
 
 
 async def test_span_query_evaluator(capfire: CaptureLogfire):

@@ -1,0 +1,68 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '203'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: You are a helpful assistant.
+        role: user
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '680'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=444
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.0001856483577284962
+        content:
+          parts:
+          - text: |
+              The capital of France is Paris.
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: 41peaK-wOMSenvgPh-vRiAY
+      usageMetadata:
+        candidatesTokenCount: 8
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 8
+        promptTokenCount: 13
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 13
+        totalTokenCount: 21
+    status:
+      code: 200
+      message: OK
+version: 1

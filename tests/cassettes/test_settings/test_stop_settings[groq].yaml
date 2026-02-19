@@ -1,0 +1,71 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '215'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
+        role: user
+      model: llama3-8b-8192
+      n: 1
+      stop:
+      - Paris
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '603'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "Bien sûr!\n\nThe lovely city that is the capital of France is "
+          role: assistant
+      created: 1749229135
+      id: chatcmpl-69930f13-fe23-4584-9d09-c1e1612a2183
+      model: llama3-8b-8192
+      object: chat.completion
+      system_fingerprint: fp_179b0f92c9
+      usage:
+        completion_time: 0.020833333
+        completion_tokens: 25
+        prompt_time: 0.004837532
+        prompt_tokens: 35
+        queue_time: 0.022124504000000003
+        total_time: 0.025670865
+        total_tokens: 60
+      usage_breakdown:
+        models: null
+      x_groq:
+        id: req_01jx32wsk4fwf98jtfjm1agphs
+    status:
+      code: 200
+      message: OK
+version: 1

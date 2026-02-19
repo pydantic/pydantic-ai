@@ -1,0 +1,69 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '150'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is 2+2?
+        role: user
+      generationConfig:
+        thinking_config:
+          includeThoughts: true
+          thinkingBudget: 1024
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1025'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1380
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |
+              **Calculating the Simple**
+
+              Okay, here we go. Someone's asking a pretty straightforward arithmetic question. It's really just a simple calculation. Nothing fancy, just plug in the numbers and get the result.  No need to overthink it. It's a quick win, a chance to flex some basic math muscles before getting into anything more complex. Just a matter of applying the right operation and moving on.
+            thought: true
+          - text: 2 + 2 = 4
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: lghYaaSmK7eomtkP_KDT6A0
+      usageMetadata:
+        candidatesTokenCount: 8
+        promptTokenCount: 8
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 8
+        thoughtsTokenCount: 16
+        totalTokenCount: 32
+    status:
+      code: 200
+      message: OK
+version: 1

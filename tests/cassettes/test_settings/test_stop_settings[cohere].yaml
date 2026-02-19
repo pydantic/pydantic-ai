@@ -1,0 +1,66 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '219'
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
+        role: user
+      model: command-r-plus
+      stop_sequences:
+      - Paris
+      stream: false
+    uri: https://api.cohere.com/v2/chat
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-length:
+      - '297'
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 UTC
+      num_chars:
+      - '521'
+      num_tokens:
+      - '34'
+      pragma:
+      - no-cache
+      vary:
+      - Origin
+    parsed_body:
+      finish_reason: STOP_SEQUENCE
+      id: 02069ccc-65d6-4286-ba8c-097e317431c5
+      message:
+        content:
+        - text: The capital of France is a city known as
+          type: text
+        role: assistant
+      usage:
+        billed_units:
+          input_tokens: 25
+          output_tokens: 9
+        tokens:
+          input_tokens: 91
+          output_tokens: 11
+    status:
+      code: 200
+      message: OK
+version: 1

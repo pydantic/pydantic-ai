@@ -1,6 +1,6 @@
 # `pydantic_ai.models.test`
 
-Utility model for quickly testing apps built with PydanticAI.
+Utility model for quickly testing apps built with Pydantic AI.
 
 Here's a minimal example:
 
@@ -8,7 +8,7 @@ Here's a minimal example:
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-my_agent = Agent('openai:gpt-4o', system_prompt='...')
+my_agent = Agent('openai:gpt-5.2', instructions='...')
 
 
 async def test_my_agent():
@@ -16,7 +16,7 @@ async def test_my_agent():
     m = TestModel()
     with my_agent.override(model=m):
         result = await my_agent.run('Testing my agent...')
-        assert result.data == 'success (no tool calls)'
+        assert result.output == 'success (no tool calls)'
     assert m.last_model_request_parameters.function_tools == []
 ```
 

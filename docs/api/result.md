@@ -4,5 +4,5 @@
     options:
         inherited_members: true
         members:
-            - ResultDataT
             - StreamedRunResult
+            - StreamedRunResultSync

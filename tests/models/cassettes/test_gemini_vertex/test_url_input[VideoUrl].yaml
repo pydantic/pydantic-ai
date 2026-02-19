@@ -1,0 +1,114 @@
+interactions:
+  - request:
+      body: grant_type=%5B%27refresh_token%27%5D&client_id=%5B%27764086051850-6qr4p6gpi6hn506pt8ejuq83di341hur.apps.googleusercontent.com%27%5D&client_secret=%5B%27scrubbed%27%5D&refresh_token=%5B%27scrubbed%27%5D
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - "268"
+        content-type:
+          - application/x-www-form-urlencoded
+      method: POST
+      uri: https://oauth2.googleapis.com/token
+    response:
+      headers:
+        alt-svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        cache-control:
+          - no-cache, no-store, max-age=0, must-revalidate
+        content-length:
+          - "1419"
+        content-type:
+          - application/json; charset=utf-8
+        expires:
+          - Mon, 01 Jan 1990 00:00:00 GMT
+        pragma:
+          - no-cache
+        transfer-encoding:
+          - chunked
+        vary:
+          - Origin
+          - X-Origin
+          - Referer
+      parsed_body:
+        access_token: scrubbed
+        expires_in: 3599
+        id_token: eyJhbGciOiJSUzI1NiIsImtpZCI6IjgyMWYzYmM2NmYwNzUxZjc4NDA2MDY3OTliMWFkZjllOWZiNjBkZmIiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJhdWQiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJzdWIiOiIxMDY1Njg0NzQzMTU3NzkyMTI1NTkiLCJoZCI6InB5ZGFudGljLmRldiIsImVtYWlsIjoibWFyY2Vsb0BweWRhbnRpYy5kZXYiLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwiYXRfaGFzaCI6ImlyckNRNE00c0Z0Z2dfS2hRTVNjekEiLCJpYXQiOjE3NDM0MTM3NzcsImV4cCI6MTc0MzQxNzM3N30.BAvb4TlcIoYcQODNLFqwtUQoSNJJbpAR0lk2OyFxXK9rSZ7m1e1_Dp1O4ApxPUS7f_NX34eSCuDJN2IXgh8VBv4k3IhI7CbMydYeqXuwlbgOOp1Z0farGEKneU1M7TvdngigAJ9wT-2LHjKd_GEcGau-CUvzXpcT1IOnNNyXGVqtuGmEfcw5jjPkKJNECUheeNHE3zeImatTstOLuKmI1ZK-etl41l3poSNuQkZkrbQ80Vst8BdT-b1tnJnXP1KGATBIamDy99OOiB9a7a9m_ikXYEyN91yR76DYot3hpDPlOX0H9hF-BOSqoOtlSS2TMBkMvFiiYWjID1e_9VlNUg
+        scope: https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email openid https://www.googleapis.com/auth/sqlservice.login
+        token_type: Bearer
+      status:
+        code: 200
+        message: OK
+  - request:
+      headers:
+        accept:
+          - "*/*"
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - "222"
+        content-type:
+          - application/json
+        host:
+          - us-central1-aiplatform.googleapis.com
+      method: POST
+      parsed_body:
+        contents:
+          - parts:
+              - text: What is the main content of this URL?
+              - fileData:
+                  fileUri: https://upload.wikimedia.org/wikipedia/commons/8/8f/Panda_at_Smithsonian_zoo.webm
+                  mimeType: video/webm
+            role: user
+      uri: https://us-central1-aiplatform.googleapis.com/v1/projects/pydantic-ai/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent
+    response:
+      headers:
+        alt-svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        content-length:
+          - "1057"
+        content-type:
+          - application/json; charset=UTF-8
+        transfer-encoding:
+          - chunked
+        vary:
+          - Origin
+          - X-Origin
+          - Referer
+      parsed_body:
+        candidates:
+          - avgLogprobs: -0.7096007005223688
+            content:
+              parts:
+                - text:
+                    The main content of the URL is a video of a panda bear sitting amongst bamboo shoots in an enclosure. The
+                    enclosure has a rocky background, an artificial mountain scene painted on the back wall, a window, and a large
+                    beige ball. The panda is eating bamboo.
+              role: model
+            finishReason: STOP
+        createTime: "2025-05-31T21:51:44.439491Z"
+        modelVersion: gemini-2.0-flash
+        responseId: 8Hk7aMPpGtWLmecPzZeogQw
+        usageMetadata:
+          candidatesTokenCount: 53
+          candidatesTokensDetails:
+            - modality: TEXT
+              tokenCount: 53
+          promptTokenCount: 1569
+          promptTokensDetails:
+            - modality: TEXT
+              tokenCount: 9
+            - modality: VIDEO
+              tokenCount: 1560
+          totalTokenCount: 1622
+          trafficType: ON_DEMAND
+      status:
+        code: 200
+        message: OK
+version: 1

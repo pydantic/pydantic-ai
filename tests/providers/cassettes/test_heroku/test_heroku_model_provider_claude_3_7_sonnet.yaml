@@ -1,0 +1,55 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '116'
+      content-type:
+      - application/json
+      host:
+      - us.inference.heroku.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: claude-3-7-sonnet
+      stream: false
+    uri: https://us.inference.heroku.com/v1/chat/completions
+  response:
+    headers:
+      content-length:
+      - '542'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=63072000
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: The capital of France is Paris. It's not only the political capital but also a major cultural and economic
+            hub in Europe, known for landmarks like the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral.
+          refusal: null
+          role: assistant
+      created: 1749176895
+      id: chatcmpl-1846531e6d7a6be30e1c6
+      model: claude-3-7-sonnet
+      object: chat.completion
+      system_fingerprint: heroku-inf-1qgiqof
+      usage:
+        completion_tokens: 51
+        prompt_tokens: 14
+        total_tokens: 65
+    status:
+      code: 200
+      message: OK
+version: 1

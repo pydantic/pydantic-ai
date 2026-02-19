@@ -1,0 +1,43 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France? Give me an answer that contains
+      the word \"Paris\", but is not the first word."}]}], "system": [], "inferenceConfig": {"stopSequences": ["Paris"]}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YWEyMWExMDYtNjJjMy00MmNiLTlkNjUtYTEwYzYzYTIxNGFk
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '231'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '197'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 189
+      output:
+        message:
+          content:
+          - text: The city of Paris
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 25
+        outputTokens: 4
+        totalTokens: 29
+    status:
+      code: 200
+      message: OK
+version: 1

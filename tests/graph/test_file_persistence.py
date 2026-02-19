@@ -1,13 +1,11 @@
 from __future__ import annotations as _annotations
 
-from asyncio.exceptions import TimeoutError
 from dataclasses import dataclass
 from datetime import timezone
 from pathlib import Path
 from typing import Union
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_graph import (
     BaseNode,
@@ -19,6 +17,7 @@ from pydantic_graph import (
 )
 from pydantic_graph.persistence.file import FileStatePersistence
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsFloat, IsNow
 
 pytestmark = pytest.mark.anyio

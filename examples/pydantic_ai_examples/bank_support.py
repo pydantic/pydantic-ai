@@ -1,33 +1,36 @@
-"""Small but complete example of using PydanticAI to build a support agent for a bank.
+"""Small but complete example of using Pydantic AI to build a support agent for a bank.
 
 Run with:
 
     uv run -m pydantic_ai_examples.bank_support
 """
 
+import sqlite3
 from dataclasses import dataclass
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
 
 
+@dataclass
 class DatabaseConn:
-    """This is a fake database for example purposes.
+    """A wrapper over the SQLite connection."""
 
-    In reality, you'd be connecting to an external database
-    (e.g. PostgreSQL) to get information about customers.
-    """
+    sqlite_conn: sqlite3.Connection
 
-    @classmethod
-    async def customer_name(cls, *, id: int) -> str | None:
-        if id == 123:
-            return 'John'
+    async def customer_name(self, *, id: int) -> str | None:
+        res = cur.execute('SELECT name FROM customers WHERE id=?', (id,))
+        row = res.fetchone()
+        if row:
+            return row[0]
+        return None
 
-    @classmethod
-    async def customer_balance(cls, *, id: int, include_pending: bool) -> float:
-        if id == 123 and include_pending:
-            return 123.45
+    async def customer_balance(self, *, id: int) -> float:
+        res = cur.execute('SELECT balance FROM customers WHERE id=?', (id,))
+        row = res.fetchone()
+        if row:
+            return row[0]
         else:
             raise ValueError('Customer not found')
 
@@ -38,17 +41,20 @@ class SupportDependencies:
     db: DatabaseConn
 
 
-class SupportResult(BaseModel):
-    support_advice: str = Field(description='Advice returned to the customer')
-    block_card: bool = Field(description='Whether to block their card or not')
-    risk: int = Field(description='Risk level of query', ge=0, le=10)
+class SupportOutput(BaseModel):
+    support_advice: str
+    """Advice returned to the customer"""
+    block_card: bool
+    """Whether to block their card or not"""
+    risk: int
+    """Risk level of query"""
 
 
 support_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5.2',
     deps_type=SupportDependencies,
-    result_type=SupportResult,
-    system_prompt=(
+    output_type=SupportOutput,
+    instructions=(
         'You are a support agent in our bank, give the '
         'customer support and judge the risk level of their query. '
         "Reply using the customer's name."
@@ -56,34 +62,40 @@ support_agent = Agent(
 )
 
 
-@support_agent.system_prompt
+@support_agent.instructions
 async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
     customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
     return f"The customer's name is {customer_name!r}"
 
 
 @support_agent.tool
-async def customer_balance(
-    ctx: RunContext[SupportDependencies], include_pending: bool
-) -> str:
+async def customer_balance(ctx: RunContext[SupportDependencies]) -> str:
     """Returns the customer's current account balance."""
     balance = await ctx.deps.db.customer_balance(
         id=ctx.deps.customer_id,
-        include_pending=include_pending,
     )
     return f'${balance:.2f}'
 
 
 if __name__ == '__main__':
-    deps = SupportDependencies(customer_id=123, db=DatabaseConn())
-    result = support_agent.run_sync('What is my balance?', deps=deps)
-    print(result.data)
-    """
-    support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
-    """
+    with sqlite3.connect(':memory:') as con:
+        cur = con.cursor()
+        cur.execute('CREATE TABLE customers(id, name, balance)')
+        cur.execute("""
+            INSERT INTO customers VALUES
+                (123, 'John', 123.45)
+        """)
+        con.commit()
 
-    result = support_agent.run_sync('I just lost my card!', deps=deps)
-    print(result.data)
-    """
-    support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
-    """
+        deps = SupportDependencies(customer_id=123, db=DatabaseConn(sqlite_conn=con))
+        result = support_agent.run_sync('What is my balance?', deps=deps)
+        print(result.output)
+        """
+        support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
+        """
+
+        result = support_agent.run_sync('I just lost my card!', deps=deps)
+        print(result.output)
+        """
+        support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+        """

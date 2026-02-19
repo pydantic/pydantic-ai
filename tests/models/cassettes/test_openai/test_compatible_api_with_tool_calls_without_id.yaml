@@ -1,0 +1,159 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '326'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the current time?
+        role: user
+      model: gemini-2.5-pro-preview-05-06
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the current time.
+          name: get_current_time
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1166'
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=1609
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          extra_content:
+            google:
+              thought: true
+              thought_signature: AVSoXO4AzAXs7GGvOY63fp8CwJK3yR8HbUPhxhfN2HaPvJnscmZCkaWvckz5NL3nIMK+si/baQcsM2Q8ME9V1RQrb3w1IKceWfjO3kHPL11odY/p6Us4GkkvJqKU/OgUnbAMbuvNdX1pyXWZUrQ7WyXZ5F4mjbxBSCLiVOTdFlK53zn+ajq5JIuG9AYHgwE/sJxUUpvNd6RcWvZR3fQb8gufjCspiO2ZdInRcdGsz/+XftFHxFbXkdtCRAw74AtjlN5osb+KgDYojdohKIEit9DcTBe7hI7oEHWMfnqYSgGrrad4FJpNB3jXmSFevE2iYYKUBzWvxJNj8fIYrCC0g4rJ1aJvuoU=
+          role: assistant
+          thought_signature: AVSoXO4AzAXs7GGvOY63fp8CwJK3yR8HbUPhxhfN2HaPvJnscmZCkaWvckz5NL3nIMK+si/baQcsM2Q8ME9V1RQrb3w1IKceWfjO3kHPL11odY/p6Us4GkkvJqKU/OgUnbAMbuvNdX1pyXWZUrQ7WyXZ5F4mjbxBSCLiVOTdFlK53zn+ajq5JIuG9AYHgwE/sJxUUpvNd6RcWvZR3fQb8gufjCspiO2ZdInRcdGsz/+XftFHxFbXkdtCRAw74AtjlN5osb+KgDYojdohKIEit9DcTBe7hI7oEHWMfnqYSgGrrad4FJpNB3jXmSFevE2iYYKUBzWvxJNj8fIYrCC0g4rJ1aJvuoU=
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_current_time
+            id: ''
+            type: function
+      created: 1748902365
+      id: 3SE-aKjdCcCEz7IPxpqjCA
+      model: gemini-2.5-pro-preview-05-06
+      object: chat.completion
+      usage:
+        completion_tokens: 12
+        prompt_tokens: 35
+        total_tokens: 109
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '575'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the current time?
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_current_time
+          id: pyd_ai_cee885c699414386a7e14b7ec43cadbc
+          type: function
+      - content: Noon
+        role: tool
+        tool_call_id: pyd_ai_cee885c699414386a7e14b7ec43cadbc
+      model: gemini-2.5-pro-preview-05-06
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the current time.
+          name: get_current_time
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '755'
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=1097
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: The current time is Noon.
+          extra_content:
+            google:
+              thought: true
+              thought_signature: AVSoXO4/lu90Bn7IxVcWAjD6KH3ZHMmsCX1tnPJERDI6SZb63hrSEtmJT/v+sn2SzlecMoXBVmtcrd3keFszUgDpLjFm1gB+uMzLS1IqPdEAh+m5S71k1hfStNMFen63UnphYHWt4UrjVHXckysRLVJjCuMmE01hQXcVh9b3YXvfWfZEFA==
+          role: assistant
+          thought_signature: AVSoXO4/lu90Bn7IxVcWAjD6KH3ZHMmsCX1tnPJERDI6SZb63hrSEtmJT/v+sn2SzlecMoXBVmtcrd3keFszUgDpLjFm1gB+uMzLS1IqPdEAh+m5S71k1hfStNMFen63UnphYHWt4UrjVHXckysRLVJjCuMmE01hQXcVh9b3YXvfWfZEFA==
+      created: 1748902366
+      id: 3iE-aNK3EIGJz7IPt_mYoAs
+      model: gemini-2.5-pro-preview-05-06
+      object: chat.completion
+      usage:
+        completion_tokens: 6
+        prompt_tokens: 66
+        total_tokens: 100
+    status:
+      code: 200
+      message: OK
+version: 1

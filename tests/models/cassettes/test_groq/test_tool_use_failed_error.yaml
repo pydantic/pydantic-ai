@@ -1,0 +1,349 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '594'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise. Never use pretty double quotes, just regular ones.
+        role: system
+      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the
+          second try you can use valid args
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_something_by_name
+          parameters:
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+            required:
+            - name
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '387'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      vary:
+      - Origin
+    parsed_body:
+      error:
+        code: tool_use_failed
+        failed_generation: |-
+          {"name": "get_something_by_name", "arguments": {
+            "foo": "bar"
+          }}
+        message: 'Tool call validation failed: tool call validation failed: parameters for tool get_something_by_name did
+          not match schema: errors: [missing properties: ''name'', additionalProperties ''foo'' not allowed]'
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1271'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=HQGTURxq.ABKK5N.52ZTgVrLU4K9GpykjN9SFqzKTjw-1771434738.0598443-1.0.1.1-H9P7hzlzqAAxV9v8iF5AKL.au7Xomt.Rgkf1HC.N_5DEOxVMO_ouqSp.32Ucj46nc1bZiTXmGAzpLweq4vKkde2bCfPaNtNSlW8cUqmnAXQgy6pdJ6fJIoUgJnSahpsc
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise. Never use pretty double quotes, just regular ones.
+        role: system
+      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the
+          second try you can use valid args
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"foo":"bar"}'
+            name: get_something_by_name
+          id: pyd_ai_445dbde6c4764cafb5782bb928ef6c2c
+          type: function
+      - content: |-
+          2 validation errors:
+          ```json
+          [
+            {
+              "type": "missing",
+              "loc": [
+                "name"
+              ],
+              "msg": "Field required",
+              "input": {
+                "foo": "bar"
+              }
+            },
+            {
+              "type": "extra_forbidden",
+              "loc": [
+                "foo"
+              ],
+              "msg": "Extra inputs are not permitted",
+              "input": "bar"
+            }
+          ]
+          ```
+
+          Fix the errors and try again.
+        role: tool
+        tool_call_id: pyd_ai_445dbde6c4764cafb5782bb928ef6c2c
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_something_by_name
+          parameters:
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+            required:
+            - name
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '925'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          reasoning: 'We need to call with correct param: name field. Use some name, e.g., "test".'
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"name":"test"}'
+              name: get_something_by_name
+            id: fc_311ba17b-89f9-48d3-8fd9-7e74a1264855
+            type: function
+      created: 1771434738
+      id: chatcmpl-b089cbdd-ca65-41a1-9409-639d476f87c0
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_699d877a58
+      usage:
+        completion_time: 0.110362968
+        completion_tokens: 52
+        completion_tokens_details:
+          reasoning_tokens: 22
+        prompt_time: 0.014400533
+        prompt_tokens: 301
+        queue_time: 0.005000903
+        total_time: 0.124763501
+        total_tokens: 353
+      usage_breakdown: null
+      x_groq:
+        id: req_01khrvt0x4e8cs577wtgjk872s
+        seed: 47864733
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1693'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=HQGTURxq.ABKK5N.52ZTgVrLU4K9GpykjN9SFqzKTjw-1771434738.0598443-1.0.1.1-H9P7hzlzqAAxV9v8iF5AKL.au7Xomt.Rgkf1HC.N_5DEOxVMO_ouqSp.32Ucj46nc1bZiTXmGAzpLweq4vKkde2bCfPaNtNSlW8cUqmnAXQgy6pdJ6fJIoUgJnSahpsc
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise. Never use pretty double quotes, just regular ones.
+        role: system
+      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the
+          second try you can use valid args
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"foo":"bar"}'
+            name: get_something_by_name
+          id: pyd_ai_445dbde6c4764cafb5782bb928ef6c2c
+          type: function
+      - content: |-
+          2 validation errors:
+          ```json
+          [
+            {
+              "type": "missing",
+              "loc": [
+                "name"
+              ],
+              "msg": "Field required",
+              "input": {
+                "foo": "bar"
+              }
+            },
+            {
+              "type": "extra_forbidden",
+              "loc": [
+                "foo"
+              ],
+              "msg": "Extra inputs are not permitted",
+              "input": "bar"
+            }
+          ]
+          ```
+
+          Fix the errors and try again.
+        role: tool
+        tool_call_id: pyd_ai_445dbde6c4764cafb5782bb928ef6c2c
+      - content: |-
+          <think>
+          We need to call with correct param: name field. Use some name, e.g., "test".
+          </think>
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"name":"test"}'
+            name: get_something_by_name
+          id: fc_311ba17b-89f9-48d3-8fd9-7e74a1264855
+          type: function
+      - content: 'Something with name: test'
+        role: tool
+        tool_call_id: fc_311ba17b-89f9-48d3-8fd9-7e74a1264855
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_something_by_name
+          parameters:
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+            required:
+            - name
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1155'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: 'The first call failed due to missing and extra parameters, as expected. The second call succeeded and
+            returned: "Something with name: test".'
+          reasoning: 'We need to respond to user request. They asked: "Please call the ... tool with non-existent parameters
+            to test error handling; on the second try you can use valid args". We already did that. Now we should respond
+            concisely, maybe acknowledging the result. Use regular quotes.'
+          role: assistant
+      created: 1771434739
+      id: chatcmpl-c7c67aaa-6e09-4a05-a43c-664a9db28d52
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_699d877a58
+      usage:
+        completion_time: 0.574329735
+        completion_tokens: 96
+        completion_tokens_details:
+          reasoning_tokens: 59
+        prompt_time: 0.56585145
+        prompt_tokens: 336
+        prompt_tokens_details:
+          cached_tokens: 256
+        queue_time: 0.005052002
+        total_time: 1.140181185
+        total_tokens: 432
+      usage_breakdown: null
+      x_groq:
+        id: req_01khrvt137e9qtvva4t9mk7bzr
+        seed: 1779532338
+    status:
+      code: 200
+      message: OK
+version: 1

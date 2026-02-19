@@ -1,0 +1,70 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '111'
+      content-type:
+      - application/json
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: gpt-oss-120b
+      stream: false
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '661'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-bc3bbd04-e8df-4ab6-bd82-9fb33726cb93
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=3600; includeSubDomains
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: The capital of France is **Paris**.
+          reasoning: 'User asks simple question: capital of France. Answer: Paris. Provide concise answer.'
+          role: assistant
+      created: 1756199010
+      id: chatcmpl-bc3bbd04-e8df-4ab6-bd82-9fb33726cb93
+      model: gpt-oss-120b
+      object: chat.completion
+      system_fingerprint: fp_a5fe16f102a24cf8caf1
+      time_info:
+        completion_time: 0.026440676
+        created: 1756199010
+        prompt_time: 0.002999482
+        queue_time: 0.000899766
+        total_time: 0.03260970115661621
+      usage:
+        completion_tokens: 36
+        prompt_tokens: 74
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 110
+    status:
+      code: 200
+      message: OK
+version: 1

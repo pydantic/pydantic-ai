@@ -1,13 +1,16 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import Literal, overload
 
-from httpx import AsyncClient as AsyncHTTPClient
+import httpx
 from openai import AsyncOpenAI
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.providers import Provider
 
 try:
@@ -17,6 +20,9 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the DeepSeek provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+
+DeepSeekModelName = Literal['deepseek-chat', 'deepseek-reasoner']
 
 
 class DeepSeekProvider(Provider[AsyncOpenAI]):
@@ -34,24 +40,41 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    @overload
-    def __init__(self) -> None: ...
+    def model_profile(self, model_name: str) -> ModelProfile | None:
+        profile = deepseek_model_profile(model_name)
+
+        # As DeepSeekProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # we need to maintain that behavior unless json_schema_transformer is set explicitly.
+        # This was not the case when using a DeepSeek model with another model class (e.g. BedrockConverseModel or GroqModel),
+        # so we won't do this in `deepseek_model_profile` unless we learn it's always needed.
+        return OpenAIModelProfile(
+            json_schema_transformer=OpenAIJsonSchemaTransformer,
+            supports_json_object_output=True,
+            openai_chat_thinking_field='reasoning_content',
+            # Starting from DeepSeek v3.2, DeepSeek requires sending thinking parts for optimal agentic performance.
+            openai_chat_send_back_thinking_parts='field',
+            # DeepSeek v3.2 reasoning mode does not support tool_choice=required yet
+            openai_supports_tool_choice_required=(model_name != 'deepseek-reasoner'),
+        ).update(profile)
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: AsyncHTTPClient) -> None: ...
-
-    @overload
-    def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        openai_client: None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None: ...
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: AsyncHTTPClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         api_key = api_key or os.getenv('DEEPSEEK_API_KEY')
         if not api_key and openai_client is None:

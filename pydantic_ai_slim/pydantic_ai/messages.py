@@ -1,129 +1,79 @@
 from __future__ import annotations as _annotations
 
-import uuid
-from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+import base64
+import hashlib
+import mimetypes
+import os
+from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
-from mimetypes import guess_type
-from typing import Annotated, Any, Literal, Union, cast, overload
+from mimetypes import MimeTypes
+from os import PathLike
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
+from urllib.parse import urlparse
 
 import pydantic
 import pydantic_core
-from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import TypeAlias
+from genai_prices import calc_price, types as genai_types
+from opentelemetry._logs import LogRecord
+from opentelemetry.util.types import AnyValue
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+from typing_extensions import TypeAliasType, deprecated
 
+from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
+from .usage import RequestUsage
+
+if TYPE_CHECKING:
+    from .models.instrumented import InstrumentationSettings
+
+_mime_types = MimeTypes()
+# Replicate what is being done in `mimetypes.init()`
+_mime_types.read_windows_registry()
+for file in mimetypes.knownfiles:
+    if os.path.isfile(file):
+        _mime_types.read(file)  # pragma: lax no cover
+# TODO check for added mimetypes in Python 3.11 when dropping support for Python 3.10:
+# Document types
+_mime_types.add_type('application/rtf', '.rtf')
+_mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
+_mime_types.add_type('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx')
+_mime_types.add_type('text/markdown', '.mdx')
+_mime_types.add_type('text/markdown', '.md')
+_mime_types.add_type('text/x-asciidoc', '.asciidoc')
+
+# Image types
+_mime_types.add_type('image/webp', '.webp')
+
+# Video types
+_mime_types.add_type('video/3gpp', '.three_gp')
+_mime_types.add_type('video/x-matroska', '.mkv')
+_mime_types.add_type('video/x-ms-wmv', '.wmv')
+_mime_types.add_type('video/x-flv', '.flv')
+
+# Audio types
+# NOTE: aac is platform specific (linux: audio/x-aac, macos: audio/aac) but x-aac is deprecated https://mimetype.io/audio/aac
+_mime_types.add_type('audio/aac', '.aac')
+_mime_types.add_type('audio/aiff', '.aiff')
+_mime_types.add_type('audio/flac', '.flac')
+_mime_types.add_type('audio/ogg', '.oga')
+_mime_types.add_type('audio/wav', '.wav')
+
+# Text/data file types not recognized by default mimetypes
+# YAML: RFC 9512 (https://www.rfc-editor.org/rfc/rfc9512.html)
+_mime_types.add_type('application/yaml', '.yaml')
+_mime_types.add_type('application/yaml', '.yml')
+# TOML: RFC 9519 (https://www.rfc-editor.org/rfc/rfc9519.html)
+_mime_types.add_type('application/toml', '.toml')
+
+# XML is recognized as `text/xml` on some systems, but it needs to be `application/xml` per RFC 7303 (https://www.rfc-editor.org/rfc/rfc7303.html)
+_mime_types.add_type('application/xml', '.xml')
 
 
-@dataclass
-class SystemPromptPart:
-    """A system prompt, generally written by the application developer.
-
-    This gives the model context and guidance on how to respond.
-    """
-
-    content: str
-    """The content of the prompt."""
-
-    timestamp: datetime = field(default_factory=_now_utc)
-    """The timestamp of the prompt."""
-
-    dynamic_ref: str | None = None
-    """The ref of the dynamic system prompt function that generated this part.
-
-    Only set if system prompt is dynamic, see [`system_prompt`][pydantic_ai.Agent.system_prompt] for more information.
-    """
-
-    part_kind: Literal['system-prompt'] = 'system-prompt'
-    """Part type identifier, this is available on all parts as a discriminator."""
-
-    def otel_event(self) -> Event:
-        return Event('gen_ai.system.message', body={'content': self.content, 'role': 'system'})
-
-
-@dataclass
-class AudioUrl:
-    """A URL to an audio file."""
-
-    url: str
-    """The URL of the audio file."""
-
-    kind: Literal['audio-url'] = 'audio-url'
-    """Type identifier, this is available on all parts as a discriminator."""
-
-    @property
-    def media_type(self) -> AudioMediaType:
-        """Return the media type of the audio file, based on the url."""
-        if self.url.endswith('.mp3'):
-            return 'audio/mpeg'
-        elif self.url.endswith('.wav'):
-            return 'audio/wav'
-        else:
-            raise ValueError(f'Unknown audio file extension: {self.url}')
-
-
-@dataclass
-class ImageUrl:
-    """A URL to an image."""
-
-    url: str
-    """The URL of the image."""
-
-    kind: Literal['image-url'] = 'image-url'
-    """Type identifier, this is available on all parts as a discriminator."""
-
-    @property
-    def media_type(self) -> ImageMediaType:
-        """Return the media type of the image, based on the url."""
-        if self.url.endswith(('.jpg', '.jpeg')):
-            return 'image/jpeg'
-        elif self.url.endswith('.png'):
-            return 'image/png'
-        elif self.url.endswith('.gif'):
-            return 'image/gif'
-        elif self.url.endswith('.webp'):
-            return 'image/webp'
-        else:
-            raise ValueError(f'Unknown image file extension: {self.url}')
-
-    @property
-    def format(self) -> ImageFormat:
-        """The file format of the image.
-
-        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
-        """
-        return _image_format(self.media_type)
-
-
-@dataclass
-class DocumentUrl:
-    """The URL of the document."""
-
-    url: str
-    """The URL of the document."""
-
-    kind: Literal['document-url'] = 'document-url'
-    """Type identifier, this is available on all parts as a discriminator."""
-
-    @property
-    def media_type(self) -> str:
-        """Return the media type of the document, based on the url."""
-        type_, _ = guess_type(self.url)
-        if type_ is None:
-            raise RuntimeError(f'Unknown document file extension: {self.url}')
-        return type_
-
-    @property
-    def format(self) -> DocumentFormat:
-        """The file format of the document.
-
-        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
-        """
-        return _document_format(self.media_type)
-
-
-AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg']
+AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 DocumentMediaType: TypeAlias = Literal[
     'application/pdf',
@@ -133,25 +83,497 @@ DocumentMediaType: TypeAlias = Literal[
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'text/html',
     'text/markdown',
+    'application/msword',
     'application/vnd.ms-excel',
 ]
-AudioFormat: TypeAlias = Literal['wav', 'mp3']
+VideoMediaType: TypeAlias = Literal[
+    'video/x-matroska',
+    'video/quicktime',
+    'video/mp4',
+    'video/webm',
+    'video/x-flv',
+    'video/mpeg',
+    'video/x-ms-wmv',
+    'video/3gpp',
+]
+
+AudioFormat: TypeAlias = Literal['wav', 'mp3', 'oga', 'flac', 'aiff', 'aac']
 ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
 DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
+VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
+
+FinishReason: TypeAlias = Literal[
+    'stop',
+    'length',
+    'content_filter',
+    'tool_call',
+    'error',
+]
+"""Reason the model finished generating the response, normalized to OpenTelemetry values."""
+
+ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
+"""Type for the force_download parameter on FileUrl subclasses.
+
+- `False`: The URL is sent directly to providers that support it. For providers that don't,
+  the file is downloaded with SSRF protection (blocks private IPs and cloud metadata).
+- `True`: The file is always downloaded with SSRF protection (blocks private IPs and cloud metadata).
+- `'allow-local'`: The file is always downloaded, allowing private IPs but still blocking cloud metadata.
+"""
+
+ProviderDetailsDelta: TypeAlias = dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]] | None
+"""Type for provider_details input: can be a static dict, a callback to update existing details, or None."""
 
 
-@dataclass
+@dataclass(repr=False)
+class SystemPromptPart:
+    """A system prompt, generally written by the application developer.
+
+    This gives the model context and guidance on how to respond.
+    """
+
+    content: str
+    """The content of the prompt."""
+
+    _: KW_ONLY
+
+    timestamp: datetime = field(default_factory=_now_utc)
+    """The timestamp of the prompt."""
+
+    dynamic_ref: str | None = None
+    """The ref of the dynamic system prompt function that generated this part.
+
+    Only set if system prompt is dynamic, see [`system_prompt`][pydantic_ai.agent.Agent.system_prompt] for more information.
+    """
+
+    part_kind: Literal['system-prompt'] = 'system-prompt'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        return LogRecord(
+            attributes={'event.name': 'gen_ai.system.message'},
+            body={'role': 'system', **({'content': self.content} if settings.include_content else {})},
+        )
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        return [_otel_messages.TextPart(type='text', **{'content': self.content} if settings.include_content else {})]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _multi_modal_content_identifier(identifier: str | bytes) -> str:
+    """Generate stable identifier for multi-modal content to help LLM in finding a specific file in tool call responses."""
+    if isinstance(identifier, str):
+        identifier = identifier.encode('utf-8')
+    return hashlib.sha1(identifier).hexdigest()[:6]
+
+
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+class FileUrl(ABC):
+    """Abstract base class for any URL-based file."""
+
+    url: str
+    """The URL of the file."""
+
+    _: KW_ONLY
+
+    force_download: ForceDownloadMode = False
+    """Controls whether the file is downloaded and how SSRF protection is applied:
+
+    * If `False`, the URL is sent directly to providers that support it. For providers that don't,
+      the file is downloaded with SSRF protection (blocks private IPs and cloud metadata).
+    * If `True`, the file is always downloaded with SSRF protection (blocks private IPs and cloud metadata).
+    * If `'allow-local'`, the file is always downloaded, allowing private IPs but still blocking cloud metadata.
+    """
+
+    vendor_metadata: dict[str, Any] | None = None
+    """Vendor-specific metadata for the file.
+
+    Supported by:
+    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+    - `OpenAIChatModel`, `OpenAIResponsesModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
+    - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
+    """
+
+    _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
+
+    _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
+
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `media_type` and `identifier` aliases.
+    def __init__(
+        self,
+        url: str,
+        *,
+        media_type: str | None = None,
+        identifier: str | None = None,
+        force_download: ForceDownloadMode = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
+        _identifier: str | None = None,
+    ) -> None: ...  # pragma: no cover
+
+    @pydantic.computed_field
+    @property
+    def media_type(self) -> str:
+        """Return the media type of the file, based on the URL or the provided `media_type`."""
+        return self._media_type or self._infer_media_type()
+
+    @pydantic.computed_field
+    @property
+    def identifier(self) -> str:
+        """The identifier of the file, such as a unique ID.
+
+        This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+        and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
+
+        This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
+        If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
+        e.g. "This is file <identifier>:" preceding the `FileUrl`.
+
+        It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+        distinguish multiple files.
+        """
+        return self._identifier or _multi_modal_content_identifier(self.url)
+
+    @abstractmethod
+    def _infer_media_type(self) -> str:
+        """Infer the media type of the file based on the URL."""
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def format(self) -> str:
+        """The file format."""
+        raise NotImplementedError
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+class VideoUrl(FileUrl):
+    """A URL to a video."""
+
+    url: str
+    """The URL of the video."""
+
+    _: KW_ONLY
+
+    kind: Literal['video-url'] = 'video-url'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
+    def __init__(
+        self,
+        url: str,
+        *,
+        media_type: str | None = None,
+        identifier: str | None = None,
+        force_download: ForceDownloadMode = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        kind: Literal['video-url'] = 'video-url',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
+        _identifier: str | None = None,
+    ) -> None: ...  # pragma: no cover
+
+    def _infer_media_type(self) -> str:
+        """Return the media type of the video, based on the url."""
+        # Assume that YouTube videos are mp4 because there would be no extension
+        # to infer from. This should not be a problem, as Gemini disregards media
+        # type for YouTube URLs.
+        if self.is_youtube:
+            return 'video/mp4'
+
+        mime_type, _ = _mime_types.guess_type(self.url)
+        if mime_type is None:
+            raise ValueError(
+                f'Could not infer media type from video URL: {self.url}. Explicitly provide a `media_type` instead.'
+            )
+        return mime_type
+
+    @property
+    def is_youtube(self) -> bool:
+        """True if the URL has a YouTube domain."""
+        parsed = urlparse(self.url)
+        hostname = parsed.hostname
+        return hostname in ('youtu.be', 'youtube.com', 'www.youtube.com')
+
+    @property
+    def format(self) -> VideoFormat:
+        """The file format of the video.
+
+        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
+        """
+        return _video_format_lookup[self.media_type]
+
+
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+class AudioUrl(FileUrl):
+    """A URL to an audio file."""
+
+    url: str
+    """The URL of the audio file."""
+
+    _: KW_ONLY
+
+    kind: Literal['audio-url'] = 'audio-url'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
+    def __init__(
+        self,
+        url: str,
+        *,
+        media_type: str | None = None,
+        identifier: str | None = None,
+        force_download: ForceDownloadMode = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        kind: Literal['audio-url'] = 'audio-url',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
+        _identifier: str | None = None,
+    ) -> None: ...  # pragma: no cover
+
+    def _infer_media_type(self) -> str:
+        """Return the media type of the audio file, based on the url.
+
+        References:
+        - Gemini: https://ai.google.dev/gemini-api/docs/audio#supported-formats
+        """
+        mime_type, _ = _mime_types.guess_type(self.url)
+        if mime_type is None:
+            raise ValueError(
+                f'Could not infer media type from audio URL: {self.url}. Explicitly provide a `media_type` instead.'
+            )
+        return mime_type
+
+    @property
+    def format(self) -> AudioFormat:
+        """The file format of the audio file."""
+        return _audio_format_lookup[self.media_type]
+
+
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+class ImageUrl(FileUrl):
+    """A URL to an image."""
+
+    url: str
+    """The URL of the image."""
+
+    _: KW_ONLY
+
+    kind: Literal['image-url'] = 'image-url'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
+    def __init__(
+        self,
+        url: str,
+        *,
+        media_type: str | None = None,
+        identifier: str | None = None,
+        force_download: ForceDownloadMode = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        kind: Literal['image-url'] = 'image-url',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
+        _identifier: str | None = None,
+    ) -> None: ...  # pragma: no cover
+
+    def _infer_media_type(self) -> str:
+        """Return the media type of the image, based on the url."""
+        mime_type, _ = _mime_types.guess_type(self.url)
+        if mime_type is None:
+            raise ValueError(
+                f'Could not infer media type from image URL: {self.url}. Explicitly provide a `media_type` instead.'
+            )
+        return mime_type
+
+    @property
+    def format(self) -> ImageFormat:
+        """The file format of the image.
+
+        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
+        """
+        return _image_format_lookup[self.media_type]
+
+
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+class DocumentUrl(FileUrl):
+    """The URL of the document."""
+
+    url: str
+    """The URL of the document."""
+
+    _: KW_ONLY
+
+    kind: Literal['document-url'] = 'document-url'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the aliases for the `_media_type` and `_identifier` fields.
+    def __init__(
+        self,
+        url: str,
+        *,
+        media_type: str | None = None,
+        identifier: str | None = None,
+        force_download: ForceDownloadMode = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        kind: Literal['document-url'] = 'document-url',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
+        _identifier: str | None = None,
+    ) -> None: ...  # pragma: no cover
+
+    def _infer_media_type(self) -> str:
+        """Return the media type of the document, based on the url."""
+        mime_type, _ = _mime_types.guess_type(self.url)
+        if mime_type is None:
+            raise ValueError(
+                f'Could not infer media type from document URL: {self.url}. Explicitly provide a `media_type` instead.'
+            )
+        return mime_type
+
+    @property
+    def format(self) -> DocumentFormat:
+        """The file format of the document.
+
+        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
+        """
+        media_type = self.media_type
+        try:
+            return _document_format_lookup[media_type]
+        except KeyError as e:
+            raise ValueError(f'Unknown document media type: {media_type}') from e
+
+
+@pydantic_dataclass(
+    repr=False,
+    config=pydantic.ConfigDict(
+        ser_json_bytes='base64',
+        val_json_bytes='base64',
+    ),
+)
 class BinaryContent:
     """Binary content, e.g. an audio or image file."""
 
     data: bytes
-    """The binary data."""
+    """The binary file data.
+
+    Use `.base64` to get the base64-encoded string.
+    """
+
+    _: KW_ONLY
 
     media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str
     """The media type of the binary data."""
 
+    vendor_metadata: dict[str, Any] | None = None
+    """Vendor-specific metadata for the file.
+
+    Supported by:
+    - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+    - `OpenAIChatModel`, `OpenAIResponsesModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
+    - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
+    """
+
+    _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
+
     kind: Literal['binary'] = 'binary'
     """Type identifier, this is available on all parts as a discriminator."""
+
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `identifier` alias for the `_identifier` field.
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str,
+        identifier: str | None = None,
+        vendor_metadata: dict[str, Any] | None = None,
+        kind: Literal['binary'] = 'binary',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _identifier: str | None = None,
+    ) -> None: ...  # pragma: no cover
+
+    @staticmethod
+    def narrow_type(bc: BinaryContent) -> BinaryContent | BinaryImage:
+        """Narrow the type of the `BinaryContent` to `BinaryImage` if it's an image."""
+        if bc.is_image:
+            return BinaryImage(
+                data=bc.data,
+                media_type=bc.media_type,
+                identifier=bc.identifier,
+                vendor_metadata=bc.vendor_metadata,
+            )
+        else:
+            return bc
+
+    @classmethod
+    def from_data_uri(cls, data_uri: str) -> BinaryContent:
+        """Create a `BinaryContent` from a data URI."""
+        prefix = 'data:'
+        if not data_uri.startswith(prefix):
+            raise ValueError('Data URI must start with "data:"')
+        media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
+        return cls.narrow_type(cls(data=base64.b64decode(data), media_type=media_type))
+
+    @classmethod
+    def from_path(cls, path: PathLike[str]) -> BinaryContent:
+        """Create a `BinaryContent` from a path.
+
+        Defaults to 'application/octet-stream' if the media type cannot be inferred.
+
+        Raises:
+            FileNotFoundError: if the file does not exist.
+            PermissionError: if the file cannot be read.
+        """
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f'File not found: {path}')
+        media_type, _ = _mime_types.guess_type(path)
+        if media_type is None:
+            media_type = 'application/octet-stream'
+
+        return cls.narrow_type(cls(data=path.read_bytes(), media_type=media_type))
+
+    @pydantic.computed_field
+    @property
+    def identifier(self) -> str:
+        """Identifier for the binary content, such as a unique ID.
+
+        This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+        and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
+
+        This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool.
+        If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
+        e.g. "This is file <identifier>:" preceding the `BinaryContent`.
+
+        It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+        distinguish multiple files.
+        """
+        return self._identifier or _multi_modal_content_identifier(self.data)
+
+    @property
+    def data_uri(self) -> str:
+        """Convert the `BinaryContent` to a data URI."""
+        return f'data:{self.media_type};base64,{self.base64}'
+
+    @property
+    def base64(self) -> str:
+        """Return the binary data as a base64-encoded string. Default encoding is UTF-8."""
+        return base64.b64encode(self.data).decode()
 
     @property
     def is_audio(self) -> bool:
@@ -164,81 +586,208 @@ class BinaryContent:
         return self.media_type.startswith('image/')
 
     @property
+    def is_video(self) -> bool:
+        """Return `True` if the media type is a video type."""
+        return self.media_type.startswith('video/')
+
+    @property
     def is_document(self) -> bool:
         """Return `True` if the media type is a document type."""
-        return self.media_type in {
-            'application/pdf',
-            'text/plain',
-            'text/csv',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'text/html',
-            'text/markdown',
-            'application/vnd.ms-excel',
-        }
+        return self.media_type in _document_format_lookup
 
     @property
     def format(self) -> str:
         """The file format of the binary content."""
-        if self.is_audio:
-            if self.media_type == 'audio/mpeg':
-                return 'mp3'
-            elif self.media_type == 'audio/wav':
-                return 'wav'
-        elif self.is_image:
-            return _image_format(self.media_type)
-        elif self.is_document:
-            return _document_format(self.media_type)
-        raise ValueError(f'Unknown media type: {self.media_type}')
+        try:
+            if self.is_audio:
+                return _audio_format_lookup[self.media_type]
+            elif self.is_image:
+                return _image_format_lookup[self.media_type]
+            elif self.is_video:
+                return _video_format_lookup[self.media_type]
+            else:
+                return _document_format_lookup[self.media_type]
+        except KeyError as e:
+            raise ValueError(f'Unknown media type: {self.media_type}') from e
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | BinaryContent'
+@pydantic_dataclass(
+    repr=False,
+    config=pydantic.ConfigDict(
+        ser_json_bytes='base64',
+        val_json_bytes='base64',
+    ),
+)
+class BinaryImage(BinaryContent):
+    """Binary content that's guaranteed to be an image."""
 
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `identifier` alias for the `_identifier` field.
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        media_type: ImageMediaType | str,
+        identifier: str | None = None,
+        vendor_metadata: dict[str, Any] | None = None,
+        kind: Literal['binary'] = 'binary',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _identifier: str | None = None,
+    ) -> None: ...  # pragma: no cover
 
-def _document_format(media_type: str) -> DocumentFormat:
-    if media_type == 'application/pdf':
-        return 'pdf'
-    elif media_type == 'text/plain':
-        return 'txt'
-    elif media_type == 'text/csv':
-        return 'csv'
-    elif media_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-        return 'docx'
-    elif media_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
-        return 'xlsx'
-    elif media_type == 'text/html':
-        return 'html'
-    elif media_type == 'text/markdown':
-        return 'md'
-    elif media_type == 'application/vnd.ms-excel':
-        return 'xls'
-    else:
-        raise ValueError(f'Unknown document media type: {media_type}')
-
-
-def _image_format(media_type: str) -> ImageFormat:
-    if media_type == 'image/jpeg':
-        return 'jpeg'
-    elif media_type == 'image/png':
-        return 'png'
-    elif media_type == 'image/gif':
-        return 'gif'
-    elif media_type == 'image/webp':
-        return 'webp'
-    else:
-        raise ValueError(f'Unknown image media type: {media_type}')
+    def __post_init__(self):
+        if not self.is_image:
+            raise ValueError('`BinaryImage` must have a media type that starts with "image/"')
 
 
 @dataclass
+class CachePoint:
+    """A cache point marker for prompt caching.
+
+    Can be inserted into UserPromptPart.content to mark cache boundaries.
+    Models that don't support caching will filter these out.
+
+    Supported by:
+
+    - Anthropic
+    - Amazon Bedrock (Converse API)
+    """
+
+    kind: Literal['cache-point'] = 'cache-point'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    ttl: Literal['5m', '1h'] = '5m'
+    """The cache time-to-live, either "5m" (5 minutes) or "1h" (1 hour).
+
+    Supported by:
+
+    * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
+
+
+MULTI_MODAL_CONTENT_TYPES = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
+"""Tuple of multi-modal content types for use with isinstance() checks."""
+
+MultiModalContent = Annotated[
+    ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent, pydantic.Discriminator('kind')
+]
+"""Union of all multi-modal content types with a discriminator for Pydantic validation."""
+
+UserContent: TypeAlias = str | MultiModalContent | CachePoint
+
+
+@dataclass(repr=False)
+class ToolReturn:
+    """A structured return value for tools that need to provide both a return value and custom content to the model.
+
+    This class allows tools to return complex responses that include:
+    - A return value for actual tool return
+    - Custom content (including multi-modal content) to be sent to the model as a UserPromptPart
+    - Optional metadata for application use
+    """
+
+    return_value: ToolReturnContent
+    """The return value to be used in the tool response."""
+
+    _: KW_ONLY
+
+    content: str | Sequence[UserContent] | None = None
+    """The content to be sent to the model as a UserPromptPart."""
+
+    metadata: Any = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    kind: Literal['tool-return'] = 'tool-return'
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_document_format_lookup: dict[str, DocumentFormat] = {
+    'application/pdf': 'pdf',
+    'text/plain': 'txt',
+    'text/csv': 'csv',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'text/html': 'html',
+    'text/markdown': 'md',
+    'application/msword': 'doc',
+    'application/vnd.ms-excel': 'xls',
+}
+_audio_format_lookup: dict[str, AudioFormat] = {
+    'audio/mpeg': 'mp3',
+    'audio/wav': 'wav',
+    'audio/flac': 'flac',
+    'audio/ogg': 'oga',
+    'audio/aiff': 'aiff',
+    'audio/aac': 'aac',
+}
+_image_format_lookup: dict[str, ImageFormat] = {
+    'image/jpeg': 'jpeg',
+    'image/png': 'png',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+}
+_video_format_lookup: dict[str, VideoFormat] = {
+    'video/x-matroska': 'mkv',
+    'video/quicktime': 'mov',
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'video/x-flv': 'flv',
+    'video/mpeg': 'mpeg',
+    'video/x-ms-wmv': 'wmv',
+    'video/3gpp': 'three_gp',
+}
+
+_kind_to_modality_lookup: dict[str, Literal['image', 'audio', 'video']] = {
+    'image-url': 'image',
+    'audio-url': 'audio',
+    'video-url': 'video',
+}
+
+
+def _infer_modality_from_media_type(media_type: str) -> Literal['image', 'audio', 'video'] | None:
+    """Infer modality from media type for OTel GenAI semantic conventions."""
+    if media_type.startswith('image/'):
+        return 'image'
+    elif media_type.startswith('audio/'):
+        return 'audio'
+    elif media_type.startswith('video/'):
+        return 'video'
+    return None
+
+
+def _convert_binary_to_otel_part(
+    media_type: str, base64_content: Callable[[], str], settings: InstrumentationSettings
+) -> _otel_messages.BlobPart | _otel_messages.BinaryDataPart:
+    """Convert binary content to OTel message part based on version."""
+    if settings.version >= 4:
+        blob_part = _otel_messages.BlobPart(type='blob', mime_type=media_type)
+        modality = _infer_modality_from_media_type(media_type)
+        if modality is not None:
+            blob_part['modality'] = modality
+        if settings.include_content and settings.include_binary_content:
+            blob_part['content'] = base64_content()
+        return blob_part
+    else:
+        converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=media_type)
+        if settings.include_content and settings.include_binary_content:
+            converted_part['content'] = base64_content()
+        return converted_part
+
+
+@dataclass(repr=False)
 class UserPromptPart:
     """A user prompt, generally written by the end user.
 
-    Content comes from the `user_prompt` parameter of [`Agent.run`][pydantic_ai.Agent.run],
-    [`Agent.run_sync`][pydantic_ai.Agent.run_sync], and [`Agent.run_stream`][pydantic_ai.Agent.run_stream].
+    Content comes from the `user_prompt` parameter of [`Agent.run`][pydantic_ai.agent.AbstractAgent.run],
+    [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], and [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream].
     """
 
     content: str | Sequence[UserContent]
     """The content of the prompt."""
+
+    _: KW_ONLY
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp of the prompt."""
@@ -246,36 +795,97 @@ class UserPromptPart:
     part_kind: Literal['user-prompt'] = 'user-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self) -> Event:
-        if isinstance(self.content, str):
-            content = self.content
-        else:
-            # TODO figure out what to record for images and audio
-            content = [part if isinstance(part, str) else {'kind': part.kind} for part in self.content]
-        return Event('gen_ai.user.message', body={'content': content, 'role': 'user'})
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        content: Any = [{'kind': part.pop('type'), **part} for part in self.otel_message_parts(settings)]
+        for part in content:
+            if part['kind'] == 'binary' and 'content' in part:
+                part['binary_content'] = part.pop('content')
+        content = [
+            part['content'] if part == {'kind': 'text', 'content': part.get('content')} else part for part in content
+        ]
+        if content in ([{'kind': 'text'}], [self.content]):
+            content = content[0]
+        return LogRecord(attributes={'event.name': 'gen_ai.user.message'}, body={'content': content, 'role': 'user'})
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        parts: list[_otel_messages.MessagePart] = []
+        content: Sequence[UserContent] = [self.content] if isinstance(self.content, str) else self.content
+        for part in content:
+            if isinstance(part, str):
+                parts.append(
+                    _otel_messages.TextPart(type='text', **({'content': part} if settings.include_content else {}))
+                )
+            elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
+                if settings.version >= 4:
+                    uri_part = _otel_messages.UriPart(type='uri')
+                    modality = _kind_to_modality_lookup.get(part.kind)
+                    if modality is not None:
+                        uri_part['modality'] = modality
+                    try:  # don't fail the whole message if media type can't be inferred for some reason, just omit it
+                        uri_part['mime_type'] = part.media_type
+                    except ValueError:
+                        pass
+                    if settings.include_content:
+                        uri_part['uri'] = part.url
+                    parts.append(uri_part)
+                else:
+                    parts.append(
+                        _otel_messages.MediaUrlPart(
+                            type=part.kind,
+                            **{'url': part.url} if settings.include_content else {},
+                        )
+                    )
+            elif isinstance(part, BinaryContent):
+                parts.append(_convert_binary_to_otel_part(part.media_type, lambda p=part: p.base64, settings))
+            elif isinstance(part, CachePoint):
+                # CachePoint is a marker, not actual content - skip it for otel
+                pass
+            else:
+                parts.append({'type': part.kind})  # pragma: no cover
+        return parts
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(Any, config=pydantic.ConfigDict(defer_build=True))
+tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
+    Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
+)
+
+if TYPE_CHECKING:
+    # Simpler type for static analysis - recursive TypeAliasType with Any produces spurious Unknown types
+    ToolReturnContent: TypeAlias = MultiModalContent | Sequence[Any] | Mapping[str, Any] | Any
+else:
+    # Recursive type for runtime Pydantic validation - enables automatic reconstruction of
+    # BinaryContent/FileUrl objects nested inside dicts/lists during deserialization
+    ToolReturnContent = TypeAliasType(
+        'ToolReturnContent',
+        MultiModalContent | Sequence['ToolReturnContent'] | Mapping[str, 'ToolReturnContent'] | Any,
+    )
 
 
-@dataclass
-class ToolReturnPart:
-    """A tool return message, this encodes the result of running a tool."""
+@dataclass(repr=False)
+class BaseToolReturnPart:
+    """Base class for tool return parts."""
 
     tool_name: str
     """The name of the "tool" was called."""
 
-    content: Any
+    content: ToolReturnContent
     """The return value."""
 
-    tool_call_id: str
-    """The tool call identifier, this is used by some models including OpenAI."""
+    tool_call_id: str = field(default_factory=_generate_tool_call_id)
+    """The tool call identifier, this is used by some models including OpenAI.
+
+    In case the tool call id is not provided by the model, Pydantic AI will generate a random one.
+    """
+
+    _: KW_ONLY
+
+    metadata: Any = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
-
-    part_kind: Literal['tool-return'] = 'tool-return'
-    """Part type identifier, this is available on all parts as a discriminator."""
 
     def model_response_str(self) -> str:
         """Return a string representation of the content for the model."""
@@ -287,22 +897,83 @@ class ToolReturnPart:
     def model_response_object(self) -> dict[str, Any]:
         """Return a dictionary representation of the content, wrapping non-dict types appropriately."""
         # gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict
-        if isinstance(self.content, dict):
-            return tool_return_ta.dump_python(self.content, mode='json')  # pyright: ignore[reportUnknownMemberType]
+        json_content = tool_return_ta.dump_python(self.content, mode='json')
+        if isinstance(json_content, dict):
+            return json_content  # type: ignore[reportUnknownReturn]
         else:
-            return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
+            return {'return_value': json_content}
 
-    def otel_event(self) -> Event:
-        return Event(
-            'gen_ai.tool.message',
-            body={'content': self.content, 'role': 'tool', 'id': self.tool_call_id, 'name': self.tool_name},
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        body: AnyValue = {
+            'role': 'tool',
+            'id': self.tool_call_id,
+            'name': self.tool_name,
+        }
+        if settings.include_content:
+            body['content'] = self.content  # pyright: ignore[reportArgumentType]
+
+        return LogRecord(
+            body=body,
+            attributes={'event.name': 'gen_ai.tool.message'},
         )
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        from .models.instrumented import InstrumentedModel
+
+        part = _otel_messages.ToolCallResponsePart(
+            type='tool_call_response',
+            id=self.tool_call_id,
+            name=self.tool_name,
+        )
+
+        if settings.include_content and self.content is not None:
+            part['result'] = InstrumentedModel.serialize_any(self.content)
+
+        return [part]
+
+    def has_content(self) -> bool:
+        """Return `True` if the tool return has content."""
+        return self.content is not None  # pragma: no cover
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class ToolReturnPart(BaseToolReturnPart):
+    """A tool return message, this encodes the result of running a tool."""
+
+    _: KW_ONLY
+
+    part_kind: Literal['tool-return'] = 'tool-return'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+@dataclass(repr=False)
+class BuiltinToolReturnPart(BaseToolReturnPart):
+    """A tool return message from a built-in tool."""
+
+    _: KW_ONLY
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    Required to be set when `provider_details` is set.
+    """
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data."""
+
+    part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
+    """Part type identifier, this is available on all parts as a discriminator."""
 
 
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
-@dataclass
+@dataclass(repr=False)
 class RetryPromptPart:
     """A message back to a model asking it to try again.
 
@@ -315,7 +986,7 @@ class RetryPromptPart:
     * the model returned plain text when a structured response was expected
     * Pydantic validation of a structured response failed, here content is derived from a Pydantic
       [`ValidationError`][pydantic_core.ValidationError]
-    * a result validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
+    * an output validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
     """
 
     content: list[pydantic_core.ErrorDetails] | str
@@ -325,13 +996,15 @@ class RetryPromptPart:
     error details.
     """
 
+    _: KW_ONLY
+
     tool_name: str | None = None
     """The name of the tool that was called, if any."""
 
     tool_call_id: str = field(default_factory=_generate_tool_call_id)
     """The tool call identifier, this is used by some models including OpenAI.
 
-    In case the tool call id is not provided by the model, PydanticAI will generate a random one.
+    In case the tool call id is not provided by the model, Pydantic AI will generate a random one.
     """
 
     timestamp: datetime = field(default_factory=_now_utc)
@@ -343,50 +1016,120 @@ class RetryPromptPart:
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
         if isinstance(self.content, str):
-            description = self.content
+            if self.tool_name is None:
+                description = f'Validation feedback:\n{self.content}'
+            else:
+                description = self.content
         else:
             json_errors = error_details_ta.dump_json(self.content, exclude={'__all__': {'ctx'}}, indent=2)
-            description = f'{len(self.content)} validation errors: {json_errors.decode()}'
+            plural = isinstance(self.content, list) and len(self.content) != 1
+            description = (
+                f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
+            )
         return f'{description}\n\nFix the errors and try again.'
 
-    def otel_event(self) -> Event:
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         if self.tool_name is None:
-            return Event('gen_ai.user.message', body={'content': self.model_response(), 'role': 'user'})
+            return LogRecord(
+                attributes={'event.name': 'gen_ai.user.message'},
+                body={'content': self.model_response(), 'role': 'user'},
+            )
         else:
-            return Event(
-                'gen_ai.tool.message',
+            return LogRecord(
+                attributes={'event.name': 'gen_ai.tool.message'},
                 body={
-                    'content': self.model_response(),
+                    **({'content': self.model_response()} if settings.include_content else {}),
                     'role': 'tool',
                     'id': self.tool_call_id,
                     'name': self.tool_name,
                 },
             )
 
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        if self.tool_name is None:
+            return [_otel_messages.TextPart(type='text', content=self.model_response())]
+        else:
+            part = _otel_messages.ToolCallResponsePart(
+                type='tool_call_response',
+                id=self.tool_call_id,
+                name=self.tool_name,
+            )
+
+            if settings.include_content:
+                part['result'] = self.model_response()
+
+            return [part]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
 
 ModelRequestPart = Annotated[
-    Union[SystemPromptPart, UserPromptPart, ToolReturnPart, RetryPromptPart], pydantic.Discriminator('part_kind')
+    SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart, pydantic.Discriminator('part_kind')
 ]
-"""A message part sent by PydanticAI to a model."""
+"""A message part sent by Pydantic AI to a model."""
 
 
-@dataclass
+@dataclass(repr=False)
 class ModelRequest:
-    """A request generated by PydanticAI and sent to a model, e.g. a message from the PydanticAI app to the model."""
+    """A request generated by Pydantic AI and sent to a model, e.g. a message from the Pydantic AI app to the model."""
 
-    parts: list[ModelRequestPart]
+    parts: Sequence[ModelRequestPart]
     """The parts of the user message."""
+
+    _: KW_ONLY
+
+    # Default is None for backwards compatibility with old serialized messages that don't have this field.
+    # Using a default_factory would incorrectly fill in the current time for deserialized historical messages.
+    timestamp: datetime | None = None
+    """The timestamp when the request was sent to the model."""
+
+    instructions: str | None = None
+    """The instructions for the model."""
 
     kind: Literal['request'] = 'request'
     """Message type identifier, this is available on all parts as a discriminator."""
 
+    run_id: str | None = None
+    """The unique identifier of the agent run in which this message originated."""
 
-@dataclass
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    @classmethod
+    def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
+        """Create a `ModelRequest` with a single user prompt as text."""
+        return cls(parts=[UserPromptPart(user_prompt)], instructions=instructions)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class TextPart:
     """A plain text response from a model."""
 
     content: str
     """The text content of the response."""
+
+    _: KW_ONLY
+
+    id: str | None = None
+    """An optional identifier of the text part.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    Required to be set when `provider_details` or `id` is set.
+    """
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -395,15 +1138,107 @@ class TextPart:
         """Return `True` if the text content is non-empty."""
         return bool(self.content)
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
-class ToolCallPart:
+
+@dataclass(repr=False)
+class ThinkingPart:
+    """A thinking response from a model."""
+
+    content: str
+    """The thinking content of the response."""
+
+    _: KW_ONLY
+
+    id: str | None = None
+    """The identifier of the thinking part.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    signature: str | None = None
+    """The signature of the thinking.
+
+    Supported by:
+
+    * Anthropic (corresponds to the `signature` field)
+    * Bedrock (corresponds to the `signature` field)
+    * Google (corresponds to the `thought_signature` field)
+    * OpenAI (corresponds to the `encrypted_content` field)
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    Signatures are only sent back to the same provider.
+    Required to be set when `provider_details`, `id` or `signature` is set.
+    """
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    part_kind: Literal['thinking'] = 'thinking'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def has_content(self) -> bool:
+        """Return `True` if the thinking content is non-empty."""
+        return bool(self.content)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class FilePart:
+    """A file response from a model."""
+
+    content: Annotated[BinaryContent, pydantic.AfterValidator(BinaryImage.narrow_type)]
+    """The file content of the response."""
+
+    _: KW_ONLY
+
+    id: str | None = None
+    """The identifier of the file part.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    Required to be set when `provider_details` or `id` is set.
+    """
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    part_kind: Literal['file'] = 'file'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def has_content(self) -> bool:
+        """Return `True` if the file content is non-empty."""
+        return bool(self.content.data)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class BaseToolCallPart:
     """A tool call from a model."""
 
     tool_name: str
     """The name of the tool to call."""
 
-    args: str | dict[str, Any]
+    args: str | dict[str, Any] | None = None
     """The arguments to pass to the tool.
 
     This is stored either as a JSON string or a Python dictionary depending on how data was received.
@@ -412,17 +1247,39 @@ class ToolCallPart:
     tool_call_id: str = field(default_factory=_generate_tool_call_id)
     """The tool call identifier, this is used by some models including OpenAI.
 
-    In case the tool call id is not provided by the model, PydanticAI will generate a random one.
+    In case the tool call id is not provided by the model, Pydantic AI will generate a random one.
     """
 
-    part_kind: Literal['tool-call'] = 'tool-call'
-    """Part type identifier, this is available on all parts as a discriminator."""
+    _: KW_ONLY
+
+    id: str | None = None
+    """An optional identifier of the tool call part, separate from the tool call ID.
+
+    This is used by some APIs like OpenAI Responses.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    Builtin tool calls are only sent back to the same provider.
+    Required to be set when `provider_details` or `id` is set.
+    """
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
         This is just for convenience with models that require dicts as input.
         """
+        if not self.args:
+            return {}
         if isinstance(self.args, dict):
             return self.args
         args = pydantic_core.from_json(self.args)
@@ -434,6 +1291,8 @@ class ToolCallPart:
 
         This is just for convenience with models that require JSON strings as input.
         """
+        if not self.args:
+            return '{}'
         if isinstance(self.args, str):
             return self.args
         return pydantic_core.to_json(self.args).decode()
@@ -447,37 +1306,183 @@ class ToolCallPart:
         else:
             return bool(self.args)
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-ModelResponsePart = Annotated[Union[TextPart, ToolCallPart], pydantic.Discriminator('part_kind')]
+
+@dataclass(repr=False)
+class ToolCallPart(BaseToolCallPart):
+    """A tool call from a model."""
+
+    _: KW_ONLY
+
+    part_kind: Literal['tool-call'] = 'tool-call'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+@dataclass(repr=False)
+class BuiltinToolCallPart(BaseToolCallPart):
+    """A tool call to a built-in tool."""
+
+    _: KW_ONLY
+
+    part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+ModelResponsePart = Annotated[
+    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+    pydantic.Discriminator('part_kind'),
+]
 """A message part returned by a model."""
 
 
-@dataclass
+@dataclass(repr=False)
 class ModelResponse:
-    """A response from a model, e.g. a message from the model to the PydanticAI app."""
+    """A response from a model, e.g. a message from the model to the Pydantic AI app."""
 
-    parts: list[ModelResponsePart]
+    parts: Sequence[ModelResponsePart]
     """The parts of the model message."""
+
+    _: KW_ONLY
+
+    usage: RequestUsage = field(default_factory=RequestUsage)
+    """Usage information for the request.
+
+    This has a default to make tests easier, and to support loading old messages where usage will be missing.
+    """
 
     model_name: str | None = None
     """The name of the model that generated the response."""
 
     timestamp: datetime = field(default_factory=_now_utc)
-    """The timestamp of the response.
+    """The timestamp when the response was received locally.
 
-    If the model provides a timestamp in the response (as OpenAI does) that will be used.
+    This is always a high-precision local datetime. Provider-specific timestamps
+    (if available) are stored in `provider_details['timestamp']`.
     """
 
     kind: Literal['response'] = 'response'
     """Message type identifier, this is available on all parts as a discriminator."""
 
-    def otel_events(self) -> list[Event]:
+    provider_name: str | None = None
+    """The name of the LLM provider that generated the response."""
+
+    provider_url: str | None = None
+    """The base URL of the LLM provider that generated the response."""
+
+    provider_details: Annotated[
+        dict[str, Any] | None,
+        # `vendor_details` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
+        pydantic.Field(validation_alias=pydantic.AliasChoices('provider_details', 'vendor_details')),
+    ] = None
+    """Additional data returned by the provider that can't be mapped to standard fields."""
+
+    provider_response_id: Annotated[
+        str | None,
+        # `vendor_id` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
+        pydantic.Field(validation_alias=pydantic.AliasChoices('provider_response_id', 'vendor_id')),
+    ] = None
+    """request ID as specified by the model provider. This can be used to track the specific request to the model."""
+
+    finish_reason: FinishReason | None = None
+    """Reason the model finished generating the response, normalized to OpenTelemetry values."""
+
+    run_id: str | None = None
+    """The unique identifier of the agent run in which this message originated."""
+
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    @property
+    def text(self) -> str | None:
+        """Get the text in the response."""
+        texts: list[str] = []
+        last_part: ModelResponsePart | None = None
+        for part in self.parts:
+            if isinstance(part, TextPart):
+                # Adjacent text parts should be joined together, but if there are parts in between
+                # (like built-in tool calls) they should have newlines between them
+                if isinstance(last_part, TextPart):
+                    texts[-1] += part.content
+                else:
+                    texts.append(part.content)
+            last_part = part
+        if not texts:
+            return None
+
+        return '\n\n'.join(texts)
+
+    @property
+    def thinking(self) -> str | None:
+        """Get the thinking in the response."""
+        thinking_parts = [part.content for part in self.parts if isinstance(part, ThinkingPart)]
+        if not thinking_parts:
+            return None
+        return '\n\n'.join(thinking_parts)
+
+    @property
+    def files(self) -> list[BinaryContent]:
+        """Get the files in the response."""
+        return [part.content for part in self.parts if isinstance(part, FilePart)]
+
+    @property
+    def images(self) -> list[BinaryImage]:
+        """Get the images in the response."""
+        return [file for file in self.files if isinstance(file, BinaryImage)]
+
+    @property
+    def tool_calls(self) -> list[ToolCallPart]:
+        """Get the tool calls in the response."""
+        return [part for part in self.parts if isinstance(part, ToolCallPart)]
+
+    @property
+    def builtin_tool_calls(self) -> list[tuple[BuiltinToolCallPart, BuiltinToolReturnPart]]:
+        """Get the builtin tool calls and results in the response."""
+        calls = [part for part in self.parts if isinstance(part, BuiltinToolCallPart)]
+        if not calls:
+            return []
+        returns_by_id = {part.tool_call_id: part for part in self.parts if isinstance(part, BuiltinToolReturnPart)}
+        return [
+            (call_part, returns_by_id[call_part.tool_call_id])
+            for call_part in calls
+            if call_part.tool_call_id in returns_by_id
+        ]
+
+    @deprecated('`price` is deprecated, use `cost` instead')
+    def price(self) -> genai_types.PriceCalculation:  # pragma: no cover
+        return self.cost()
+
+    def cost(self) -> genai_types.PriceCalculation:
+        """Calculate the cost of the usage.
+
+        Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
+        """
+        assert self.model_name, 'Model name is required to calculate price'
+        # Try matching on provider_api_url first as this is more specific, then fall back to provider_id.
+        if self.provider_url:
+            try:
+                return calc_price(
+                    self.usage,
+                    self.model_name,
+                    provider_api_url=self.provider_url,
+                    genai_request_timestamp=self.timestamp,
+                )
+            except LookupError:
+                pass
+        return calc_price(
+            self.usage,
+            self.model_name,
+            provider_id=self.provider_name,
+            genai_request_timestamp=self.timestamp,
+        )
+
+    def otel_events(self, settings: InstrumentationSettings) -> list[LogRecord]:
         """Return OpenTelemetry events for the response."""
-        result: list[Event] = []
+        result: list[LogRecord] = []
 
         def new_event_body():
             new_body: dict[str, Any] = {'role': 'assistant'}
-            ev = Event('gen_ai.assistant.message', body=new_body)
+            ev = LogRecord(attributes={'event.name': 'gen_ai.assistant.message'}, body=new_body)
             result.append(ev)
             return new_body
 
@@ -487,36 +1492,136 @@ class ModelResponse:
                 body.setdefault('tool_calls', []).append(
                     {
                         'id': part.tool_call_id,
-                        'type': 'function',  # TODO https://github.com/pydantic/pydantic-ai/issues/888
+                        'type': 'function',
                         'function': {
                             'name': part.tool_name,
-                            'arguments': part.args,
+                            **({'arguments': part.args} if settings.include_content else {}),
                         },
                     }
                 )
-            elif isinstance(part, TextPart):
-                if body.get('content'):
-                    body = new_event_body()
-                body['content'] = part.content
+            elif isinstance(part, TextPart | ThinkingPart):
+                kind = part.part_kind
+                body.setdefault('content', []).append(
+                    {'kind': kind, **({'text': part.content} if settings.include_content else {})}
+                )
+            elif isinstance(part, FilePart):
+                body.setdefault('content', []).append(
+                    {
+                        'kind': 'binary',
+                        'media_type': part.content.media_type,
+                        **(
+                            {'binary_content': part.content.base64}
+                            if settings.include_content and settings.include_binary_content
+                            else {}
+                        ),
+                    }
+                )
+
+        if content := body.get('content'):
+            text_content = content[0].get('text')
+            if content == [{'kind': 'text', 'text': text_content}]:
+                body['content'] = text_content
 
         return result
 
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        parts: list[_otel_messages.MessagePart] = []
+        for part in self.parts:
+            if isinstance(part, TextPart):
+                parts.append(
+                    _otel_messages.TextPart(
+                        type='text',
+                        **({'content': part.content} if settings.include_content else {}),
+                    )
+                )
+            elif isinstance(part, ThinkingPart):
+                parts.append(
+                    _otel_messages.ThinkingPart(
+                        type='thinking',
+                        **({'content': part.content} if settings.include_content else {}),
+                    )
+                )
+            elif isinstance(part, FilePart):
+                parts.append(
+                    _convert_binary_to_otel_part(part.content.media_type, lambda p=part: p.content.base64, settings)
+                )
+            elif isinstance(part, BaseToolCallPart):
+                call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
+                if isinstance(part, BuiltinToolCallPart):
+                    call_part['builtin'] = True
+                if settings.include_content and part.args is not None:
+                    from .models.instrumented import InstrumentedModel
 
-ModelMessage = Annotated[Union[ModelRequest, ModelResponse], pydantic.Discriminator('kind')]
+                    if isinstance(part.args, str):
+                        call_part['arguments'] = part.args
+                    else:
+                        call_part['arguments'] = {k: InstrumentedModel.serialize_any(v) for k, v in part.args.items()}
+
+                parts.append(call_part)
+            elif isinstance(part, BuiltinToolReturnPart):
+                return_part = _otel_messages.ToolCallResponsePart(
+                    type='tool_call_response',
+                    id=part.tool_call_id,
+                    name=part.tool_name,
+                    builtin=True,
+                )
+                if settings.include_content and part.content is not None:  # pragma: no branch
+                    from .models.instrumented import InstrumentedModel
+
+                    return_part['result'] = InstrumentedModel.serialize_any(part.content)
+
+                parts.append(return_part)
+        return parts
+
+    @property
+    @deprecated('`vendor_details` is deprecated, use `provider_details` instead')
+    def vendor_details(self) -> dict[str, Any] | None:
+        return self.provider_details
+
+    @property
+    @deprecated('`vendor_id` is deprecated, use `provider_response_id` instead')
+    def vendor_id(self) -> str | None:
+        return self.provider_response_id
+
+    @property
+    @deprecated('`provider_request_id` is deprecated, use `provider_response_id` instead')
+    def provider_request_id(self) -> str | None:
+        return self.provider_response_id
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('kind')]
 """Any message sent to or returned by a model."""
 
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(
-    list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64')
+    list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
 
 
-@dataclass
+@dataclass(repr=False)
 class TextPartDelta:
     """A partial update (delta) for a `TextPart` to append new text content."""
 
     content_delta: str
     """The incremental text content to add to the existing `TextPart` content."""
+
+    _: KW_ONLY
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    This is required to be set when `provider_details` is set and the initial TextPart does not have a `provider_name` or it has changed.
+    """
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
 
     part_delta_kind: Literal['text'] = 'text'
     """Part delta type identifier, used as a discriminator."""
@@ -534,11 +1639,127 @@ class TextPartDelta:
             ValueError: If `part` is not a `TextPart`.
         """
         if not isinstance(part, TextPart):
-            raise ValueError('Cannot apply TextPartDeltas to non-TextParts')
-        return replace(part, content=part.content + self.content_delta)
+            raise ValueError('Cannot apply TextPartDeltas to non-TextParts')  # pragma: no cover
+        return replace(
+            part,
+            content=part.content + self.content_delta,
+            provider_name=self.provider_name or part.provider_name,
+            provider_details={**(part.provider_details or {}), **(self.provider_details or {})} or None,
+        )
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass
+@dataclass(repr=False, kw_only=True)
+class ThinkingPartDelta:
+    """A partial update (delta) for a `ThinkingPart` to append new thinking content."""
+
+    content_delta: str | None = None
+    """The incremental thinking content to add to the existing `ThinkingPart` content."""
+
+    signature_delta: str | None = None
+    """Optional signature delta.
+
+    Note this is never treated as a delta — it can replace None.
+    """
+
+    provider_name: str | None = None
+    """Optional provider name for the thinking part.
+
+    Signatures are only sent back to the same provider.
+    Required to be set when `provider_details` is set and the initial ThinkingPart does not have a `provider_name` or it has changed.
+    """
+
+    provider_details: ProviderDetailsDelta = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    Can be a dict to merge with existing details, or a callable that takes
+    the existing details and returns updated details.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data."""
+
+    part_delta_kind: Literal['thinking'] = 'thinking'
+    """Part delta type identifier, used as a discriminator."""
+
+    @overload
+    def apply(self, part: ModelResponsePart) -> ThinkingPart: ...
+
+    @overload
+    def apply(self, part: ModelResponsePart | ThinkingPartDelta) -> ThinkingPart | ThinkingPartDelta: ...
+
+    def apply(self, part: ModelResponsePart | ThinkingPartDelta) -> ThinkingPart | ThinkingPartDelta:
+        """Apply this thinking delta to an existing `ThinkingPart`.
+
+        Args:
+            part: The existing model response part, which must be a `ThinkingPart`.
+
+        Returns:
+            A new `ThinkingPart` with updated thinking content.
+
+        Raises:
+            ValueError: If `part` is not a `ThinkingPart`.
+        """
+        if isinstance(part, ThinkingPart):
+            new_content = part.content + self.content_delta if self.content_delta else part.content
+            new_signature = self.signature_delta if self.signature_delta is not None else part.signature
+            new_provider_name = self.provider_name if self.provider_name is not None else part.provider_name
+            # Resolve callable provider_details if needed
+            resolved_details = (
+                self.provider_details(part.provider_details)
+                if callable(self.provider_details)
+                else self.provider_details
+            )
+            new_provider_details = {**(part.provider_details or {}), **(resolved_details or {})} or None
+            return replace(
+                part,
+                content=new_content,
+                signature=new_signature,
+                provider_name=new_provider_name,
+                provider_details=new_provider_details,
+            )
+        elif isinstance(part, ThinkingPartDelta):
+            if self.content_delta is None and self.signature_delta is None:
+                raise ValueError('Cannot apply ThinkingPartDelta with no content or signature')
+            if self.content_delta is not None:
+                part = replace(part, content_delta=(part.content_delta or '') + self.content_delta)
+            if self.signature_delta is not None:
+                part = replace(part, signature_delta=self.signature_delta)
+            if self.provider_name is not None:
+                part = replace(part, provider_name=self.provider_name)
+            if self.provider_details is not None:
+                if callable(self.provider_details):
+                    if callable(part.provider_details):
+                        existing_fn = part.provider_details
+                        new_fn = self.provider_details
+
+                        def chained_both(d: dict[str, Any] | None) -> dict[str, Any]:
+                            return new_fn(existing_fn(d))
+
+                        part = replace(part, provider_details=chained_both)
+                    else:
+                        part = replace(part, provider_details=self.provider_details)  # pragma: no cover
+                elif callable(part.provider_details):
+                    existing_fn = part.provider_details
+                    new_dict = self.provider_details
+
+                    def chained_dict(d: dict[str, Any] | None) -> dict[str, Any]:
+                        return {**existing_fn(d), **new_dict}
+
+                    part = replace(part, provider_details=chained_dict)
+                else:
+                    existing = part.provider_details if isinstance(part.provider_details, dict) else {}
+                    part = replace(part, provider_details={**existing, **self.provider_details})
+            return part
+        raise ValueError(  # pragma: no cover
+            f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
+        )
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
 class ToolCallPartDelta:
     """A partial update (delta) for a `ToolCallPart` to modify tool name, arguments, or tool call ID."""
 
@@ -558,6 +1779,20 @@ class ToolCallPartDelta:
     Note this is never treated as a delta — it can replace None, but otherwise if a
     non-matching value is provided an error will be raised."""
 
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    This is required to be set when `provider_details` is set and the initial ToolCallPart does not have a `provider_name` or it has changed.
+    """
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
     part_delta_kind: Literal['tool_call'] = 'tool_call'
     """Part delta type identifier, used as a discriminator."""
 
@@ -565,41 +1800,53 @@ class ToolCallPartDelta:
         """Convert this delta to a fully formed `ToolCallPart` if possible, otherwise return `None`.
 
         Returns:
-            A `ToolCallPart` if both `tool_name_delta` and `args_delta` are set, otherwise `None`.
+            A `ToolCallPart` if `tool_name_delta` is set, otherwise `None`.
         """
-        if self.tool_name_delta is None or self.args_delta is None:
+        if self.tool_name_delta is None:
             return None
 
-        return ToolCallPart(self.tool_name_delta, self.args_delta, self.tool_call_id or _generate_tool_call_id())
+        return ToolCallPart(
+            self.tool_name_delta,
+            self.args_delta,
+            self.tool_call_id or _generate_tool_call_id(),
+            provider_name=self.provider_name,
+            provider_details=self.provider_details,
+        )
 
     @overload
-    def apply(self, part: ModelResponsePart) -> ToolCallPart: ...
+    def apply(self, part: ModelResponsePart) -> ToolCallPart | BuiltinToolCallPart: ...
 
     @overload
-    def apply(self, part: ModelResponsePart | ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta: ...
+    def apply(
+        self, part: ModelResponsePart | ToolCallPartDelta
+    ) -> ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta: ...
 
-    def apply(self, part: ModelResponsePart | ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta:
+    def apply(
+        self, part: ModelResponsePart | ToolCallPartDelta
+    ) -> ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta:
         """Apply this delta to a part or delta, returning a new part or delta with the changes applied.
 
         Args:
             part: The existing model response part or delta to update.
 
         Returns:
-            Either a new `ToolCallPart` or an updated `ToolCallPartDelta`.
+            Either a new `ToolCallPart` or `BuiltinToolCallPart`, or an updated `ToolCallPartDelta`.
 
         Raises:
-            ValueError: If `part` is neither a `ToolCallPart` nor a `ToolCallPartDelta`.
+            ValueError: If `part` is neither a `ToolCallPart`, `BuiltinToolCallPart`, nor a `ToolCallPartDelta`.
             UnexpectedModelBehavior: If applying JSON deltas to dict arguments or vice versa.
         """
-        if isinstance(part, ToolCallPart):
+        if isinstance(part, ToolCallPart | BuiltinToolCallPart):
             return self._apply_to_part(part)
 
         if isinstance(part, ToolCallPartDelta):
             return self._apply_to_delta(part)
 
-        raise ValueError(f'Can only apply ToolCallPartDeltas to ToolCallParts or ToolCallPartDeltas, not {part}')
+        raise ValueError(  # pragma: no cover
+            f'Can only apply ToolCallPartDeltas to ToolCallParts, BuiltinToolCallParts, or ToolCallPartDeltas, not {part}'
+        )
 
-    def _apply_to_delta(self, delta: ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta:
+    def _apply_to_delta(self, delta: ToolCallPartDelta) -> ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta:
         """Internal helper to apply this delta to another delta."""
         if self.tool_name_delta:
             # Append incremental text to the existing tool_name_delta
@@ -624,40 +1871,65 @@ class ToolCallPartDelta:
         if self.tool_call_id:
             delta = replace(delta, tool_call_id=self.tool_call_id)
 
+        if self.provider_name:
+            delta = replace(delta, provider_name=self.provider_name)
+
+        if self.provider_details:
+            merged_provider_details = {**(delta.provider_details or {}), **self.provider_details}
+            delta = replace(delta, provider_details=merged_provider_details)
+
         # If we now have enough data to create a full ToolCallPart, do so
-        if delta.tool_name_delta is not None and delta.args_delta is not None:
-            return ToolCallPart(delta.tool_name_delta, delta.args_delta, delta.tool_call_id or _generate_tool_call_id())
+        if delta.tool_name_delta is not None:
+            return ToolCallPart(
+                delta.tool_name_delta,
+                delta.args_delta,
+                delta.tool_call_id or _generate_tool_call_id(),
+                provider_name=delta.provider_name,
+                provider_details=delta.provider_details,
+            )
 
         return delta
 
-    def _apply_to_part(self, part: ToolCallPart) -> ToolCallPart:
-        """Internal helper to apply this delta directly to a `ToolCallPart`."""
+    def _apply_to_part(self, part: ToolCallPart | BuiltinToolCallPart) -> ToolCallPart | BuiltinToolCallPart:
+        """Internal helper to apply this delta directly to a `ToolCallPart` or `BuiltinToolCallPart`."""
         if self.tool_name_delta:
             # Append incremental text to the existing tool_name
             tool_name = part.tool_name + self.tool_name_delta
             part = replace(part, tool_name=tool_name)
 
         if isinstance(self.args_delta, str):
-            if not isinstance(part.args, str):
+            if isinstance(part.args, dict):
                 raise UnexpectedModelBehavior(f'Cannot apply JSON deltas to non-JSON tool arguments ({part=}, {self=})')
-            updated_json = part.args + self.args_delta
+            updated_json = (part.args or '') + self.args_delta
             part = replace(part, args=updated_json)
         elif isinstance(self.args_delta, dict):
-            if not isinstance(part.args, dict):
+            if isinstance(part.args, str):
                 raise UnexpectedModelBehavior(f'Cannot apply dict deltas to non-dict tool arguments ({part=}, {self=})')
             updated_dict = {**(part.args or {}), **self.args_delta}
             part = replace(part, args=updated_dict)
 
         if self.tool_call_id:
             part = replace(part, tool_call_id=self.tool_call_id)
+
+        if self.provider_name:
+            part = replace(part, provider_name=self.provider_name)
+
+        if self.provider_details:
+            merged_provider_details = {**(part.provider_details or {}), **self.provider_details}
+            part = replace(part, provider_details=merged_provider_details)
+
         return part
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-ModelResponsePartDelta = Annotated[Union[TextPartDelta, ToolCallPartDelta], pydantic.Discriminator('part_delta_kind')]
+
+ModelResponsePartDelta = Annotated[
+    TextPartDelta | ThinkingPartDelta | ToolCallPartDelta, pydantic.Discriminator('part_delta_kind')
+]
 """A partial update (delta) for any model response part."""
 
 
-@dataclass
+@dataclass(repr=False, kw_only=True)
 class PartStartEvent:
     """An event indicating that a new part has started.
 
@@ -671,11 +1943,21 @@ class PartStartEvent:
     part: ModelResponsePart
     """The newly started `ModelResponsePart`."""
 
+    previous_part_kind: (
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+    ) = None
+    """The kind of the previous part, if any.
+
+    This is useful for UI event streams to know whether to group parts of the same kind together when emitting events.
+    """
+
     event_kind: Literal['part_start'] = 'part_start'
     """Event type identifier, used as a discriminator."""
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False, kw_only=True)
 class PartDeltaEvent:
     """An event indicating a delta update for an existing part."""
 
@@ -688,53 +1970,142 @@ class PartDeltaEvent:
     event_kind: Literal['part_delta'] = 'part_delta'
     """Event type identifier, used as a discriminator."""
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False, kw_only=True)
+class PartEndEvent:
+    """An event indicating that a part is complete."""
+
+    index: int
+    """The index of the part within the overall response parts list."""
+
+    part: ModelResponsePart
+    """The complete `ModelResponsePart`."""
+
+    next_part_kind: (
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+    ) = None
+    """The kind of the next part, if any.
+
+    This is useful for UI event streams to know whether to group parts of the same kind together when emitting events.
+    """
+
+    event_kind: Literal['part_end'] = 'part_end'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
 class FinalResultEvent:
-    """An event indicating the response to the current model request matches the result schema."""
+    """An event indicating the response to the current model request matches the output schema and will produce a result."""
 
     tool_name: str | None
-    """The name of the result tool that was called. `None` if the result is from text content and not from a tool."""
+    """The name of the output tool that was called. `None` if the result is from text content and not from a tool."""
     tool_call_id: str | None
     """The tool call ID, if any, that this result is associated with."""
     event_kind: Literal['final_result'] = 'final_result'
     """Event type identifier, used as a discriminator."""
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-ModelResponseStreamEvent = Annotated[Union[PartStartEvent, PartDeltaEvent], pydantic.Discriminator('event_kind')]
-"""An event in the model response stream, either starting a new part or applying a delta to an existing one."""
 
-AgentStreamEvent = Annotated[
-    Union[PartStartEvent, PartDeltaEvent, FinalResultEvent], pydantic.Discriminator('event_kind')
+ModelResponseStreamEvent = Annotated[
+    PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent, pydantic.Discriminator('event_kind')
 ]
-"""An event in the agent stream."""
+"""An event in the model response stream, starting a new part, applying a delta to an existing one, indicating a part is complete, or indicating the final result."""
 
 
-@dataclass
+@dataclass(repr=False)
 class FunctionToolCallEvent:
     """An event indicating the start to a call to a function tool."""
 
     part: ToolCallPart
     """The (function) tool call to make."""
-    call_id: str = field(init=False)
-    """An ID used for matching details about the call to its result. If present, defaults to the part's tool_call_id."""
+
+    _: KW_ONLY
+
     event_kind: Literal['function_tool_call'] = 'function_tool_call'
     """Event type identifier, used as a discriminator."""
 
-    def __post_init__(self):
-        self.call_id = self.part.tool_call_id or str(uuid.uuid4())
+    @property
+    def tool_call_id(self) -> str:
+        """An ID used for matching details about the call to its result."""
+        return self.part.tool_call_id
+
+    @property
+    @deprecated('`call_id` is deprecated, use `tool_call_id` instead.')
+    def call_id(self) -> str:
+        """An ID used for matching details about the call to its result."""
+        return self.part.tool_call_id  # pragma: no cover
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass
+@dataclass(repr=False)
 class FunctionToolResultEvent:
     """An event indicating the result of a function tool call."""
 
     result: ToolReturnPart | RetryPromptPart
     """The result of the call to the function tool."""
-    tool_call_id: str
-    """An ID used to match the result to its original call."""
+
+    _: KW_ONLY
+
+    content: str | Sequence[UserContent] | None = None
+    """The content that will be sent to the model as a UserPromptPart following the result."""
+
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""
 
+    @property
+    def tool_call_id(self) -> str:
+        """An ID used to match the result to its original call."""
+        return self.result.tool_call_id
 
-HandleResponseEvent = Annotated[Union[FunctionToolCallEvent, FunctionToolResultEvent], pydantic.Discriminator('kind')]
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@deprecated(
+    '`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.'
+)
+@dataclass(repr=False)
+class BuiltinToolCallEvent:
+    """An event indicating the start to a call to a built-in tool."""
+
+    part: BuiltinToolCallPart
+    """The built-in tool call to make."""
+
+    _: KW_ONLY
+
+    event_kind: Literal['builtin_tool_call'] = 'builtin_tool_call'
+    """Event type identifier, used as a discriminator."""
+
+
+@deprecated(
+    '`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.'
+)
+@dataclass(repr=False)
+class BuiltinToolResultEvent:
+    """An event indicating the result of a built-in tool call."""
+
+    result: BuiltinToolReturnPart
+    """The result of the call to the built-in tool."""
+
+    _: KW_ONLY
+
+    event_kind: Literal['builtin_tool_result'] = 'builtin_tool_result'
+    """Event type identifier, used as a discriminator."""
+
+
+HandleResponseEvent = Annotated[
+    FunctionToolCallEvent
+    | FunctionToolResultEvent
+    | BuiltinToolCallEvent  # pyright: ignore[reportDeprecated]
+    | BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    pydantic.Discriminator('event_kind'),
+]
+"""An event yielded when handling a model response, indicating tool calls and results."""
+
+AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
+"""An event in the agent stream: model response stream events and response-handling events."""

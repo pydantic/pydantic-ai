@@ -1,0 +1,192 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '357'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: How much is 3 * 12390?
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      system: Always use the code execution tool for math.
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - name: code_execution
+        type: code_execution_20250522
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '2028'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      container:
+        expires_at: '2025-09-17T00:24:43.124581Z'
+        id: container_011CTCwceSoRxi8Pf16Fb7Tn
+      content:
+      - signature: EvsDCkYIBxgCKkCSFDXODoOrOHU14Yv7+TNxuR4sDsJKw9y9C1gGPIWqslF6apNZ1xwJ94E9KsQBfXlZ/ELoBSTj3YT0liwueN6kEgxrakXTN1a+YafcnckaDC2EYhQsezxdE/P7XSIwczAl/PquNGpiOLqC5DnYKvD2+F0JhBQsbLe1bQi/VR0XCQdd+4DZ5dBU5AmuDcntKuICIMg145F3vP8bFnTdUMOIQY0NASypKRnHj6owIkuqWJ+pwu6OdpDt2a+Lr7R1dw860hcPjEp65eg5nwtyi8bw1pzfQJmC48DoiQn/OYeiXMWeNv5HoKEK/lkikqVPcTnD03MytUsNGRqUBfDvr4bxNgxqeAENi5pZ21ySnjxhC879gN0G3uriEM8o4LXj/X2DotKO1lvIEL/2RQZGrFulDLq5I2FW51YBY3kzHerK7zwFgs3t39VLsy7Q3T6sLi4yh4BbFxF4RaSOCicTRbMYC8UO85uhArSSm/0EDDhX+kxIGJZ91F6Vv0vSS4qLy+55buZ8Jj4/P86t9YMxBeylQ/tUNGzhISqc1+CZeQ4aZKiRyQmlfkA6bcM42JAFQT/c0EbM2JmDsiSpkM8d021E9hqrr2eIhasaOo4vG5yUz7f9aSaRc/Muy02mckNxxxS7UshBCxr8veoMa0HYnB/rBNFeGAE=
+        thinking: 'The user is asking for a simple multiplication: 3 * 12390. This is a mathematical calculation, and according
+          to my guidelines, I should always use the code execution tool for math. Even though this is a relatively simple
+          calculation that could be done mentally, the instruction is clear that I should use the code execution tool for
+          math.'
+        type: thinking
+      - id: srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn
+        input:
+          code: |-
+            result = 3 * 12390
+            print(f"3 * 12390 = {result}")
+        name: code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 0
+          stderr: ''
+          stdout: |
+            3 * 12390 = 37170
+          type: code_execution_result
+        tool_use_id: srvtoolu_01Pc4vcD1JPUDcVhHaskFUfn
+        type: code_execution_tool_result
+      - text: 3 * 12390 = 37170
+        type: text
+      id: msg_018bVTPr9khzuds31rFDuqW4
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 1771
+        output_tokens: 171
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '355'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: How about 4 * 12390?
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      system: Always use the code execution tool for math.
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - name: code_execution
+        type: code_execution_20250522
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1684'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      container:
+        expires_at: '2025-09-17T00:24:54.409332Z'
+        id: container_011CTCwdXe48NC7LaX3rxQ4d
+      content:
+      - signature: EucCCkYIBxgCKkDrAwZF3dM/a2UiJFMD/+Z5mdZOkFXxJ1vmAg7GWzC2YUTBKtKvys1yFaWmkUuBSYBC/kaTPYVj28qa94V0Q/ngEgw+4333itH5QH/0B6gaDHxUZy/HGNpU04RbZiIwmQeS7P+gLHlV9b0tRYciwVbpjZl8WkrunyWyD5xXTC7bzv/tQKv8kMjxRsRGZZH1Ks4BDiNK1tuAlz4x5LDAsui8/8vBDY1c+NRtc6y0bOgxSXFXSemv2BHm7VokC7JG8+iCQEY9HIyFtyjLeJ93niDCszU8YHPtAa4o2Orw8K4Tc4Y18U/TqfgnZulkjkeONhDJP9uUk4Db4woJiLpAx13X8W5TriwqHWMRM2+D0coqTTWTovC/xbVFFZZmwyqaz/h6V6qqokyLpbqb+5B5kw/uQfybUv28h3GqxFyuD62zM9OPyMqbd2GrAPbSLE2JETkJsp6GzxVEh1vNI3DMgdQYAQ==
+        thinking: 'The user is asking for a simple multiplication: 4 * 12390. This is a computational task that requires precise
+          calculation, so I should use the code execution tool to get the accurate result.'
+        type: thinking
+      - id: srvtoolu_017iCje5DPMZEdgBkxj1osgt
+        input:
+          code: |-
+            result = 4 * 12390
+            print(f"4 * 12390 = {result}")
+        name: code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 0
+          stderr: ''
+          stdout: |
+            4 * 12390 = 49560
+          type: code_execution_result
+        tool_use_id: srvtoolu_017iCje5DPMZEdgBkxj1osgt
+        type: code_execution_tool_result
+      - text: 4 * 12390 = 49560
+        type: text
+      id: msg_01VngRFBcNddwrYQoKUmdePY
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 1741
+        output_tokens: 143
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

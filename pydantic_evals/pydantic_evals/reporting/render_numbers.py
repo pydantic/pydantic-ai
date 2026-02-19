@@ -29,7 +29,7 @@ def default_render_number(value: float | int) -> str:
     """
     # If it's an int, just return its string representation.
     if isinstance(value, int):
-        return str(value)
+        return f'{value:,d}'
 
     abs_val = abs(value)
 

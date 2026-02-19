@@ -1,3 +1,4 @@
+# pyright: reportDeprecated=false
 import re
 
 import pytest
@@ -6,6 +7,10 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
 
 from ..conftest import TestEnv
+
+pytestmark = [
+    pytest.mark.filterwarnings('ignore:`GoogleGLAProvider` is deprecated.:DeprecationWarning'),
+]
 
 
 def test_api_key_arg(env: TestEnv):

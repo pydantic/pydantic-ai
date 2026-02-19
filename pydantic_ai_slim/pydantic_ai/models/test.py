@@ -9,9 +9,16 @@ from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
 import pydantic_core
+from typing_extensions import assert_never
 
 from .. import _utils
+from .._run_context import RunContext
+from ..builtin_tools import SUPPORTED_BUILTIN_TOOLS, AbstractBuiltinTool
+from ..exceptions import UserError
 from ..messages import (
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
+    FilePart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -19,35 +26,36 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
 )
-from ..result import Usage
+from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-)
+from ..usage import RequestUsage
+from . import Model, ModelRequestParameters, StreamedResponse
 from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass
-class _TextResult:
-    """A private wrapper class to tag a result that came from the custom_result_text field."""
+class _WrappedTextOutput:
+    """A private wrapper class to tag an output that came from the custom_output_text field."""
 
     value: str | None
 
 
-@dataclass
-class _FunctionToolResult:
-    """A wrapper class to tag a result that came from the custom_result_args field."""
+@dataclass(init=False)
+class _WrappedToolOutput:
+    """A wrapper class to tag an output that came from the custom_output_args field."""
 
-    value: Any | None
+    value: dict[str, Any] | None
+
+    def __init__(self, value: Any | None):
+        self.value = pydantic_core.to_jsonable_python(value)
 
 
-@dataclass
+@dataclass(init=False)
 class TestModel(Model):
     """A model specifically for testing purposes.
 
@@ -65,33 +73,57 @@ class TestModel(Model):
 
     call_tools: list[str] | Literal['all'] = 'all'
     """List of tools to call. If `'all'`, all tools will be called."""
-    custom_result_text: str | None = None
-    """If set, this text is returned as the final result."""
-    custom_result_args: Any | None = None
-    """If set, these args will be passed to the result tool."""
+    custom_output_text: str | None = None
+    """If set, this text is returned as the final output."""
+    custom_output_args: Any | None = None
+    """If set, these args will be passed to the output tool."""
     seed: int = 0
     """Seed for generating random data."""
     last_model_request_parameters: ModelRequestParameters | None = field(default=None, init=False)
     """The last ModelRequestParameters passed to the model in a request.
 
-    The ModelRequestParameters contains information about the function and result tools available during request handling.
+    The ModelRequestParameters contains information about the function and output tools available during request handling.
 
     This is set when a request is made, so will reflect the function tools from the last step of the last run.
     """
     _model_name: str = field(default='test', repr=False)
     _system: str = field(default='test', repr=False)
 
+    def __init__(
+        self,
+        *,
+        call_tools: list[str] | Literal['all'] = 'all',
+        custom_output_text: str | None = None,
+        custom_output_args: Any | None = None,
+        seed: int = 0,
+        model_name: str = 'test',
+        profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
+    ):
+        """Initialize TestModel with optional settings and profile."""
+        self.call_tools = call_tools
+        self.custom_output_text = custom_output_text
+        self.custom_output_args = custom_output_args
+        self.seed = seed
+        self.last_model_request_parameters = None
+        self._model_name = model_name
+        self._system = 'test'
+        super().__init__(settings=settings, profile=profile)
+
     async def request(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelResponse, Usage]:
+    ) -> ModelResponse:
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         self.last_model_request_parameters = model_request_parameters
-
         model_response = self._request(messages, model_settings, model_request_parameters)
-        usage = _estimate_usage([*messages, model_response])
-        return model_response, usage
+        model_response.usage = _estimate_usage([*messages, model_response])
+        return model_response
 
     @asynccontextmanager
     async def request_stream(
@@ -99,12 +131,21 @@ class TestModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
         self.last_model_request_parameters = model_request_parameters
 
         model_response = self._request(messages, model_settings, model_request_parameters)
         yield TestStreamedResponse(
-            _model_name=self._model_name, _structured_response=model_response, _messages=messages
+            model_request_parameters=model_request_parameters,
+            _model_name=self._model_name,
+            _structured_response=model_response,
+            _messages=messages,
+            _provider_name=self._system,
         )
 
     @property
@@ -114,8 +155,13 @@ class TestModel(Model):
 
     @property
     def system(self) -> str:
-        """The system / model provider."""
+        """The model provider."""
         return self._system
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """TestModel supports all builtin tools for testing flexibility."""
+        return SUPPORTED_BUILTIN_TOOLS
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
@@ -128,29 +174,29 @@ class TestModel(Model):
             tools_to_call = (function_tools_lookup[name] for name in self.call_tools)
             return [(r.name, r) for r in tools_to_call]
 
-    def _get_result(self, model_request_parameters: ModelRequestParameters) -> _TextResult | _FunctionToolResult:
-        if self.custom_result_text is not None:
-            assert model_request_parameters.allow_text_result, (
-                'Plain response not allowed, but `custom_result_text` is set.'
+    def _get_output(self, model_request_parameters: ModelRequestParameters) -> _WrappedTextOutput | _WrappedToolOutput:
+        if self.custom_output_text is not None:
+            assert model_request_parameters.output_mode != 'tool', (
+                'Plain response not allowed, but `custom_output_text` is set.'
             )
-            assert self.custom_result_args is None, 'Cannot set both `custom_result_text` and `custom_result_args`.'
-            return _TextResult(self.custom_result_text)
-        elif self.custom_result_args is not None:
-            assert model_request_parameters.result_tools is not None, (
-                'No result tools provided, but `custom_result_args` is set.'
+            assert self.custom_output_args is None, 'Cannot set both `custom_output_text` and `custom_output_args`.'
+            return _WrappedTextOutput(self.custom_output_text)
+        elif self.custom_output_args is not None:
+            assert model_request_parameters.output_tools is not None, (
+                'No output tools provided, but `custom_output_args` is set.'
             )
-            result_tool = model_request_parameters.result_tools[0]
+            output_tool = model_request_parameters.output_tools[0]
 
-            if k := result_tool.outer_typed_dict_key:
-                return _FunctionToolResult({k: self.custom_result_args})
+            if k := output_tool.outer_typed_dict_key:
+                return _WrappedToolOutput({k: self.custom_output_args})
             else:
-                return _FunctionToolResult(self.custom_result_args)
-        elif model_request_parameters.allow_text_result:
-            return _TextResult(None)
-        elif model_request_parameters.result_tools:
-            return _FunctionToolResult(None)
+                return _WrappedToolOutput(self.custom_output_args)
+        elif model_request_parameters.allow_text_output:
+            return _WrappedTextOutput(None)
+        elif model_request_parameters.output_tools:
+            return _WrappedToolOutput(None)
         else:
-            return _TextResult(None)
+            return _WrappedTextOutput(None)
 
     def _request(
         self,
@@ -158,47 +204,54 @@ class TestModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        if model_request_parameters.builtin_tools:
+            raise UserError('TestModel does not support built-in tools')
+
         tool_calls = self._get_tool_calls(model_request_parameters)
-        result = self._get_result(model_request_parameters)
-        result_tools = model_request_parameters.result_tools
+        output_wrapper = self._get_output(model_request_parameters)
+        output_tools = model_request_parameters.output_tools
 
         # if there are tools, the first thing we want to do is call all of them
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(
-                parts=[ToolCallPart(name, self.gen_tool_args(args)) for name, args in tool_calls],
+                parts=[
+                    ToolCallPart(name, self.gen_tool_args(args), tool_call_id=f'pyd_ai_tool_call_id__{name}')
+                    for name, args in tool_calls
+                ],
                 model_name=self._model_name,
             )
 
-        if messages:
+        if messages:  # pragma: no branch
             last_message = messages[-1]
             assert isinstance(last_message, ModelRequest), 'Expected last message to be a `ModelRequest`.'
 
             # check if there are any retry prompts, if so retry them
             new_retry_names = {p.tool_name for p in last_message.parts if isinstance(p, RetryPromptPart)}
             if new_retry_names:
-                # Handle retries for both function tools and result tools
+                # Handle retries for both function tools and output tools
                 # Check function tools first
                 retry_parts: list[ModelResponsePart] = [
                     ToolCallPart(name, self.gen_tool_args(args)) for name, args in tool_calls if name in new_retry_names
                 ]
-                # Check result tools
-                if result_tools:
+                # Check output tools
+                if output_tools:
                     retry_parts.extend(
                         [
                             ToolCallPart(
                                 tool.name,
-                                result.value
-                                if isinstance(result, _FunctionToolResult) and result.value is not None
+                                output_wrapper.value
+                                if isinstance(output_wrapper, _WrappedToolOutput) and output_wrapper.value is not None
                                 else self.gen_tool_args(tool),
+                                tool_call_id=f'pyd_ai_tool_call_id__{tool.name}',
                             )
-                            for tool in result_tools
+                            for tool in output_tools
                             if tool.name in new_retry_names
                         ]
                     )
                 return ModelResponse(parts=retry_parts, model_name=self._model_name)
 
-        if isinstance(result, _TextResult):
-            if (response_text := result.value) is None:
+        if isinstance(output_wrapper, _WrappedTextOutput):
+            if (response_text := output_wrapper.value) is None:
                 # build up details of tool responses
                 output: dict[str, Any] = {}
                 for message in messages:
@@ -215,16 +268,32 @@ class TestModel(Model):
             else:
                 return ModelResponse(parts=[TextPart(response_text)], model_name=self._model_name)
         else:
-            assert result_tools, 'No result tools provided'
-            custom_result_args = result.value
-            result_tool = result_tools[self.seed % len(result_tools)]
-            if custom_result_args is not None:
+            assert output_tools, 'No output tools provided'
+            custom_output_args = output_wrapper.value
+            output_tool = output_tools[self.seed % len(output_tools)]
+            if custom_output_args is not None:
                 return ModelResponse(
-                    parts=[ToolCallPart(result_tool.name, custom_result_args)], model_name=self._model_name
+                    parts=[
+                        ToolCallPart(
+                            output_tool.name,
+                            custom_output_args,
+                            tool_call_id=f'pyd_ai_tool_call_id__{output_tool.name}',
+                        )
+                    ],
+                    model_name=self._model_name,
                 )
             else:
-                response_args = self.gen_tool_args(result_tool)
-                return ModelResponse(parts=[ToolCallPart(result_tool.name, response_args)], model_name=self._model_name)
+                response_args = self.gen_tool_args(output_tool)
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            output_tool.name,
+                            response_args,
+                            tool_call_id=f'pyd_ai_tool_call_id__{output_tool.name}',
+                        )
+                    ],
+                    model_name=self._model_name,
+                )
 
 
 @dataclass
@@ -234,6 +303,8 @@ class TestStreamedResponse(StreamedResponse):
     _model_name: str
     _structured_response: ModelResponse
     _messages: InitVar[Iterable[ModelMessage]]
+    _provider_name: str
+    _provider_url: str | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
@@ -250,19 +321,42 @@ class TestStreamedResponse(StreamedResponse):
                     mid = len(text) // 2
                     words = [text[:mid], text[mid:]]
                 self._usage += _get_string_usage('')
-                yield self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
+                for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=''):
+                    yield event
                 for word in words:
                     self._usage += _get_string_usage(word)
-                    yield self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
-            else:
+                    for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=word):
+                        yield event
+            elif isinstance(part, ToolCallPart):
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
                 )
+            elif isinstance(part, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
+                # NOTE: These parts are not generated by TestModel, but we need to handle them for type checking
+                assert False, f'Unexpected part type in TestModel: {type(part).__name__}'
+            elif isinstance(part, ThinkingPart):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since we don't generate ThinkingPart on TestModel.
+                assert False, "This should be unreachable — we don't generate ThinkingPart on TestModel."
+            elif isinstance(part, FilePart):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since we don't generate FilePart on TestModel.
+                assert False, "This should be unreachable — we don't generate FilePart on TestModel."
+            else:
+                assert_never(part)
 
     @property
     def model_name(self) -> str:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:
@@ -284,7 +378,7 @@ class _JsonSchemaTestData:
         self.defs = schema.get('$defs', {})
         self.seed = seed
 
-    def generate(self) -> Any:
+    def generate(self) -> dict[str, Any]:
         """Generate data for the JSON schema."""
         return self._gen_any(self.schema)
 
@@ -426,6 +520,6 @@ class _JsonSchemaTestData:
         return s
 
 
-def _get_string_usage(text: str) -> Usage:
+def _get_string_usage(text: str) -> RequestUsage:
     response_tokens = _estimate_string_tokens(text)
-    return Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+    return RequestUsage(output_tokens=response_tokens)

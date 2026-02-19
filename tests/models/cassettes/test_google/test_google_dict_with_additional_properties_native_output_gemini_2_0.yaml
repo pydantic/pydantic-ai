@@ -1,0 +1,87 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '519'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Create a config named "api-config" with metadata author="Alice" and version="1.0"
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          description: A response with configuration metadata.
+          properties:
+            metadata:
+              additionalProperties:
+                type: string
+              type: object
+            name:
+              type: string
+          required:
+          - name
+          - metadata
+          title: ConfigResponse
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '760'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=818
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -1.4634492981713265e-05
+        content:
+          parts:
+          - text: |-
+              {
+                "name": "api-config",
+                "metadata": {
+                  "author": "Alice",
+                  "version": "1.0"
+                }
+              }
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: 8pMcab_EMqWd28oP46bOiAk
+      usageMetadata:
+        candidatesTokenCount: 40
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 40
+        promptTokenCount: 22
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 22
+        totalTokenCount: 62
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,401 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '346'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      mcp_servers:
+      - name: deepwiki
+        type: url
+        url: https://mcp.deepwiki.com/mcp
+      messages:
+      - content:
+        - text: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '6664'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - signature: EqUDCkYICBgCKkCTiLjx5Rzw9zXo4pFDhFAc9Ci1R+d2fpkiqw7IPt1PgxBankr7bhRfh2iQOFEUy7sYVtsBxvnHW8zfBRxH1j6lEgySvdOyObrcFdJX3qkaDMAMCdLHIevZ/mSx/SIwi917U34N5jLQH1yMoCx/k72klLG5v42vcwUTG4ngKDI69Ddaf0eeDpgg3tL5FHfvKowCnslWg3Pd3ITe+TLlzu+OVZhRKU9SEwDJbjV7ZF954Ls6XExAfjdXhrhvXDB+hz6fZFPGFEfXV7jwElFT5HcGPWy84xvlwzbklZ2zH3XViik0B5dMErMAKs6IVwqXo3s+0p9xtX5gCBuvLkalET2upNsmdKGJv7WQWoaLch5N07uvSgWkO8AkGuVtBgqZH+uRGlPfYlnAgifNHu00GSAVK3beeyZfpnSQ6LQKcH+wVmrOi/3UvzA5f1LvsXG32gQKUCxztATnlBaI+7GMs1IAloaRHBndyRoe8Lwv79zZe9u9gnF9WCgK3yQsAR5hGZXlBKiIWfnRrXQ7QmA2hVO+mhEOCnz7OQkMIEUlfxgB
+        thinking: The user is asking about the pydantic/pydantic-ai repository and wants me to keep the answer short. I should
+          use the deepwiki tools to get information about this repository. Let me start by asking a general question about
+          what this repository is about.
+        type: thinking
+      - id: mcptoolu_01SAss3KEwASziHZoMR6HcZU
+        input:
+          question: What is pydantic-ai and what does this repository do?
+          repoName: pydantic/pydantic-ai
+        name: ask_question
+        server_name: deepwiki
+        type: mcp_tool_use
+      - content:
+        - text: |
+            Pydantic AI is a Python agent framework designed to simplify the development of production-grade applications using Generative AI . The repository contains this framework, which emphasizes an ergonomic developer experience and type-safety, similar to Pydantic and FastAPI .
+
+            ## Core Functionality
+
+            The `pydantic-ai` repository provides a comprehensive set of tools and abstractions for building AI agents . Its core components include:
+
+            *   **Type-safe agents**: Agents are defined using `Agent[Deps, Output]` for compile-time validation .
+            *   **Model-agnostic design**: It supports over 15 LLM providers through a unified `Model` interface .
+            *   **Structured outputs**: Automatic Pydantic validation and self-correction ensure structured outputs .
+            *   **Observability**: Integration with OpenTelemetry and Logfire provides comprehensive observability .
+            *   **Production-ready tooling**: This includes an evaluation framework, durable execution, and protocol integrations .
+
+            ## Repository Structure
+
+            The `pydantic-ai` repository is organized as a UV workspace monorepo, containing several packages :
+
+            *   `pydantic-ai-slim`: This is the core framework, containing modules for `Agent`, `Model`, and tools .
+            *   `pydantic-graph`: Provides the graph execution engine .
+            *   `pydantic-evals`: Offers an evaluation framework for datasets and evaluators .
+            *   `examples`: Contains example applications .
+            *   `clai`: A CLI interface for the framework .
+            *   `pydantic-ai`: A meta-package that includes all optional extras .
+
+            ## Agent Execution
+
+            The `Agent` class is the primary interface for orchestrating AI tasks . It coordinates the model abstraction, message protocol, tool system, and graph execution . Agent execution uses a graph-based state machine from `pydantic_graph.Graph` . The execution flow involves three core node types :
+
+            *   `UserPromptNode`: Processes user input and creates initial `ModelRequest` .
+            *   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()` and handles retries .
+            *   `CallToolsNode`: Executes tool functions via `RunContext[Deps]` .
+
+            The `Agent` class provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution needs .
+
+            ## Key Features
+
+            ### Model Provider Support
+            Pydantic AI offers a unified `Model` abstract base class for various LLM providers, including OpenAI, Anthropic, Google, and more . All models implement `request(messages)` and `request_stream(messages)` methods .
+
+            ### Tool System
+            The framework includes a tool system for registering and executing functions via decorators like `@agent.tool` . It automatically generates JSON schemas from function signatures and docstrings, validates tool call arguments, and injects `RunContext[Deps]` for dependencies .
+
+            ### Observability
+            Pydantic AI integrates with OpenTelemetry, providing instrumentation for agent runs, model requests, and tool executions . It also has native integration with Pydantic Logfire for real-time debugging and performance monitoring .
+
+            ### Evaluation Framework
+            The `pydantic-evals` package provides a framework for systematically testing and evaluating agent performance . It supports datasets with `Case` objects, various evaluators, and generates `EvaluationReport` with aggregated metrics .
+
+            ## Integrations
+            Pydantic AI supports various integrations for development and production, including :
+            *   **Model Context Protocol (MCP)**: For external tool server access .
+            *   **AG-UI Protocol**: For interactive application frontends .
+            *   **Agent2Agent (A2A)**: For multi-agent communication .
+            *   **Temporal**: For durable workflow execution .
+            *   **DBOS**: For database-backed execution .
+
+            Notes:
+            The `pydantic-ai-slim` package  is a core version of the framework, allowing users to install only necessary dependencies for specific models or features . The `pydantic-ai` package  is a meta-package that includes all optional extras .
+
+            Wiki pages you might want to explore:
+            - [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
+
+            View this search on DeepWiki: https://deepwiki.com/search/what-is-pydanticai-and-what-do_2dc46d92-288e-470b-b52e-24bb13f839c7
+          type: text
+        is_error: false
+        tool_use_id: mcptoolu_01SAss3KEwASziHZoMR6HcZU
+        type: mcp_tool_result
+      - text: |-
+          **Pydantic AI** is a Python agent framework for building production-grade applications with Generative AI. It provides:
+
+          - **Type-safe agents** with compile-time validation using `Agent[Deps, Output]`
+          - **Model-agnostic design** supporting 15+ LLM providers (OpenAI, Anthropic, Google, etc.)
+          - **Structured outputs** with automatic Pydantic validation and self-correction
+          - **Built-in observability** via OpenTelemetry and Logfire integration
+          - **Production tooling** including evaluation framework, durable execution, and tool system
+
+          The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools). It emphasizes developer ergonomics and type safety, similar to Pydantic and FastAPI.
+        type: text
+      id: msg_01MYDjkvBDRaKsY6PDwQz3n6
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 2674
+        output_tokens: 373
+        server_tool_use:
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '6733'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      mcp_servers:
+      - name: deepwiki
+        type: url
+        url: https://mcp.deepwiki.com/mcp
+      messages:
+      - content:
+        - text: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
+          type: text
+        role: user
+      - content:
+        - signature: EqUDCkYICBgCKkCTiLjx5Rzw9zXo4pFDhFAc9Ci1R+d2fpkiqw7IPt1PgxBankr7bhRfh2iQOFEUy7sYVtsBxvnHW8zfBRxH1j6lEgySvdOyObrcFdJX3qkaDMAMCdLHIevZ/mSx/SIwi917U34N5jLQH1yMoCx/k72klLG5v42vcwUTG4ngKDI69Ddaf0eeDpgg3tL5FHfvKowCnslWg3Pd3ITe+TLlzu+OVZhRKU9SEwDJbjV7ZF954Ls6XExAfjdXhrhvXDB+hz6fZFPGFEfXV7jwElFT5HcGPWy84xvlwzbklZ2zH3XViik0B5dMErMAKs6IVwqXo3s+0p9xtX5gCBuvLkalET2upNsmdKGJv7WQWoaLch5N07uvSgWkO8AkGuVtBgqZH+uRGlPfYlnAgifNHu00GSAVK3beeyZfpnSQ6LQKcH+wVmrOi/3UvzA5f1LvsXG32gQKUCxztATnlBaI+7GMs1IAloaRHBndyRoe8Lwv79zZe9u9gnF9WCgK3yQsAR5hGZXlBKiIWfnRrXQ7QmA2hVO+mhEOCnz7OQkMIEUlfxgB
+          thinking: The user is asking about the pydantic/pydantic-ai repository and wants me to keep the answer short. I
+            should use the deepwiki tools to get information about this repository. Let me start by asking a general question
+            about what this repository is about.
+          type: thinking
+        - id: mcptoolu_01SAss3KEwASziHZoMR6HcZU
+          input:
+            question: What is pydantic-ai and what does this repository do?
+            repoName: pydantic/pydantic-ai
+          name: ask_question
+          server_name: deepwiki
+          type: mcp_tool_use
+        - content:
+          - citations: null
+            text: |
+              Pydantic AI is a Python agent framework designed to simplify the development of production-grade applications using Generative AI . The repository contains this framework, which emphasizes an ergonomic developer experience and type-safety, similar to Pydantic and FastAPI .
+
+              ## Core Functionality
+
+              The `pydantic-ai` repository provides a comprehensive set of tools and abstractions for building AI agents . Its core components include:
+
+              *   **Type-safe agents**: Agents are defined using `Agent[Deps, Output]` for compile-time validation .
+              *   **Model-agnostic design**: It supports over 15 LLM providers through a unified `Model` interface .
+              *   **Structured outputs**: Automatic Pydantic validation and self-correction ensure structured outputs .
+              *   **Observability**: Integration with OpenTelemetry and Logfire provides comprehensive observability .
+              *   **Production-ready tooling**: This includes an evaluation framework, durable execution, and protocol integrations .
+
+              ## Repository Structure
+
+              The `pydantic-ai` repository is organized as a UV workspace monorepo, containing several packages :
+
+              *   `pydantic-ai-slim`: This is the core framework, containing modules for `Agent`, `Model`, and tools .
+              *   `pydantic-graph`: Provides the graph execution engine .
+              *   `pydantic-evals`: Offers an evaluation framework for datasets and evaluators .
+              *   `examples`: Contains example applications .
+              *   `clai`: A CLI interface for the framework .
+              *   `pydantic-ai`: A meta-package that includes all optional extras .
+
+              ## Agent Execution
+
+              The `Agent` class is the primary interface for orchestrating AI tasks . It coordinates the model abstraction, message protocol, tool system, and graph execution . Agent execution uses a graph-based state machine from `pydantic_graph.Graph` . The execution flow involves three core node types :
+
+              *   `UserPromptNode`: Processes user input and creates initial `ModelRequest` .
+              *   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()` and handles retries .
+              *   `CallToolsNode`: Executes tool functions via `RunContext[Deps]` .
+
+              The `Agent` class provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution needs .
+
+              ## Key Features
+
+              ### Model Provider Support
+              Pydantic AI offers a unified `Model` abstract base class for various LLM providers, including OpenAI, Anthropic, Google, and more . All models implement `request(messages)` and `request_stream(messages)` methods .
+
+              ### Tool System
+              The framework includes a tool system for registering and executing functions via decorators like `@agent.tool` . It automatically generates JSON schemas from function signatures and docstrings, validates tool call arguments, and injects `RunContext[Deps]` for dependencies .
+
+              ### Observability
+              Pydantic AI integrates with OpenTelemetry, providing instrumentation for agent runs, model requests, and tool executions . It also has native integration with Pydantic Logfire for real-time debugging and performance monitoring .
+
+              ### Evaluation Framework
+              The `pydantic-evals` package provides a framework for systematically testing and evaluating agent performance . It supports datasets with `Case` objects, various evaluators, and generates `EvaluationReport` with aggregated metrics .
+
+              ## Integrations
+              Pydantic AI supports various integrations for development and production, including :
+              *   **Model Context Protocol (MCP)**: For external tool server access .
+              *   **AG-UI Protocol**: For interactive application frontends .
+              *   **Agent2Agent (A2A)**: For multi-agent communication .
+              *   **Temporal**: For durable workflow execution .
+              *   **DBOS**: For database-backed execution .
+
+              Notes:
+              The `pydantic-ai-slim` package  is a core version of the framework, allowing users to install only necessary dependencies for specific models or features . The `pydantic-ai` package  is a meta-package that includes all optional extras .
+
+              Wiki pages you might want to explore:
+              - [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
+
+              View this search on DeepWiki: https://deepwiki.com/search/what-is-pydanticai-and-what-do_2dc46d92-288e-470b-b52e-24bb13f839c7
+            type: text
+          is_error: false
+          tool_use_id: mcptoolu_01SAss3KEwASziHZoMR6HcZU
+          type: mcp_tool_result
+        - text: |-
+            **Pydantic AI** is a Python agent framework for building production-grade applications with Generative AI. It provides:
+
+            - **Type-safe agents** with compile-time validation using `Agent[Deps, Output]`
+            - **Model-agnostic design** supporting 15+ LLM providers (OpenAI, Anthropic, Google, etc.)
+            - **Structured outputs** with automatic Pydantic validation and self-correction
+            - **Built-in observability** via OpenTelemetry and Logfire integration
+            - **Production tooling** including evaluation framework, durable execution, and tool system
+
+            The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools). It emphasizes developer ergonomics and type safety, similar to Pydantic and FastAPI.
+          type: text
+        role: assistant
+      - content:
+        - text: How about the pydantic repo in the same org?
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '6408'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - signature: EtECCkYICBgCKkAkKy+K3Z/q4dGwZGr1MdsH8HLaULElUSaa/Y8A1L/Jp7y1AfJd1zrTL7Zfa2KoPr0HqO/AI/cJJreheuwcn/dWEgw0bPLie900a4h9wS0aDACnsdbr+adzpUyExiIwyuNjV82BVkK/kU+sMyrfbhgb6ob/DUgudJPaK5zR6cINAAGQnIy3iOXTwu3OUfPAKrgBzF9HD5HjiPSJdsxlkI0RA5Yjiol05/hR3fUB6WWrs0aouxIzlriJ6NzmzvqctkFJdRgAL9Mh06iK1A61PLyBWRdo1f5TBziFP1c6z7iQQzH9DdcaHvG8yLoaadbyTxMvTn2PtfEcSPjuZcLgv7QcF+HZXbDVjsHJW78OK2ta0M6/xuU1p4yG3qgoss3b0G6fAyvUVgVbb1wknkE/9W9gd2k/ZSh4P7F6AcvLTXQScTyMfWRtAWQqABgB
+        thinking: The user is asking about the pydantic repo in the same org, so that would be pydantic/pydantic. I should
+          ask about what this repository does and provide a short answer.
+        type: thinking
+      - id: mcptoolu_01A9RvAqDeoUnaMgQc6Nn75y
+        input:
+          question: What is Pydantic and what does this repository do?
+          repoName: pydantic/pydantic
+        name: ask_question
+        server_name: deepwiki
+        type: mcp_tool_use
+      - content:
+        - text: |
+            Pydantic is a Python library for data validation, parsing, and serialization using type hints  . This repository, `pydantic/pydantic`, contains the source code for the Pydantic library itself, including its core validation logic, documentation, and continuous integration/continuous deployment (CI/CD) pipelines  .
+
+            ## What is Pydantic
+
+            Pydantic is designed to ensure that data conforms to specified types and constraints at runtime . It leverages Python type hints to define data schemas and provides mechanisms for data conversion and validation . The library's core validation logic is implemented in Rust within a separate package called `pydantic-core`, which contributes to its performance .
+
+            Pydantic offers several user-facing APIs for validation:
+            *   `BaseModel`: Used for defining class-based models with fields, suitable for domain models, API schemas, and configuration .
+            *   `TypeAdapter`: Provides a flexible way to validate and serialize arbitrary Python types, including primitive types and dataclasses .
+            *   `@dataclass`: Enhances Python's built-in dataclasses with Pydantic's validation capabilities .
+            *   `@validate_call`: Used for validating function arguments and return values .
+
+            ## What this Repository Does
+
+            The `pydantic/pydantic` repository serves as the development hub for the Pydantic library. Its primary functions include:
+
+            ### Core Library Development
+            The repository contains the Python source code for the Pydantic library, including modules for `BaseModel` , `Field` definitions , configuration management , and type adapters . It also includes internal modules responsible for model construction and schema generation .
+
+            ### Documentation
+            The repository hosts the documentation for Pydantic, which is built using MkDocs . The documentation covers installation instructions , core concepts like models , fields, and JSON Schema generation . It also includes information on contributing to the project .
+
+            ### Continuous Integration and Deployment (CI/CD)
+            The repository utilizes GitHub Actions for its CI/CD pipeline . This pipeline includes:
+            *   **Linting**: Checks code quality and style .
+            *   **Testing**: Runs a comprehensive test suite across multiple operating systems and Python versions . This includes memory profiling tests, Mypy plugin tests, and type-checking integration tests   .
+            *   **Coverage**: Aggregates test coverage data and posts comments to pull requests .
+            *   **Release Process**: Automates publishing new versions to PyPI and sending release announcements .
+            *   **Third-Party Integration Testing**: Tests Pydantic's compatibility with other popular libraries like FastAPI, SQLModel, and Beanie .
+            *   **Dependency Management**: Uses `uv` for managing dependencies and includes workflows to check compatibility with various dependency versions  .
+            *   **Performance Benchmarking**: Utilizes CodSpeed to track and analyze performance .
+
+            ## Versioning and Compatibility
+            Pydantic maintains strict version compatibility between the pure Python package (`pydantic`) and its Rust-based validation core (`pydantic-core`)  . A `SystemError` is raised if there's a mismatch in `pydantic-core` versions, ensuring a stable environment . The `version_info()` function provides detailed version information for Pydantic and its dependencies .
+
+            Notes:
+            The `CITATION.cff` file also provides a concise description of Pydantic as "the most widely used data validation library for Python" . The `README.md` and `docs/index.md` files reiterate this, emphasizing its speed and extensibility  .
+
+            Wiki pages you might want to explore:
+            - [Overview (pydantic/pydantic)](/wiki/pydantic/pydantic#1)
+            - [Development and Deployment (pydantic/pydantic)](/wiki/pydantic/pydantic#7)
+
+            View this search on DeepWiki: https://deepwiki.com/search/what-is-pydantic-and-what-does_dab96efa-752a-4688-a630-3f4658084a88
+          type: text
+        is_error: false
+        tool_use_id: mcptoolu_01A9RvAqDeoUnaMgQc6Nn75y
+        type: mcp_tool_result
+      - text: |-
+          **Pydantic** is Python's most widely used data validation library for parsing, validation, and serialization using type hints. The repository contains:
+
+          **Core Features:**
+          - **Data validation** with automatic type conversion and constraint checking
+          - **Multiple APIs**: `BaseModel` for class-based models, `TypeAdapter` for arbitrary types, `@dataclass` decorator, and `@validate_call` for functions
+          - **High performance** via Rust-based validation core (`pydantic-core`)
+          - **JSON Schema generation** and comprehensive serialization support
+
+          **Repository Contents:**
+          - Python source code for the main Pydantic library
+          - Comprehensive documentation built with MkDocs
+          - Extensive CI/CD pipeline with testing across multiple Python versions and OS
+          - Integration testing with popular libraries (FastAPI, SQLModel, etc.)
+          - Performance benchmarking and dependency compatibility checks
+
+          Pydantic ensures runtime data integrity through type hints and is foundational to many Python frameworks, especially in web APIs and data processing applications.
+        type: text
+      id: msg_01DSGib8F7nNoYprfYSGp1sd
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 5262
+        output_tokens: 369
+        server_tool_use:
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -11,10 +11,10 @@ Here's a minimal example:
 
 ```py {title="function_model_usage.py" call_name="test_my_agent" noqa="I001"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import FunctionModel, AgentInfo
 
-my_agent = Agent('openai:gpt-4o')
+my_agent = Agent('openai:gpt-5.2')
 
 
 async def model_function(
@@ -28,17 +28,24 @@ async def model_function(
                 UserPromptPart(
                     content='Testing my agent...',
                     timestamp=datetime.datetime(...),
-                    part_kind='user-prompt',
                 )
             ],
-            kind='request',
+            timestamp=datetime.datetime(...),
+            run_id='...',
         )
     ]
     """
     print(info)
     """
     AgentInfo(
-        function_tools=[], allow_text_result=True, result_tools=[], model_settings=None
+        function_tools=[],
+        allow_text_output=True,
+        output_tools=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[], builtin_tools=[], output_tools=[]
+        ),
+        instructions=None,
     )
     """
     return ModelResponse(parts=[TextPart('hello world')])
@@ -48,7 +55,7 @@ async def test_my_agent():
     """Unit test for my_agent, to be run by pytest."""
     with my_agent.override(model=FunctionModel(model_function)):
         result = await my_agent.run('Testing my agent...')
-        assert result.data == 'hello world'
+        assert result.output == 'hello world'
 ```
 
 See [Unit testing with `FunctionModel`](../../testing.md#unit-testing-with-functionmodel) for detailed documentation.

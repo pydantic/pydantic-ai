@@ -1,0 +1,49 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}], "system": [], "inferenceConfig":
+      {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MTU4ODY4OTctOGU4MC00YzJlLWEyZTctMDA2ZmM0NTZjMmYy
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '126'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: http://localhost:8787/bedrock/model/amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      content-length:
+      - '631'
+      content-type:
+      - application/json
+      pydantic-ai-gateway-price-estimate:
+      - 0.0000USD
+    parsed_body:
+      metrics:
+        latencyMs: 717
+      output:
+        message:
+          content:
+          - text: The capital of France is Paris. Paris is not only the capital city but also the most populous city in France,
+              and it is a major center for culture, commerce, fashion, and international diplomacy. The city is known for
+              its historical landmarks, such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées,
+              among many other attractions.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 7
+        outputTokens: 78
+        pydantic_ai_gateway:
+          cost_estimate: 1.1165000000000002e-05
+        serverToolUsage: {}
+        totalTokens: 85
+    status:
+      code: 200
+      message: OK
+version: 1

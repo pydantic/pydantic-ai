@@ -1,0 +1,247 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1182'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What was the temperature in London 1st January 2022?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - temperature
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: |-
+            <summary>Get the temperature in a city on a specific date.</summary>
+            <returns>
+            <description>The temperature in degrees Celsius.</description>
+            </returns>
+          name: temperature
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                description: The city name.
+                type: string
+              date:
+                description: 'The date. (format: date)'
+                type: string
+            required:
+            - city
+            - date
+            type: object
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              date:
+                description: 'Format: date'
+                type: string
+              temperature:
+                type: string
+            required:
+            - temperature
+            - date
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '818'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=795
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -8.833004228238548e-06
+        content:
+          parts:
+          - functionCall:
+              args:
+                city: London
+                date: '2022-01-01'
+              name: temperature
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: cDlXacOkMODnqtsPz8P96Ao
+      usageMetadata:
+        candidatesTokenCount: 14
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 14
+        promptTokenCount: 69
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 69
+        totalTokenCount: 83
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1590'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What was the temperature in London 1st January 2022?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              city: London
+              date: '2022-01-01'
+            id: pyd_ai_3b434062371141a69cab8ea6571e6812
+            name: temperature
+          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_3b434062371141a69cab8ea6571e6812
+            name: temperature
+            response:
+              return_value: 30°C
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - temperature
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: |-
+            <summary>Get the temperature in a city on a specific date.</summary>
+            <returns>
+            <description>The temperature in degrees Celsius.</description>
+            </returns>
+          name: temperature
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                description: The city name.
+                type: string
+              date:
+                description: 'The date. (format: date)'
+                type: string
+            required:
+            - city
+            - date
+            type: object
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              date:
+                description: 'Format: date'
+                type: string
+              temperature:
+                type: string
+            required:
+            - temperature
+            - date
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '860'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=843
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -5.462665631923647e-06
+        content:
+          parts:
+          - functionCall:
+              args:
+                city: London
+                date: '2022-01-01'
+                temperature: 30°C
+              name: final_result
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: cjlXadqMAv3hqtsPuej14A4
+      usageMetadata:
+        candidatesTokenCount: 21
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 21
+        promptTokenCount: 91
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 91
+        totalTokenCount: 112
+    status:
+      code: 200
+      message: OK
+version: 1

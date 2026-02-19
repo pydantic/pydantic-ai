@@ -1,0 +1,161 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '409'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_user_country
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '615'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll help find the largest city in your country. Let me first check your country using the get_user_country
+          tool.
+        type: text
+      - id: toolu_01JJ8TequDsrEU2pv1QFRWAK
+        input: {}
+        name: get_user_country
+        type: tool_use
+      id: msg_01MsqUB7ZyhjGkvepS1tCXp3
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 383
+        output_tokens: 65
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '810'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.
+          type: text
+        role: user
+      - content:
+        - text: I'll help find the largest city in your country. Let me first check your country using the get_user_country
+            tool.
+          type: text
+        - id: toolu_01JJ8TequDsrEU2pv1QFRWAK
+          input: {}
+          name: get_user_country
+          type: tool_use
+        role: assistant
+      - content:
+        - content: Mexico
+          is_error: false
+          tool_use_id: toolu_01JJ8TequDsrEU2pv1QFRWAK
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_user_country
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '812'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: Based on the result, you are located in Mexico. The largest city in Mexico is Mexico City (Ciudad de México),
+          which is both the capital and the most populous city in the country. With a population of approximately 9.2 million
+          people in the city proper and over 21 million people in its metropolitan area, Mexico City is not only the largest
+          city in Mexico but also one of the largest cities in the world.
+        type: text
+      id: msg_0142umg4diSckrDtV9vAmmPL
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 460
+        output_tokens: 91
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
