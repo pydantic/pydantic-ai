@@ -428,9 +428,7 @@ class AnthropicModel(Model):
 
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
-        system_prompt, anthropic_messages = await self._map_message(
-            messages, model_request_parameters, model_settings
-        )
+        system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_config = self._build_output_config(model_request_parameters, model_settings)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
@@ -521,9 +519,7 @@ class AnthropicModel(Model):
 
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
-        system_prompt, anthropic_messages = await self._map_message(
-            messages, model_request_parameters, model_settings
-        )
+        system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_config = self._build_output_config(model_request_parameters, model_settings)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
