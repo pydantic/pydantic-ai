@@ -39,7 +39,7 @@ class ModelRequestParameters:
 
     @cached_property
     def prompted_output_instructions(self) -> str | None:
-        if self.output_mode == 'prompted' and self.prompted_output_template and self.output_object:
+        if self.output_mode in ('prompted', 'native') and self.prompted_output_template and self.output_object:
             from ._output import PromptedOutputSchema
 
             return PromptedOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
