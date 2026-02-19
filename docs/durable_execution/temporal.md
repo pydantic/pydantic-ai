@@ -182,7 +182,22 @@ The event stream handler function will receive the agent [run context][pydantic_
 As the streaming model request activity, workflow, and workflow execution call all take place in separate processes, passing data between them requires some care:
 
 - To get data from the workflow call site or workflow to the event stream handler, you can use a [dependencies object](#agent-run-context-and-dependencies).
-- To get data from the event stream handler to the workflow, workflow call site, or a frontend, you need to use an external system that the event stream handler can write to and the event consumer can read from, like a message queue. You can use the dependency object to make sure the same connection string or other unique ID is available in all the places that need it.
+- To get data from the event stream handler to the workflow, workflow call site, or a frontend, you need to use an external system that the event stream handler can write to and the event consumer can read from. Alternatively, you can use Temporal's built-in signals and queries to pass events from activities to the workflow and from the workflow to the caller.
+
+#### Example
+
+For a complete working example of streaming with Temporal using signals and queries, see the [temporal_streaming example](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_examples/temporal_streaming). This example demonstrates:
+
+- How to use an [`event_stream_handler`][pydantic_ai.agent.EventStreamHandler] to capture agent events in activities
+- Using Temporal signals to send events from activities to the workflow
+- Using Temporal queries to poll events from the workflow to the caller
+- Setting up dependencies to pass workflow identification for signal routing
+- Integrating MCP toolsets and custom tools with streaming
+- Complete project structure with all necessary files
+
+The example includes a Yahoo Finance search agent with Python code execution capabilities, showing how to stream tool calls, model responses, and results in real-time during workflow execution.
+
+
 
 ### Model Selection at Runtime
 

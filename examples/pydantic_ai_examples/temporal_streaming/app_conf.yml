@@ -1,0 +1,11 @@
+# Configuration file for the Temporal Streaming example
+#
+# This file demonstrates how to configure API keys using environment variables.
+# The value specified here (e.g., ANTHROPIC_API_KEY) will be replaced with the
+# actual environment variable value at runtime.
+
+llm:
+  # The anthropic_api_key will be read from the ANTHROPIC_API_KEY environment variable
+  # Make sure to set it before running the example:
+  # export ANTHROPIC_API_KEY='your-api-key-here'
+  anthropic_api_key: 'ANTHROPIC_API_KEY'
