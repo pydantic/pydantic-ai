@@ -65,7 +65,7 @@ def _build_dockerfile(
             lines.append(
                 f'RUN apt-get update && apt-get install -y --no-install-recommends {pkg_list} && rm -rf /var/lib/apt/lists/*'
             )
-        elif package_manager == 'npm':  # pragma: no cover
+        elif package_manager == 'npm':
             pkg_list = ' '.join(packages)
             lines.append(f'RUN npm install -g {pkg_list}')
 
