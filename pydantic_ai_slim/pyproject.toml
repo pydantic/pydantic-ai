@@ -54,7 +54,7 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "griffe>=1.14.0",
+    "griffelib>=2.0",
     "httpx>=0.27",
     "pydantic>=2.12",
     "pydantic-graph=={{ version }}",
