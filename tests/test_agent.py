@@ -65,6 +65,7 @@ from pydantic_ai.builtin_tools import (
     WebSearchUserLocation,
 )
 from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
@@ -747,6 +748,28 @@ def test_response_tuple():
             )
         ]
     )
+
+
+def test_model_request_tracks_prepared_values():
+    class PreparedTrackingTestModel(TestModel):
+        def prepare_request(
+            self,
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+            model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+            prepared_settings: ModelSettings = {'temperature': 0.123, **(model_settings or {})}
+            prepared_parameters = replace(model_request_parameters, allow_image_output=True)
+            return prepared_settings, prepared_parameters
+
+    agent = Agent(PreparedTrackingTestModel())
+    result = agent.run_sync('Hello')
+
+    first_message = result.all_messages()[0]
+    assert isinstance(first_message, ModelRequest)
+    assert first_message.model_settings == {'temperature': 0.123}
+    assert first_message.model_request_parameters is not None
+    assert first_message.model_request_parameters.allow_image_output is True
 
 
 def upcase(text: str) -> str:
