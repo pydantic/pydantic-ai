@@ -107,6 +107,8 @@ cli = [
     "argcomplete>=3.5.0",
     "pyperclip>=1.9.0",
 ]
+# Voice (realtime speech-to-speech)
+voice = ["websockets>=14.0"]
 # MCP
 mcp = ["mcp>=1.25.0,<2.0"]
 # FastMCP
