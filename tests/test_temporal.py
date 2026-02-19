@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Literal
+from unittest.mock import patch
 
 import pytest
 from inline_snapshot import snapshot
@@ -120,6 +121,8 @@ with workflow.unsafe.imports_passed_through():
 
     # https://github.com/temporalio/sdk-python/blob/3244f8bffebee05e0e7efefb1240a75039903dda/tests/test_client.py#L112C1-L113C1
     from inline_snapshot import snapshot
+    from mcp.client.session import ClientSession
+    from mcp.types import ClientRequest
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from .conftest import IsDatetime, IsStr
@@ -757,18 +760,13 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
     actually runs (opening an MCP connection and calling `tools/list`). Subsequent get_tools
     calls return the wrapper's cached tool definitions without scheduling an activity at all.
     """
-    from unittest.mock import patch
-
-    from mcp.client.session import ClientSession
 
     original_send_request = ClientSession.send_request
     methods_called: list[str] = []
 
-    async def tracking_send_request(self_: Any, *args: Any, **kwargs: Any) -> Any:
-        request = args[0] if args else kwargs.get('request')
-        if request is not None and hasattr(request, 'root') and hasattr(request.root, 'method'):  # pragma: no branch
-            methods_called.append(request.root.method)
-        return await original_send_request(self_, *args, **kwargs)
+    async def tracking_send_request(self_: ClientSession, request: ClientRequest, *args: Any, **kwargs: Any) -> Any:
+        methods_called.append(request.root.method)
+        return await original_send_request(self_, request, *args, **kwargs)
 
     with patch.object(ClientSession, 'send_request', tracking_send_request):
         async with Worker(
