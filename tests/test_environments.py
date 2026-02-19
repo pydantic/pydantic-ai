@@ -55,7 +55,7 @@ try:
 except ImportError:  # pragma: lax no cover
     e2b_installed = False
 else:
-    e2b_installed = True
+    e2b_installed = True  # pragma: lax no cover
 
 pytestmark = pytest.mark.anyio
 
@@ -1290,7 +1290,7 @@ def test_docker_sandbox_instantiation():
 
 
 @e2b_skip
-def test_e2b_sandbox_instantiation():
+def test_e2b_sandbox_instantiation():  # pragma: lax no cover
     """E2BEnvironment can be constructed without connecting to E2B."""
 
     sandbox = E2BEnvironment(template='base', api_key='test-key', timeout=60)
@@ -2193,7 +2193,7 @@ def test_docker_sandbox_process_already_eof() -> None:
 # --- E2BEnvironment: mocked tests ---
 
 
-def _make_mock_e2b_sandbox() -> Any:
+def _make_mock_e2b_sandbox() -> Any:  # pragma: lax no cover
     """Create a mock E2B sandbox with AsyncMock for all async methods."""
     mock_sandbox = MagicMock()
 
@@ -2222,7 +2222,7 @@ def _make_mock_e2b_sandbox() -> Any:
 
 
 @pytest.fixture
-def mock_e2b_sandbox() -> Any:
+def mock_e2b_sandbox() -> Any:  # pragma: lax no cover
     """Create an E2BEnvironment with mocked internals."""
     if not e2b_installed:
         pytest.skip('e2b-code-interpreter package not installed')
@@ -2232,20 +2232,20 @@ def mock_e2b_sandbox() -> Any:
     return sandbox
 
 
-async def test_e2b_execute(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_execute(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.execute runs commands."""
     result = await mock_e2b_sandbox.shell('echo hello')
     assert result.exit_code == 0
     assert isinstance(result.output, str)
 
 
-async def test_e2b_execute_with_env(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_execute_with_env(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.execute passes merged env vars."""
     result = await mock_e2b_sandbox.shell('echo test', env={'KEY': 'val'})
     assert result.exit_code == 0
 
 
-async def test_e2b_execute_truncation(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_execute_truncation(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.execute truncates long output."""
     mock_result = MagicMock()
     mock_result.stdout = 'x' * 200_000
@@ -2258,14 +2258,14 @@ async def test_e2b_execute_truncation(mock_e2b_sandbox: Any) -> None:
     assert len(result.output) == 100_000
 
 
-async def test_e2b_read_file(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_read_file(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.read_file returns content."""
     # The mock commands.run returns mock_result with stdout
     content = await mock_e2b_sandbox.read_file('test.txt')
     assert isinstance(content, str)
 
 
-async def test_e2b_read_file_not_found(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_read_file_not_found(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.read_file raises on missing files."""
     mock_result = MagicMock()
     mock_result.exit_code = 1
@@ -2276,7 +2276,7 @@ async def test_e2b_read_file_not_found(mock_e2b_sandbox: Any) -> None:
         await mock_e2b_sandbox.read_file('missing.txt')
 
 
-async def test_e2b_read_file_image(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_read_file_image(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.read_file returns raw bytes for image files."""
     png_data = b'\x89PNG\r\n\x1a\n'
     mock_e2b_sandbox.sandbox.files.read.return_value = png_data
@@ -2285,26 +2285,26 @@ async def test_e2b_read_file_image(mock_e2b_sandbox: Any) -> None:
     assert result == png_data
 
 
-async def test_e2b_write_file(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_write_file(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.write_file creates files."""
     await mock_e2b_sandbox.write_file('test.txt', 'content')
     mock_e2b_sandbox.sandbox.files.write.assert_called()
 
 
-async def test_e2b_write_file_binary(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_write_file_binary(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.write_file handles binary content."""
     await mock_e2b_sandbox.write_file('data.bin', b'\x00\x01\x02')
     mock_e2b_sandbox.sandbox.files.write.assert_called()
 
 
-async def test_e2b_write_file_with_parent_dir(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_write_file_with_parent_dir(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.write_file creates parent directories."""
     await mock_e2b_sandbox.write_file('sub/dir/file.txt', 'content')
     # Should have run mkdir -p for the parent
     mock_e2b_sandbox.sandbox.commands.run.assert_called()
 
 
-async def test_e2b_edit_file(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_edit_file(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.edit_file replaces text."""
     mock_e2b_sandbox.sandbox.files.read.return_value = 'old_value = 1'
     count = await mock_e2b_sandbox.replace_str('code.py', 'old_value', 'new_value')
@@ -2312,14 +2312,14 @@ async def test_e2b_edit_file(mock_e2b_sandbox: Any) -> None:
     mock_e2b_sandbox.sandbox.files.write.assert_called()
 
 
-async def test_e2b_edit_file_bytes(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_edit_file_bytes(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.edit_file handles bytes content."""
     mock_e2b_sandbox.sandbox.files.read.return_value = b'old bytes data'
     count = await mock_e2b_sandbox.replace_str('data.txt', 'old', 'new')
     assert count == 1
 
 
-async def test_e2b_ls(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_ls(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.ls returns entries."""
     mock_entry = MagicMock()
     mock_entry.name = 'test.txt'
@@ -2332,7 +2332,7 @@ async def test_e2b_ls(mock_e2b_sandbox: Any) -> None:
     assert entries[0].is_dir is False
 
 
-async def test_e2b_ls_dir(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_ls_dir(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.ls handles directories."""
     mock_entry = MagicMock()
     mock_entry.name = 'subdir'
@@ -2345,7 +2345,7 @@ async def test_e2b_ls_dir(mock_e2b_sandbox: Any) -> None:
     assert entries[0].path == 'src/subdir'
 
 
-async def test_e2b_glob(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_glob(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.glob returns matches."""
     mock_result = MagicMock()
     mock_result.stdout = 'a.py\nb.py\n'
@@ -2355,7 +2355,7 @@ async def test_e2b_glob(mock_e2b_sandbox: Any) -> None:
     assert matches == ['a.py', 'b.py']
 
 
-async def test_e2b_grep(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_grep(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.grep returns matches."""
     mock_result = MagicMock()
     mock_result.stdout = 'file.py:1:match\n'
@@ -2365,7 +2365,7 @@ async def test_e2b_grep(mock_e2b_sandbox: Any) -> None:
     assert 'match' in result
 
 
-async def test_e2b_grep_count(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_grep_count(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.grep count mode filters zeros."""
     mock_result = MagicMock()
     mock_result.stdout = 'a.py:3\nb.py:0\n'
@@ -2376,7 +2376,7 @@ async def test_e2b_grep_count(mock_e2b_sandbox: Any) -> None:
     assert 'b.py:0' not in result
 
 
-async def test_e2b_instructions(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_instructions(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.instructions provides per-tool descriptions."""
     grep_desc = mock_e2b_sandbox.instructions('grep')
     assert grep_desc is not None
@@ -2384,7 +2384,7 @@ async def test_e2b_instructions(mock_e2b_sandbox: Any) -> None:
 
 
 @e2b_skip
-async def test_e2b_sandbox_property() -> None:
+async def test_e2b_sandbox_property() -> None:  # pragma: lax no cover
     """E2BEnvironment.sandbox raises when not started."""
 
     sandbox = E2BEnvironment(api_key='test')
@@ -2392,28 +2392,28 @@ async def test_e2b_sandbox_property() -> None:
         _ = sandbox.sandbox
 
 
-async def test_e2b_merge_env(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_merge_env(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment._merge_env merges baseline and per-call env."""
     mock_e2b_sandbox._env_vars = {'BASE': 'val'}
     merged = mock_e2b_sandbox._merge_env({'EXTRA': 'extra'})
     assert merged == {'BASE': 'val', 'EXTRA': 'extra'}
 
 
-async def test_e2b_merge_env_override(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_merge_env_override(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment._merge_env per-call overrides baseline."""
     mock_e2b_sandbox._env_vars = {'KEY': 'old'}
     merged = mock_e2b_sandbox._merge_env({'KEY': 'new'})
     assert merged == {'KEY': 'new'}
 
 
-async def test_e2b_merge_env_empty(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_merge_env_empty(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment._merge_env returns None when nothing to merge."""
     mock_e2b_sandbox._env_vars = {}
     result = mock_e2b_sandbox._merge_env(None)
     assert result is None
 
 
-async def test_e2b_create_process(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_create_process(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.create_process returns an E2BEnvironmentProcess."""
 
     proc = await mock_e2b_sandbox.create_process('echo test')
@@ -3151,7 +3151,7 @@ async def test_docker_read_file_image_not_found(mock_docker_sandbox: Any, mock_c
 
 
 @e2b_skip
-async def test_e2b_process_start_with_env() -> None:
+async def test_e2b_process_start_with_env() -> None:  # pragma: lax no cover
     """E2BEnvironmentProcess._start passes env to commands.start."""
 
     mock_sandbox = MagicMock()
@@ -3176,7 +3176,7 @@ async def test_e2b_process_start_with_env() -> None:
 
 
 @e2b_skip
-async def test_e2b_process_aenter() -> None:
+async def test_e2b_process_aenter() -> None:  # pragma: lax no cover
     """E2BEnvironmentProcess.__aenter__ starts the process."""
 
     mock_sandbox = MagicMock()
@@ -3196,7 +3196,7 @@ async def test_e2b_process_aenter() -> None:
 
 
 @e2b_skip
-async def test_e2b_process_send() -> None:
+async def test_e2b_process_send() -> None:  # pragma: lax no cover
     """E2BEnvironmentProcess.send writes to process stdin."""
 
     mock_sandbox = MagicMock()
@@ -3217,7 +3217,7 @@ async def test_e2b_process_send() -> None:
 
 
 @e2b_skip
-async def test_e2b_process_recv() -> None:
+async def test_e2b_process_recv() -> None:  # pragma: lax no cover
     """E2BEnvironmentProcess.recv reads from stdout stream."""
 
     mock_sandbox = MagicMock()
@@ -3236,7 +3236,7 @@ async def test_e2b_process_recv() -> None:
 
 
 @e2b_skip
-async def test_e2b_process_recv_no_timeout() -> None:
+async def test_e2b_process_recv_no_timeout() -> None:  # pragma: lax no cover
     """E2BEnvironmentProcess.recv without timeout."""
 
     mock_sandbox = MagicMock()
@@ -3254,7 +3254,7 @@ async def test_e2b_process_recv_no_timeout() -> None:
 
 
 @e2b_skip
-async def test_e2b_process_recv_stderr() -> None:
+async def test_e2b_process_recv_stderr() -> None:  # pragma: lax no cover
     """E2BEnvironmentProcess.recv_stderr reads from stderr stream."""
 
     mock_sandbox = MagicMock()
@@ -3272,7 +3272,7 @@ async def test_e2b_process_recv_stderr() -> None:
 
 
 @e2b_skip
-async def test_e2b_process_recv_stderr_no_timeout() -> None:
+async def test_e2b_process_recv_stderr_no_timeout() -> None:  # pragma: lax no cover
     """E2BEnvironmentProcess.recv_stderr without timeout."""
 
     mock_sandbox = MagicMock()
@@ -3290,7 +3290,7 @@ async def test_e2b_process_recv_stderr_no_timeout() -> None:
 
 
 @e2b_skip
-async def test_e2b_process_returncode() -> None:
+async def test_e2b_process_returncode() -> None:  # pragma: lax no cover
     """E2BEnvironmentProcess.returncode reflects exit status."""
 
     mock_sandbox = MagicMock()
@@ -3308,7 +3308,7 @@ async def test_e2b_process_returncode() -> None:
 
 
 @e2b_skip
-async def test_e2b_process_wait() -> None:
+async def test_e2b_process_wait() -> None:  # pragma: lax no cover
     """E2BEnvironmentProcess.wait returns exit code."""
 
     mock_sandbox = MagicMock()
@@ -3327,7 +3327,7 @@ async def test_e2b_process_wait() -> None:
 
 
 @e2b_skip
-async def test_e2b_process_wait_no_timeout() -> None:
+async def test_e2b_process_wait_no_timeout() -> None:  # pragma: lax no cover
     """E2BEnvironmentProcess.wait without timeout."""
 
     mock_sandbox = MagicMock()
@@ -3345,7 +3345,7 @@ async def test_e2b_process_wait_no_timeout() -> None:
 
 
 @e2b_skip
-async def test_e2b_process_kill() -> None:
+async def test_e2b_process_kill() -> None:  # pragma: lax no cover
     """E2BEnvironmentProcess.kill terminates the process."""
 
     mock_sandbox = MagicMock()
@@ -3366,7 +3366,7 @@ async def test_e2b_process_kill() -> None:
 
 
 @e2b_skip
-async def test_e2b_process_kill_not_started() -> None:
+async def test_e2b_process_kill_not_started() -> None:  # pragma: lax no cover
     """E2BEnvironmentProcess.kill does nothing when process not started."""
 
     mock_sandbox = MagicMock()
@@ -3382,7 +3382,7 @@ async def test_e2b_process_kill_not_started() -> None:
 
 
 @e2b_skip
-async def test_e2b_process_kill_error() -> None:
+async def test_e2b_process_kill_error() -> None:  # pragma: lax no cover
     """E2BEnvironmentProcess.kill handles exceptions gracefully."""
 
     mock_sandbox = MagicMock()
@@ -3402,7 +3402,7 @@ async def test_e2b_process_kill_error() -> None:
     await proc._stderr_recv.aclose()
 
 
-async def test_e2b_write_file_with_parent_creates_dir(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_write_file_with_parent_creates_dir(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.write_file calls mkdir for parent directories."""
     await mock_e2b_sandbox.write_file('deep/nested/file.txt', 'content')
     # Should have called commands.run for mkdir -p
@@ -3411,13 +3411,13 @@ async def test_e2b_write_file_with_parent_creates_dir(mock_e2b_sandbox: Any) -> 
     assert 'deep/nested' in str(mkdir_call)
 
 
-async def test_e2b_write_file_no_parent_dir(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_write_file_no_parent_dir(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.write_file skips mkdir for root-level files."""
     await mock_e2b_sandbox.write_file('root_file.txt', 'content')
     mock_e2b_sandbox.sandbox.files.write.assert_called()
 
 
-async def test_e2b_execute_with_timeout(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_execute_with_timeout(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.execute passes timeout to commands.run."""
     result = await mock_e2b_sandbox.shell('echo test', timeout=30)
     assert result.exit_code == 0
@@ -3425,7 +3425,7 @@ async def test_e2b_execute_with_timeout(mock_e2b_sandbox: Any) -> None:
     assert call_kwargs['timeout'] == 30
 
 
-async def test_e2b_execute_no_timeout(mock_e2b_sandbox: Any) -> None:
+async def test_e2b_execute_no_timeout(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
     """E2BEnvironment.execute with timeout=None."""
     result = await mock_e2b_sandbox.shell('echo test', timeout=None)
     assert result.exit_code == 0
@@ -3717,7 +3717,7 @@ async def test_docker_ls_size_value_error(mock_docker_sandbox: Any, mock_contain
 
 
 @e2b_skip
-async def test_e2b_lifecycle() -> None:
+async def test_e2b_lifecycle() -> None:  # pragma: lax no cover
     """E2BEnvironment.__aenter__ and __aexit__ (lines 166-186)."""
     from unittest.mock import patch as mock_patch
 
@@ -3739,7 +3739,7 @@ async def test_e2b_lifecycle() -> None:
 
 
 @e2b_skip
-async def test_e2b_lifecycle_close_error() -> None:
+async def test_e2b_lifecycle_close_error() -> None:  # pragma: lax no cover
     """E2BEnvironment.__aexit__ handles close errors gracefully (lines 183-185)."""
     from unittest.mock import patch as mock_patch
 
@@ -3757,7 +3757,7 @@ async def test_e2b_lifecycle_close_error() -> None:
 
 
 @e2b_skip
-async def test_e2b_process_wait_polls() -> None:
+async def test_e2b_process_wait_polls() -> None:  # pragma: lax no cover
     """E2BEnvironmentProcess.wait polls until exit code appears (line 110)."""
 
     import anyio
@@ -3966,7 +3966,7 @@ async def test_base_run_python_success():
 
         @property
         def capabilities(self) -> frozenset[EnvCapability]:
-            return frozenset({'shell', 'write_file', 'run_python'})
+            return frozenset({'shell', 'write_file', 'run_python'})  # pragma: no cover
 
         async def write_file(self, path: str, content: str | bytes) -> None:
             self.written[path] = content
@@ -3990,7 +3990,7 @@ async def test_base_run_python_error():
     class _ShellEnv(BaseEnv):
         @property
         def capabilities(self) -> frozenset[EnvCapability]:
-            return frozenset({'shell', 'write_file', 'run_python'})
+            return frozenset({'shell', 'write_file', 'run_python'})  # pragma: no cover
 
         async def write_file(self, path: str, content: str | bytes) -> None:
             pass
