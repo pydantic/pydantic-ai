@@ -112,6 +112,17 @@ def tmp_path_cwd(tmp_path: Path):
         sys.path.remove(str(tmp_path))
 
 
+def _check_python_version(min_version: str | None, max_version: str | None) -> None:
+    if min_version:
+        min_info = tuple(int(v) for v in min_version.split('.'))
+        if sys.version_info < min_info:
+            pytest.skip(f'Python version {min_version} required')  # pragma: lax no cover
+    if max_version:
+        max_info = tuple(int(v) for v in max_version.split('.'))
+        if sys.version_info[:2] > max_info:
+            pytest.skip(f'Python version <= {max_version} required')  # pragma: lax no cover
+
+
 @pytest.mark.xdist_group(name='doc_tests')
 @pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
     'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
@@ -154,6 +165,10 @@ def test_docs_examples(
     mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
     mocker.patch('pydantic_ai.toolsets.fastmcp.FastMCPToolset', return_value=MockMCPServer())
     mocker.patch('mcp.server.fastmcp.FastMCP')
+    try:
+        mocker.patch('sentence_transformers.SentenceTransformer')
+    except ModuleNotFoundError:
+        pass
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
@@ -194,15 +209,15 @@ def test_docs_examples(
     opt_lint = prefix_settings.get('lint', '')
     noqa = prefix_settings.get('noqa', '')
     python_version = prefix_settings.get('py')
+    max_python_version = prefix_settings.get('max_py')
     dunder_name = prefix_settings.get('dunder_name', '__main__')
     requires = prefix_settings.get('requires')
+
+    _check_python_version(python_version, max_python_version)
 
     ruff_target_version: str = 'py310'
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
-        if sys.version_info < python_version_info:
-            pytest.skip(f'Python version {python_version} required')  # pragma: lax no cover
-
         ruff_target_version = f'py{python_version_info[0]}{python_version_info[1]}'
 
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
