@@ -271,11 +271,7 @@ async def main():
 asyncio.run(main())
 ```
 
-Files uploaded via the Anthropic Files API are:
-
-- Available in the container's `/mnt/user/uploads/` directory
-- Persisted for 30 days
-- Workspace-scoped (accessible across sessions)
+For details on file management, persistence, and container behavior, see the [Anthropic Files API documentation](https://docs.anthropic.com/en/api/files).
 
 #### OpenAI
 
@@ -295,7 +291,7 @@ async def main():
 
     # Create an agent with CodeExecutionTool that has access to the uploaded file
     agent = Agent(
-        'openai:gpt-4o',
+        'openai-responses:gpt-5.2',
         builtin_tools=[CodeExecutionTool(file_ids=[file.id])],
     )
 
@@ -307,10 +303,7 @@ async def main():
 asyncio.run(main())
 ```
 
-Files uploaded via the OpenAI Files API are:
-
-- Automatically mounted in newly created containers
-- Containers expire after 20 minutes of inactivity, but files persist and can be reused with new containers
+For details on file management, container lifecycle, and persistence behavior, see the [OpenAI Responses API documentation](https://platform.openai.com/docs/api-reference/responses).
 
 #### Provider Support
 

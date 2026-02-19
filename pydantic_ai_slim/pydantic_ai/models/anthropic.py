@@ -424,14 +424,12 @@ class AnthropicModel(Model):
         Most preprocessing has happened in `prepare_request()`.
         """
         tools = self._get_tools(model_request_parameters, model_settings)
-        tools, mcp_servers, builtin_tool_betas, container_file_ids = self._add_builtin_tools(
-            tools, model_request_parameters
-        )
+        tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(tools, model_request_parameters)
 
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
         system_prompt, anthropic_messages = await self._map_message(
-            messages, model_request_parameters, model_settings, container_file_ids
+            messages, model_request_parameters, model_settings
         )
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_config = self._build_output_config(model_request_parameters, model_settings)
@@ -519,14 +517,12 @@ class AnthropicModel(Model):
 
         # standalone function to make it easier to override
         tools = self._get_tools(model_request_parameters, model_settings)
-        tools, mcp_servers, builtin_tool_betas, container_file_ids = self._add_builtin_tools(
-            tools, model_request_parameters
-        )
+        tools, mcp_servers, builtin_tool_betas = self._add_builtin_tools(tools, model_request_parameters)
 
         tool_choice = self._infer_tool_choice(tools, model_settings, model_request_parameters)
 
         system_prompt, anthropic_messages = await self._map_message(
-            messages, model_request_parameters, model_settings, container_file_ids
+            messages, model_request_parameters, model_settings
         )
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
         output_config = self._build_output_config(model_request_parameters, model_settings)
@@ -654,10 +650,9 @@ class AnthropicModel(Model):
 
     def _add_builtin_tools(
         self, tools: list[BetaToolUnionParam], model_request_parameters: ModelRequestParameters
-    ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str], list[str]]:
+    ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str]]:
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
-        container_file_ids: list[str] = []
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 user_location = UserLocation(type='approximate', **tool.user_location) if tool.user_location else None
@@ -675,7 +670,6 @@ class AnthropicModel(Model):
                 tools.append(BetaCodeExecutionTool20250825Param(name='code_execution', type='code_execution_20250825'))
                 beta_features.add('code-execution-2025-08-25')
                 if tool.file_ids:
-                    container_file_ids.extend(tool.file_ids)
                     beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
@@ -717,7 +711,7 @@ class AnthropicModel(Model):
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
-        return tools, mcp_servers, beta_features, container_file_ids
+        return tools, mcp_servers, beta_features
 
     def _infer_tool_choice(
         self,
@@ -745,12 +739,15 @@ class AnthropicModel(Model):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
-        container_file_ids: list[str] | None = None,
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
-        pending_container_uploads: list[str] = list(container_file_ids) if container_file_ids else []
+        # Extract container_file_ids from CodeExecutionTool instances in builtin_tools
+        pending_container_uploads: list[str] = []
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, CodeExecutionTool) and tool.file_ids:
+                pending_container_uploads.extend(tool.file_ids)
         for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
@@ -873,19 +870,11 @@ class AnthropicModel(Model):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name == 'bash_code_execution':
+                            elif response_part.tool_name in ('bash_code_execution', 'text_editor_code_execution'):
                                 server_tool_use_block_param = BetaServerToolUseBlockParam(
                                     id=tool_use_id,
                                     type='server_tool_use',
-                                    name='bash_code_execution',
-                                    input=response_part.args_as_dict(),
-                                )
-                                assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name == 'text_editor_code_execution':
-                                server_tool_use_block_param = BetaServerToolUseBlockParam(
-                                    id=tool_use_id,
-                                    type='server_tool_use',
-                                    name='text_editor_code_execution',
+                                    name=response_part.tool_name,
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
@@ -1485,17 +1474,11 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
-    elif item.name == 'bash_code_execution':
+    elif item.name in ('bash_code_execution', 'text_editor_code_execution'):
+        # Preserve original tool name for message history round-trip
         return BuiltinToolCallPart(
             provider_name=provider_name,
-            tool_name='bash_code_execution',
-            args=cast(dict[str, Any], item.input) or None,
-            tool_call_id=item.id,
-        )
-    elif item.name == 'text_editor_code_execution':
-        return BuiltinToolCallPart(
-            provider_name=provider_name,
-            tool_name='text_editor_code_execution',
+            tool_name=item.name,
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )

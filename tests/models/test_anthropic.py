@@ -5262,7 +5262,7 @@ async def test_anthropic_web_fetch_tool_with_parameters():
     )
 
     # Get tools from model
-    tools, _, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     # Find the web_fetch tool
     web_fetch_tool_param = next((t for t in tools if t.get('name') == 'web_fetch'), None)
@@ -5295,7 +5295,7 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
     )
 
     # Get tools from model
-    tools, _, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    tools, _, _ = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     # Find the web_fetch tool
     web_fetch_tool_param = next((t for t in tools if t.get('name') == 'web_fetch'), None)
@@ -5324,7 +5324,7 @@ async def test_anthropic_code_execution_tool_with_file_ids():
     )
 
     # Get tools from model
-    tools, _, betas, container_file_ids = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    tools, _, betas = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     # Verify code_execution tool is present
     code_exec_tool_param = next((t for t in tools if t.get('name') == 'code_execution'), None)
@@ -5334,9 +5334,6 @@ async def test_anthropic_code_execution_tool_with_file_ids():
     # Verify betas include both code execution and files API
     assert 'code-execution-2025-08-25' in betas
     assert 'files-api-2025-04-14' in betas
-
-    # Verify file_ids are returned
-    assert container_file_ids == ['file_123', 'file_456']
 
 
 async def test_anthropic_code_execution_tool_without_file_ids():
@@ -5357,7 +5354,7 @@ async def test_anthropic_code_execution_tool_without_file_ids():
     )
 
     # Get tools from model
-    tools, _, betas, container_file_ids = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+    tools, _, betas = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
 
     # Verify code_execution tool is present
     code_exec_tool_param = next((t for t in tools if t.get('name') == 'code_execution'), None)
@@ -5366,9 +5363,6 @@ async def test_anthropic_code_execution_tool_without_file_ids():
     # Verify only code execution beta is present, not files API
     assert 'code-execution-2025-08-25' in betas
     assert 'files-api-2025-04-14' not in betas
-
-    # Verify no file_ids are returned
-    assert container_file_ids == []
 
 
 async def test_anthropic_container_upload_blocks_in_messages():
@@ -5379,9 +5373,12 @@ async def test_anthropic_container_upload_blocks_in_messages():
     # Create a model instance
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
 
+    # Create CodeExecutionTool with file_ids so that _map_message can extract them
+    code_exec_tool = CodeExecutionTool(file_ids=['file_abc', 'file_xyz'])
+
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
-        builtin_tools=[],
+        builtin_tools=[code_exec_tool],
         output_tools=[],
     )
 
@@ -5390,9 +5387,9 @@ async def test_anthropic_container_upload_blocks_in_messages():
     # Create test messages
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Test message')])]
 
-    # Call _map_message with file_ids
+    # Call _map_message which will extract file_ids from builtin_tools
     _, anthropic_messages = await m._map_message(  # pyright: ignore[reportPrivateUsage]
-        messages, model_request_parameters, model_settings, container_file_ids=['file_abc', 'file_xyz']
+        messages, model_request_parameters, model_settings
     )
 
     # Verify container_upload blocks are in the user message content
