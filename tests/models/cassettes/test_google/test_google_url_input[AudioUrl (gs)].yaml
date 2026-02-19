@@ -1,6 +1,6 @@
 interactions:
   - request:
-      body: grant_type=refresh_token&client_id=764086051850-6qr4p6gpi6hn506pt8ejuq83di341hur.apps.googleusercontent.com&client_secret=scrubbed&refresh_token=scrubbed
+      body: grant_type=refresh_token&client_id=scrubbed&client_secret=scrubbed&refresh_token=scrubbed
       headers:
         accept:
           - "*/*"
