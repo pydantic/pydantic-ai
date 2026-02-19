@@ -670,7 +670,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_name='groq',
                 provider_url='https://api.groq.com',
                 provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
-                provider_response_id='chatcmpl-31dace36-574a-42ee-a89f-154b2881e090',
+                provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -695,7 +695,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_name='groq',
                 provider_url='https://api.groq.com',
                 provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
-                provider_response_id='chatcmpl-5644262c-ce2b-40af-9408-21690b4619a8',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -798,7 +798,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 4, 7, 16, 32, 53, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2044,7 +2044,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-9748c1af-1065-410a-969a-d7fb48039fbb',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2070,7 +2070,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 4, 19, 12, 3, 10, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-994aa228-883a-498c-8b20-9655d770b697',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -2195,7 +2195,7 @@ Enjoy your homemade Uruguayan alfajores!\
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 17, 21, 29, 56, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-4ef92b12-fb9d-486f-8b98-af9b5ecac736',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -3562,7 +3562,7 @@ By following these steps, you can create authentic Argentinian alfajores that sh
                     'finish_reason': 'stop',
                     'timestamp': datetime(2025, 9, 17, 21, 30, 1, tzinfo=timezone.utc),
                 },
-                provider_response_id='chatcmpl-dd0af56b-f71d-4101-be2f-89efcf3f05ac',
+                provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
@@ -5391,14 +5391,14 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
         return f'Something with name: {name}'
 
     result = await agent.run(
-        'Please call the "get_something_by_name" tool with non-existent parameters to test error handling'
+        'Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the second try you can use valid args'
     )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Please call the "get_something_by_name" tool with non-existent parameters to test error handling',
+                        content='Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the second try you can use valid args',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -5410,7 +5410,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 parts=[
                     ToolCallPart(
                         tool_name='get_something_by_name',
-                        args={'invalid_param': 'test'},
+                        args={'foo': 'bar'},
                         tool_call_id=IsStr(),
                     )
                 ],
@@ -5429,13 +5429,13 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                                 'type': 'missing',
                                 'loc': ('name',),
                                 'msg': 'Field required',
-                                'input': {'invalid_param': 'test'},
+                                'input': {'foo': 'bar'},
                             },
                             {
                                 'type': 'extra_forbidden',
-                                'loc': ('invalid_param',),
+                                'loc': ('foo',),
                                 'msg': 'Extra inputs are not permitted',
-                                'input': 'test',
+                                'input': 'bar',
                             },
                         ],
                         tool_name='get_something_by_name',
@@ -5450,23 +5450,20 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='We need to call with correct param name: name. Provide a non-existent name perhaps "nonexistent".'
+                        content='We need to call with correct param: name field. Use some name, e.g., "test".'
                     ),
                     ToolCallPart(
                         tool_name='get_something_by_name',
-                        args='{"name":"nonexistent"}',
+                        args='{"name":"test"}',
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=RequestUsage(input_tokens=283, output_tokens=49),
+                usage=RequestUsage(input_tokens=301, output_tokens=52),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={
-                    'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 9, 2, 21, 3, 54, tzinfo=timezone.utc),
-                },
+                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
@@ -5475,7 +5472,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 parts=[
                     ToolReturnPart(
                         tool_name='get_something_by_name',
-                        content='Something with name: nonexistent',
+                        content='Something with name: test',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -5487,19 +5484,18 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user asked: "Please call the \'get_something_by_name\' tool with non-existent parameters to test error handling". They wanted to test error handling with non-existent parameters, but we corrected to proper parameters. The response from tool: "Something with name: nonexistent". Should we respond? Probably just output the result. Follow developer instruction: be concise, no fancy quotes. Use regular quotes only.'
+                        content='We need to respond to user request. They asked: "Please call the ... tool with non-existent parameters to test error handling; on the second try you can use valid args". We already did that. Now we should respond concisely, maybe acknowledging the result. Use regular quotes.'
                     ),
-                    TextPart(content='Something with name: nonexistent'),
+                    TextPart(
+                        content='The first call failed due to missing and extra parameters, as expected. The second call succeeded and returned: "Something with name: test".'
+                    ),
                 ],
-                usage=RequestUsage(input_tokens=319, output_tokens=96),
+                usage=RequestUsage(input_tokens=336, output_tokens=96),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={
-                    'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 2, 21, 3, 57, tzinfo=timezone.utc),
-                },
+                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5517,7 +5513,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
         return f'Something with name: {name}'
 
     async with agent.iter(
-        'Please call the "get_something_by_name" tool with non-existent parameters to test error handling'
+        'Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the second try you can use valid args'
     ) as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
@@ -5531,7 +5527,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Please call the "get_something_by_name" tool with non-existent parameters to test error handling',
+                        content='Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the second try you can use valid args',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -5542,15 +5538,11 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content="""\
-The user requests to call the tool with non-existent parameters to test error handling. We need to call the function "get_something_by_name" with wrong parameters. The function expects a single argument object with "name". Non-existent parameters means we could provide a wrong key, or missing name. Let's provide an object with wrong key "nonexistent": "value". That should cause error. So we call the function with {"nonexistent": "test"}.
-
-We need to output the call.\
-"""
+                        content='We need to call the tool with invalid parameters first, then second call with valid args. The user wants us to test error handling. So first call should have wrong parameters (e.g., missing required "name" or extra param). The tool expects only "name". If we send extra property, that might cause error. Or missing "name". We\'ll do a call with missing name: {}. Then second call with name: "test". Let\'s do that.'
                     ),
                     ToolCallPart(
                         tool_name='get_something_by_name',
-                        args={'nonexistent': 'test'},
+                        args={'invalid_param': 'value'},
                         tool_call_id=IsStr(),
                     ),
                 ],
@@ -5558,8 +5550,8 @@ We need to output the call.\
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={'timestamp': datetime(2025, 9, 2, 21, 23, 3, tzinfo=timezone.utc)},
-                provider_response_id='chatcmpl-4e0ca299-7515-490a-a98a-16d7664d4fba',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-4f39f3af-3267-4ac1-a0cf-6aa7451877dc',
                 run_id=IsStr(),
             ),
             ModelRequest(
@@ -5570,13 +5562,13 @@ We need to output the call.\
                                 'type': 'missing',
                                 'loc': ('name',),
                                 'msg': 'Field required',
-                                'input': {'nonexistent': 'test'},
+                                'input': {'invalid_param': 'value'},
                             },
                             {
                                 'type': 'extra_forbidden',
-                                'loc': ('nonexistent',),
+                                'loc': ('invalid_param',),
                                 'msg': 'Extra inputs are not permitted',
-                                'input': 'test',
+                                'input': 'value',
                             },
                         ],
                         tool_name='get_something_by_name',
@@ -5590,23 +5582,22 @@ We need to output the call.\
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content='We need to call with correct param: name. Use a placeholder name.'),
+                    ThinkingPart(
+                        content='We need to call the function with correct parameter "name". Provide a name, e.g., "example".'
+                    ),
                     ToolCallPart(
                         tool_name='get_something_by_name',
-                        args='{"name":"test_name"}',
-                        tool_call_id=IsStr(),
+                        args='{"name":"example"}',
+                        tool_call_id='fc_bfb39741-3748-4def-9886-a93fc9c64a90',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=283, output_tokens=43),
+                usage=RequestUsage(input_tokens=304, output_tokens=49),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={
-                    'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2025, 9, 2, 21, 23, 4, tzinfo=timezone.utc),
-                },
-                provider_response_id='chatcmpl-fffa1d41-1763-493a-9ced-083bd3f2d98b',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'tool_calls'},
+                provider_response_id='chatcmpl-e35442a8-12c0-4fb4-8be4-0e51727ce7b7',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -5614,7 +5605,81 @@ We need to output the call.\
                 parts=[
                     ToolReturnPart(
                         tool_name='get_something_by_name',
-                        content='Something with name: test_name',
+                        content='Something with name: example',
+                        tool_call_id='fc_bfb39741-3748-4def-9886-a93fc9c64a90',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user wants to test error handling by calling tool with non-existent parameters first (we did) and then second try with valid args. We have succeeded. Now respond concisely.'
+                    ),
+                    TextPart(content='The tool returned the expected result for the valid call.'),
+                ],
+                usage=RequestUsage(input_tokens=339, output_tokens=58),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_url='https://api.groq.com',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'stop'},
+                provider_response_id='chatcmpl-935610b8-ec6a-4b1d-8a58-84b34ab0590e',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(
+        m,
+        instructions='Be concise. Never use pretty double quotes, just regular ones.',
+        output_type=Literal['yes', 'no'],
+    )
+
+    result = await agent.run(
+        'dont make a tool call, just return the string "maybe" by itself, not as json output, to test error handling; on the second try you can use valid args'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='dont make a tool call, just return the string "maybe" by itself, not as json output, to test error handling; on the second try you can use valid args',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='maybe')],
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_url='https://api.groq.com',
+                finish_reason='error',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'json_invalid',
+                                'loc': (),
+                                'msg': 'Invalid JSON: expected value at line 1 column 1',
+                                'input': 'maybe',
+                                'ctx': {'error': 'expected value at line 1 column 1'},
+                            }
+                        ],
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -5624,18 +5689,146 @@ We need to output the call.\
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='The tool call succeeded with the name "test_name".')],
-                usage=RequestUsage(input_tokens=320, output_tokens=15),
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user wants me to fix the errors. They attempted to get plain "maybe" but system expects JSON output from tool calls? The user says "on the second try you can use valid args". So we need to produce a valid tool call with appropriate arguments to the function final_result. The function expects a response field with value "yes" or "no". So we must call the function with response "yes" or "no". The user wants to test error handling, but now we need to provide valid output. We should call the function final_result with response maybe? But allowed values are "yes" or "no". The user didn't specify which. Probably we can respond with "yes". Let's do function call.
+
+"""
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"response":"yes"}',
+                        tool_call_id='fc_beee8d84-e6d7-4980-bec6-298d3ec7a73f',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=254, output_tokens=174),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
-                provider_details={
-                    'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 2, 21, 23, 4, tzinfo=timezone.utc),
-                },
-                provider_response_id='chatcmpl-fe6b5685-166f-4c71-9cd7-3d5a97301bf1',
-                finish_reason='stop',
+                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-9fc28492-a04d-4b0f-b9a0-a9149d048b37',
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_tool_use_failed_error_streaming_with_text(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(
+        m,
+        instructions='Be concise. Never use pretty double quotes, just regular ones.',
+        output_type=Literal['yes', 'no'],
+    )
+
+    async with agent.iter(
+        'dont make a tool call, just return the string "maybe" by itself, not as json output, to test error handling; on the second try you can use valid args'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for _ in request_stream:
+                        pass
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='dont make a tool call, just return the string "maybe" by itself, not as json output, to test error handling; on the second try you can use valid args',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user says: "dont make a tool call, just return the string "maybe" by itself, not as json output, to test error handling; on the second try you can use valid args". The developer instructions: be concise. Never use pretty double quotes, just regular ones.
+
+We need to respond with just the string maybe, not JSON, and no tool call. So just plain text: maybe.\
+"""
+                    ),
+                    TextPart(content='maybe'),
+                ],
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_url='https://api.groq.com',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='chatcmpl-fd87720a-9b48-4161-bcd7-6127bd0d3696',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'json_invalid',
+                                'loc': (),
+                                'msg': 'Invalid JSON: expected value at line 1 column 1',
+                                'input': 'maybe',
+                                'ctx': {'error': 'expected value at line 1 column 1'},
+                            }
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='We need to comply with tool usage now. The user wants a second try using valid args. The tool expects final_result with response "yes" or "no". They likely want to produce a correct response using the tool. The user originally asked to return "maybe". But now they got validation error because the system expects JSON output via tool? The instruction says on the second try you can use valid args. So we should call the function final_result with response either "yes" or "no". But the user didn\'t ask a yes/no question. However the tool only accepts yes/no. We need to choose something plausible. Probably respond "no" because we can\'t return maybe. The instruction says be concise. So we call the function with response "no".'
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"response":"no"}',
+                        tool_call_id='fc_299e8414-9e94-4d9c-bd06-c096f8919768',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=343, output_tokens=180),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_url='https://api.groq.com',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'tool_calls'},
+                provider_response_id='chatcmpl-0b76b1ce-aa40-4950-9c90-a167b11d4b09',
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
