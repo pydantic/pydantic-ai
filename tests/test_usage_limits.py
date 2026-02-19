@@ -7,8 +7,6 @@ from decimal import Decimal
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
-from inline_snapshot import snapshot
-from inline_snapshot.extra import warns
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -28,6 +26,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
+from ._inline_snapshot import snapshot, warns
 from .conftest import IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
@@ -457,3 +456,30 @@ async def test_parallel_tool_calls_limit_enforced():
 
 def test_usage_unknown_provider():
     assert RequestUsage.extract({}, provider='unknown', provider_url='', provider_fallback='') == RequestUsage()
+
+
+def test_usage_limits_preserves_explicit_zero():
+    """Test that explicit 0 token limits are preserved and not replaced by deprecated fallbacks."""
+    # When input_tokens_limit=0 and deprecated request_tokens_limit is also set,
+    # the explicit 0 should be preserved (not overwritten by the deprecated fallback).
+    # We ignore type errors below because overloads don't allow mixing current and deprecated args.
+    limits = UsageLimits(input_tokens_limit=0, request_tokens_limit=123)  # pyright: ignore[reportCallIssue]
+    assert limits.input_tokens_limit == 0
+
+    limits = UsageLimits(output_tokens_limit=0, response_tokens_limit=456)  # pyright: ignore[reportCallIssue]
+    assert limits.output_tokens_limit == 0
+
+    # When only deprecated arg is passed, should use it as fallback
+    limits = UsageLimits(request_tokens_limit=123)  # pyright: ignore[reportDeprecated]
+    assert limits.input_tokens_limit == 123
+
+    limits = UsageLimits(response_tokens_limit=456)  # pyright: ignore[reportDeprecated]
+    assert limits.output_tokens_limit == 456
+
+    # When neither is passed, should be None
+    limits = UsageLimits()
+    assert limits.input_tokens_limit is None
+
+    # When only current arg is set, should use it
+    limits = UsageLimits(input_tokens_limit=100)
+    assert limits.input_tokens_limit == 100

@@ -329,7 +329,7 @@ dataset = Dataset(
         # Quality score with different model
         LLMJudge(
             rubric='Overall response quality',
-            model='anthropic:claude-sonnet-4-5',
+            model='anthropic:claude-sonnet-4-6',
             score={'evaluation_name': 'quality', 'include_reason': False},
             assertion=False,
         ),
@@ -404,7 +404,24 @@ dataset = Dataset(
 
 ---
 
+## Built-in Report Evaluators
+
+In addition to the case-level evaluators above, Pydantic Evals provides report evaluators that
+analyze entire experiment results. These are passed via the `report_evaluators` parameter on `Dataset`.
+
+| Report Evaluator | Purpose | Output |
+|------------------|---------|--------|
+| [`ConfusionMatrixEvaluator`][pydantic_evals.evaluators.ConfusionMatrixEvaluator] | Classification confusion matrix | `ConfusionMatrix` |
+| [`PrecisionRecallEvaluator`][pydantic_evals.evaluators.PrecisionRecallEvaluator] | PR curve with AUC | `PrecisionRecall` |
+
+**See:** [Report Evaluators](report-evaluators.md) for full documentation, parameters, and examples,
+including how to write custom report evaluators that produce `ScalarResult` and `TableResult` analyses.
+
+---
+
 ## Quick Reference Table
+
+### Case-Level Evaluators
 
 | Evaluator | Purpose | Return Type | Cost | Speed |
 |-----------|---------|-------------|------|-------|
@@ -415,6 +432,13 @@ dataset = Dataset(
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | `bool` | Free | Instant |
 | [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] | Subjective quality | `bool` and/or `float` | $$ | Slow |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavioral check | `bool` | Free | Fast |
+
+### Report-Level Evaluators
+
+| Evaluator | Purpose | Output Type | Cost | Speed |
+|-----------|---------|-------------|------|-------|
+| [`ConfusionMatrixEvaluator`][pydantic_evals.evaluators.ConfusionMatrixEvaluator] | Classification matrix | `ConfusionMatrix` | Free | Instant |
+| [`PrecisionRecallEvaluator`][pydantic_evals.evaluators.PrecisionRecallEvaluator] | PR curve with AUC | `PrecisionRecall` | Free | Instant |
 
 ## Combining Evaluators
 
@@ -453,4 +477,5 @@ This approach:
 
 - **[LLM Judge](llm-judge.md)** - Deep dive on LLM-as-a-Judge evaluation
 - **[Custom Evaluators](custom.md)** - Write your own evaluation logic
+- **[Report Evaluators](report-evaluators.md)** - Experiment-wide analyses (confusion matrices, PR curves, etc.)
 - **[Span-Based Evaluation](span-based.md)** - Using OpenTelemetry spans for behavioral checks

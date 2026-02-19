@@ -13,7 +13,6 @@ from typing import Annotated, Literal, TypeAlias
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
 from pydantic_ai import (
@@ -62,6 +61,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import ClientWithHandler, IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = [
@@ -1355,7 +1355,9 @@ async def test_image_as_binary_content_input(
 
 
 @pytest.mark.vcr()
-async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+async def test_image_url_input(
+    allow_model_requests: None, gemini_api_key: str, disable_ssrf_protection_for_vcr: None
+) -> None:
     m = GeminiModel('gemini-2.0-flash-exp', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 
@@ -1389,7 +1391,9 @@ Here's a breakdown:
 
 
 @pytest.mark.vcr()
-async def test_video_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+async def test_video_url_input(
+    allow_model_requests: None, gemini_api_key: str, disable_ssrf_protection_for_vcr: None
+) -> None:
     m = GeminiModel('gemini-2.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -1416,7 +1420,9 @@ It strongly evokes places like Mykonos or Santorini in Greece, known for their i
 
 
 @pytest.mark.vcr()
-async def test_document_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
+async def test_document_url_input(
+    allow_model_requests: None, gemini_api_key: str, disable_ssrf_protection_for_vcr: None
+) -> None:
     m = GeminiModel('gemini-2.0-flash-thinking-exp-01-21', provider=GoogleGLAProvider(api_key=gemini_api_key))
     agent = Agent(m)
 

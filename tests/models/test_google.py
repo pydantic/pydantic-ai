@@ -9,11 +9,10 @@ import re
 import tempfile
 from collections.abc import AsyncIterator
 from datetime import date, timezone
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from httpx import AsyncClient as HttpxAsyncClient, Timeout
-from inline_snapshot import Is, snapshot
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
@@ -76,19 +75,24 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
+from .._inline_snapshot import Is, snapshot
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
     from google.genai import errors
     from google.genai.types import (
+        BlockedReason,
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
+        GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
         HarmBlockThreshold,
         HarmCategory,
+        HarmProbability,
         MediaModality,
         ModalityTokenCount,
+        SafetyRating,
     )
 
     from pydantic_ai.models.google import (
@@ -848,7 +852,9 @@ It looks like someone is either reviewing footage on the monitor, or using it as
 """)
 
 
-async def test_google_model_image_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_image_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -861,7 +867,9 @@ async def test_google_model_image_url_input(allow_model_requests: None, google_p
     assert result.output == snapshot('That is a potato.')
 
 
-async def test_google_model_video_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_video_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -921,7 +929,9 @@ The video is an AI analyzing recent 404 HTTP responses using Logfire. It identif
 """)
 
 
-async def test_google_model_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_document_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -931,7 +941,9 @@ async def test_google_model_document_url_input(allow_model_requests: None, googl
     assert result.output == snapshot('The document appears to be a dummy PDF file.\n')
 
 
-async def test_google_model_text_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_text_document_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -2531,7 +2543,7 @@ async def test_google_url_input(
 )
 @pytest.mark.vcr()
 async def test_google_url_input_force_download(
-    allow_model_requests: None, vertex_provider: GoogleProvider
+    allow_model_requests: None, vertex_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
 ) -> None:  # pragma: lax no cover
     m = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     agent = Agent(m)
@@ -2576,7 +2588,7 @@ async def test_google_gs_url_force_download_raises_user_error(allow_model_reques
     agent = Agent(m)
 
     url = ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png', force_download=True)
-    with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported.'):
+    with pytest.raises(ValueError, match='URL protocol "gs" is not allowed'):
         _ = await agent.run(['What is the main content of this URL?', url])
 
 
@@ -2671,6 +2683,31 @@ async def test_google_timeout(allow_model_requests: None, google_provider: Googl
 
     with pytest.raises(UserError, match='Google does not support setting ModelSettings.timeout to a httpx.Timeout'):
         await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
+
+
+async def test_google_extra_headers(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    agent = Agent(m, model_settings=GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))
+    result = await agent.run('Hello')
+    assert result.output == snapshot('Hello there! How can I help you today?\n')
+
+
+async def test_google_extra_headers_in_config(allow_model_requests: None):
+    m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'})
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    # Cast to work around GenerateContentConfigDict having partially unknown types
+    # (same pattern as google.py:308)
+    config_dict = cast(dict[str, Any], config)
+    headers = config_dict['http_options']['headers']
+    assert headers['Extra-Header-Key'] == 'Extra-Header-Value'
+    assert headers['Content-Type'] == 'application/json'
 
 
 async def test_google_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
@@ -3606,7 +3643,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text or call a tool.',
+                        content='Please return text.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -4805,6 +4842,7 @@ async def test_gcs_video_url_raises_error_on_google_gla():
 
     google-gla cannot access GCS buckets, so attempting to use gs:// URLs
     should fail with a helpful error message rather than a cryptic API error.
+    SSRF protection now catches non-http(s) protocols first.
     """
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
     # google-gla is the default for GoogleProvider with api_key, but be explicit
@@ -4812,7 +4850,7 @@ async def test_gcs_video_url_raises_error_on_google_gla():
 
     video = VideoUrl(url='gs://bucket/video.mp4')
 
-    with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported'):
+    with pytest.raises(ValueError, match='URL protocol "gs" is not allowed'):
         await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
 
@@ -5692,3 +5730,117 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
             },
         ]
     )
+
+
+def _make_prompt_feedback(*, with_details: bool) -> GenerateContentResponsePromptFeedback:
+    """Create a prompt_feedback with block_reason, optionally with message and safety_ratings."""
+    if with_details:
+        return GenerateContentResponsePromptFeedback(
+            block_reason=BlockedReason.PROHIBITED_CONTENT,
+            block_reason_message='The prompt was blocked.',
+            safety_ratings=[
+                SafetyRating(
+                    category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    probability=HarmProbability.HIGH,
+                    blocked=True,
+                )
+            ],
+        )
+    return GenerateContentResponsePromptFeedback(
+        block_reason=BlockedReason.PROHIBITED_CONTENT,
+    )
+
+
+@pytest.mark.parametrize('with_details', [True, False])
+async def test_google_prompt_feedback_non_streaming(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture, with_details: bool
+):
+    """Test that prompt_feedback with block_reason raises ContentFilterError when candidates are empty."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    response = GenerateContentResponse(
+        candidates=[],
+        prompt_feedback=_make_prompt_feedback(with_details=with_details),
+        response_id='resp_123',
+        model_version=model_name,
+        create_time=datetime.datetime.now(),
+    )
+
+    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        ContentFilterError, match="Content filter triggered. Block reason: 'PROHIBITED_CONTENT'"
+    ) as exc_info:
+        await agent.run('prohibited content')
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['block_reason'] == 'PROHIBITED_CONTENT'
+    if with_details:
+        assert response_msg['provider_details']['block_reason_message'] == 'The prompt was blocked.'
+        assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
+        assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
+        assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True
+
+
+@pytest.mark.parametrize('with_details', [True, False])
+async def test_google_prompt_feedback_streaming(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture, with_details: bool
+):
+    """Test that prompt_feedback with block_reason raises ContentFilterError in streaming mode."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    chunks: list[GenerateContentResponse] = []
+
+    if not with_details:
+        # Include a chunk with no candidates and no block_reason to cover that branch
+        chunks.append(
+            GenerateContentResponse(
+                candidates=[],
+                model_version=model_name,
+                response_id='resp_123',
+                prompt_feedback=GenerateContentResponsePromptFeedback(),
+            )
+        )
+
+    chunks.append(
+        GenerateContentResponse(
+            candidates=[],
+            model_version=model_name,
+            response_id='resp_123',
+            prompt_feedback=_make_prompt_feedback(with_details=with_details),
+        )
+    )
+
+    async def stream_iterator():
+        for c in chunks:
+            yield c
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
+
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        ContentFilterError, match="Content filter triggered. Block reason: 'PROHIBITED_CONTENT'"
+    ) as exc_info:
+        async with agent.run_stream('prohibited content'):
+            pass
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['block_reason'] == 'PROHIBITED_CONTENT'
+    if with_details:
+        assert response_msg['provider_details']['block_reason_message'] == 'The prompt was blocked.'
+        assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
+        assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
+        assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True
