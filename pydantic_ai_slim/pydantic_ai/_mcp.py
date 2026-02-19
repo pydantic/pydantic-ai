@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Sequence
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import logfire
 from pydantic.alias_generators import to_snake
+from typing_extensions import assert_never
 
 from pydantic_ai.agent.abstract import AbstractAgent
-
-from typing_extensions import assert_never
 
 from . import exceptions, messages
 from .agent import AgentDepsT, OutputDataT
@@ -151,7 +150,6 @@ def agent_to_mcp(
     server_name: str | None = None,
     tool_name: str | None = None,
     tool_description: str | None = None,
-    # TODO(Marcelo): Should this actually be a factory that is created in every tool call?
     deps: AgentDepsT = None,
 ) -> Server:
     server_name = to_snake((server_name or agent.name or 'PydanticAI Agent').replace(' ', '_'))
@@ -164,8 +162,11 @@ def agent_to_mcp(
                 name=tool_name,
                 description=tool_description,
                 inputSchema={'type': 'object', 'properties': {'prompt': {'type': 'string'}}},
-                # TODO(Marcelo): How do I get this?
-                outputSchema={'type': 'object', 'properties': {}},
+                outputSchema={
+                    'type': 'object',
+                    'properties': {'result': agent.output_json_schema()},
+                    'required': ['result'],
+                },
             )
         ]
 
@@ -173,9 +174,11 @@ def agent_to_mcp(
         if name != tool_name:
             raise ValueError(f'Unknown tool: {name}')
 
-        # TODO(Marcelo): Should we pass the `message_history` instead?
-        prompt = cast(str, args['prompt'])
-        logfire.info(f'Calling tool: {name} with args: {args}')
+        prompt = args.get('prompt')
+        if not isinstance(prompt, str):
+            raise ValueError(f"Expected 'prompt' argument to be a string, got {type(prompt).__name__}")
+
+        logfire.info('Calling tool {name}', name=name, args=args)
 
         result = await agent.run(user_prompt=prompt, deps=deps)
 

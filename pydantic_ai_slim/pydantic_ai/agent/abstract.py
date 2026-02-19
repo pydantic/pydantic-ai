@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
 from pydantic import TypeAdapter
-from typing_extensions import Self, TypeIs, TypeVar, deprecated
+from typing_extensions import TypeIs, TypeVar, deprecated
 
 from pydantic_graph import End
 
