@@ -323,21 +323,15 @@ def _run_chat_command(
 
     if args.prompt:
         try:
-            asyncio.run(_run_with_mcp(agent, ask_agent(agent, args.prompt, stream, console, code_theme)))
+            asyncio.run(ask_agent(agent, args.prompt, stream, console, code_theme))
         except KeyboardInterrupt:
             pass
         return 0
 
     try:
-        return asyncio.run(_run_with_mcp(agent, run_chat(stream, agent, console, code_theme, prog_name)))
+        return asyncio.run(run_chat(stream, agent, console, code_theme, prog_name))
     except KeyboardInterrupt:  # pragma: no cover
         return 0
-
-
-async def _run_with_mcp(agent: AbstractAgent[Any, Any], coro: Any) -> Any:
-    """Start MCP servers on the agent, then await the coroutine."""
-    async with agent:
-        return await coro
 
 
 async def run_chat(
@@ -360,33 +354,34 @@ async def run_chat(
     multiline = False
     messages: list[ModelMessage] = list(message_history) if message_history else []
 
-    while True:
-        try:
-            auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit', '/cp'])
-            text = await session.prompt_async(f'{prog_name} ➤ ', auto_suggest=auto_suggest, multiline=multiline)
-        except (KeyboardInterrupt, EOFError):  # pragma: no cover
-            return 0
-
-        if not text.strip():
-            continue
-
-        ident_prompt = text.lower().strip().replace(' ', '-')
-        if ident_prompt.startswith('/'):
-            exit_value, multiline = handle_slash_command(ident_prompt, messages, multiline, console, code_theme)
-            if exit_value is not None:
-                return exit_value
-        else:
+    async with agent:
+        while True:
             try:
-                messages = await ask_agent(
-                    agent, text, stream, console, code_theme, deps, messages, model_settings, usage_limits
-                )
-            except CancelledError:  # pragma: no cover
-                console.print('[dim]Interrupted[/dim]')
-            except Exception as e:  # pragma: no cover
-                cause = getattr(e, '__cause__', None)
-                console.print(f'\n[red]{type(e).__name__}:[/red] {e}')
-                if cause:
-                    console.print(f'[dim]Caused by: {cause}[/dim]')
+                auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit', '/cp'])
+                text = await session.prompt_async(f'{prog_name} ➤ ', auto_suggest=auto_suggest, multiline=multiline)
+            except (KeyboardInterrupt, EOFError):  # pragma: no cover
+                return 0
+
+            if not text.strip():
+                continue
+
+            ident_prompt = text.lower().strip().replace(' ', '-')
+            if ident_prompt.startswith('/'):
+                exit_value, multiline = handle_slash_command(ident_prompt, messages, multiline, console, code_theme)
+                if exit_value is not None:
+                    return exit_value
+            else:
+                try:
+                    messages = await ask_agent(
+                        agent, text, stream, console, code_theme, deps, messages, model_settings, usage_limits
+                    )
+                except CancelledError:  # pragma: no cover
+                    console.print('[dim]Interrupted[/dim]')
+                except Exception as e:  # pragma: no cover
+                    cause = getattr(e, '__cause__', None)
+                    console.print(f'\n[red]{type(e).__name__}:[/red] {e}')
+                    if cause:
+                        console.print(f'[dim]Caused by: {cause}[/dim]')
 
 
 async def ask_agent(
@@ -402,51 +397,52 @@ async def ask_agent(
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
-    if not stream:
-        with status:
-            result = await agent.run(prompt, message_history=messages, deps=deps)
-        content = str(result.output)
-        console.print(Markdown(content, code_theme=code_theme))
-        return result.all_messages()
+    async with agent:
+        if not stream:
+            with status:
+                result = await agent.run(prompt, message_history=messages, deps=deps)
+            content = str(result.output)
+            console.print(Markdown(content, code_theme=code_theme))
+            return result.all_messages()
 
-    with status, ExitStack() as stack:
-        async with agent.iter(
-            prompt, message_history=messages, deps=deps, model_settings=model_settings, usage_limits=usage_limits
-        ) as agent_run:
-            live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
-            content_pieces: list[str] = []
-            updated_content = ''
+        with status, ExitStack() as stack:
+            async with agent.iter(
+                prompt, message_history=messages, deps=deps, model_settings=model_settings, usage_limits=usage_limits
+            ) as agent_run:
+                live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
+                content_pieces: list[str] = []
+                updated_content = ''
 
-            async for node in agent_run:
-                status.stop()
-                stack.enter_context(live)
+                async for node in agent_run:
+                    status.stop()
+                    stack.enter_context(live)
 
-                if Agent.is_model_request_node(node):
-                    async with node.stream(agent_run.ctx) as handle_stream:
-                        async for content in handle_stream.stream_output(debounce_by=None):
-                            updated_content = str(content)
-                            display = '\n\n'.join(content_pieces + [updated_content])
-                            live.update(Markdown(display, code_theme=code_theme))
-
-                elif Agent.is_call_tools_node(node):
-                    if updated_content:
-                        content_pieces.append(updated_content)
-                        updated_content = ''
-
-                    async with node.stream(agent_run.ctx) as handle_stream:
-                        async for event in handle_stream:
-                            if isinstance(event, FunctionToolCallEvent):
-                                tool_name = event.part.tool_name
-                                display = '\n\n'.join(content_pieces + [f'> _Calling tool `{tool_name}`..._'])
+                    if Agent.is_model_request_node(node):
+                        async with node.stream(agent_run.ctx) as handle_stream:
+                            async for content in handle_stream.stream_output(debounce_by=None):
+                                updated_content = str(content)
+                                display = '\n\n'.join(content_pieces + [updated_content])
                                 live.update(Markdown(display, code_theme=code_theme))
-                            elif isinstance(event, FunctionToolResultEvent) and isinstance(
-                                event.result, ToolReturnPart
-                            ):
-                                tool_name = event.result.tool_name
-                                content_pieces.append(f'> Called tool `{tool_name}`.')
 
-            assert agent_run.result is not None
-            return agent_run.result.all_messages()
+                    elif Agent.is_call_tools_node(node):
+                        if updated_content:
+                            content_pieces.append(updated_content)
+                            updated_content = ''
+
+                        async with node.stream(agent_run.ctx) as handle_stream:
+                            async for event in handle_stream:
+                                if isinstance(event, FunctionToolCallEvent):
+                                    tool_name = event.part.tool_name
+                                    display = '\n\n'.join(content_pieces + [f'> _Calling tool `{tool_name}`..._'])
+                                    live.update(Markdown(display, code_theme=code_theme))
+                                elif isinstance(event, FunctionToolResultEvent) and isinstance(
+                                    event.result, ToolReturnPart
+                                ):
+                                    tool_name = event.result.tool_name
+                                    content_pieces.append(f'> Called tool `{tool_name}`.')
+
+                assert agent_run.result is not None
+                return agent_run.result.all_messages()
 
 
 class CustomAutoSuggest(AutoSuggestFromHistory):
