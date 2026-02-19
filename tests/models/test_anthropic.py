@@ -195,6 +195,18 @@ class MockAnthropic:
         return BetaMessageTokensCount(input_tokens=10)
 
 
+def test_anthropic_client_property_reflects_provider_changes():
+    client_a = cast(AsyncAnthropic, MockAnthropic())
+    provider = AnthropicProvider(anthropic_client=client_a)
+    model = AnthropicModel('claude-haiku-4-5', provider=provider)
+
+    assert model.client is client_a
+
+    client_b = cast(AsyncAnthropic, MockAnthropic())
+    provider._client = client_b
+    assert model.client is client_b
+
+
 def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> BetaMessage:
     return BetaMessage(
         id='123',

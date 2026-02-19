@@ -510,10 +510,12 @@ async def test_log_levels_and_exceptions():
     # Verify attributes reflect log levels and exceptions
     log_nodes = list(
         parent_span.find_descendants(
-            lambda node: 'Debug message' in str(node.attributes)
-            or 'Info message' in str(node.attributes)
-            or 'Warning message' in str(node.attributes)
-            or 'Error occurred' in str(node.attributes)
+            lambda node: (
+                'Debug message' in str(node.attributes)
+                or 'Info message' in str(node.attributes)
+                or 'Warning message' in str(node.attributes)
+                or 'Error occurred' in str(node.attributes)
+            )
         )
     )
     assert len(log_nodes) > 0, 'Should have log messages as spans'

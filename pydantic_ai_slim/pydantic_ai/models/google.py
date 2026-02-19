@@ -204,8 +204,6 @@ class GoogleModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    client: Client = field(repr=False)
-
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
 
@@ -232,9 +230,12 @@ class GoogleModel(Model):
         if isinstance(provider, str):
             provider = infer_provider('gateway/google-vertex' if provider == 'gateway' else provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def client(self) -> Client:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:

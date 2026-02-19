@@ -93,6 +93,18 @@ def test_init():
     assert m.base_url == 'https://api.groq.com'
 
 
+def test_groq_client_property_reflects_provider_changes():
+    client_a = cast(AsyncGroq, MockGroq())
+    provider = GroqProvider(groq_client=client_a)
+    model = GroqModel('llama-3.3-70b-versatile', provider=provider)
+
+    assert model.client is client_a
+
+    client_b = cast(AsyncGroq, MockGroq())
+    provider._client = client_b
+    assert model.client is client_b
+
+
 @dataclass
 class MockGroq:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None

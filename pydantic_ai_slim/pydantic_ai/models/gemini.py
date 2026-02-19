@@ -109,12 +109,9 @@ class GeminiModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    client: httpx.AsyncClient = field(repr=False)
-
     _model_name: GeminiModelName = field(repr=False)
     _provider: Provider[httpx.AsyncClient] = field(repr=False)
     _auth: AuthProtocol | None = field(repr=False)
-    _url: str | None = field(repr=False)
 
     def __init__(
         self,
@@ -146,15 +143,16 @@ class GeminiModel(Model):
 
                 provider = GoogleVertexProvider()  # type: ignore[reportDeprecated]
         self._provider = provider
-        self.client = provider.client
-        self._url = str(self.client.base_url)
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
+    def client(self) -> httpx.AsyncClient:
+        return self._provider.client
+
+    @property
     def base_url(self) -> str:
-        assert self._url is not None, 'URL not initialized'
-        return self._url
+        return str(self.client.base_url)
 
     @property
     def model_name(self) -> GeminiModelName:
