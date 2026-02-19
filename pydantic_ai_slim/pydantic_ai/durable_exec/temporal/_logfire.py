@@ -15,7 +15,7 @@ def _default_setup_logfire() -> Logfire:
     import logfire
 
     instance = logfire.configure()
-    logfire.instrument_pydantic_ai()
+    instance.instrument_pydantic_ai()
     return instance
 
 
