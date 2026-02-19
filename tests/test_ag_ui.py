@@ -2617,6 +2617,50 @@ async def test_frontend_system_prompt_accepted_when_opted_in():
     )
 
 
+async def test_frontend_system_prompt_accepted_no_agent_prompt():
+    """Test that frontend system prompts are used when accept_frontend_system_prompt=True and agent has no system_prompt."""
+
+    agent = Agent(model=TestModel())
+
+    run_input = create_input(
+        SystemMessage(
+            id='msg_sys',
+            content='Frontend system prompt',
+        ),
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept_frontend_system_prompt=True)
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Frontend system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_system_prompt_reinjected_with_ag_ui_history():
     """Test that system prompts ARE reinjected on followup messages via UI adapters."""
 

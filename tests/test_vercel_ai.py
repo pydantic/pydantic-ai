@@ -49,31 +49,6 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
-from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
-from pydantic_ai.ui.vercel_ai._utils import dump_provider_metadata, load_provider_metadata
-from pydantic_ai.ui.vercel_ai.request_types import (
-    DynamicToolInputAvailablePart,
-    DynamicToolOutputAvailablePart,
-    FileUIPart,
-    ReasoningUIPart,
-    SubmitMessage,
-    TextUIPart,
-    ToolApprovalRequested,
-    ToolApprovalResponded,
-    ToolInputAvailablePart,
-    ToolOutputAvailablePart,
-    ToolOutputErrorPart,
-    UIMessage,
-)
-from pydantic_ai.ui.vercel_ai.response_types import (
-    BaseChunk,
-    DataChunk,
-    FileChunk,
-    SourceDocumentChunk,
-    SourceUrlChunk,
-    ToolInputStartChunk,
-)
-from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr, try_import
@@ -5912,6 +5887,54 @@ async def test_frontend_system_prompt_stripped_no_agent_prompt():
 async def test_frontend_system_prompt_accepted_when_opted_in():
     """Test that frontend system prompts are kept and agent prompt skipped when accept_frontend_system_prompt=True."""
     agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    request = SubmitMessage(
+        id='test-request',
+        messages=[
+            UIMessage(
+                id='msg-sys',
+                role='system',
+                parts=[TextUIPart(text='Frontend system prompt')],
+            ),
+            UIMessage(
+                id='msg-1',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request, accept_frontend_system_prompt=True)
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Frontend system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_accepted_no_agent_prompt():
+    """Test that frontend system prompts are used when accept_frontend_system_prompt=True and agent has no system_prompt."""
+    agent = Agent(model=TestModel())
 
     request = SubmitMessage(
         id='test-request',
