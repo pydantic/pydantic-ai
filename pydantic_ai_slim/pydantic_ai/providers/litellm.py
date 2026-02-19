@@ -45,7 +45,8 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @classmethod
+    def model_profile(cls, model_name: str) -> ModelProfile | None:
         # Map provider prefixes to their profile functions
         provider_to_profile = {
             'anthropic': anthropic_model_profile,

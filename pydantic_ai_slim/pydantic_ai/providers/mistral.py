@@ -35,7 +35,8 @@ class MistralProvider(Provider[Mistral]):
     def client(self) -> Mistral:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @classmethod
+    def model_profile(cls, model_name: str) -> ModelProfile | None:
         return mistral_model_profile(model_name)
 
     @overload

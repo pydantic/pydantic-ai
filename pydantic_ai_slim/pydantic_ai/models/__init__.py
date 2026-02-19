@@ -47,7 +47,7 @@ from ..messages import (
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..providers import Provider, infer_provider
+from ..providers import Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -1108,6 +1108,86 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
+_LEGACY_MODEL_PREFIXES: dict[str, str] = {
+    'gpt': 'openai',
+    'o1': 'openai',
+    'o3': 'openai',
+    'claude': 'anthropic',
+    'gemini': 'google-gla',
+}
+"""Backward compat: allows prefix-only model names like `gpt-4` without `provider:`."""
+
+
+def parse_model_id(model: str) -> tuple[str | None, str]:
+    """Parse a model id string into its provider and model name components.
+
+    Handles both the modern `provider:model` format and legacy model names
+    that start with known prefixes (e.g., `gpt-4`, `claude-3`).
+
+    Args:
+        model: A model identifier string, either `provider:model_name` or a legacy
+            prefix-based name.
+
+    Returns:
+        A tuple of `(provider_name, model_name)`. If the provider can't be inferred,
+        returns `(None, model)` so callers can decide how to handle unknown providers.
+    """
+    if ':' in model:
+        provider_name, model_name = model.split(':', maxsplit=1)
+        return provider_name, model_name
+
+    # Legacy model names without provider prefix
+    for prefix, provider_name in _LEGACY_MODEL_PREFIXES.items():
+        if model.startswith(prefix):
+            return provider_name, model
+
+    # Unknown prefix: let callers decide how to handle this case.
+    return None, model
+
+
+def infer_model_profile(model: str) -> ModelProfile:
+    """Infer the model profile from a model id string without constructing a provider.
+
+    Uses `Provider.model_profile` class methods to look up the profile for the given model.
+    Returns `DEFAULT_PROFILE` for unknown or unrecognized providers.
+
+    Note: This returns the raw provider profile **without** intersecting with
+    `Model.supported_builtin_tools()`, unlike `Model.profile`. This means the returned
+    profile may claim support for builtin tools that a specific `Model` subclass doesn't
+    implement. This is acceptable for best-effort scenarios (e.g. `TemporalModel` with
+    unregistered model strings) where the actual `Model` class isn't available.
+
+    Args:
+        model: A model identifier string (e.g. `'openai:gpt-5'`, `'anthropic:claude-sonnet-4-5'`).
+
+    Returns:
+        The inferred `ModelProfile`, or `DEFAULT_PROFILE` if the provider is unknown.
+    """
+    provider, model_name = parse_model_id(model)
+    if provider is None:
+        return DEFAULT_PROFILE
+
+    if provider == 'vertexai':  # pragma: no cover
+        provider = 'google-vertex'
+    elif provider == 'google':
+        provider = 'google-gla'
+
+    if provider.startswith('gateway/'):
+        from ..providers.gateway import normalize_gateway_provider
+
+        provider = normalize_gateway_provider(provider)
+
+    try:
+        provider_class = infer_provider_class(provider)
+    except ValueError:
+        return DEFAULT_PROFILE
+
+    try:
+        return provider_class.model_profile(model_name) or DEFAULT_PROFILE
+    except (ValueError, UserError):
+        return DEFAULT_PROFILE
+
+
 def infer_model(  # noqa: C901
     model: Model | KnownModelName | str, provider_factory: Callable[[str], Provider[Any]] = infer_provider
 ) -> Model:
@@ -1126,25 +1206,17 @@ def infer_model(  # noqa: C901
 
         return TestModel()
 
-    try:
-        provider_name, model_name = model.split(':', maxsplit=1)
-    except ValueError:
-        provider_name = None
-        model_name = model
-        if model_name.startswith(('gpt', 'o1', 'o3')):
-            provider_name = 'openai'
-        elif model_name.startswith('claude'):
-            provider_name = 'anthropic'
-        elif model_name.startswith('gemini'):
-            provider_name = 'google-gla'
+    provider_name, model_name = parse_model_id(model)
+    if provider_name is None:
+        raise UserError(f'Unknown model: {model}')
 
-        if provider_name is not None:
-            warnings.warn(
-                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider_name}:{model_name}'.",
-                DeprecationWarning,
-            )
-        else:
-            raise UserError(f'Unknown model: {model}')
+    # Warn if using legacy model name without provider prefix
+    if ':' not in model:
+        warnings.warn(
+            f'Specifying a model name without a provider prefix is deprecated. '
+            f"Instead of {model!r}, use '{provider_name}:{model}'.",
+            DeprecationWarning,
+        )
 
     if provider_name == 'vertexai':  # pragma: no cover
         warnings.warn(

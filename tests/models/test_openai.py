@@ -2805,7 +2805,8 @@ def test_openai_model_profile_function():
 
 def test_openai_model_profile_from_provider():
     class CustomProvider(OpenAIProvider):
-        def model_profile(self, model_name: str) -> ModelProfile:
+        @classmethod
+        def model_profile(cls, model_name: str) -> ModelProfile:
             return ModelProfile(
                 json_schema_transformer=InlineDefsJsonSchemaTransformer if model_name == 'gpt-4o' else None
             )

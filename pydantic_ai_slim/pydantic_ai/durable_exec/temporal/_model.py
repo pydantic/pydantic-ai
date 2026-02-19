@@ -16,8 +16,9 @@ from pydantic_ai import ModelMessage, ModelResponse, ModelResponseStreamEvent, m
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, infer_model_profile, parse_model_id
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -298,6 +299,76 @@ class TemporalModel(WrapperModel):
 
     def _current_model_id(self) -> str | None:
         return self._model_id_var.get()
+
+    def _current_model(self) -> models.Model | str:
+        """Get the current model, or the unregistered model ID string."""
+        model_id = self._current_model_id()
+        if model_id is None:
+            return self.wrapped
+        if model_id in self._models_by_id:
+            return self._models_by_id[model_id]
+        return model_id
+
+    @property
+    def model_name(self) -> str:
+        """Get the model name, inferring from raw strings without provider construction."""
+        current = self._current_model()
+        if isinstance(current, str):
+            _, model_name = parse_model_id(current)
+            return model_name
+        return current.model_name
+
+    @property
+    def system(self) -> str:
+        """Get the system (provider) name, inferring from raw strings without provider construction."""
+        current = self._current_model()
+        if isinstance(current, str):
+            provider_name, _ = parse_model_id(current)
+            return provider_name or self.wrapped.system
+        return current.system
+
+    @property
+    def profile(self) -> ModelProfile:
+        """Get the model profile, inferring from raw strings without provider construction.
+
+        Note: This overrides a cached_property with a regular property because the profile
+        depends on _current_model_id() which can change dynamically via using_model().
+        """
+        current = self._current_model()
+        if isinstance(current, str):
+            # Unlike Model.profile, this returns the raw provider profile without intersecting
+            # supported_builtin_tools with the model class's supported_builtin_tools(). This is
+            # acceptable because TemporalModel delegates to the wrapped model for actual requests,
+            # and this profile is only used for capability checks, not request preparation.
+            return infer_model_profile(current)
+        return current.profile
+
+    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
+        current = self._current_model()
+        if isinstance(current, str):
+            return Model.customize_request_parameters(self, model_request_parameters)
+        return current.customize_request_parameters(model_request_parameters)
+
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        """Prepare request using the currently active model's profile.
+
+        This override ensures that when a different model is specified at runtime
+        via `using_model()`, we use that model's profile for validation and
+        parameter preparation, not the default wrapped model's profile.
+        """
+        current = self._current_model()
+
+        # For unregistered model strings, use Model.prepare_request (grandparent's method)
+        # with our overridden profile property. This allows validation to use the correct
+        # profile inferred from the model string, without constructing a full model instance.
+        if isinstance(current, str):
+            return Model.prepare_request(self, model_settings, model_request_parameters)
+
+        return current.prepare_request(model_settings, model_request_parameters)
 
     def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any] | None = None) -> Model:
         """Resolve a model ID to a Model instance.

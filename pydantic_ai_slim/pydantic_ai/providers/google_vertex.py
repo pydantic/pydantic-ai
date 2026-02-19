@@ -52,7 +52,8 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
     def client(self) -> httpx.AsyncClient:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @classmethod
+    def model_profile(cls, model_name: str) -> ModelProfile | None:
         return google_model_profile(model_name)
 
     @overload

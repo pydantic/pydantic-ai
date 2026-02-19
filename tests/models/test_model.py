@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from pydantic_ai import UserError
-from pydantic_ai.models import Model, infer_model
+from pydantic_ai.models import DEFAULT_PROFILE, Model, infer_model, infer_model_profile, parse_model_id
 
 from ..conftest import try_import
 
@@ -267,3 +267,79 @@ def test_infer_model_with_provider():
 def test_infer_str_unknown():
     with pytest.raises(UserError, match='Unknown model: foobar'):
         infer_model('foobar')
+
+
+@pytest.mark.parametrize(
+    ('model_id', 'expected'),
+    [
+        pytest.param('openai:gpt-5', ('openai', 'gpt-5'), id='provider:model'),
+        pytest.param('anthropic:claude-3', ('anthropic', 'claude-3'), id='anthropic:model'),
+        pytest.param('gpt-4', ('openai', 'gpt-4'), id='legacy-gpt'),
+        pytest.param('o1-mini', ('openai', 'o1-mini'), id='legacy-o1'),
+        pytest.param('o3-mini', ('openai', 'o3-mini'), id='legacy-o3'),
+        pytest.param('claude-3-opus', ('anthropic', 'claude-3-opus'), id='legacy-claude'),
+        pytest.param('gemini-1.5-flash', ('google-gla', 'gemini-1.5-flash'), id='legacy-gemini'),
+        pytest.param('unknown-model', (None, 'unknown-model'), id='unknown'),
+        pytest.param('custom:model:with:colons', ('custom', 'model:with:colons'), id='multiple-colons'),
+        pytest.param('gateway/openai:gpt-5', ('gateway/openai', 'gpt-5'), id='gateway-prefix'),
+    ],
+)
+def test_parse_model_id(model_id: str, expected: tuple[str | None, str]):
+    assert parse_model_id(model_id) == expected
+
+
+@pytest.mark.parametrize(
+    ('model_id', 'is_default'),
+    [
+        pytest.param('openai:gpt-5', False, id='openai'),
+        pytest.param('anthropic:claude-sonnet-4-5', False, id='anthropic'),
+        pytest.param('gateway/openai:gpt-5', False, id='gateway-openai'),
+        pytest.param('unknown-provider:some-model', True, id='unknown-provider'),
+        pytest.param('unknown-model', True, id='unknown-no-prefix'),
+        pytest.param('nebius:model-without-slash', False, id='provider-unknown-model'),
+        pytest.param('google:gemini-2.0-flash', False, id='google-shorthand'),
+        pytest.param('openrouter:model-without-slash', True, id='openrouter-no-slash'),
+        pytest.param('together:model-without-slash', True, id='together-no-slash'),
+    ],
+)
+def test_infer_model_profile(model_id: str, is_default: bool):
+    profile = infer_model_profile(model_id)
+    if is_default:
+        assert profile is DEFAULT_PROFILE
+    else:
+        assert profile is not DEFAULT_PROFILE
+
+
+@pytest.mark.parametrize(
+    ('model_id', 'provider_path', 'model_name'),
+    [
+        pytest.param('openai:gpt-5', 'pydantic_ai.providers.openai.OpenAIProvider', 'gpt-5', id='openai'),
+        pytest.param(
+            'anthropic:claude-sonnet-4-5',
+            'pydantic_ai.providers.anthropic.AnthropicProvider',
+            'claude-sonnet-4-5',
+            id='anthropic',
+        ),
+        pytest.param(
+            'google-gla:gemini-2.0-flash',
+            'pydantic_ai.providers.google.GoogleProvider',
+            'gemini-2.0-flash',
+            id='google-gla',
+        ),
+        pytest.param(
+            'google:gemini-2.0-flash',
+            'pydantic_ai.providers.google.GoogleProvider',
+            'gemini-2.0-flash',
+            id='google-shorthand',
+        ),
+    ],
+)
+def test_infer_model_profile_matches_provider(model_id: str, provider_path: str, model_name: str):
+    """Verify infer_model_profile returns the same profile as the provider's model_profile."""
+    module_path, class_name = provider_path.rsplit('.', 1)
+    module = import_module(module_path)
+    provider_class = getattr(module, class_name)
+
+    profile = infer_model_profile(model_id)
+    provider_profile = provider_class.model_profile(model_name)
+    assert profile == provider_profile
