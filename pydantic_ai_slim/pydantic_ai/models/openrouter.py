@@ -22,6 +22,7 @@ try:
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
     from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
     from openai.types.chat.chat_completion_message import Annotation as _OpenAIAnnotation
+    from openai.types.chat.completion_create_params import WebSearchOptions
 
     from .openai import (
         OpenAIChatModel,
@@ -640,7 +641,7 @@ class OpenRouterModel(OpenAIChatModel):
         return new_settings, customized_parameters
 
     @override
-    def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> None:
+    def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         """OpenRouter handles web search via plugins in extra_body, not via the OpenAI web_search_options parameter."""
         return None
 
