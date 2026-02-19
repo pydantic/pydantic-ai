@@ -114,6 +114,19 @@ class _StubBedrockProvider(Provider[Any]):
         return DEFAULT_PROFILE
 
 
+def test_bedrock_client_property_reflects_provider_changes():
+    error = ClientError({'Error': {'Code': 'Test', 'Message': 'test'}}, 'TestOperation')
+    client_a = _StubBedrockClient(error)
+    provider = _StubBedrockProvider(client_a)
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=provider)
+
+    assert model.client is client_a
+
+    client_b = _StubBedrockClient(error)
+    cast(Any, provider)._client = client_b
+    assert model.client is client_b
+
+
 def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
     """Instantiate a BedrockConverseModel wired to always raise the given error."""
     return BedrockConverseModel(
