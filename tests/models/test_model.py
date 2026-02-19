@@ -65,12 +65,12 @@ TEST_CASES = [
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
-        'gateway/anthropic:claude-sonnet-4-5',
-        'claude-sonnet-4-5',
+        'gateway/anthropic:claude-sonnet-4-6',
+        'claude-sonnet-4-6',
         'anthropic',
         'anthropic',
         AnthropicModel,
-        id='gateway/anthropic:claude-sonnet-4-5',
+        id='gateway/anthropic:claude-sonnet-4-6',
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
@@ -245,6 +245,9 @@ def test_infer_model(
         assert isinstance(m, expected_model)
         assert m.model_name == expected_model_name
         assert m.system == expected_system
+
+        # Test that model_id matches the provider:model string that was passed in
+        assert m.model_id == f'{expected_system}:{expected_model_name}'
 
         m2 = infer_model(m)
         assert m2 is m

@@ -131,7 +131,7 @@ def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
 def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
     """Run the CLI and return the exit code for the process."""
     # we don't want to autocomplete or list models that don't include the provider,
-    # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
+    # e.g. we want to show `openai:gpt-5.2` but not `gpt-5.2`
     qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
     args_list = list(args_list) if args_list is not None else sys.argv[1:]
 
@@ -160,7 +160,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         '--model',
         action='append',
         dest='models',
-        help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-5). '
+        help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-6). '
         'Format: "provider:model_name". First model is preselected in UI; additional models appear as options.',
     )
     model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
@@ -179,6 +179,10 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         help="System instructions. When `--agent` is specified, these are additional to the agent's existing instructions "
         'and will be passed as extra instructions to each run.',
     )
+    parser.add_argument(
+        '--html-source',
+        help='URL or file path for the chat UI HTML. If not specified, the UI is downloaded from a CDN.',
+    )
     parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
     parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
     argcomplete.autocomplete(parser)
@@ -194,6 +198,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         tools=args.tools or [],
         instructions=args.instructions,
         default_model=default_model,
+        html_source=args.html_source,
     )
 
 
@@ -228,7 +233,7 @@ subcommands:
     model_arg = parser.add_argument(
         '-m',
         '--model',
-        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "{default_model}".',
+        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-6". Defaults to "{default_model}".',
     )
     model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
     parser.add_argument(
@@ -282,7 +287,7 @@ def _run_chat_command(
             console.print(f'Error initializing [magenta]{args.model}[/magenta]:\n[red]{e}[/red]')
             return 1
 
-    model_name = agent.model if isinstance(agent.model, str) else f'{agent.model.system}:{agent.model.model_name}'
+    model_name = agent.model if isinstance(agent.model, str) else agent.model.model_id
     if args.agent and model_arg_set:
         console.print(
             f'{name_version} using custom agent [magenta]{args.agent}[/magenta] with [magenta]{model_name}[/magenta]',

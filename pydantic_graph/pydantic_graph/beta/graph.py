@@ -727,7 +727,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 self.task_group.cancel_scope.cancel()
                 return
 
-        raise RuntimeError(  # pragma: no cover
+        raise RuntimeError(  # pragma: lax no cover
             'Graph run completed, but no result was produced. This is either a bug in the graph or a bug in the graph runner.'
         )
 

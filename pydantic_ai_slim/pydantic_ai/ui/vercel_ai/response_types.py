@@ -2,6 +2,8 @@
 
 Converted to Python from:
 https://github.com/vercel/ai/blob/ai%406.0.57/packages/ai/src/ui-message-stream/ui-message-chunks.ts
+
+Tool approval types (`ToolApprovalRequestChunk`, `ToolOutputDeniedChunk`) require AI SDK UI v6 or later.
 """
 
 from abc import ABC
@@ -23,7 +25,7 @@ FinishReason = Literal['stop', 'length', 'content-filter', 'tool-calls', 'error'
 class BaseChunk(CamelBaseModel, ABC):
     """Abstract base class for response SSE events."""
 
-    def encode(self) -> str:
+    def encode(self, sdk_version: int) -> str:
         return self.model_dump_json(by_alias=True, exclude_none=True)
 
 
@@ -94,6 +96,10 @@ class ToolInputStartChunk(BaseChunk):
     provider_metadata: ProviderMetadata | None = None
     dynamic: bool | None = None
 
+    def encode(self, sdk_version: int) -> str:
+        exclude = {'provider_metadata'} if sdk_version < 6 else None
+        return self.model_dump_json(by_alias=True, exclude_none=True, exclude=exclude)
+
 
 class ToolInputDeltaChunk(BaseChunk):
     """Tool input delta chunk."""
@@ -150,7 +156,10 @@ class ToolOutputErrorChunk(BaseChunk):
 
 
 class ToolApprovalRequestChunk(BaseChunk):
-    """Tool approval request chunk for human-in-the-loop approval."""
+    """Tool approval request chunk for human-in-the-loop approval.
+
+    Requires AI SDK UI v6 or later.
+    """
 
     type: Literal['tool-approval-request'] = 'tool-approval-request'
     approval_id: str
@@ -158,7 +167,10 @@ class ToolApprovalRequestChunk(BaseChunk):
 
 
 class ToolOutputDeniedChunk(BaseChunk):
-    """Tool output denied chunk when user denies tool execution."""
+    """Tool output denied chunk when user denies tool execution.
+
+    Requires AI SDK UI v6 or later.
+    """
 
     type: Literal['tool-output-denied'] = 'tool-output-denied'
     tool_call_id: str
@@ -249,5 +261,5 @@ class DoneChunk(BaseChunk):
 
     type: Literal['done'] = 'done'
 
-    def encode(self) -> str:
+    def encode(self, sdk_version: int) -> str:
         return '[DONE]'
