@@ -193,16 +193,16 @@ async def test_server_instructions_disabled_by_default(run_context: RunContext[i
 
 
 async def test_server_instructions_enabled(run_context: RunContext[int]):
-    """Test that server instructions are returned when use_server_instructions=True."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], use_server_instructions=True)
+    """Test that server instructions are returned when add_server_instructions=True."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], add_server_instructions=True)
     async with server:
         instructions = await server.get_instructions(run_context)
         assert instructions == 'Be a helpful assistant.'
 
 
 async def test_server_instructions_not_initialized():
-    """Test that AttributeError is raised when use_server_instructions=True but server not initialized."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], use_server_instructions=True)
+    """Test that AttributeError is raised when add_server_instructions=True but server not initialized."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], add_server_instructions=True)
     
     # Don't enter the context manager to avoid initialization
     ctx = build_run_context(0)
@@ -232,22 +232,22 @@ def test_sse_server():
     assert sse_server.log_level is None
 
 
-def test_sse_server_with_use_server_instructions():
-    """Test that SSE server can be configured with use_server_instructions=True."""
+def test_sse_server_with_add_server_instructions():
+    """Test that SSE server can be configured with add_server_instructions=True."""
     sse_server = MCPServerSSE(
         url='http://localhost:8000/sse',
-        use_server_instructions=True
+        add_server_instructions=True
     )
-    assert sse_server.use_server_instructions is True
+    assert sse_server.add_server_instructions is True
 
 
-def test_streamable_http_server_with_use_server_instructions():
-    """Test that StreamableHTTP server can be configured with use_server_instructions=True."""
+def test_streamable_http_server_with_add_server_instructions():
+    """Test that StreamableHTTP server can be configured with add_server_instructions=True."""
     http_server = MCPServerStreamableHTTP(
         url='http://localhost:8000/mcp',
-        use_server_instructions=True
+        add_server_instructions=True
     )
-    assert http_server.use_server_instructions is True
+    assert http_server.add_server_instructions is True
 
 
 def test_sse_server_with_header_and_timeout():
