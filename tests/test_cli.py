@@ -6,7 +6,6 @@ from typing import Any
 
 import pytest
 from dirty_equals import IsInstance, IsStr
-from inline_snapshot import snapshot
 from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
@@ -16,6 +15,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
+from ._inline_snapshot import snapshot
 from .conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
@@ -454,7 +454,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
                 '-m',
                 'openai:gpt-5',
                 '-m',
-                'anthropic:claude-sonnet-4-5',
+                'anthropic:claude-sonnet-4-6',
             ],
             prog_name='clai',
         )
@@ -465,7 +465,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
         agent_path='test_module:custom_agent',
         host='127.0.0.1',
         port=7932,
-        models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
+        models=['openai:gpt-5', 'anthropic:claude-sonnet-4-6'],
         tools=[],
         instructions=None,
         default_model='openai:gpt-5',
@@ -693,7 +693,7 @@ def test_run_web_command_cli_models_passed_to_create_web_app(
     create_test_module(custom_agent=test_agent)
 
     result = run_web_command(
-        agent_path='test_module:custom_agent', models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5']
+        agent_path='test_module:custom_agent', models=['openai:gpt-5', 'anthropic:claude-sonnet-4-6']
     )
 
     assert result == 0
@@ -701,7 +701,7 @@ def test_run_web_command_cli_models_passed_to_create_web_app(
 
     call_kwargs = mock_create_app.call_args.kwargs
     # CLI models passed as list; agent model merging/deduplication happens in create_web_app
-    assert call_kwargs.get('models') == ['openai:gpt-5', 'anthropic:claude-sonnet-4-5']
+    assert call_kwargs.get('models') == ['openai:gpt-5', 'anthropic:claude-sonnet-4-6']
 
 
 def test_agent_to_cli_sync_with_args(mocker: MockerFixture, env: TestEnv):
