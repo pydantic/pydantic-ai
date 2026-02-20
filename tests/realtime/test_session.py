@@ -2,8 +2,6 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -13,10 +11,7 @@ from pydantic_ai.realtime import (
     AudioDelta,
     AudioInput,
     InputTranscript,
-    RealtimeConnection,
     RealtimeEvent,
-    RealtimeInput,
-    RealtimeModel,
     RealtimeSession,
     SessionError,
     ToolCall,
@@ -26,53 +21,8 @@ from pydantic_ai.realtime import (
     Transcript,
     TurnComplete,
 )
-from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import ToolDefinition
 
-# ---------------------------------------------------------------------------
-# Fake implementations for testing
-# ---------------------------------------------------------------------------
-
-
-class FakeRealtimeConnection(RealtimeConnection):
-    """A fake connection that yields pre-configured events."""
-
-    def __init__(self, events: list[RealtimeEvent]) -> None:
-        self._events = events
-        self.sent: list[RealtimeInput] = []
-
-    async def send(self, content: RealtimeInput) -> None:
-        self.sent.append(content)
-
-    async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
-        for event in self._events:
-            yield event
-
-
-class FakeRealtimeModel(RealtimeModel):
-    """A fake model that yields a pre-configured connection."""
-
-    def __init__(self, connection: FakeRealtimeConnection) -> None:
-        self._connection = connection
-        self.last_instructions: str | None = None
-        self.last_tools: list[ToolDefinition] | None = None
-
-    @property
-    def model_name(self) -> str:
-        return 'fake-realtime'
-
-    @asynccontextmanager
-    async def connect(
-        self,
-        *,
-        instructions: str,
-        tools: list[ToolDefinition] | None = None,
-        model_settings: ModelSettings | None = None,
-    ) -> AsyncIterator[FakeRealtimeConnection]:
-        self.last_instructions = instructions
-        self.last_tools = tools
-        yield self._connection
-
+from .conftest import FakeRealtimeConnection, FakeRealtimeModel
 
 # ---------------------------------------------------------------------------
 # RealtimeSession passthrough tests

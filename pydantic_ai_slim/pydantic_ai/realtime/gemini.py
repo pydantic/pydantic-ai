@@ -190,6 +190,10 @@ class GeminiRealtimeModel(RealtimeModel):
     def model_name(self) -> str:
         return self.model
 
+    @property
+    def system(self) -> str:
+        return 'google'
+
     def _get_client(self) -> GenaiClient:
         if self.client is not None:
             return self.client
