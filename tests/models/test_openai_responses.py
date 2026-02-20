@@ -34,6 +34,7 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturnPart,
     UnexpectedModelBehavior,
+    UsageLimitExceeded,
     UserError,
     UserPromptPart,
     capture_run_messages,
@@ -49,7 +50,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
@@ -9964,6 +9965,70 @@ async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key
 
 I need to respond with a Python function for calculating the factorial. The user wants me to think step-by-step, but I need to keep my reasoning brief. I'll provide a brief explanation of how the function works and include some input validation. I could choose either an iterative or recursive approach. I'll keep the details high-level, showing only the essential steps before presenting the final code to the user.\
 """)
+
+
+async def test_responses_count_tokens(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    result = await model.count_tokens(
+        [ModelRequest(parts=[], instructions='Follow the system instructions.')],
+        OpenAIResponsesModelSettings(timeout=123.0),
+        ModelRequestParameters(),
+    )
+
+    assert result.input_tokens == snapshot(16)
+
+
+async def test_responses_count_tokens_no_messages(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    with pytest.raises(UserError, match='Cannot count tokens without any messages or a previous response ID'):
+        await model.count_tokens([], None, ModelRequestParameters())
+
+
+async def test_responses_count_tokens_with_tools(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a location',
+        parameters_json_schema={'type': 'object', 'properties': {'location': {'type': 'string'}}},
+    )
+    result = await model.count_tokens(
+        [ModelRequest.user_text_prompt('What is the weather in Paris?')],
+        None,
+        ModelRequestParameters(function_tools=[tool_def], allow_text_output=False),
+    )
+
+    assert result.input_tokens == snapshot(51)
+
+
+async def test_responses_usage_limit_exceeded(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=r'The next request would exceed the input_tokens_limit of 9 \(input_tokens=18\)',
+    ):
+        await agent.run(
+            'The quick brown fox jumps over the lazy dog.',
+            usage_limits=UsageLimits(input_tokens_limit=9, count_tokens_before_request=True),
+        )
+
+
+async def test_responses_usage_limit_not_exceeded(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model)
+
+    result = await agent.run(
+        'The quick brown fox jumps over the lazy dog.',
+        usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+    )
+    assert result.output == snapshot(
+        "That's a classic pangram! It contains every letter of the English alphabet"
+        " at least once. It's commonly used for testing fonts, typewriters, and keyboards."
+    )
 
 
 async def test_openai_include_raw_annotations_non_streaming(allow_model_requests: None, openai_api_key: str):
