@@ -125,9 +125,9 @@ def create_web_app(
     Args:
         agent: The Pydantic AI agent to serve
         models: Models to make available in the UI. Can be:
-            - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-5']`)
+            - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-6']`)
             - A dict mapping display labels to model names/instances
-                (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'}`)
+                (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-6'}`)
             If not provided, the UI will have no model options.
         builtin_tools: Optional list of additional builtin tools to make available in the UI.
             Tools already configured on the agent are always included but won't appear as options.

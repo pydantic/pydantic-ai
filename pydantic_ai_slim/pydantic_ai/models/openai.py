@@ -783,6 +783,25 @@ class OpenAIChatModel(Model):
 
         choice = response.choices[0]
 
+        # Handle refusal responses (structured output safety filter)
+        if choice.message.refusal:
+            provider_details = self._process_provider_details(response) or {}
+            provider_details.pop('finish_reason', None)
+            provider_details['refusal'] = choice.message.refusal
+            if response.created:  # pragma: no branch
+                provider_details['timestamp'] = number_to_datetime(response.created)
+            return ModelResponse(
+                parts=[],
+                usage=self._map_usage(response),
+                model_name=response.model,
+                timestamp=_now_utc(),
+                provider_details=provider_details or None,
+                provider_response_id=response.id,
+                provider_name=self._provider.name,
+                provider_url=self._provider.base_url,
+                finish_reason='content_filter',
+            )
+
         items: list[ModelResponsePart] = []
 
         if thinking_parts := self._process_thinking(choice.message):
@@ -1143,107 +1162,127 @@ class OpenAIChatModel(Model):
             else:
                 assert_never(part)
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:  # noqa: C901
+    async def _map_image_url_item(self, item: ImageUrl) -> ChatCompletionContentPartImageParam:
+        """Map an ImageUrl to a chat completion image content part."""
+        image_url: ImageURL = {'url': item.url}
+        if metadata := item.vendor_metadata:
+            image_url['detail'] = metadata.get('detail', 'auto')
+        if item.force_download:
+            image_content = await download_item(item, data_format='base64_uri', type_format='extension')
+            image_url['url'] = image_content['data']
+        return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
+
+    async def _map_binary_content_item(self, item: BinaryContent) -> ChatCompletionContentPartParam:
+        """Map a BinaryContent item to a chat completion content part."""
         profile = OpenAIModelProfile.from_profile(self.profile)
+        if self._is_text_like_media_type(item.media_type):
+            # Inline text-like binary content as a text block
+            return self._inline_text_file_part(
+                item.data.decode('utf-8'),
+                media_type=item.media_type,
+                identifier=item.identifier,
+            )
+        elif item.is_image:
+            image_url = ImageURL(url=item.data_uri)
+            if metadata := item.vendor_metadata:
+                image_url['detail'] = metadata.get('detail', 'auto')
+            return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
+        elif item.is_audio:
+            assert item.format in ('wav', 'mp3')
+            if profile.openai_chat_audio_input_encoding == 'uri':
+                audio = InputAudio(data=item.data_uri, format=item.format)
+            else:
+                audio = InputAudio(data=item.base64, format=item.format)
+            return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
+        elif item.is_document:
+            return File(
+                file=FileFile(
+                    file_data=item.data_uri,
+                    filename=f'filename.{item.format}',
+                ),
+                type='file',
+            )
+        else:  # pragma: no cover
+            raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
+
+    async def _map_audio_url_item(self, item: AudioUrl) -> ChatCompletionContentPartInputAudioParam:
+        """Map an AudioUrl to a chat completion audio content part."""
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        data_format = 'base64_uri' if profile.openai_chat_audio_input_encoding == 'uri' else 'base64'
+        downloaded_item = await download_item(item, data_format=data_format, type_format='extension')
+        assert downloaded_item['data_type'] in (
+            'wav',
+            'mp3',
+        ), f'Unsupported audio format: {downloaded_item["data_type"]}'
+        audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
+        return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
+
+    async def _map_document_url_item(self, item: DocumentUrl) -> ChatCompletionContentPartParam:
+        """Map a DocumentUrl to a chat completion content part."""
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        # OpenAI Chat API's FileFile only supports base64-encoded data, not URLs.
+        # Some providers (e.g., OpenRouter) support URLs via the profile flag.
+        if not item.force_download and profile.openai_chat_supports_file_urls:
+            return File(
+                file=FileFile(
+                    file_data=item.url,
+                    filename=f'filename.{item.format}',
+                ),
+                type='file',
+            )
+        if self._is_text_like_media_type(item.media_type):
+            downloaded_text = await download_item(item, data_format='text')
+            return self._inline_text_file_part(
+                downloaded_text['data'],
+                media_type=item.media_type,
+                identifier=item.identifier,
+            )
+        else:
+            downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
+            return File(
+                file=FileFile(
+                    file_data=downloaded_item['data'],
+                    filename=f'filename.{downloaded_item["data_type"]}',
+                ),
+                type='file',
+            )
+
+    async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:  # pragma: no cover
+        """Map a VideoUrl to a chat completion content part."""
+        raise NotImplementedError('VideoUrl is not supported for OpenAI')
+
+    async def _map_content_item(
+        self, item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | CachePoint
+    ) -> ChatCompletionContentPartParam | None:
+        """Map a single content item to a chat completion content part, or None to filter it out."""
+        if isinstance(item, str):
+            return ChatCompletionContentPartTextParam(text=item, type='text')
+        elif isinstance(item, ImageUrl):
+            return await self._map_image_url_item(item)
+        elif isinstance(item, BinaryContent):
+            return await self._map_binary_content_item(item)
+        elif isinstance(item, AudioUrl):
+            return await self._map_audio_url_item(item)
+        elif isinstance(item, DocumentUrl):
+            return await self._map_document_url_item(item)
+        elif isinstance(item, VideoUrl):
+            return await self._map_video_url_item(item)
+        elif isinstance(item, CachePoint):
+            # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
+            return None
+        else:
+            assert_never(item)
+
+    async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
         content: str | list[ChatCompletionContentPartParam]
         if isinstance(part.content, str):
             content = part.content
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(ChatCompletionContentPartTextParam(text=item, type='text'))
-                elif isinstance(item, ImageUrl):
-                    image_url: ImageURL = {'url': item.url}
-                    if metadata := item.vendor_metadata:
-                        image_url['detail'] = metadata.get('detail', 'auto')
-                    if item.force_download:
-                        image_content = await download_item(item, data_format='base64_uri', type_format='extension')
-                        image_url['url'] = image_content['data']
-                    content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
-                elif isinstance(item, BinaryContent):
-                    if self._is_text_like_media_type(item.media_type):
-                        # Inline text-like binary content as a text block
-                        content.append(
-                            self._inline_text_file_part(
-                                item.data.decode('utf-8'),
-                                media_type=item.media_type,
-                                identifier=item.identifier,
-                            )
-                        )
-                    elif item.is_image:
-                        image_url = ImageURL(url=item.data_uri)
-                        if metadata := item.vendor_metadata:
-                            image_url['detail'] = metadata.get('detail', 'auto')
-                        content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
-                    elif item.is_audio:
-                        assert item.format in ('wav', 'mp3')
-                        if profile.openai_chat_audio_input_encoding == 'uri':
-                            audio = InputAudio(data=item.data_uri, format=item.format)
-                        else:
-                            audio = InputAudio(data=item.base64, format=item.format)
-                        content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
-                    elif item.is_document:
-                        content.append(
-                            File(
-                                file=FileFile(
-                                    file_data=item.data_uri,
-                                    filename=f'filename.{item.format}',
-                                ),
-                                type='file',
-                            )
-                        )
-                    else:  # pragma: no cover
-                        raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
-                elif isinstance(item, AudioUrl):
-                    data_format = 'base64_uri' if profile.openai_chat_audio_input_encoding == 'uri' else 'base64'
-                    downloaded_item = await download_item(item, data_format=data_format, type_format='extension')
-                    assert downloaded_item['data_type'] in (
-                        'wav',
-                        'mp3',
-                    ), f'Unsupported audio format: {downloaded_item["data_type"]}'
-                    audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
-                    content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
-                elif isinstance(item, DocumentUrl):
-                    # OpenAI Chat API's FileFile only supports base64-encoded data, not URLs.
-                    # Some providers (e.g., OpenRouter) support URLs via the profile flag.
-                    if not item.force_download and profile.openai_chat_supports_file_urls:
-                        content.append(
-                            File(
-                                file=FileFile(
-                                    file_data=item.url,
-                                    filename=f'filename.{item.format}',
-                                ),
-                                type='file',
-                            )
-                        )
-                    elif self._is_text_like_media_type(item.media_type):
-                        downloaded_text = await download_item(item, data_format='text')
-                        content.append(
-                            self._inline_text_file_part(
-                                downloaded_text['data'],
-                                media_type=item.media_type,
-                                identifier=item.identifier,
-                            )
-                        )
-                    else:
-                        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
-                        content.append(
-                            File(
-                                file=FileFile(
-                                    file_data=downloaded_item['data'],
-                                    filename=f'filename.{downloaded_item["data_type"]}',
-                                ),
-                                type='file',
-                            )
-                        )
-                elif isinstance(item, VideoUrl):  # pragma: no cover
-                    raise NotImplementedError('VideoUrl is not supported for OpenAI')
-                elif isinstance(item, CachePoint):
-                    # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
-                    pass
-                else:
-                    assert_never(item)
+                mapped_item = await self._map_content_item(item)
+                if mapped_item is not None:
+                    content.append(mapped_item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
     @staticmethod
@@ -1399,6 +1438,7 @@ class OpenAIResponsesModel(Model):
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
+        refusal_text: str | None = None
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
@@ -1435,7 +1475,9 @@ class OpenAIResponsesModel(Model):
                     )
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
-                    if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
+                    if isinstance(content, responses.ResponseOutputRefusal):
+                        refusal_text = content.refusal
+                    elif isinstance(content, responses.ResponseOutputText):  # pragma: no branch
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
@@ -1507,6 +1549,12 @@ class OpenAIResponsesModel(Model):
             finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
         if response.created_at:  # pragma: no branch
             provider_details['timestamp'] = number_to_datetime(response.created_at)
+
+        if refusal_text is not None:
+            items = []
+            finish_reason = 'content_filter'
+            provider_details.pop('finish_reason', None)
+            provider_details['refusal'] = refusal_text
 
         return ModelResponse(
             parts=items,
@@ -2192,6 +2240,8 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _model_settings: OpenAIChatModelSettings | None = None
+    _has_refusal: bool = field(default=False, init=False)
+    _refusal_text: str = field(default='', init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._provider_timestamp is not None:  # pragma: no branch
@@ -2220,14 +2270,29 @@ class OpenAIStreamedResponse(StreamedResponse):
             if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
                 continue
 
+            # Handle refusal responses (structured output safety filter).
+            # Note: OpenAI sends refusal instead of content (not alongside it), so in practice
+            # text parts won't have been yielded before _has_refusal is set.
+            if choice.delta.refusal:
+                self._has_refusal = True
+                self.finish_reason = 'content_filter'
+                self._refusal_text += choice.delta.refusal
+                continue
+
             if raw_finish_reason := choice.finish_reason:
-                self.finish_reason = self._map_finish_reason(raw_finish_reason)
+                if not self._has_refusal:
+                    self.finish_reason = self._map_finish_reason(raw_finish_reason)
 
             if provider_details := self._map_provider_details(chunk):  # pragma: no branch
+                if self._has_refusal:
+                    provider_details.pop('finish_reason', None)
                 self.provider_details = {**(self.provider_details or {}), **provider_details}
 
             for event in self._map_part_delta(choice):
                 yield event
+
+        if self._refusal_text:
+            self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
 
     def _validate_response(self) -> AsyncIterable[ChatCompletionChunk]:
         """Hook that validates incoming chunks.
@@ -2362,6 +2427,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+    _has_refusal: bool = field(default=False, init=False)
+    _refusal_text: str = field(default='', init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         # Track annotations by item_id and content_index
@@ -2380,8 +2447,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
                 if raw_finish_reason:  # pragma: no branch
-                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
-                    self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+                    if not self._has_refusal:
+                        self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
+                        self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
 
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                 pass  # there's nothing we need to do here
@@ -2611,6 +2679,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     ):
                         yield event
 
+            elif isinstance(chunk, responses.ResponseRefusalDeltaEvent):
+                # Accumulate refusal text from deltas as a fallback in case the done event is missing.
+                self._has_refusal = True
+                self.finish_reason = 'content_filter'
+                self._refusal_text += chunk.delta
+
+            elif isinstance(chunk, responses.ResponseRefusalDoneEvent):
+                # The done event contains the full refusal text, replacing any accumulated deltas.
+                self._has_refusal = True
+                self.finish_reason = 'content_filter'
+                self._refusal_text = chunk.refusal
+
             elif isinstance(chunk, responses.ResponseWebSearchCallInProgressEvent):
                 pass  # there's nothing we need to do here
 
@@ -2719,6 +2799,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     f'Handling of this event type is not yet implemented. Please report on our GitHub: {chunk}',
                     UserWarning,
                 )
+
+        if self._refusal_text:
+            self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
