@@ -1,7 +1,7 @@
 """Pytest orchestration for AI SDK <-> Pydantic AI integration tests.
 
-Starts a real HTTP server, runs TypeScript tests against it, and fails if the
-tests fail. Requires node >= 22.6 (built-in TypeScript strip).
+Starts a real HTTP server per test, runs TypeScript tests against it, and fails
+if the tests fail. Requires node >= 22.6 (built-in TypeScript strip).
 """
 
 from __future__ import annotations
@@ -50,12 +50,13 @@ def _wait_for_server(port: int, timeout: float = STARTUP_TIMEOUT) -> None:
     raise TimeoutError(f'Server on port {port} did not start within {timeout}s')
 
 
-@pytest.fixture(scope='module')
-def server_url() -> Iterator[str]:
+@pytest.fixture
+def server_url(request: pytest.FixtureRequest) -> Iterator[str]:
+    agent_name: str = request.param
     port = _free_port()
     log = tempfile.TemporaryFile()
     proc = subprocess.Popen(
-        [sys.executable, '-m', SERVER_MODULE, str(port)],
+        [sys.executable, '-m', SERVER_MODULE, agent_name, str(port)],
         cwd=REPO_ROOT,
         stdout=log,
         stderr=log,
@@ -73,19 +74,26 @@ def server_url() -> Iterator[str]:
             print(f'\n--- server log ---\n{output}--- end server log ---')
 
 
-TEST_FILES = [
-    'test_text.ts',
-    'test_thinking.ts',
-    'test_tool.ts',
-    'test_tool_approval.ts',
-    'test_multi_tool.ts',
-]
+TEST_FILES = sorted(SDK_DIR.glob('test_*.ts'))
 
 
-@pytest.mark.parametrize('test_file', TEST_FILES)
-def test_ai_sdk(_npm_install: None, server_url: str, test_file: str) -> None:
+def test_agents_match_test_files() -> None:
+    from tests.ai_sdk.server import AGENTS
+
+    agent_names = set(AGENTS.keys())
+    test_names = {f.stem.removeprefix('test_') for f in TEST_FILES}
+    assert agent_names == test_names
+
+
+@pytest.mark.parametrize(
+    ('test_file', 'server_url'),
+    [(f, f.stem.removeprefix('test_')) for f in TEST_FILES],
+    ids=[f.name for f in TEST_FILES],
+    indirect=['server_url'],
+)
+def test_ai_sdk(_npm_install: None, server_url: str, test_file: Path) -> None:
     result = subprocess.run(
-        ['node', '--test', str(SDK_DIR / test_file)],
+        ['node', '--test', str(test_file)],
         env={**os.environ, 'SERVER_URL': server_url},
         capture_output=True,
         text=True,
@@ -94,5 +102,5 @@ def test_ai_sdk(_npm_install: None, server_url: str, test_file: str) -> None:
 
     if result.returncode != 0:
         pytest.fail(
-            f'node --test {test_file} exited {result.returncode}\n\nstdout:\n{result.stdout}\n\nstderr:\n{result.stderr}'
+            f'node --test {test_file.name} exited {result.returncode}\n\nstdout:\n{result.stdout}\n\nstderr:\n{result.stderr}'
         )
