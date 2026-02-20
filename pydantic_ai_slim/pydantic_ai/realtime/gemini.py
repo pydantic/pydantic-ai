@@ -91,9 +91,17 @@ class GeminiRealtimeConnection(RealtimeConnection):
             raise NotImplementedError(f'Gemini Live does not support {type(content).__name__} input')
 
     async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
-        async for msg in self._session.receive():
-            for event in map_message(msg):
-                yield event
+        # The google-genai SDK's receive() yields messages for a single model
+        # turn and stops on turn_complete. We loop so the connection stays open
+        # across multiple conversational turns.
+        while True:
+            has_messages = False
+            async for msg in self._session.receive():
+                has_messages = True
+                for event in map_message(msg):
+                    yield event
+            if not has_messages:
+                break
 
 
 def map_message(msg: Any) -> list[RealtimeEvent]:
