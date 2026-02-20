@@ -46,8 +46,7 @@ class RealtimeCassette:
         raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding='utf-8'))
         raw_interactions: list[dict[str, Any]] = raw.get('interactions', [])
         interactions: list[CassetteInteraction] = [
-            CassetteInteraction(direction=item['direction'], data=item['data'])
-            for item in raw_interactions
+            CassetteInteraction(direction=item['direction'], data=item['data']) for item in raw_interactions
         ]
         return cls(version=raw.get('version', 1), interactions=interactions)
 
@@ -55,9 +54,7 @@ class RealtimeCassette:
         path.parent.mkdir(parents=True, exist_ok=True)
         data: dict[str, Any] = {
             'version': self.version,
-            'interactions': [
-                {'direction': i.direction, 'data': i.data} for i in self.interactions
-            ],
+            'interactions': [{'direction': i.direction, 'data': i.data} for i in self.interactions],
         }
         path.write_text(
             yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
@@ -135,17 +132,13 @@ class RecordingWebSocket:
         self._cassette = cassette
 
     async def send(self, message: str) -> None:
-        self._cassette.interactions.append(
-            CassetteInteraction(direction='sent', data=json.loads(message))
-        )
+        self._cassette.interactions.append(CassetteInteraction(direction='sent', data=json.loads(message)))
         await self._ws.send(message)
 
     async def recv(self, **kwargs: Any) -> str | bytes:
         raw = await self._ws.recv(**kwargs)
         text = raw.decode('utf-8') if isinstance(raw, bytes) else raw
-        self._cassette.interactions.append(
-            CassetteInteraction(direction='received', data=json.loads(text))
-        )
+        self._cassette.interactions.append(CassetteInteraction(direction='received', data=json.loads(text)))
         return raw
 
     def __aiter__(self) -> RecordingWebSocket:

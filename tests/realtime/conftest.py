@@ -26,7 +26,7 @@ with try_import() as imports_successful:
         realtime_cassette_plan,
     )
 
-CASSETTES_DIR = Path(__file__).parent / 'cassettes'
+CASSETTES_DIR = Path(__file__).parent / 'ws_cassettes'
 
 
 def _get_record_mode(request: pytest.FixtureRequest) -> str | None:
@@ -103,8 +103,7 @@ def gemini_realtime_model(
 
     if plan == 'error_missing':
         raise RuntimeError(
-            f'Missing realtime cassette: {cassette_path}\n'
-            'Record with: uv run pytest --record-mode=once <test> -v'
+            f'Missing realtime cassette: {cassette_path}\nRecord with: uv run pytest --record-mode=once <test> -v'
         )
 
     cassette = RealtimeCassette.load(cassette_path) if plan == 'replay' else RealtimeCassette()
