@@ -53,8 +53,10 @@ from .request_types import (
     SourceUrlUIPart,
     StepStartUIPart,
     TextUIPart,
+    ToolApprovalResponded,
     ToolInputAvailablePart,
     ToolOutputAvailablePart,
+    ToolOutputDeniedPart,
     ToolOutputErrorPart,
     ToolUIPart,
     UIMessage,
@@ -295,7 +297,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             # The call and return metadata are combined in the output part.
                             # So we extract and return them to the respective parts
                             call_meta = return_meta = {}
-                            has_tool_output = isinstance(part, (ToolOutputAvailablePart, ToolOutputErrorPart))
+                            has_tool_output = isinstance(
+                                part, (ToolOutputAvailablePart, ToolOutputErrorPart, ToolOutputDeniedPart)
+                            )
 
                             if has_tool_output:
                                 call_meta, return_meta = cls._load_builtin_tool_meta(provider_meta)
@@ -315,8 +319,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 output: Any | None = None
                                 if isinstance(part, ToolOutputAvailablePart):
                                     output = part.output
-                                elif isinstance(part, ToolOutputErrorPart):  # pragma: no branch
+                                elif isinstance(part, ToolOutputErrorPart):
                                     output = {'error_text': part.error_text, 'is_error': True}
+                                elif isinstance(part, ToolOutputDeniedPart):  # pragma: no branch
+                                    output = _denial_reason(part)
                                 builder.add(
                                     BuiltinToolReturnPart(
                                         tool_name=tool_name,
@@ -346,6 +352,14 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 builder.add(
                                     RetryPromptPart(
                                         tool_name=tool_name, tool_call_id=tool_call_id, content=part.error_text
+                                    )
+                                )
+                            elif part.state == 'output-denied':
+                                builder.add(
+                                    ToolReturnPart(
+                                        tool_name=tool_name,
+                                        tool_call_id=tool_call_id,
+                                        content=_denial_reason(part),
                                     )
                                 )
                     elif isinstance(part, DataUIPart):  # pragma: no cover
@@ -633,6 +647,13 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 assert_never(item)
 
     return ui_parts
+
+
+def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
+    """Extract the denial reason from a tool part's approval, or return a default message."""
+    if isinstance(part.approval, ToolApprovalResponded) and part.approval.reason:
+        return part.approval.reason
+    return 'Tool call was denied.'
 
 
 def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:
