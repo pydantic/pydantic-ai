@@ -58,7 +58,7 @@ from pydantic_ai import (
     VideoUrl,
     WebSearchTool,
 )
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -99,6 +99,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.xai import (
         XaiModel,
         XaiModelSettings,
+        _get_builtin_tools,
     )
     from pydantic_ai.providers.xai import XaiProvider
 
@@ -147,6 +148,36 @@ def test_xai_init_with_fixture_api_key(xai_api_key: str):
 
     assert m.model_name == XAI_NON_REASONING_MODEL
     assert m.system == 'xai'
+
+
+async def test_xai_request_uses_response_finish_reason_when_outputs_empty(allow_model_requests: None):
+    """Covers fallback finish-reason mapping when response.outputs is empty."""
+    response = create_response(content='done', finish_reason='length')
+    response.proto.outputs.clear()
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    model_response = await m.request(
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    assert model_response.finish_reason == 'stop'
+
+
+def test_xai_get_builtin_tools_rejects_unsupported_builtin_tool():
+    class _UnsupportedBuiltinTool:
+        kind = 'unsupported_builtin_tool'
+
+    params = ModelRequestParameters(
+        function_tools=[],
+        allow_text_output=True,
+        output_tools=[],
+        builtin_tools=cast(Any, [_UnsupportedBuiltinTool()]),
+    )
+
+    with pytest.raises(UserError, match='is not supported by `XaiModel`'):
+        _get_builtin_tools(params)
 
 
 async def test_xai_request_simple_success(allow_model_requests: None):
