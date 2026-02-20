@@ -179,5 +179,5 @@ def test_client_property_pattern(
     assert model.client is client_a
 
     client_b = AsyncOpenAI(api_key='key-b')
-    cast(Any, provider)._client = client_b
+    provider._client = client_b
     assert model.client is client_b

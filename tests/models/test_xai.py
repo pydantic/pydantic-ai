@@ -99,7 +99,6 @@ with try_import() as imports_successful:
     from pydantic_ai.models.xai import (
         XaiModel,
         XaiModelSettings,
-        _get_builtin_tools,
     )
     from pydantic_ai.providers.xai import XaiProvider
 
@@ -169,15 +168,14 @@ def test_xai_get_builtin_tools_rejects_unsupported_builtin_tool():
     class _UnsupportedBuiltinTool:
         kind = 'unsupported_builtin_tool'
 
+    import pydantic_ai.models.xai as xai_module
+
     params = ModelRequestParameters(
-        function_tools=[],
-        allow_text_output=True,
-        output_tools=[],
-        builtin_tools=cast(Any, [_UnsupportedBuiltinTool()]),
+        builtin_tools=cast(Any, [_UnsupportedBuiltinTool()])
     )
 
     with pytest.raises(UserError, match='is not supported by `XaiModel`'):
-        _get_builtin_tools(params)
+        cast(Any, xai_module)._get_builtin_tools(params)
 
 
 async def test_xai_request_simple_success(allow_model_requests: None):
