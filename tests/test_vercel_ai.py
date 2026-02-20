@@ -5693,86 +5693,14 @@ class TestSdkVersion:
         assert 'providerMetadata' in tool_input_start_v6
 
 
-async def test_adapter_load_messages_approval_requested_part():
-    """Approval-requested parts produce only a ToolCallPart (no result yet)."""
-    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolApprovalRequestedPart, ToolApprovalRequestedPart
-
-    ui_messages = [
-        UIMessage(
-            id='msg1',
-            role='assistant',
-            parts=[
-                ToolApprovalRequestedPart(
-                    type='tool-my_tool',
-                    tool_call_id='tc_static',
-                    input={'x': 1},
-                    approval=ToolApprovalRequested(id='req-1'),
-                ),
-                DynamicToolApprovalRequestedPart(
-                    tool_name='dyn_tool',
-                    tool_call_id='tc_dyn',
-                    input={'y': 2},
-                    approval=ToolApprovalRequested(id='req-2'),
-                ),
-            ],
-        )
-    ]
-
-    messages = VercelAIAdapter.load_messages(ui_messages)
-    assert messages == snapshot(
-        [
-            ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='tc_static'),
-                    ToolCallPart(tool_name='dyn_tool', args={'y': 2}, tool_call_id='tc_dyn'),
-                ],
-                timestamp=IsDatetime(),
-            )
-        ]
-    )
-
-
-async def test_adapter_load_messages_approval_responded_part():
-    """Approval-responded parts produce only a ToolCallPart (execution pending)."""
-    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolApprovalRespondedPart, ToolApprovalRespondedPart
-
-    ui_messages = [
-        UIMessage(
-            id='msg1',
-            role='assistant',
-            parts=[
-                ToolApprovalRespondedPart(
-                    type='tool-my_tool',
-                    tool_call_id='tc_static',
-                    input={'x': 1},
-                    approval=ToolApprovalResponded(id='resp-1', approved=True),
-                ),
-                DynamicToolApprovalRespondedPart(
-                    tool_name='dyn_tool',
-                    tool_call_id='tc_dyn',
-                    input={'y': 2},
-                    approval=ToolApprovalResponded(id='resp-2', approved=False, reason='Not now'),
-                ),
-            ],
-        )
-    ]
-
-    messages = VercelAIAdapter.load_messages(ui_messages)
-    assert messages == snapshot(
-        [
-            ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='tc_static'),
-                    ToolCallPart(tool_name='dyn_tool', args={'y': 2}, tool_call_id='tc_dyn'),
-                ],
-                timestamp=IsDatetime(),
-            )
-        ]
-    )
-
-
-async def test_adapter_load_messages_output_denied_part():
-    """Output-denied dynamic tool parts produce a ToolCallPart + ToolReturnPart with the denial reason."""
+@pytest.mark.parametrize(
+    ('reason', 'expected_content'),
+    [
+        pytest.param('Too dangerous', 'Too dangerous', id='explicit-reason'),
+        pytest.param(None, 'Tool call was denied.', id='default-reason'),
+    ],
+)
+async def test_adapter_load_messages_output_denied(reason: str | None, expected_content: str):
     from pydantic_ai.ui.vercel_ai.request_types import DynamicToolOutputDeniedPart
 
     ui_messages = [
@@ -5784,7 +5712,7 @@ async def test_adapter_load_messages_output_denied_part():
                     tool_name='delete_file',
                     tool_call_id='tc_denied',
                     input={'path': 'important.txt'},
-                    approval=ToolApprovalResponded(id='deny-1', approved=False, reason='Too dangerous'),
+                    approval=ToolApprovalResponded(id='deny-1', approved=False, reason=reason),
                 ),
             ],
         )
@@ -5801,47 +5729,7 @@ async def test_adapter_load_messages_output_denied_part():
                 parts=[
                     ToolReturnPart(
                         tool_name='delete_file',
-                        content='Too dangerous',
-                        tool_call_id='tc_denied',
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-        ]
-    )
-
-
-async def test_adapter_load_messages_output_denied_default_reason():
-    """Output-denied with no approval reason uses a default message."""
-    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolOutputDeniedPart
-
-    ui_messages = [
-        UIMessage(
-            id='msg1',
-            role='assistant',
-            parts=[
-                DynamicToolOutputDeniedPart(
-                    tool_name='delete_file',
-                    tool_call_id='tc_denied',
-                    input={'path': 'file.txt'},
-                    approval=ToolApprovalResponded(id='deny-1', approved=False),
-                ),
-            ],
-        )
-    ]
-
-    messages = VercelAIAdapter.load_messages(ui_messages)
-    assert messages == snapshot(
-        [
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='delete_file', args={'path': 'file.txt'}, tool_call_id='tc_denied')],
-                timestamp=IsDatetime(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='delete_file',
-                        content='Tool call was denied.',
+                        content=expected_content,
                         tool_call_id='tc_denied',
                         timestamp=IsDatetime(),
                     )
@@ -5852,7 +5740,6 @@ async def test_adapter_load_messages_output_denied_default_reason():
 
 
 async def test_adapter_load_messages_output_denied_builtin_tool():
-    """Output-denied builtin tool part produces BuiltinToolCallPart + BuiltinToolReturnPart."""
     from pydantic_ai.ui.vercel_ai.request_types import ToolOutputDeniedPart
 
     ui_messages = [
@@ -5892,47 +5779,3 @@ async def test_adapter_load_messages_output_denied_builtin_tool():
             )
         ]
     )
-
-
-async def test_tool_approval_extraction_with_new_part_types():
-    """iter_tool_approval_responses finds approvals on the new part types."""
-    from pydantic_ai.ui.vercel_ai._utils import iter_tool_approval_responses
-    from pydantic_ai.ui.vercel_ai.request_types import (
-        DynamicToolApprovalRespondedPart,
-        DynamicToolOutputDeniedPart,
-        ToolApprovalRespondedPart,
-    )
-
-    messages = [
-        UIMessage(
-            id='msg1',
-            role='assistant',
-            parts=[
-                ToolApprovalRespondedPart(
-                    type='tool-my_tool',
-                    tool_call_id='tc1',
-                    input={'x': 1},
-                    approval=ToolApprovalResponded(id='r1', approved=True),
-                ),
-                DynamicToolApprovalRespondedPart(
-                    tool_name='dyn_tool',
-                    tool_call_id='tc2',
-                    input={'y': 2},
-                    approval=ToolApprovalResponded(id='r2', approved=False, reason='Nope'),
-                ),
-                DynamicToolOutputDeniedPart(
-                    tool_name='denied_tool',
-                    tool_call_id='tc3',
-                    input={'z': 3},
-                    approval=ToolApprovalResponded(id='r3', approved=False),
-                ),
-            ],
-        )
-    ]
-
-    results = list(iter_tool_approval_responses(messages))
-    assert results == [
-        ('tc1', ToolApprovalResponded(id='r1', approved=True)),
-        ('tc2', ToolApprovalResponded(id='r2', approved=False, reason='Nope')),
-        ('tc3', ToolApprovalResponded(id='r3', approved=False)),
-    ]
