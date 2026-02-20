@@ -73,9 +73,19 @@ def server_url() -> Iterator[str]:
             print(f'\n--- server log ---\n{output}--- end server log ---')
 
 
-def test_tool_approval(_npm_install: None, server_url: str) -> None:
+TEST_FILES = [
+    'test_text.ts',
+    'test_thinking.ts',
+    'test_tool.ts',
+    'test_tool_approval.ts',
+    'test_multi_tool.ts',
+]
+
+
+@pytest.mark.parametrize('test_file', TEST_FILES)
+def test_ai_sdk(_npm_install: None, server_url: str, test_file: str) -> None:
     result = subprocess.run(
-        ['node', '--test', str(SDK_DIR / 'test_tool_approval.ts')],
+        ['node', '--test', str(SDK_DIR / test_file)],
         env={**os.environ, 'SERVER_URL': server_url},
         capture_output=True,
         text=True,
@@ -83,4 +93,4 @@ def test_tool_approval(_npm_install: None, server_url: str) -> None:
     )
 
     if result.returncode != 0:
-        pytest.fail(f'node --test exited {result.returncode}\n\nstdout:\n{result.stdout}\n\nstderr:\n{result.stderr}')
+        pytest.fail(f'node --test {test_file} exited {result.returncode}\n\nstdout:\n{result.stdout}\n\nstderr:\n{result.stderr}')
