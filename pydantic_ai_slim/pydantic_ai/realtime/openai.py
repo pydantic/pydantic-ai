@@ -89,21 +89,19 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # Trigger a new model response after providing the tool result
             await self._ws.send(json.dumps({'type': 'response.create'}))
         else:
-            raise NotImplementedError(
-                f'OpenAI Realtime does not support {type(content).__name__} input'
-            )
+            raise NotImplementedError(f'OpenAI Realtime does not support {type(content).__name__} input')
 
     async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
         async for raw in self._ws:
             if not isinstance(raw, str):
                 continue
             data: dict[str, Any] = json.loads(raw)
-            event = _map_event(data)
+            event = map_event(data)
             if event is not None:
                 yield event
 
 
-def _map_event(data: dict[str, Any]) -> RealtimeEvent | None:
+def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
     """Map an OpenAI Realtime event dict to a `RealtimeEvent`."""
     event_type = data.get('type')
 
@@ -141,9 +139,7 @@ def _map_event(data: dict[str, Any]) -> RealtimeEvent | None:
 
     if event_type == 'response.done':
         response = data.get('response')
-        interrupted = (
-            isinstance(response, dict) and cast(dict[str, Any], response).get('status') == 'cancelled'
-        )
+        interrupted = isinstance(response, dict) and cast(dict[str, Any], response).get('status') == 'cancelled'
         return TurnComplete(interrupted=interrupted)
 
     if event_type == 'error':
@@ -198,10 +194,10 @@ class OpenAIRealtimeModel(RealtimeModel):
             # Wait for session.created
             raw = await ws.recv()
             if not isinstance(raw, str):
-                raise RuntimeError(f'Expected text message from WebSocket, got {type(raw).__name__}')
+                raise TypeError(f'Expected text message from WebSocket, got {type(raw).__name__}')
             created: dict[str, Any] = json.loads(raw)
             if created.get('type') != 'session.created':
-                raise RuntimeError(f"Expected session.created, got {created.get('type')}")
+                raise RuntimeError(f'Expected session.created, got {created.get("type")}')
 
             # Build session.update payload
             session_config: dict[str, object] = {
@@ -225,9 +221,9 @@ class OpenAIRealtimeModel(RealtimeModel):
             # Wait for session.updated confirmation
             raw = await ws.recv()
             if not isinstance(raw, str):
-                raise RuntimeError(f'Expected text message from WebSocket, got {type(raw).__name__}')
+                raise TypeError(f'Expected text message from WebSocket, got {type(raw).__name__}')
             updated: dict[str, Any] = json.loads(raw)
             if updated.get('type') != 'session.updated':
-                raise RuntimeError(f"Expected session.updated, got {updated.get('type')}")
+                raise RuntimeError(f'Expected session.updated, got {updated.get("type")}')
 
             yield OpenAIRealtimeConnection(ws)

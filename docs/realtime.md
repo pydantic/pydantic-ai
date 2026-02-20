@@ -20,9 +20,9 @@ pip install "pydantic-ai-slim[google]"
 
 ## Quick Start
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.realtime import AudioDelta, Transcript, ToolCallCompleted, TurnComplete
+from pydantic_ai.realtime import AudioDelta, ToolCallCompleted, Transcript, TurnComplete
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 agent = Agent()
@@ -42,14 +42,11 @@ async def main():
         async for event in session:
             match event:
                 case AudioDelta(data=data):
-                    # Play audio response
-                    ...
+                    play(data)  # type: ignore
                 case Transcript(text=text):
-                    # Display transcript
-                    ...
+                    display(text)  # type: ignore
                 case ToolCallCompleted(tool_name=name, result=result):
-                    # Tool was auto-executed
-                    ...
+                    print(f'{name} -> {result}')
                 case TurnComplete():
                     break
 ```
@@ -68,7 +65,7 @@ Sending an unsupported input type raises `NotImplementedError` at runtime. When 
 
 A convenience [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] method is available for the most common case:
 
-```python
+```python {test="skip"}
 # These are equivalent:
 await session.send_audio(audio_bytes)
 await session.send(AudioInput(data=audio_bytes))
@@ -166,7 +163,7 @@ _Coming soon._ Uses [Amazon Bedrock bidirectional streaming](https://docs.aws.am
 
 For advanced use cases where you want manual control over tool execution, you can use a `RealtimeModel` directly without the agent wrapper:
 
-```python
+```python {test="skip"}
 from pydantic_ai.realtime import AudioInput, ToolCall, ToolResult
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 

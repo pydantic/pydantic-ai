@@ -82,17 +82,15 @@ class GeminiRealtimeConnection(RealtimeConnection):
                 ]
             )
         else:
-            raise NotImplementedError(
-                f'Gemini Live does not support {type(content).__name__} input'
-            )
+            raise NotImplementedError(f'Gemini Live does not support {type(content).__name__} input')
 
     async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
         async for msg in self._session.receive():
-            for event in _map_message(msg):
+            for event in map_message(msg):
                 yield event
 
 
-def _map_message(msg: Any) -> list[RealtimeEvent]:
+def map_message(msg: Any) -> list[RealtimeEvent]:
     """Map a Gemini LiveServerMessage to a list of RealtimeEvents.
 
     A single Gemini message can carry multiple events (e.g. audio parts + transcription),
@@ -102,14 +100,14 @@ def _map_message(msg: Any) -> list[RealtimeEvent]:
 
     # Tool calls
     if msg.tool_call:
-        for fc in msg.tool_call.function_calls:
-            events.append(
-                ToolCall(
-                    tool_call_id=fc.id or '',
-                    tool_name=fc.name or '',
-                    args=json.dumps(fc.args) if fc.args else '{}',
-                )
+        events.extend(
+            ToolCall(
+                tool_call_id=fc.id or '',
+                tool_name=fc.name or '',
+                args=json.dumps(fc.args) if fc.args else '{}',
             )
+            for fc in msg.tool_call.function_calls
+        )
         return events
 
     # Tool call cancellation = interrupted turn
@@ -136,9 +134,7 @@ def _map_message(msg: Any) -> list[RealtimeEvent]:
 
     # Input transcription (user speech -> text)
     if sc.input_transcription and sc.input_transcription.text:
-        events.append(
-            InputTranscript(text=sc.input_transcription.text, is_final=bool(sc.input_transcription.finished))
-        )
+        events.append(InputTranscript(text=sc.input_transcription.text, is_final=bool(sc.input_transcription.finished)))
 
     # Turn complete / interrupted
     if sc.turn_complete:

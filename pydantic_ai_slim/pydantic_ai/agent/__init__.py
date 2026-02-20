@@ -1630,7 +1630,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         executes tool calls using the agent's registered tools.
 
         Example:
-        ```python
+        ```python {test="skip"}
         from pydantic_ai import Agent
         from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 

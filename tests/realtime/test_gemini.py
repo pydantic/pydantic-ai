@@ -21,7 +21,7 @@ with try_import() as imports_successful:
         Transcript,
         TurnComplete,
     )
-    from pydantic_ai.realtime.gemini import GeminiRealtimeConnection, GeminiRealtimeModel, _map_message
+    from pydantic_ai.realtime.gemini import GeminiRealtimeConnection, GeminiRealtimeModel, map_message
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
@@ -103,7 +103,7 @@ class StubMessage:
 
 
 # ---------------------------------------------------------------------------
-# _map_message tests
+# map_message tests
 # ---------------------------------------------------------------------------
 
 
@@ -113,17 +113,15 @@ def test_map_audio_delta() -> None:
             model_turn=StubModelTurn(parts=[StubPart(inline_data=StubInlineData(data=b'\x00\x01\x02'))])
         )
     )
-    events = _map_message(msg)
+    events = map_message(msg)
     assert len(events) == 1
     assert isinstance(events[0], AudioDelta)
     assert events[0].data == b'\x00\x01\x02'
 
 
 def test_map_text_part() -> None:
-    msg = StubMessage(
-        server_content=StubServerContent(model_turn=StubModelTurn(parts=[StubPart(text='Hello')]))
-    )
-    events = _map_message(msg)
+    msg = StubMessage(server_content=StubServerContent(model_turn=StubModelTurn(parts=[StubPart(text='Hello')])))
+    events = map_message(msg)
     assert len(events) == 1
     assert isinstance(events[0], Transcript)
     assert events[0].text == 'Hello'
@@ -134,7 +132,7 @@ def test_map_output_transcription() -> None:
     msg = StubMessage(
         server_content=StubServerContent(output_transcription=StubTranscription(text='Hi there', finished=True))
     )
-    events = _map_message(msg)
+    events = map_message(msg)
     assert len(events) == 1
     assert isinstance(events[0], Transcript)
     assert events[0].text == 'Hi there'
@@ -147,7 +145,7 @@ def test_map_input_transcription() -> None:
             input_transcription=StubTranscription(text='What is the weather?', finished=True)
         )
     )
-    events = _map_message(msg)
+    events = map_message(msg)
     assert len(events) == 1
     assert isinstance(events[0], InputTranscript)
     assert events[0].text == 'What is the weather?'
@@ -156,7 +154,7 @@ def test_map_input_transcription() -> None:
 
 def test_map_turn_complete() -> None:
     msg = StubMessage(server_content=StubServerContent(turn_complete=True))
-    events = _map_message(msg)
+    events = map_message(msg)
     assert len(events) == 1
     assert isinstance(events[0], TurnComplete)
     assert events[0].interrupted is False
@@ -164,7 +162,7 @@ def test_map_turn_complete() -> None:
 
 def test_map_turn_complete_interrupted() -> None:
     msg = StubMessage(server_content=StubServerContent(turn_complete=True, interrupted=True))
-    events = _map_message(msg)
+    events = map_message(msg)
     assert len(events) == 1
     assert isinstance(events[0], TurnComplete)
     assert events[0].interrupted is True
@@ -176,7 +174,7 @@ def test_map_tool_call() -> None:
             function_calls=[StubFunctionCall(id='tc_1', name='get_weather', args={'city': 'London'})]
         )
     )
-    events = _map_message(msg)
+    events = map_message(msg)
     assert len(events) == 1
     assert isinstance(events[0], ToolCall)
     assert events[0].tool_call_id == 'tc_1'
@@ -185,10 +183,8 @@ def test_map_tool_call() -> None:
 
 
 def test_map_tool_call_no_args() -> None:
-    msg = StubMessage(
-        tool_call=StubToolCall(function_calls=[StubFunctionCall(id='tc_2', name='noop', args=None)])
-    )
-    events = _map_message(msg)
+    msg = StubMessage(tool_call=StubToolCall(function_calls=[StubFunctionCall(id='tc_2', name='noop', args=None)]))
+    events = map_message(msg)
     assert len(events) == 1
     assert isinstance(events[0], ToolCall)
     assert events[0].args == '{}'
@@ -203,7 +199,7 @@ def test_map_multiple_tool_calls() -> None:
             ]
         )
     )
-    events = _map_message(msg)
+    events = map_message(msg)
     assert len(events) == 2
     assert isinstance(events[0], ToolCall)
     assert events[0].tool_name == 'foo'
@@ -213,7 +209,7 @@ def test_map_multiple_tool_calls() -> None:
 
 def test_map_tool_call_cancellation() -> None:
     msg = StubMessage(tool_call_cancellation=StubToolCallCancellation(ids=['tc_1']))
-    events = _map_message(msg)
+    events = map_message(msg)
     assert len(events) == 1
     assert isinstance(events[0], TurnComplete)
     assert events[0].interrupted is True
@@ -226,7 +222,7 @@ def test_map_combined_audio_and_transcription() -> None:
             output_transcription=StubTranscription(text='response text', finished=False),
         )
     )
-    events = _map_message(msg)
+    events = map_message(msg)
     assert len(events) == 2
     assert isinstance(events[0], AudioDelta)
     assert isinstance(events[1], Transcript)
@@ -235,13 +231,13 @@ def test_map_combined_audio_and_transcription() -> None:
 
 def test_map_empty_server_content() -> None:
     msg = StubMessage(server_content=StubServerContent())
-    events = _map_message(msg)
+    events = map_message(msg)
     assert events == []
 
 
 def test_map_no_content() -> None:
     msg = StubMessage()
-    events = _map_message(msg)
+    events = map_message(msg)
     assert events == []
 
 
@@ -323,7 +319,9 @@ async def test_send_tool_result() -> None:
 @pytest.mark.anyio
 async def test_iterates_and_maps_events() -> None:
     messages = [
-        StubMessage(server_content=StubServerContent(output_transcription=StubTranscription(text='Hi', finished=False))),
+        StubMessage(
+            server_content=StubServerContent(output_transcription=StubTranscription(text='Hi', finished=False))
+        ),
         StubMessage(server_content=StubServerContent(turn_complete=True)),
     ]
     session = FakeGeminiSession(messages)
