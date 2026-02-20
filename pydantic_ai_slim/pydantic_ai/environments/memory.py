@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Literal
 
 from ._base import (
     IMAGE_EXTENSIONS,
-    ExecuteResult,
     ExecutionEnvironment,
+    ExecutionResult,
     FileInfo,
     apply_edit,
     collect_grep_matches,
@@ -52,7 +52,7 @@ class MemoryEnvironment(ExecutionEnvironment):
         self,
         files: dict[str, str | bytes] | None = None,
         *,
-        command_handler: Callable[[str], ExecuteResult] | None = None,
+        command_handler: Callable[[str], ExecutionResult] | None = None,
     ) -> None:
         """Create an in-memory execution environment.
 
@@ -60,7 +60,7 @@ class MemoryEnvironment(ExecutionEnvironment):
             files: Initial files to populate the environment with.
                 Keys are file paths, values are file contents (str or bytes).
             command_handler: Optional callback for `shell()` calls.
-                Receives the command string and returns an `ExecuteResult`.
+                Receives the command string and returns an `ExecutionResult`.
                 If not provided, `shell()` raises `RuntimeError`.
         """
         self._files: dict[str, str | bytes] = {}
@@ -90,7 +90,7 @@ class MemoryEnvironment(ExecutionEnvironment):
         *,
         timeout: float | None = 120,
         env: dict[str, str] | None = None,
-    ) -> ExecuteResult:
+    ) -> ExecutionResult:
         """Execute a command using the configured handler.
 
         Args:
@@ -133,7 +133,10 @@ class MemoryEnvironment(ExecutionEnvironment):
 
         # Text mode
         if isinstance(content, bytes):
-            text = content.decode('utf-8', errors='replace')
+            try:
+                text = content.decode('utf-8')
+            except UnicodeDecodeError:
+                return content
         else:
             text = content
 

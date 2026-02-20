@@ -178,7 +178,6 @@ nav:
           - api/settings.md
           - api/tools.md
           - api/toolsets.md
-          - api/runtime.md
           - api/ui/ag_ui.md
           - api/ui/base.md
           - api/ui/vercel_ai.md

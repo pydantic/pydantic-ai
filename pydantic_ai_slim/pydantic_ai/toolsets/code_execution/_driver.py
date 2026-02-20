@@ -1,7 +1,7 @@
 """Stdio-based sandbox driver for CPython runtimes.
 
 Self-contained script with zero dependencies beyond the Python 3.10+ stdlib.
-Runs inside any sandbox (Docker, E2B, Modal, etc.) and communicates with the
+Runs inside any sandbox (Docker, Modal, etc.) and communicates with the
 host via NDJSON (newline-delimited JSON) over stdin/stdout.
 
 Protocol:

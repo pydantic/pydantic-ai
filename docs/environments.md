@@ -24,13 +24,12 @@ async def main():
 
 ## Environments
 
-An [`ExecutionEnvironment`][pydantic_ai.environments.ExecutionEnvironment] defines where and how commands run. Five implementations are included:
+An [`ExecutionEnvironment`][pydantic_ai.environments.ExecutionEnvironment] defines where and how commands run. Four implementations are included:
 
 | Environment | Isolation | Use case |
 |---|---|---|
 | [`LocalEnvironment`][pydantic_ai.environments.local.LocalEnvironment] | None — runs on host | Development, testing, trusted agents |
 | [`DockerEnvironment`][pydantic_ai.environments.docker.DockerEnvironment] | Container-level | Production, untrusted code |
-| [`E2BEnvironment`][pydantic_ai.environments.e2b.E2BEnvironment] | Cloud VM | Production, zero local setup |
 | [`MemoryEnvironment`][pydantic_ai.environments.memory.MemoryEnvironment] | In-memory (no filesystem) | Unit testing |
 | [`MontyEnvironment`][pydantic_ai.environments.monty.MontyEnvironment] | Sandboxed interpreter | Code execution only |
 
@@ -39,11 +38,11 @@ All environments are async context managers. Enter the environment before runnin
 ```python {title="environments_lifecycle.py" test="skip"}
 from pydantic_ai.environments.docker import DockerEnvironment
 
-env = DockerEnvironment(image='python:3.12-slim', packages=['numpy'])
+env = DockerEnvironment(image='python:3.12-slim')
 
 async def main():
     async with env:
-        result = await env.shell('python -c "import numpy; print(numpy.__version__)"')
+        result = await env.shell('python -c "print(42)"')
         print(result.output)
 ```
 
@@ -68,7 +67,7 @@ File operations (read, write, edit, ls, glob, grep) are confined to the root dir
 
 ### DockerEnvironment
 
-[`DockerEnvironment`][pydantic_ai.environments.docker.DockerEnvironment] runs commands inside a Docker container with configurable images, packages, resource limits, and network access.
+[`DockerEnvironment`][pydantic_ai.environments.docker.DockerEnvironment] runs commands inside a Docker container with configurable resource limits, security options, and network access.
 
 Requires the `docker` package: `pip install pydantic-ai-slim[docker-sandbox]`
 
@@ -76,9 +75,7 @@ Requires the `docker` package: `pip install pydantic-ai-slim[docker-sandbox]`
 from pydantic_ai.environments.docker import DockerEnvironment
 
 env = DockerEnvironment(
-    image='python:3.12-slim',
-    packages=['pandas', 'matplotlib'],
-    setup_commands=['apt-get update && apt-get install -y git'],
+    image='my-sandbox:latest',
     env_vars={'MPLBACKEND': 'Agg'},
     memory_limit='512m',
     cpu_limit=1.0,
@@ -86,7 +83,54 @@ env = DockerEnvironment(
 )
 ```
 
-Built images are cached by default (keyed on the image, packages, and setup commands) so subsequent starts are fast.
+#### Building a custom Docker image
+
+`DockerEnvironment` runs whatever image you give it — it doesn't install packages at startup. Pre-build a custom image with any libraries your agent needs, so containers start fast and reproducibly.
+
+**Example Dockerfile** — a Python data-science sandbox:
+
+```dockerfile {title="Dockerfile" test="skip" lint="skip"}
+FROM python:3.12-slim
+
+# Install OS-level tools the agent might use (optional)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git curl jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python packages
+RUN pip install --no-cache-dir numpy pandas matplotlib requests
+
+WORKDIR /workspace
+```
+
+Build and tag the image:
+
+```bash
+docker build -t my-sandbox:latest .
+```
+
+Then pass the tag to `DockerEnvironment`:
+
+```python {title="environments_docker_custom.py" test="skip"}
+from pydantic_ai.environments.docker import DockerEnvironment
+
+env = DockerEnvironment(image='my-sandbox:latest')
+```
+
+!!! tip "Tips for custom images"
+
+    - **Start from a slim base** (`python:3.12-slim`, `node:22-slim`, etc.) to keep image size and attack surface small.
+    - **Pin package versions** (e.g. `numpy==2.2.3`) for reproducible builds.
+    - **Use `--no-cache-dir`** with pip to avoid bloating the image with cached wheels.
+    - **Build once, run many times.** The image is pulled from the local Docker cache on each `DockerEnvironment` startup — no rebuild needed.
+    - **Use a registry** for team or CI workflows: push your image to Docker Hub, GitHub Container Registry, or a private registry, then reference it by its full name (e.g. `ghcr.io/myorg/my-sandbox:latest`).
+    - **For Node.js** or other runtimes, adjust the base image and install command accordingly:
+
+        ```dockerfile {test="skip" lint="skip"}
+        FROM node:22-slim
+        RUN npm install -g typescript ts-node express
+        WORKDIR /workspace
+        ```
 
 For running untrusted code, you can harden the container with Linux security options:
 
@@ -109,23 +153,6 @@ env = DockerEnvironment(
 ```
 
 This drops all Linux capabilities, prevents privilege escalation, runs as an unprivileged user, limits the number of processes, and makes the root filesystem read-only (with writable tmpfs mounts for scratch space and the working directory).
-
-### E2BEnvironment
-
-[`E2BEnvironment`][pydantic_ai.environments.e2b.E2BEnvironment] runs commands in a cloud-hosted micro-VM via [E2B](https://e2b.dev). It provides full Linux isolation with no local Docker required.
-
-Requires the `e2b-code-interpreter` package: `pip install pydantic-ai-slim[e2b-sandbox]`
-
-```python {title="environments_e2b.py" test="skip"}
-from pydantic_ai.environments.e2b import E2BEnvironment
-
-env = E2BEnvironment(
-    template='base',
-    # api_key defaults to E2B_API_KEY env var
-    timeout=300,
-    env_vars={'MY_VAR': 'value'},
-)
-```
 
 ## ExecutionEnvironmentToolset
 
@@ -163,7 +190,7 @@ from pydantic_ai import Agent
 from pydantic_ai.environments import ExecutionEnvironmentToolset
 from pydantic_ai.environments.docker import DockerEnvironment
 
-env = DockerEnvironment(image='python:3.12-slim', packages=['requests'])
+env = DockerEnvironment(image='python:3.12-slim')
 toolset = ExecutionEnvironmentToolset(env)
 
 agent = Agent('openai:gpt-5.2', toolsets=[toolset])
@@ -256,7 +283,7 @@ You can implement [`ExecutionEnvironment`][pydantic_ai.environments.ExecutionEnv
 ```python {title="environments_custom.py" test="skip" lint="skip"}
 from typing import Literal
 
-from pydantic_ai.environments import ExecutionEnvironment, ExecutionProcess, ExecuteResult, FileInfo
+from pydantic_ai.environments import ExecutionEnvironment, ExecutionProcess, ExecutionResult, FileInfo
 from pydantic_ai.environments._base import Capability
 
 class MyCloudEnvironment(ExecutionEnvironment):
@@ -266,7 +293,7 @@ class MyCloudEnvironment(ExecutionEnvironment):
 
     async def shell(
         self, command: str, *, timeout: float | None = 120, env: dict[str, str] | None = None
-    ) -> ExecuteResult:
+    ) -> ExecutionResult:
         # Run a command in your cloud environment
         ...
 

@@ -19,8 +19,8 @@ from ._base import (
     IMAGE_EXTENSIONS,
     MAX_OUTPUT_CHARS,
     Capability,
-    ExecuteResult,
     ExecutionProcess,
+    ExecutionResult,
     FileInfo,
     apply_edit,
     collect_grep_matches,
@@ -188,7 +188,7 @@ class LocalEnvironment(DriverBasedEnvironment):
         *,
         timeout: float | None = 120,
         env: dict[str, str] | None = None,
-    ) -> ExecuteResult:
+    ) -> ExecutionResult:
         """Execute a command using subprocess for simplicity and reliability."""
         proc = await anyio.open_process(
             command,
@@ -214,7 +214,7 @@ class LocalEnvironment(DriverBasedEnvironment):
             with anyio.CancelScope(shield=True):
                 await proc.wait()
             _close_subprocess_transport(proc)
-            return ExecuteResult(output='[Command timed out]', exit_code=-1)
+            return ExecutionResult(output='[Command timed out]', exit_code=-1)
 
         _close_subprocess_transport(proc)
         stdout = b''.join(chunks)
@@ -222,7 +222,7 @@ class LocalEnvironment(DriverBasedEnvironment):
         truncated = len(output) > MAX_OUTPUT_CHARS
         if truncated:
             output = output[:MAX_OUTPUT_CHARS]
-        return ExecuteResult(
+        return ExecutionResult(
             output=output,
             exit_code=proc.returncode if proc.returncode is not None else 0,
             truncated=truncated,
@@ -238,7 +238,11 @@ class LocalEnvironment(DriverBasedEnvironment):
         if resolved.suffix.lower() in IMAGE_EXTENSIONS:
             return resolved.read_bytes()
 
-        text = resolved.read_text(encoding='utf-8', errors='replace')
+        raw = resolved.read_bytes()
+        try:
+            text = raw.decode('utf-8')
+        except UnicodeDecodeError:
+            return raw
         return format_lines(text, offset, limit)
 
     async def write_file(self, path: str, content: str | bytes) -> None:

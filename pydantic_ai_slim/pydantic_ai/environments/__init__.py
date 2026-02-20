@@ -5,23 +5,22 @@ This package provides:
 - `ExecutionEnvironment` — abstract base class for execution environments
 - `ExecutionProcess` — interactive process handle with bidirectional I/O
 - `ExecutionEnvironmentToolset` — toolset exposing coding-agent-style tools backed by an environment
-- `ExecuteResult`, `FileInfo` — result types
+- `ExecutionResult`, `FileInfo` — result types
 
 Implementations:
 
 - `environments.docker.DockerEnvironment` — Docker container-based sandbox (isolated)
 - `environments.local.LocalEnvironment` — local subprocess environment (no isolation, for dev/testing)
-- `environments.e2b.E2BEnvironment` — hosted sandbox via E2B (isolated)
 - `environments.memory.MemoryEnvironment` — in-memory environment for testing
 - `environments.monty.MontyEnvironment` — Monty sandboxed interpreter for code execution
 """
 
 from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
 
-from ._base import ExecuteResult, ExecutionEnvironment, ExecutionProcess, FileInfo
+from ._base import ExecutionEnvironment, ExecutionProcess, ExecutionResult, FileInfo
 
 __all__ = (
-    'ExecuteResult',
+    'ExecutionResult',
     'ExecutionEnvironment',
     'ExecutionEnvironmentToolset',
     'ExecutionProcess',

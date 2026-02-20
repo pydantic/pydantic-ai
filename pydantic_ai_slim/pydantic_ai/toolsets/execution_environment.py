@@ -13,6 +13,7 @@ from typing import Any, Literal
 from typing_extensions import Self
 
 from ..environments._base import (
+    IMAGE_EXTENSIONS,
     IMAGE_MEDIA_TYPES,
     ExecutionEnvironment,
 )
@@ -23,17 +24,17 @@ from ..toolsets.function import FunctionToolset
 Capability = Literal[
     'ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'run_code', 'run_code_with_functions'
 ]
-"""Toolset-level capability used in ``include``/``exclude``.
+"""Toolset-level capability used in `include`/`exclude`.
 
 These are higher-level than the environment's fine-grained capabilities.
 The toolset maps these to the appropriate environment capabilities.
 """
 
 EditStrategy = Literal['replace_str', 'apply_patch']
-"""Specific edit tool strategy. Expanded from the ``edit_file`` capability."""
+"""Specific edit tool strategy. Expanded from the `edit_file` capability."""
 
 CodeLanguage = Literal['python', 'typescript']
-"""Code execution language. Expanded from the ``run_code`` capability."""
+"""Code execution language. Expanded from the `run_code` capability."""
 
 # Capabilities that are excluded by default (handled by CodeExecutionToolset)
 _DEFAULT_EXCLUDE: frozenset[Capability] = frozenset({'run_code'})
@@ -57,13 +58,13 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
     Tool names and schemas are designed to match what popular coding agents
     expose, so models are well-trained on them.
 
-    Tools are dynamically registered based on the environment's ``capabilities``,
-    filtered by ``include``/``exclude``. The ``run_code`` capability is excluded
-    by default (use ``CodeExecutionToolset`` for code execution).
+    Tools are dynamically registered based on the environment's `capabilities`,
+    filtered by `include`/`exclude`. The `run_code` capability is excluded
+    by default (use `CodeExecutionToolset` for code execution).
 
     The environment can be:
     - Passed directly at construction time (most common)
-    - Set/overridden via context var using ``use_environment()`` (for testing or per-call-site config)
+    - Set/overridden via context var using `use_environment()` (for testing or per-call-site config)
 
     Usage:
         ```python {test="skip" lint="skip"}
@@ -100,22 +101,22 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
 
         Args:
             environment: The execution environment to use for tool execution.
-                Can also be set later via ``use_environment()``.
-            include: Capabilities to include. ``None`` means all capabilities
-                from the environment (minus ``run_code``). Pass an explicit set
+                Can also be set later via `use_environment()`.
+            include: Capabilities to include. `None` means all capabilities
+                from the environment (minus `run_code`). Pass an explicit set
                 to restrict to specific capabilities.
-            exclude: Capabilities to exclude. ``None`` defaults to ``{'run_code'}``.
-                Use ``frozenset()`` to include all capabilities including ``run_code``.
-            edit_strategy: Which edit strategy to use. ``None`` auto-selects
-                ``'replace_str'`` if supported by the environment.
-            code_language: Code execution language. ``None`` auto-detects
-                from the environment's capabilities (defaults to ``'python'``).
-            require_shell_approval: Whether the ``shell`` tool requires human-in-the-loop
-                approval before execution. Recommended for ``LocalEnvironment`` where
+            exclude: Capabilities to exclude. `None` defaults to `{'run_code'}`.
+                Use `frozenset()` to include all capabilities including `run_code`.
+            edit_strategy: Which edit strategy to use. `None` auto-selects
+                `'replace_str'` if supported by the environment.
+            code_language: Code execution language. `None` auto-detects
+                from the environment's capabilities (defaults to `'python'`).
+            require_shell_approval: Whether the `shell` tool requires human-in-the-loop
+                approval before execution. Recommended for `LocalEnvironment` where
                 commands run directly on the host.
-            require_write_approval: Whether ``write_file`` and edit tools require
+            require_write_approval: Whether `write_file` and edit tools require
                 human-in-the-loop approval before execution.
-            image_support: Whether ``read_file`` should return images as ``BinaryContent``
+            image_support: Whether `read_file` should return images as `BinaryContent`
                 for multimodal models (otherwise returns a placeholder message).
             max_image_bytes: Maximum image file size to return as BinaryContent.
             max_retries: Maximum retries per tool call.
@@ -267,15 +268,18 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             try:
                 content = await self.required_environment.read_file(path, offset=offset, limit=limit)
                 if isinstance(content, bytes):
-                    # Image file — return as BinaryContent or placeholder
-                    if self._image_support:
-                        if len(content) > self._max_image_bytes:
-                            return f'Error: Image too large ({len(content)} bytes, max {self._max_image_bytes} bytes).'
-                        ext = posixpath.splitext(path)[1].lower()
-                        media_type = IMAGE_MEDIA_TYPES.get(ext, 'application/octet-stream')
-                        return BinaryContent(data=content, media_type=media_type)
+                    ext = posixpath.splitext(path)[1].lower()
+                    if ext in IMAGE_EXTENSIONS:
+                        # Image file — return as BinaryContent or placeholder
+                        if self._image_support:
+                            if len(content) > self._max_image_bytes:
+                                return f'Error: Image too large ({len(content)} bytes, max {self._max_image_bytes} bytes).'
+                            media_type = IMAGE_MEDIA_TYPES.get(ext, 'application/octet-stream')
+                            return BinaryContent(data=content, media_type=media_type)
+                        else:
+                            return f'[Image file: {path} — image_support is disabled on this toolset]'
                     else:
-                        return f'[Image file: {path} — image_support is disabled on this toolset]'
+                        return f'[Binary file: {path} — cannot display as text]'
                 return content
             except (FileNotFoundError, PermissionError, ValueError, OSError) as e:
                 return f'Error: {e}'
@@ -326,7 +330,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         async def glob_tool(pattern: str, path: str = '.') -> str:
             """Find files matching a glob pattern.
 
-            Supports patterns like ``**/*.py``, ``src/**/*.ts``.
+            Supports patterns like `**/*.py`, `src/**/*.ts`.
             Returns up to 100 matching file paths.
 
             Args:
@@ -360,11 +364,11 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             Args:
                 pattern: The regex pattern to search for.
                 path: The file or directory to search in.
-                glob: Glob pattern to filter which files are searched (e.g. ``*.py``).
+                glob: Glob pattern to filter which files are searched (e.g. `*.py`).
                 output_mode: Controls output format:
-                    ``content`` (default) shows matching lines with file paths and line numbers,
-                    ``files_with_matches`` shows only file paths,
-                    ``count`` shows match counts per file.
+                    `content` (default) shows matching lines with file paths and line numbers,
+                    `files_with_matches` shows only file paths,
+                    `count` shows match counts per file.
             """
             try:
                 result = await self.required_environment.grep(

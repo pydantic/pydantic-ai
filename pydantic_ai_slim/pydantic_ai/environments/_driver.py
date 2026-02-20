@@ -2,7 +2,7 @@
 
 Provides `DriverBasedEnvironment`, an intermediate abstract base class that
 extends `ExecutionEnvironment` with code execution via the NDJSON driver protocol.
-Concrete subclasses (Docker, E2B, Local) implement `_start_driver` and `_copy_driver`.
+Concrete subclasses (Docker, Local) implement `_start_driver` and `_copy_driver`.
 """
 
 from __future__ import annotations
