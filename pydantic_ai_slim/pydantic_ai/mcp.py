@@ -24,6 +24,7 @@ from typing_extensions import Self, assert_never, deprecated
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 from .direct import model_request
+from .toolsets._searchable import should_defer
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 try:
@@ -365,6 +366,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     - `False` (default): All tools are visible to the model.
     - `True`: All tools have `defer_loading=True`.
     - `list[str]`: Only the named tools have `defer_loading=True`.
+      Names should be the original MCP tool names, before any `tool_prefix` is applied.
     """
 
     _id: str | None
@@ -586,15 +588,12 @@ class MCPServer(AbstractToolset[Any], ABC):
         result: dict[str, ToolsetTool[Any]] = {}
         for mcp_tool in await self.list_tools():
             name = f'{self.tool_prefix}_{mcp_tool.name}' if self.tool_prefix else mcp_tool.name
-            should_defer = self.defer_loading is True or (
-                isinstance(self.defer_loading, list) and mcp_tool.name in self.defer_loading
-            )
             result[name] = self.tool_for_tool_def(
                 ToolDefinition(
                     name=name,
                     description=mcp_tool.description,
                     parameters_json_schema=mcp_tool.inputSchema,
-                    defer_loading=should_defer,
+                    defer_loading=should_defer(self.defer_loading, mcp_tool.name),
                     metadata={
                         'meta': mcp_tool.meta,
                         'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,

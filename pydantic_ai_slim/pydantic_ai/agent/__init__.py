@@ -1551,6 +1551,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
 
+        # Always wraps; short-circuits when no deferred tools.
+        # TODO: an event-driven approach (wrapping only when deferred tools exist) would be more performant.
         toolset = SearchableToolset(wrapped=toolset)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset

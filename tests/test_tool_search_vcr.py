@@ -3,58 +3,37 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, ToolCallPart
-from pydantic_ai.models import Model
 
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
+MOCK_API_KEYS: dict[str, str] = {
+    'OPENAI_API_KEY': 'mock-api-key',
+    'ANTHROPIC_API_KEY': 'mock-api-key',
+    'GOOGLE_API_KEY': 'mock-api-key',
+}
+
+
+@pytest.fixture(autouse=True)
+def _mock_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key, default in MOCK_API_KEYS.items():
+        if not os.getenv(key):
+            monkeypatch.setenv(key, default)
+
 
 @dataclass
 class Case:
     model_name: str
-    expected_output: str = field(default='')
-
-
-def _create_model(case: Case) -> Model:
-    # Pin model versions here so VCR cassettes stay valid across runs
-    try:
-        if case.model_name.startswith('openai:'):
-            from pydantic_ai.models.openai import OpenAIChatModel
-            from pydantic_ai.providers.openai import OpenAIProvider
-
-            return OpenAIChatModel(
-                case.model_name.split(':', 1)[1],
-                provider=OpenAIProvider(api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key')),
-            )
-        elif case.model_name.startswith('anthropic:'):
-            from pydantic_ai.models.anthropic import AnthropicModel
-            from pydantic_ai.providers.anthropic import AnthropicProvider
-
-            return AnthropicModel(
-                case.model_name.split(':', 1)[1],
-                provider=AnthropicProvider(api_key=os.getenv('ANTHROPIC_API_KEY', 'mock-api-key')),
-            )
-        elif case.model_name.startswith('google:'):
-            from pydantic_ai.models.google import GoogleModel
-            from pydantic_ai.providers.google import GoogleProvider
-
-            return GoogleModel(
-                case.model_name.split(':', 1)[1],
-                provider=GoogleProvider(api_key=os.getenv('GOOGLE_API_KEY', 'mock-api-key')),
-            )
-        else:
-            raise ValueError(f'Unknown model: {case.model_name}')  # pragma: no cover
-    except ImportError:
-        pytest.skip(f'{case.model_name.split(":")[0]} is not installed')
+    expected_output: str
 
 
 @pytest.mark.parametrize(
@@ -90,7 +69,7 @@ This monthly payment includes principal and interest. Keep in mind that your act
         ),
         pytest.param(
             Case(
-                model_name='google:gemini-3-flash-preview',
+                model_name='google-gla:gemini-3-flash-preview',
                 expected_output=snapshot(
                     'OK. I searched for "mortgage" and found the `mortgage_calculator` tool. Using that tool for a $400,000 loan at 6.5% interest over 30 years, the calculated monthly payment is $2,528.27.'
                 ),
@@ -108,8 +87,7 @@ async def test_tool_search_discovers_and_uses_tool(allow_model_requests: None, c
     3. Model calls the discovered tool with the correct arguments
     4. Tool returns the calculated result
     """
-    model = _create_model(case)
-    agent: Agent[None, str] = Agent(model)
+    agent: Agent[None, str] = Agent(case.model_name)
 
     @agent.tool_plain
     def get_weather(city: str) -> str:  # pragma: no cover

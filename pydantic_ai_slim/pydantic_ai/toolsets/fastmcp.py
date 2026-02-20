@@ -14,6 +14,7 @@ from pydantic_ai import messages
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets._searchable import should_defer
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
 try:
@@ -142,15 +143,12 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         async with self:
             result: dict[str, ToolsetTool[AgentDepsT]] = {}
             for mcp_tool in await self.client.list_tools():
-                should_defer = self.defer_loading is True or (
-                    isinstance(self.defer_loading, list) and mcp_tool.name in self.defer_loading
-                )
                 result[mcp_tool.name] = self.tool_for_tool_def(
                     ToolDefinition(
                         name=mcp_tool.name,
                         description=mcp_tool.description,
                         parameters_json_schema=mcp_tool.inputSchema,
-                        defer_loading=should_defer,
+                        defer_loading=should_defer(self.defer_loading, mcp_tool.name),
                         metadata={
                             'meta': mcp_tool.meta,
                             'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
