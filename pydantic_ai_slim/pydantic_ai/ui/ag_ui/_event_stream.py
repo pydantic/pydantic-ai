@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Any, Final
 from uuid import uuid4
 
 from ..._utils import now_utc
@@ -32,6 +32,7 @@ from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
 
 try:
     from ag_ui.core import (
+        ActivitySnapshotEvent,
         BaseEvent,
         EventType,
         RunAgentInput,
@@ -173,6 +174,23 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
         if not followed_by_thinking:
             yield ThinkingEndEvent(type=EventType.THINKING_END)
+
+            # Emit ActivitySnapshotEvent to preserve thinking metadata for round-trip.
+            # Frontends receive this and send it back as ActivityMessage, which _adapter.py
+            # converts back to ThinkingPart. This preserves signature/id needed by providers
+            # like Anthropic for extended thinking.
+            # See: https://docs.ag-ui.com/concepts/events#activity-events
+            content: dict[str, Any] = {'content': part.content}
+            for field in ('id', 'signature', 'provider_name', 'provider_details'):
+                value = getattr(part, field)
+                if value is not None:
+                    content[field] = value
+
+            yield ActivitySnapshotEvent(
+                activity_type='pydantic_ai_thinking',
+                message_id=part.id or f'thinking-{uuid4().hex[:8]}',
+                content=content,
+            )
 
     def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
         return self._handle_tool_call_start(part)
