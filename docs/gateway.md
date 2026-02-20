@@ -90,7 +90,7 @@ Examples of providers and models that can be used are:
 | **Provider** | **API Format**  | **Example Model**                        |
 | --- |-----------------|------------------------------------------|
 | OpenAI | `openai`        | `gateway/openai:gpt-5.2`                 |
-| Anthropic | `anthropic`     | `gateway/anthropic:claude-sonnet-4-5`    |
+| Anthropic | `anthropic`     | `gateway/anthropic:claude-sonnet-4-6`    |
 | Google Vertex | `google-vertex` | `gateway/google-vertex:gemini-3-flash-preview` |
 | Groq | `groq`          | `gateway/groq:openai/gpt-oss-120b`       |
 | AWS Bedrock | `bedrock`       | `gateway/bedrock:amazon.nova-micro-v1:0` |

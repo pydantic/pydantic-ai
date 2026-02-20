@@ -13,7 +13,6 @@ from typing import Any, cast
 
 import pytest
 from httpx import AsyncClient as HttpxAsyncClient, Timeout
-from inline_snapshot import Is, snapshot
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
@@ -76,19 +75,24 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
+from .._inline_snapshot import Is, snapshot
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
     from google.genai import errors
     from google.genai.types import (
+        BlockedReason,
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
+        GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
         HarmBlockThreshold,
         HarmCategory,
+        HarmProbability,
         MediaModality,
         ModalityTokenCount,
+        SafetyRating,
     )
 
     from pydantic_ai.models.google import (
@@ -5726,3 +5730,117 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
             },
         ]
     )
+
+
+def _make_prompt_feedback(*, with_details: bool) -> GenerateContentResponsePromptFeedback:
+    """Create a prompt_feedback with block_reason, optionally with message and safety_ratings."""
+    if with_details:
+        return GenerateContentResponsePromptFeedback(
+            block_reason=BlockedReason.PROHIBITED_CONTENT,
+            block_reason_message='The prompt was blocked.',
+            safety_ratings=[
+                SafetyRating(
+                    category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    probability=HarmProbability.HIGH,
+                    blocked=True,
+                )
+            ],
+        )
+    return GenerateContentResponsePromptFeedback(
+        block_reason=BlockedReason.PROHIBITED_CONTENT,
+    )
+
+
+@pytest.mark.parametrize('with_details', [True, False])
+async def test_google_prompt_feedback_non_streaming(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture, with_details: bool
+):
+    """Test that prompt_feedback with block_reason raises ContentFilterError when candidates are empty."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    response = GenerateContentResponse(
+        candidates=[],
+        prompt_feedback=_make_prompt_feedback(with_details=with_details),
+        response_id='resp_123',
+        model_version=model_name,
+        create_time=datetime.datetime.now(),
+    )
+
+    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        ContentFilterError, match="Content filter triggered. Block reason: 'PROHIBITED_CONTENT'"
+    ) as exc_info:
+        await agent.run('prohibited content')
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['block_reason'] == 'PROHIBITED_CONTENT'
+    if with_details:
+        assert response_msg['provider_details']['block_reason_message'] == 'The prompt was blocked.'
+        assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
+        assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
+        assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True
+
+
+@pytest.mark.parametrize('with_details', [True, False])
+async def test_google_prompt_feedback_streaming(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture, with_details: bool
+):
+    """Test that prompt_feedback with block_reason raises ContentFilterError in streaming mode."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    chunks: list[GenerateContentResponse] = []
+
+    if not with_details:
+        # Include a chunk with no candidates and no block_reason to cover that branch
+        chunks.append(
+            GenerateContentResponse(
+                candidates=[],
+                model_version=model_name,
+                response_id='resp_123',
+                prompt_feedback=GenerateContentResponsePromptFeedback(),
+            )
+        )
+
+    chunks.append(
+        GenerateContentResponse(
+            candidates=[],
+            model_version=model_name,
+            response_id='resp_123',
+            prompt_feedback=_make_prompt_feedback(with_details=with_details),
+        )
+    )
+
+    async def stream_iterator():
+        for c in chunks:
+            yield c
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
+
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        ContentFilterError, match="Content filter triggered. Block reason: 'PROHIBITED_CONTENT'"
+    ) as exc_info:
+        async with agent.run_stream('prohibited content'):
+            pass
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['block_reason'] == 'PROHIBITED_CONTENT'
+    if with_details:
+        assert response_msg['provider_details']['block_reason_message'] == 'The prompt was blocked.'
+        assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
+        assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
+        assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True

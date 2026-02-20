@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import re
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,7 +13,6 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict
 
@@ -50,6 +50,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, TestEnv, try_import
 from .mock_openai import (
     MockOpenAI,
@@ -4405,3 +4406,51 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
     # Final usage should be from the last chunk (15 output tokens)
     # NOT the sum of all chunks (5+10+15+15 = 45 output tokens)
     assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
+
+
+async def test_openai_chat_refusal_non_streaming(allow_model_requests: None):
+    """Test that a refusal field on ChatCompletionMessage triggers ContentFilterError."""
+    c = completion_message(
+        ChatCompletionMessage(content=None, refusal="I'm sorry, I can't help with that.", role='assistant'),
+    )
+    c.model = 'gpt-4o'
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(
+        ContentFilterError,
+        match=re.escape('Content filter triggered. Refusal: "I\'m sorry, I can\'t help with that."'),
+    ) as exc_info:
+        await agent.run('harmful prompt')
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['refusal'] == "I'm sorry, I can't help with that."
+
+
+async def test_openai_chat_refusal_streaming(allow_model_requests: None):
+    """Test that refusal deltas in streaming trigger ContentFilterError."""
+    stream = [
+        chunk([ChoiceDelta(refusal="I'm sorry, ", role='assistant')]),
+        chunk([ChoiceDelta(refusal="I can't help with that.")]),
+        chunk([ChoiceDelta()], finish_reason='stop'),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ContentFilterError, match='Content filter triggered') as exc_info:
+        async with agent.run_stream('harmful prompt'):
+            pass
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['refusal'] == "I'm sorry, I can't help with that."
