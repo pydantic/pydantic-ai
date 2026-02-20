@@ -36,6 +36,7 @@ from ._base import (
     RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
+    TextInput,
     ToolCall,
     ToolResult,
     Transcript,
@@ -70,6 +71,11 @@ class GeminiRealtimeConnection(RealtimeConnection):
         elif isinstance(content, ImageInput):
             await self._session.send_realtime_input(
                 video=genai_types.Blob(data=content.data, mime_type=content.mime_type)
+            )
+        elif isinstance(content, TextInput):
+            await self._session.send_client_content(
+                turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content.text)]),
+                turn_complete=True,
             )
         elif isinstance(content, ToolResult):
             await self._session.send_tool_response(

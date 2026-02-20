@@ -47,6 +47,18 @@ class ImageInput:
 
 
 @dataclass
+class TextInput:
+    """A text message to send to the model.
+
+    This sends a turn-based text message (as opposed to streaming audio).
+    Useful for text-only conversations or injecting text context alongside
+    audio in a realtime session.
+    """
+
+    text: str
+
+
+@dataclass
 class ToolResult:
     """The result of a tool call to send back to the model."""
 
@@ -54,10 +66,7 @@ class ToolResult:
     output: str
 
 
-RealtimeInput = TypeAliasType(
-    'RealtimeInput',
-    AudioInput | ImageInput | ToolResult,
-)
+RealtimeInput = TypeAliasType('RealtimeInput', AudioInput | ImageInput | TextInput | ToolResult)
 
 # ---------------------------------------------------------------------------
 # Connection-level events (yielded by RealtimeConnection.__aiter__)

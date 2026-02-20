@@ -38,6 +38,7 @@ from ._base import (
     RealtimeInput,
     RealtimeModel,
     SessionError,
+    TextInput,
     ToolCall,
     ToolResult,
     Transcript,
@@ -76,6 +77,17 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 'audio': base64.b64encode(content.data).decode('ascii'),
             }
             await self._ws.send(json.dumps(event))
+        elif isinstance(content, TextInput):
+            item_event = {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [{'type': 'input_text', 'text': content.text}],
+                },
+            }
+            await self._ws.send(json.dumps(item_event))
+            await self._ws.send(json.dumps({'type': 'response.create'}))
         elif isinstance(content, ToolResult):
             item_event = {
                 'type': 'conversation.item.create',

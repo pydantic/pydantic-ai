@@ -12,6 +12,7 @@ from ._base import (
     RealtimeConnection,
     RealtimeInput,
     RealtimeSessionEvent,
+    TextInput,
     ToolCall,
     ToolCallCompleted,
     ToolCallStarted,
@@ -31,11 +32,7 @@ class RealtimeSession:
     `ToolCallCompleted` is emitted. All other events pass through directly.
     """
 
-    def __init__(
-        self,
-        connection: RealtimeConnection,
-        tool_runner: ToolRunner,
-    ) -> None:
+    def __init__(self, connection: RealtimeConnection, tool_runner: ToolRunner) -> None:
         self._connection = connection
         self._tool_runner = tool_runner
 
@@ -46,6 +43,10 @@ class RealtimeSession:
     async def send_audio(self, data: bytes) -> None:
         """Convenience method to send audio data."""
         await self._connection.send(AudioInput(data=data))
+
+    async def send_text(self, text: str) -> None:
+        """Convenience method to send a text message."""
+        await self._connection.send(TextInput(text=text))
 
     async def __aiter__(self) -> AsyncIterator[RealtimeSessionEvent]:
         async for event in self._connection:

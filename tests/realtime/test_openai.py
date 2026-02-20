@@ -8,15 +8,21 @@ from collections.abc import AsyncIterator
 
 import pytest
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai import Agent
     from pydantic_ai.realtime import (
         AudioDelta,
         AudioInput,
         InputTranscript,
+        RealtimeSessionEvent,
         SessionError,
+        TextInput,
         ToolCall,
+        ToolCallCompleted,
+        ToolCallStarted,
         ToolResult,
         Transcript,
         TurnComplete,
@@ -161,6 +167,24 @@ async def test_send_audio() -> None:
 
 
 @pytest.mark.anyio
+async def test_send_text() -> None:
+    ws = FakeWebSocket([])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+
+    await conn.send(TextInput(text='Hello'))
+
+    assert [json.loads(m) for m in ws.sent] == snapshot(
+        [
+            {
+                'type': 'conversation.item.create',
+                'item': {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'Hello'}]},
+            },
+            {'type': 'response.create'},
+        ]
+    )
+
+
+@pytest.mark.anyio
 async def test_send_tool_result() -> None:
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
@@ -212,3 +236,63 @@ def test_model_name() -> None:
 def test_default_model_name() -> None:
     model = OpenAIRealtimeModel()
     assert model.model_name == 'gpt-4o-realtime-preview'
+
+
+# ---------------------------------------------------------------------------
+# Integration tests (WebSocket cassette recording/replay)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_openai_connect_and_transcript(openai_realtime_model: OpenAIRealtimeModel) -> None:
+    """Connect via Agent.realtime_session and verify transcript + turn complete events."""
+    agent: Agent[None, str] = Agent(instructions='You are a helpful assistant. Be brief.')
+
+    events: list[RealtimeSessionEvent] = []
+    async with agent.realtime_session(model=openai_realtime_model) as session:
+        await session.send_text('Say hello in exactly three words.')
+        async for event in session:
+            if not isinstance(event, AudioDelta):
+                events.append(event)
+            if isinstance(event, TurnComplete):
+                break
+
+    assert events == snapshot(
+        [
+            Transcript(text='Hi'),
+            Transcript(text=' there'),
+            Transcript(text=','),
+            Transcript(text=' friend'),
+            Transcript(text='!'),
+            Transcript(text='Hi there, friend!', is_final=True),
+            TurnComplete(),
+        ]
+    )
+
+
+@pytest.mark.anyio
+async def test_openai_tool_call(openai_realtime_model: OpenAIRealtimeModel) -> None:
+    """Connect with a tool via Agent.realtime_session and verify tool dispatch."""
+    agent: Agent[None, str] = Agent(
+        instructions='You are a weather assistant. Always use the get_weather tool when asked about weather.',
+    )
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'Sunny in {city}'
+
+    events: list[RealtimeSessionEvent] = []
+    async with agent.realtime_session(model=openai_realtime_model) as session:
+        await session.send_text('What is the weather in London?')
+        async for event in session:
+            if not isinstance(event, AudioDelta):
+                events.append(event)
+            if isinstance(event, (ToolCallCompleted, TurnComplete)):
+                break
+
+    assert events == snapshot(
+        [
+            ToolCallStarted(tool_name='get_weather', tool_call_id='call_Xm4UH9KdJ1s3B8OK'),
+            ToolCallCompleted(tool_name='get_weather', tool_call_id='call_Xm4UH9KdJ1s3B8OK', result='Sunny in London'),
+        ]
+    )

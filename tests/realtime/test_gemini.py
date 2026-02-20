@@ -8,15 +8,21 @@ from typing import Any
 
 import pytest
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai import Agent
     from pydantic_ai.realtime import (
         AudioDelta,
         AudioInput,
         ImageInput,
         InputTranscript,
+        RealtimeSessionEvent,
+        TextInput,
         ToolCall,
+        ToolCallCompleted,
+        ToolCallStarted,
         ToolResult,
         Transcript,
         TurnComplete,
@@ -254,12 +260,16 @@ class FakeGeminiSession:
         self.sent_audio: list[Any] = []
         self.sent_video: list[Any] = []
         self.sent_tool_responses: list[Any] = []
+        self.sent_client_content: list[tuple[Any, bool]] = []
 
     async def send_realtime_input(self, *, audio: Any = None, video: Any = None) -> None:
         if audio is not None:
             self.sent_audio.append(audio)
         if video is not None:
             self.sent_video.append(video)
+
+    async def send_client_content(self, *, turns: Any = None, turn_complete: bool = True) -> None:
+        self.sent_client_content.append((turns, turn_complete))
 
     async def send_tool_response(self, *, function_responses: list[Any]) -> None:
         self.sent_tool_responses.extend(function_responses)
@@ -296,6 +306,20 @@ async def test_send_image() -> None:
     assert len(session.sent_video) == 1
     assert session.sent_video[0].data == b'\xff\xd8'
     assert session.sent_video[0].mime_type == 'image/jpeg'
+
+
+@pytest.mark.anyio
+async def test_send_text() -> None:
+    session = FakeGeminiSession()
+    conn = GeminiRealtimeConnection(session)
+
+    await conn.send(TextInput(text='Hello'))
+
+    assert len(session.sent_client_content) == 1
+    turns, turn_complete = session.sent_client_content[0]
+    assert turns.role == 'user'
+    assert turns.parts[0].text == 'Hello'
+    assert turn_complete is True
 
 
 @pytest.mark.anyio
@@ -346,3 +370,55 @@ def test_model_name() -> None:
 def test_default_model_name() -> None:
     model = GeminiRealtimeModel()
     assert model.model_name == 'gemini-2.5-flash-native-audio-preview'
+
+
+# ---------------------------------------------------------------------------
+# Integration tests (WebSocket cassette recording/replay)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_gemini_connect_and_transcript(gemini_realtime_model: GeminiRealtimeModel) -> None:
+    """Connect via Agent.realtime_session and verify transcript + turn complete events."""
+    agent: Agent[None, str] = Agent(instructions='You are a helpful assistant. Be brief.')
+
+    events: list[RealtimeSessionEvent] = []
+    async with agent.realtime_session(model=gemini_realtime_model) as session:
+        await session.send_text('Say hello in exactly three words.')
+        async for event in session:
+            if not isinstance(event, AudioDelta):
+                events.append(event)
+            if isinstance(event, TurnComplete):
+                break
+
+    assert events == snapshot([Transcript(text='Hello there!'), TurnComplete()])
+
+
+@pytest.mark.anyio
+async def test_gemini_tool_call(gemini_realtime_model: GeminiRealtimeModel) -> None:
+    """Connect with a tool via Agent.realtime_session and verify tool dispatch."""
+    agent: Agent[None, str] = Agent(
+        instructions='You are a weather assistant. Always use the get_weather tool when asked about weather.',
+    )
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'Sunny in {city}'
+
+    events: list[RealtimeSessionEvent] = []
+    async with agent.realtime_session(model=gemini_realtime_model) as session:
+        await session.send_text('What is the weather in London?')
+        async for event in session:
+            if not isinstance(event, AudioDelta):
+                events.append(event)
+            if isinstance(event, (ToolCallCompleted, TurnComplete)):
+                break
+
+    assert events == snapshot(
+        [
+            ToolCallStarted(tool_name='get_weather', tool_call_id='386960d7-689d-42b1-a7c7-43962a0c8281'),
+            ToolCallCompleted(
+                tool_name='get_weather', tool_call_id='386960d7-689d-42b1-a7c7-43962a0c8281', result='Sunny in London'
+            ),
+        ]
+    )
