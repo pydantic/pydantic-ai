@@ -69,6 +69,16 @@ class MockToolsetWithInstructions(AbstractToolset[Any]):
         return None
 
 
+async def test_mock_toolset_with_instructions_interface():
+    """Test that MockToolsetWithInstructions correctly implements AbstractToolset interface."""
+    toolset = MockToolsetWithInstructions(instructions='test instructions', id='my-id')
+    ctx = build_run_context(None)
+
+    assert toolset.id == 'my-id'
+    assert await toolset.get_tools(ctx) == {}
+    assert await toolset.call_tool('any_tool', {}, ctx, None) is None  # type: ignore[arg-type]
+
+
 async def test_function_toolset_instructions():
     """Test that FunctionToolset returns None for instructions by default."""
     toolset = FunctionToolset[None]()
@@ -933,6 +943,7 @@ async def test_wrapper_toolsets_delegate_instructions():
     def allow_all_filter(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
         return True
 
+    assert allow_all_filter(ctx, ToolDefinition(name='test', description='', parameters_json_schema={})) is True
     filtered_toolset = base_toolset.filtered(allow_all_filter)
     assert await filtered_toolset.get_instructions(ctx) == base_instructions
 
@@ -949,6 +960,7 @@ async def test_wrapper_toolsets_delegate_instructions():
     async def prepare_func(ctx: RunContext[Any], tools: list[ToolDefinition]) -> list[ToolDefinition]:
         return tools
 
+    assert await prepare_func(ctx, []) == []
     prepared_toolset = base_toolset.prepared(prepare_func)
     assert await prepared_toolset.get_instructions(ctx) == base_instructions
 
@@ -1026,10 +1038,6 @@ async def test_function_toolset_get_instructions_string():
     """FunctionToolset with a string instruction returns it via get_instructions."""
     toolset = FunctionToolset(instructions='Always use tool X for math.')
 
-    @toolset.tool
-    def add(a: int, b: int) -> int:
-        return a + b
-
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
     assert result == 'Always use tool X for math.'
@@ -1082,10 +1090,6 @@ async def test_function_toolset_get_instructions_multiple():
 async def test_function_toolset_get_instructions_none_default():
     """FunctionToolset without instructions returns None."""
     toolset = FunctionToolset()
-
-    @toolset.tool
-    def add(a: int, b: int) -> int:
-        return a + b
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
@@ -1171,17 +1175,7 @@ async def test_wrapper_toolset_passes_through_instructions():
 async def test_combined_toolset_aggregates_instructions():
     """CombinedToolset gathers instructions from all children."""
     ts1 = FunctionToolset(instructions='Toolset 1 instructions.')
-
-    @ts1.tool
-    def tool_a() -> str:
-        return 'a'
-
     ts2 = FunctionToolset(instructions='Toolset 2 instructions.')
-
-    @ts2.tool
-    def tool_b() -> str:
-        return 'b'
-
     combined = CombinedToolset([ts1, ts2])
 
     ctx = build_run_context(None)
@@ -1192,17 +1186,7 @@ async def test_combined_toolset_aggregates_instructions():
 async def test_combined_toolset_skips_none_instructions():
     """CombinedToolset skips toolsets that return None for instructions."""
     ts1 = FunctionToolset(instructions='Only from ts1.')
-
-    @ts1.tool
-    def tool_a() -> str:
-        return 'a'
-
     ts2 = FunctionToolset()  # No instructions
-
-    @ts2.tool
-    def tool_b() -> str:
-        return 'b'
-
     combined = CombinedToolset([ts1, ts2])
 
     ctx = build_run_context(None)
@@ -1213,17 +1197,7 @@ async def test_combined_toolset_skips_none_instructions():
 async def test_combined_toolset_all_none_returns_none():
     """CombinedToolset returns None when all children return None."""
     ts1 = FunctionToolset()
-
-    @ts1.tool
-    def tool_a() -> str:
-        return 'a'
-
     ts2 = FunctionToolset()
-
-    @ts2.tool
-    def tool_b() -> str:
-        return 'b'
-
     combined = CombinedToolset([ts1, ts2])
 
     ctx = build_run_context(None)
@@ -1233,11 +1207,7 @@ async def test_combined_toolset_all_none_returns_none():
 
 async def test_dynamic_toolset_instructions_before_resolution():
     """DynamicToolset returns None for instructions before get_tools resolves it."""
-
-    def make_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
-        return FunctionToolset(instructions='Dynamic instructions.')
-
-    dynamic = DynamicToolset(make_toolset)
+    dynamic = DynamicToolset(lambda ctx: FunctionToolset(instructions='Dynamic instructions.'))
 
     ctx = build_run_context(None)
     # Before get_tools is called, _toolset is None
@@ -1249,13 +1219,7 @@ async def test_dynamic_toolset_instructions_after_resolution():
     """DynamicToolset delegates instructions after get_tools resolves it."""
 
     def make_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
-        ts = FunctionToolset[None](instructions='Dynamic instructions.')
-
-        @ts.tool
-        def my_tool() -> str:
-            return 'result'
-
-        return ts
+        return FunctionToolset[None](instructions='Dynamic instructions.')
 
     dynamic = DynamicToolset(make_toolset)
 
