@@ -7,7 +7,6 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock
 
 import pytest
-from inline_snapshot import snapshot
 from typing_extensions import Self
 
 from pydantic_ai import (
@@ -28,6 +27,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
+
+from ._inline_snapshot import snapshot
 
 pytestmark = pytest.mark.anyio
 

@@ -65,12 +65,12 @@ TEST_CASES = [
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},
-        'gateway/anthropic:claude-sonnet-4-5',
-        'claude-sonnet-4-5',
+        'gateway/anthropic:claude-sonnet-4-6',
+        'claude-sonnet-4-6',
         'anthropic',
         'anthropic',
         AnthropicModel,
-        id='gateway/anthropic:claude-sonnet-4-5',
+        id='gateway/anthropic:claude-sonnet-4-6',
     ),
     pytest.param(
         {'PYDANTIC_AI_GATEWAY_API_KEY': 'gateway-api-key'},

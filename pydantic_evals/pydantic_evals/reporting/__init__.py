@@ -18,6 +18,7 @@ from pydantic_evals._utils import UNSET, Unset
 from ..evaluators import EvaluationResult
 from .analyses import (
     ConfusionMatrix,
+    LinePlot,
     PrecisionRecall,
     PrecisionRecallCurve,
     PrecisionRecallPoint,
@@ -47,6 +48,7 @@ __all__ = (
     'ReportCaseAggregate',
     'ReportAnalysis',
     'ConfusionMatrix',
+    'LinePlot',
     'PrecisionRecall',
     'PrecisionRecallCurve',
     'PrecisionRecallPoint',
@@ -1608,7 +1610,9 @@ class EvaluationRenderer:
         return _NumberRenderer.infer_from_config(self.duration_config, 'duration', all_durations)
 
 
-def _render_analysis(analysis: ConfusionMatrix | PrecisionRecall | ScalarResult | TableResult) -> RenderableType:
+def _render_analysis(
+    analysis: ConfusionMatrix | PrecisionRecall | ScalarResult | TableResult | LinePlot,
+) -> RenderableType:
     """Render a single report analysis as a Rich renderable."""
     if isinstance(analysis, ConfusionMatrix):
         table = Table(title=analysis.title, show_lines=True)
@@ -1629,6 +1633,11 @@ def _render_analysis(analysis: ConfusionMatrix | PrecisionRecall | ScalarResult 
         for curve in analysis.curves:
             auc_str = f', AUC={curve.auc:.4f}' if curve.auc is not None else ''
             lines.append(f'  {curve.name}: {len(curve.points)} points{auc_str}')
+        return Text('\n'.join(lines))
+    elif isinstance(analysis, LinePlot):
+        lines: list[str] = [analysis.title]
+        for curve in analysis.curves:
+            lines.append(f'  {curve.name}: {len(curve.points)} points')
         return Text('\n'.join(lines))
     elif isinstance(analysis, TableResult):
         table = Table(title=analysis.title, show_lines=True)

@@ -48,6 +48,7 @@ def anthropic_model_profile(model_name: str) -> AnthropicModelProfile | None:
     models_that_support_json_schema_output = (
         'claude-haiku-4-5',
         'claude-sonnet-4-5',
+        'claude-sonnet-4-6',
         'claude-opus-4-1',
         'claude-opus-4-5',
         'claude-opus-4-6',
