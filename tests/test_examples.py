@@ -573,6 +573,16 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
+    'Clean up old databases': ToolCallPart(
+        tool_name='run_subagent',
+        args={'task': 'Clean up old databases'},
+        tool_call_id='run_subagent_call_id',
+    ),
+    'Clean up databases': ToolCallPart(
+        tool_name='run_subagent',
+        args={'task': 'Clean up databases'},
+        tool_call_id='run_subagent_call_id',
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -693,6 +703,17 @@ async def model_logic(  # noqa: C901
                 )
 
             return ModelResponse(parts=[part])
+        elif m.content == 'Clean up old databases' and any(t.name == 'dangerous_action' for t in info.function_tools):
+            # Sub-agent in nested_deferred_tools.py example
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='dangerous_action',
+                        args={'target': 'old_databases'},
+                        tool_call_id='dangerous_action_call_id',
+                    )
+                ]
+            )
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
@@ -959,6 +980,8 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'run_subagent':
+        return ModelResponse(parts=[TextPart(cast(str, m.content))])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'calculate_answer':
         return ModelResponse(
             parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]

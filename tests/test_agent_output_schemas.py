@@ -397,6 +397,11 @@ async def test_deferred_output_json_schema():
                             'title': 'Metadata',
                             'type': 'object',
                         },
+                        'context': {
+                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                            'title': 'Context',
+                            'type': 'object',
+                        },
                     },
                     'title': 'DeferredToolRequests',
                     'type': 'object',
@@ -519,6 +524,11 @@ distinguish multiple files.\
                         'metadata': {
                             'additionalProperties': {'additionalProperties': True, 'type': 'object'},
                             'title': 'Metadata',
+                            'type': 'object',
+                        },
+                        'context': {
+                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                            'title': 'Context',
                             'type': 'object',
                         },
                     },

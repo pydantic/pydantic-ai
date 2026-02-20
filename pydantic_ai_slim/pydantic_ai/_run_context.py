@@ -17,6 +17,7 @@ from . import _utils, messages as _messages
 if TYPE_CHECKING:
     from .models import Model
     from .result import RunUsage
+    from .tools import DeferredToolResults
 
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
@@ -72,6 +73,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Whether a tool call that required approval has now been approved."""
     tool_call_metadata: Any = None
     """Metadata from `DeferredToolResults.metadata[tool_call_id]`, available when `tool_call_approved=True`."""
+    tool_call_context: Any = None
+    """Context from `DeferredToolResults.context[tool_call_id]`, available when `tool_call_approved=True`."""
+    deferred_tool_results: DeferredToolResults | None = None
+    """Nested deferred tool results, available when this tool previously raised `CallDeferred(deferred_tool_requests=...)` or when an approved tool call (`ToolApproved`) also has nested deferred results."""
     partial_output: bool = False
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None

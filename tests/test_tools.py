@@ -2338,6 +2338,7 @@ def test_deferred_tool_results_serializable():
                 'tool-denied': {'message': 'The tool call was denied.', 'kind': 'tool-denied'},
             },
             'metadata': {},
+            'context': {},
         }
     )
     deserialized = results_ta.validate_python(serialized)
@@ -2984,3 +2985,89 @@ def test_tool_call_metadata_not_available_for_unapproved_calls():
     # For regular tool calls (not via ToolApproved), metadata should be None
     assert len(received_metadata) == 1
     assert received_metadata[0] is None
+
+
+def test_context_on_approval_required():
+    """Context flows correctly through ApprovalRequired exceptions."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('risky_action', {'x': 1}, tool_call_id='call_1')])
+        else:
+            return ModelResponse(parts=[TextPart('Done!')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def risky_action(ctx: RunContext[None], x: int) -> str:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired(
+                metadata={'reason': 'dangerous'},
+                context={'state': 'pending', 'value': x},
+            )
+        assert ctx.tool_call_context == {'state': 'pending', 'value': 1}
+        return f'executed with x={x}'
+
+    result = agent.run_sync('Do it')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='risky_action', args={'x': 1}, tool_call_id='call_1')],
+            metadata={'call_1': {'reason': 'dangerous'}},
+            context={'call_1': {'state': 'pending', 'value': 1}},
+        )
+    )
+
+    messages = result.all_messages()
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            approvals={'call_1': ToolApproved()},
+            context={'call_1': {'state': 'pending', 'value': 1}},
+        ),
+    )
+    assert result.output == snapshot('Done!')
+
+
+def test_context_on_call_deferred():
+    """Context flows correctly through CallDeferred exceptions (non-nested).
+
+    Note: For CallDeferred (external tools), the tool is not re-invoked on resumption —
+    the result is injected directly. Context round-tripping through the tool itself is
+    exercised in test_context_on_approval_required above.
+    """
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('slow_task', {'input': 'data'}, tool_call_id='call_1')])
+        else:
+            return ModelResponse(parts=[TextPart('Done!')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def slow_task(ctx: RunContext[None], input: str) -> str:
+        raise CallDeferred(
+            metadata={'task_id': 'bg_1'},
+            context={'progress': 0, 'queue_position': 5},
+        )
+
+    result = agent.run_sync('Process data')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='slow_task', args={'input': 'data'}, tool_call_id='call_1')],
+            metadata={'call_1': {'task_id': 'bg_1'}},
+            context={'call_1': {'progress': 0, 'queue_position': 5}},
+        )
+    )
+    # Verify context is correctly propagated in the output
+    assert result.output.context == {'call_1': {'progress': 0, 'queue_position': 5}}
+
+    messages = result.all_messages()
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            calls={'call_1': 'result_value'},
+        ),
+    )
+    assert result.output == snapshot('Done!')

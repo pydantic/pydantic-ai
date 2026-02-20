@@ -70,7 +70,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
@@ -7762,3 +7762,133 @@ async def test_central_content_filter_with_partial_content():
     # Should NOT raise ContentFilterError
     result = await agent.run('Trigger filter')
     assert result.output == 'Partially generated content...'
+
+
+def test_nested_deferred_tool_calls():
+    """Nested deferred tool calls with regular tools, mixed approvals, metadata, and context."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('regular_tool', {'x': 10}, tool_call_id='regular'),
+                    ToolCallPart('orchestrate', {'plan': 'execute'}, tool_call_id='parent'),
+                ]
+            )
+        else:
+            return ModelResponse(parts=[TextPart('All done!')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def regular_tool(x: int) -> int:
+        return x * 2
+
+    # Capture values received by the parent tool for verification
+    received_values: dict[str, Any] = {}
+
+    @agent.tool
+    def orchestrate(ctx: RunContext[None], plan: str) -> str:
+        if ctx.deferred_tool_results is not None:
+            assert ctx.tool_call_approved is True
+            assert ctx.tool_call_metadata == {'parent_info': 'orchestrator'}
+            assert ctx.tool_call_context == {'parent_state': 'in_progress'}
+            ext = ctx.deferred_tool_results.calls.get('ext_call')
+            a1 = ctx.deferred_tool_results.approvals.get('approve_1')
+            a2 = ctx.deferred_tool_results.approvals.get('approve_2')
+            # Verify grandchild results are reconstructed correctly (child::grandchild split)
+            grandchild_ext = ctx.deferred_tool_results.calls.get('child_1::gc_call')
+            # Capture for assertion outside the tool
+            received_values['ext'] = ext
+            received_values['a1'] = a1
+            received_values['a2'] = a2
+            received_values['grandchild_ext'] = grandchild_ext
+            received_values['metadata'] = dict(ctx.deferred_tool_results.metadata)
+            received_values['context'] = dict(ctx.deferred_tool_results.context)
+            return f'ext={ext}, a1_approved={isinstance(a1, ToolApproved)}, a2_denied={isinstance(a2, ToolDenied)}, gc={grandchild_ext}'
+
+        nested = DeferredToolRequests(
+            calls=[
+                ToolCallPart('background_task', {'input': 'data'}, tool_call_id='ext_call'),
+                # Grandchild: simulates a child that itself had nested deferred calls,
+                # resulting in a composite child_id containing '::' (i.e. 3 levels deep)
+                ToolCallPart('deep_task', {'level': 3}, tool_call_id='child_1::gc_call'),
+            ],
+            approvals=[
+                ToolCallPart('dangerous_action', {'target': 'db'}, tool_call_id='approve_1'),
+                ToolCallPart('delete_file', {'path': '/tmp/x'}, tool_call_id='approve_2'),
+            ],
+            metadata={
+                'approve_1': {'reason': 'needs approval'},
+                'ext_call': {'task_type': 'background'},
+            },
+            context={
+                'ext_call': {'queue_position': 5},
+                'approve_1': {'conversation_state': [1, 2, 3]},
+            },
+        )
+        raise CallDeferred(
+            metadata={'parent_info': 'orchestrator'},
+            context={'parent_state': 'in_progress'},
+            deferred_tool_requests=nested,
+        )
+
+    # First run: regular tool executes, orchestrate defers with nested requests
+    result = agent.run_sync('Go')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            calls=[
+                ToolCallPart(tool_name='background_task', args={'input': 'data'}, tool_call_id='parent::ext_call'),
+                ToolCallPart(tool_name='deep_task', args={'level': 3}, tool_call_id='parent::child_1::gc_call'),
+            ],
+            approvals=[
+                ToolCallPart(tool_name='dangerous_action', args={'target': 'db'}, tool_call_id='parent::approve_1'),
+                ToolCallPart(tool_name='delete_file', args={'path': '/tmp/x'}, tool_call_id='parent::approve_2'),
+            ],
+            metadata={
+                'parent': {'parent_info': 'orchestrator'},
+                'parent::approve_1': {'reason': 'needs approval'},
+                'parent::ext_call': {'task_type': 'background'},
+            },
+            context={
+                'parent': {'parent_state': 'in_progress'},
+                'parent::ext_call': {'queue_position': 5},
+                'parent::approve_1': {'conversation_state': [1, 2, 3]},
+            },
+        )
+    )
+
+    # Second run: approve one, deny the other, provide external call results (including grandchild)
+    messages = result.all_messages()
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            calls={
+                'parent::ext_call': 'task_result_42',
+                'parent::child_1::gc_call': 'deep_result',
+            },
+            approvals={
+                'parent::approve_1': ToolApproved(),
+                'parent::approve_2': ToolDenied('Not allowed'),
+            },
+            metadata={
+                'parent': {'parent_info': 'orchestrator'},
+                'parent::approve_1': {'user_note': 'ok'},
+            },
+            context={
+                'parent': {'parent_state': 'in_progress'},
+                'parent::ext_call': {'queue_position': 5},
+            },
+        ),
+    )
+    assert result.output == snapshot('All done!')
+
+    # Verify the parent tool received raw values, not ToolReturn-wrapped ones
+    assert received_values['ext'] == 'task_result_42'
+    assert received_values['grandchild_ext'] == 'deep_result'
+    assert isinstance(received_values['a1'], ToolApproved)
+    assert isinstance(received_values['a2'], ToolDenied)
+    # Verify metadata and context were propagated to child DeferredToolResults
+    # Only metadata/context provided in the second run with 'parent::' prefix gets split to children
+    assert received_values['metadata'] == {'approve_1': {'user_note': 'ok'}}
+    assert received_values['context'] == {'ext_call': {'queue_position': 5}}

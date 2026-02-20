@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import sys
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import pydantic_core
@@ -15,6 +16,7 @@ else:
 
 if TYPE_CHECKING:
     from .messages import RetryPromptPart
+    from .tools import DeferredToolRequests
 
 __all__ = (
     'ModelRetry',
@@ -79,10 +81,27 @@ class CallDeferred(Exception):
     Args:
         metadata: Optional dictionary of metadata to attach to the deferred tool call.
             This metadata will be available in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
+        deferred_tool_requests: Optional nested deferred tool requests from a subagent or inner tool execution.
+            When provided, the nested deferred calls are surfaced to the parent agent's `DeferredToolRequests`
+            with composite IDs (`parent_id::child_id`), allowing the user to interact with a single flat set of requests.
+        context: Optional opaque context to preserve across the deferral boundary.
+            This context will be available in `DeferredToolRequests.context` keyed by `tool_call_id`,
+            and should be passed back unchanged in `DeferredToolResults.context` during resumption.
+            Available in the tool's `RunContext.tool_call_context` when the tool is re-invoked.
     """
 
-    def __init__(self, metadata: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        metadata: dict[str, Any] | None = None,
+        *,
+        deferred_tool_requests: DeferredToolRequests | None = None,
+        context: Mapping[str, Any] | None = None,
+    ):
         self.metadata = metadata
+        self.deferred_tool_requests = deferred_tool_requests
+        # Mapping[str, Any] (not Any) is intentional: named keys keep context composable
+        # and extensible across features (e.g. subagent message history + code mode checkpoint).
+        self.context = context
         super().__init__()
 
 
@@ -94,10 +113,20 @@ class ApprovalRequired(Exception):
     Args:
         metadata: Optional dictionary of metadata to attach to the deferred tool call.
             This metadata will be available in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
+        context: Optional opaque context to preserve across the deferral boundary.
+            This context will be available in `DeferredToolRequests.context` keyed by `tool_call_id`,
+            and should be passed back unchanged in `DeferredToolResults.context` during resumption.
+            Available in the tool's `RunContext.tool_call_context` when the tool is re-invoked.
     """
 
-    def __init__(self, metadata: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        metadata: dict[str, Any] | None = None,
+        *,
+        context: Mapping[str, Any] | None = None,
+    ):
         self.metadata = metadata
+        self.context = context
         super().__init__()
 
 
