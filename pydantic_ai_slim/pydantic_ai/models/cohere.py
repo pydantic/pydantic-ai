@@ -36,7 +36,6 @@ from . import Model, ModelRequestParameters, check_allow_model_requests
 try:
     from cohere import (
         AssistantChatMessageV2,
-        AssistantMessageV2ContentItem,
         AsyncClientV2,
         ChatFinishReason,
         ChatMessageV2,
@@ -257,7 +256,7 @@ class CohereModel(Model):
 
                 message_param = AssistantChatMessageV2(role='assistant')
                 if texts or thinking:
-                    contents: list[AssistantMessageV2ContentItem] = []
+                    contents: list[TextAssistantMessageV2ContentItem | ThinkingAssistantMessageV2ContentItem] = []
                     if thinking:
                         contents.append(ThinkingAssistantMessageV2ContentItem(thinking='\n\n'.join(thinking)))
                     if texts:  # pragma: no branch
