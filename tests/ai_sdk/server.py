@@ -1,4 +1,4 @@
-"""Minimal Starlette server for JS integration testing of Vercel AI SDK."""
+"""Minimal Starlette server for AI SDK integration testing."""
 
 from __future__ import annotations
 
@@ -11,21 +11,32 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 
+def _has_tool_return(messages: list[ModelMessage]) -> bool:
+    return any(
+        isinstance(part, ToolReturnPart)
+        for msg in messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+    )
+
+
 async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-    """Model function that always calls delete_file tool."""
-    yield {
-        0: DeltaToolCall(
-            name='delete_file',
-            json_args='{"path": "test.txt"}',
-            tool_call_id='delete_1',
-        )
-    }
+    if _has_tool_return(messages):
+        yield 'Done.'
+    else:
+        yield {
+            0: DeltaToolCall(
+                name='delete_file',
+                json_args='{"path": "test.txt"}',
+                tool_call_id='delete_1',
+            )
+        }
 
 
 agent: Agent[None, str | DeferredToolRequests] = Agent(

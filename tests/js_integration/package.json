@@ -1,8 +1,0 @@
-{
-  "name": "pydantic-ai-vercel-integration-tests",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "ai": "^6.0.57"
-  }
-}
