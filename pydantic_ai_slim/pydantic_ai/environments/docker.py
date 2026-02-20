@@ -5,26 +5,24 @@ Requires the `docker` package: `pip install pydantic-ai-slim[docker-sandbox]`
 
 from __future__ import annotations
 
-import hashlib
 import io
 import math
 import posixpath
 import struct
 import tarfile
-from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, cast
 
 import anyio
 import anyio.to_thread
-from typing_extensions import Self, assert_never
+from typing_extensions import Self
 
 from ._base import (
     IMAGE_EXTENSIONS,
     MAX_OUTPUT_CHARS,
     Capability,
-    ExecuteResult,
     ExecutionProcess,
+    ExecutionResult,
     FileInfo,
     apply_edit,
     build_glob_cmd,
@@ -38,57 +36,13 @@ from ._driver import DriverBasedEnvironment
 
 try:
     import docker
-    from docker.errors import DockerException, ImageNotFound
+    from docker.errors import DockerException
     from docker.models.containers import Container
 except ImportError as _import_error:
     raise ImportError(
         'The `docker` package is required for DockerEnvironment. '
         'Install it with: pip install pydantic-ai-slim[docker-sandbox]'
     ) from _import_error
-
-
-def _build_dockerfile(
-    base_image: str,
-    packages: Sequence[str],
-    package_manager: Literal['pip', 'apt', 'npm'],
-    setup_commands: Sequence[str],
-) -> str:
-    """Generate a Dockerfile from configuration."""
-    lines = [f'FROM {base_image}']
-
-    if packages:
-        if package_manager == 'pip':
-            pkg_list = ' '.join(f'"{p}"' for p in packages)
-            lines.append(f'RUN pip install --no-cache-dir {pkg_list}')
-        elif package_manager == 'apt':
-            pkg_list = ' '.join(packages)
-            lines.append(
-                f'RUN apt-get update && apt-get install -y --no-install-recommends {pkg_list} && rm -rf /var/lib/apt/lists/*'
-            )
-        elif package_manager == 'npm':
-            pkg_list = ' '.join(packages)
-            lines.append(f'RUN npm install -g {pkg_list}')
-        else:
-            assert_never(package_manager)
-
-    for cmd in setup_commands:
-        lines.append(f'RUN {cmd}')
-
-    return '\n'.join(lines)
-
-
-def _config_hash(
-    image: str,
-    packages: Sequence[str],
-    package_manager: str,
-    setup_commands: Sequence[str],
-) -> str:
-    """Deterministic hash for image caching."""
-    sep = '\0'
-    pkg_str = sep.join(packages)
-    cmd_str = sep.join(setup_commands)
-    key = f'{image}{sep}{pkg_str}{sep}{sep}{package_manager}{sep}{sep}{cmd_str}'
-    return hashlib.md5(key.encode()).hexdigest()[:12]
 
 
 def _put_file(container: Container, path: str, data: bytes) -> None:
@@ -272,16 +226,13 @@ class DockerEnvironmentProcess(ExecutionProcess):
 class DockerEnvironment(DriverBasedEnvironment):
     """Docker container-based environment for isolated code execution.
 
-    Provides isolated code execution with configurable runtimes,
-    package installation, and persistent or ephemeral workspaces.
+    Provides isolated code execution with configurable resource limits,
+    network access, and persistent or ephemeral workspaces.
 
     Usage:
         ```python {test="skip" lint="skip"}
-        async with DockerEnvironment(
-            image='python:3.12-slim',
-            packages=['numpy', 'opencv-python-headless'],
-        ) as env:
-            result = await env.shell('python -c "import numpy; print(numpy.__version__)"')
+        async with DockerEnvironment(image='python:3.12-slim') as env:
+            result = await env.shell('python -c "print(42)"')
             print(result.output)
         ```
     """
@@ -290,9 +241,6 @@ class DockerEnvironment(DriverBasedEnvironment):
         self,
         *,
         image: str = 'python:3.12-slim',
-        packages: Sequence[str] = (),
-        package_manager: Literal['pip', 'apt', 'npm'] = 'pip',
-        setup_commands: Sequence[str] = (),
         env_vars: dict[str, str] | None = None,
         work_dir: str = '/workspace',
         volumes: dict[str, dict[str, str]] | None = None,
@@ -301,20 +249,17 @@ class DockerEnvironment(DriverBasedEnvironment):
         pids_limit: int | None = None,
         network_disabled: bool = False,
         read_only: bool = False,
-        cap_drop: Sequence[str] | None = None,
-        security_opt: Sequence[str] | None = None,
+        cap_drop: list[str] | None = None,
+        security_opt: list[str] | None = None,
         user: str | None = None,
         tmpfs: dict[str, str] | None = None,
         init: bool = False,
-        cache_built_image: bool = True,
     ) -> None:
         """Create a Docker environment.
 
         Args:
-            image: Base Docker image to use.
-            packages: Packages to install on top of the base image.
-            package_manager: Package manager to use ('pip', 'apt', or 'npm').
-            setup_commands: Additional shell commands to run during image build.
+            image: Docker image to use. Pre-build custom images with any
+                required packages before passing them here.
             env_vars: Baseline environment variables to set in the container.
             work_dir: Working directory inside the container.
             volumes: Volume mounts (Docker format).
@@ -332,12 +277,8 @@ class DockerEnvironment(DriverBasedEnvironment):
                 (e.g. `{'/tmp': 'noexec,nosuid,size=64m'}`).
             init: Whether to use `--init` to run an init process as PID 1.
                 Ensures proper signal handling and zombie reaping.
-            cache_built_image: Whether to cache custom-built images.
         """
         self._image = image
-        self._packages = tuple(packages)
-        self._package_manager: Literal['pip', 'apt', 'npm'] = package_manager
-        self._setup_commands = tuple(setup_commands)
         self._env_vars = env_vars or {}
         self._work_dir = work_dir
         self._volumes = volumes
@@ -346,12 +287,11 @@ class DockerEnvironment(DriverBasedEnvironment):
         self._pids_limit = pids_limit
         self._network_disabled = network_disabled
         self._read_only = read_only
-        self._cap_drop = list(cap_drop) if cap_drop else None
-        self._security_opt = list(security_opt) if security_opt else None
+        self._cap_drop = cap_drop
+        self._security_opt = security_opt
         self._user = user
         self._tmpfs = tmpfs
         self._init = init
-        self._cache_built_image = cache_built_image
 
         self._client: docker.DockerClient | None = None
         self._container: Container | None = None
@@ -386,13 +326,12 @@ class DockerEnvironment(DriverBasedEnvironment):
         return self
 
     def _setup(self) -> None:
-        """Build image if needed and start container (sync, runs in executor)."""
+        """Start container (sync, runs in executor)."""
         self._client = docker.from_env()
-        image_name = self._resolve_image()
 
         # Create and start container
         kwargs: dict[str, Any] = {
-            'image': image_name,
+            'image': self._image,
             'command': 'sleep infinity',
             'detach': True,
             'working_dir': self._work_dir,
@@ -426,39 +365,6 @@ class DockerEnvironment(DriverBasedEnvironment):
 
         # Ensure work_dir exists
         self._container.exec_run(['mkdir', '-p', self._work_dir])
-
-    def _resolve_image(self) -> str:
-        """Determine the image to use, building a custom one if needed."""
-        assert self._client is not None
-
-        if not self._packages and not self._setup_commands:
-            return self._image
-
-        # Build a custom image with packages installed
-        tag_hash = _config_hash(self._image, self._packages, self._package_manager, self._setup_commands)
-        tag = f'pydantic-ai-sandbox:{self._image.replace(":", "-").replace("/", "-")}-{tag_hash}'
-
-        # Check if cached image exists
-        if self._cache_built_image:
-            try:
-                self._client.images.get(tag)
-                return tag
-            except ImageNotFound:
-                pass
-
-        dockerfile = _build_dockerfile(self._image, self._packages, self._package_manager, self._setup_commands)
-
-        # Build using a tar context
-        f = io.BytesIO()
-        with tarfile.open(fileobj=f, mode='w') as tar:
-            dockerfile_bytes = dockerfile.encode('utf-8')
-            info = tarfile.TarInfo(name='Dockerfile')
-            info.size = len(dockerfile_bytes)
-            tar.addfile(info, io.BytesIO(dockerfile_bytes))
-        f.seek(0)
-
-        self._client.images.build(fileobj=f, custom_context=True, tag=tag, rm=True)
-        return tag
 
     async def __aexit__(self, *_args: Any) -> None:
         if self._container is not None:  # pragma: no branch
@@ -510,7 +416,7 @@ class DockerEnvironment(DriverBasedEnvironment):
         *,
         timeout: float | None = 120,
         env: dict[str, str] | None = None,
-    ) -> ExecuteResult:
+    ) -> ExecutionResult:
         """Execute a command in the container."""
 
         def _exec() -> tuple[int, bytes]:
@@ -535,19 +441,22 @@ class DockerEnvironment(DriverBasedEnvironment):
         # timeout command returns 124 on timeout
         if exit_code == 124 and timeout is not None:
             output += '\n[Command timed out]'
-        return ExecuteResult(output=output, exit_code=exit_code, truncated=truncated)
+        return ExecutionResult(output=output, exit_code=exit_code, truncated=truncated)
 
     async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str | bytes:
         ext = posixpath.splitext(path)[1].lower()
         if ext in IMAGE_EXTENSIONS:
             return await anyio.to_thread.run_sync(self._read_file_bytes_sync, path)
 
-        def _read() -> str:
+        def _read() -> str | bytes:
             cmd = build_read_file_cmd(path, offset=offset, limit=limit)
             exit_code, output = self.container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
             if exit_code != 0:
                 raise FileNotFoundError(f'File not found or not readable: {path}')
-            return output.decode('utf-8', errors='replace')
+            try:
+                return output.decode('utf-8')
+            except UnicodeDecodeError:
+                return self._read_file_bytes_sync(path)
 
         return await anyio.to_thread.run_sync(_read)
 

@@ -8,7 +8,7 @@ import struct
 import tarfile
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from inline_snapshot import snapshot
@@ -16,7 +16,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import ToolCallPart
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
-from pydantic_ai.environments import ExecuteResult, ExecutionEnvironmentToolset, FileInfo
+from pydantic_ai.environments import ExecutionEnvironmentToolset, ExecutionResult, FileInfo
 from pydantic_ai.environments._base import (
     apply_edit,
     build_glob_cmd,
@@ -40,9 +40,6 @@ try:
     from pydantic_ai.environments.docker import (
         DockerEnvironment,
         DockerEnvironmentProcess,
-        ImageNotFound,
-        _build_dockerfile,
-        _config_hash,
         _put_file,
     )
 except ImportError:  # pragma: lax no cover
@@ -50,17 +47,9 @@ except ImportError:  # pragma: lax no cover
 else:
     docker_installed = True
 
-try:
-    from pydantic_ai.environments.e2b import E2BEnvironment, E2BEnvironmentProcess
-except ImportError:  # pragma: lax no cover
-    e2b_installed = False
-else:
-    e2b_installed = True  # pragma: lax no cover
-
 pytestmark = pytest.mark.anyio
 
 docker_skip = pytest.mark.skipif(not docker_installed, reason='docker package not installed')
-e2b_skip = pytest.mark.skipif(not e2b_installed, reason='e2b-code-interpreter package not installed')
 
 
 def build_run_context(deps: Any = None, run_step: int = 0) -> RunContext[Any]:
@@ -78,14 +67,14 @@ def build_run_context(deps: Any = None, run_step: int = 0) -> RunContext[Any]:
 
 
 def test_execute_result():
-    result = ExecuteResult(output='hello\n', exit_code=0)
+    result = ExecutionResult(output='hello\n', exit_code=0)
     assert result.output == 'hello\n'
     assert result.exit_code == 0
     assert result.truncated is False
 
 
 def test_execute_result_truncated():
-    result = ExecuteResult(output='data', exit_code=1, truncated=True)
+    result = ExecutionResult(output='data', exit_code=1, truncated=True)
     assert result.truncated is True
 
 
@@ -1182,8 +1171,8 @@ async def test_memory_grep_with_glob_pattern():
 
 
 async def test_memory_execute_with_handler():
-    def handler(cmd: str) -> ExecuteResult:
-        return ExecuteResult(output=f'ran: {cmd}\n', exit_code=0)
+    def handler(cmd: str) -> ExecutionResult:
+        return ExecutionResult(output=f'ran: {cmd}\n', exit_code=0)
 
     async with MemoryEnvironment(command_handler=handler) as env:
         result = await env.shell('echo hello')
@@ -1253,7 +1242,7 @@ new.py\
         assert result == snapshot('main.py:1:print("hello")')
 
 
-# --- Docker/E2B instantiation tests ---
+# --- Docker instantiation tests ---
 
 
 @docker_skip
@@ -1266,8 +1255,6 @@ def test_docker_sandbox_instantiation():
 
     sandbox_with_opts = DockerEnvironment(
         image='node:20-slim',
-        packages=['express'],
-        package_manager='npm',
         memory_limit='512m',
         cpu_limit=1.0,
         network_disabled=True,
@@ -1289,14 +1276,6 @@ def test_docker_sandbox_instantiation():
     assert isinstance(sandbox_hardened, DockerEnvironment)
 
 
-@e2b_skip
-def test_e2b_sandbox_instantiation():  # pragma: lax no cover
-    """E2BEnvironment can be constructed without connecting to E2B."""
-
-    sandbox = E2BEnvironment(template='base', api_key='test-key', timeout=60)
-    assert isinstance(sandbox, E2BEnvironment)
-
-
 # --- Agent-level integration test ---
 
 
@@ -1306,7 +1285,7 @@ async def test_agent_with_execution_toolset():
 
     env = MemoryEnvironment(
         files={'data.txt': 'hello world\n'},
-        command_handler=lambda cmd: ExecuteResult(output=f'executed: {cmd}\n', exit_code=0),
+        command_handler=lambda cmd: ExecutionResult(output=f'executed: {cmd}\n', exit_code=0),
     )
     toolset = ExecutionEnvironmentToolset(env)
 
@@ -2047,53 +2026,6 @@ async def test_docker_resolve_path(mock_docker_sandbox: Any) -> None:
 
 
 @docker_skip
-def test_docker_build_dockerfile() -> None:
-    """_build_dockerfile generates correct Dockerfiles."""
-
-    # pip
-    result = _build_dockerfile('python:3.12-slim', ['numpy', 'pandas'], 'pip', [])
-    assert 'FROM python:3.12-slim' in result
-    assert 'pip install' in result
-    assert '"numpy"' in result
-
-    # apt
-    result = _build_dockerfile('ubuntu:22.04', ['curl', 'wget'], 'apt', [])
-    assert 'apt-get install' in result
-
-    # npm
-    result = _build_dockerfile('node:20', ['express'], 'npm', [])
-    assert 'npm install -g' in result
-
-    # setup commands
-    result = _build_dockerfile('python:3.12-slim', [], 'pip', ['echo setup', 'ls -la'])
-    assert 'RUN echo setup' in result
-    assert 'RUN ls -la' in result
-
-    # no packages, no commands
-    result = _build_dockerfile('python:3.12-slim', [], 'pip', [])
-    assert result == 'FROM python:3.12-slim'
-
-
-@docker_skip
-def test_docker_config_hash() -> None:
-    """_config_hash produces deterministic, collision-resistant hashes."""
-
-    h1 = _config_hash('python:3.12', ['numpy', 'pandas'], 'pip', [])
-    h2 = _config_hash('python:3.12', ['numpy', 'pandas'], 'pip', [])
-    assert h1 == h2
-
-    # Different configs produce different hashes
-    h3 = _config_hash('python:3.12', ['numpy'], 'pip', [])
-    assert h1 != h3
-
-    # Using \0 separator prevents confusion between
-    # packages=['numpy|pandas'] and packages=['numpy', 'pandas']
-    h4 = _config_hash('python:3.12', ['numpy|pandas'], 'pip', [])
-    h5 = _config_hash('python:3.12', ['numpy', 'pandas'], 'pip', [])
-    assert h4 != h5
-
-
-@docker_skip
 def test_docker_put_file() -> None:
     """_put_file creates a tar archive and uploads it."""
 
@@ -2188,242 +2120,6 @@ def test_docker_sandbox_process_already_eof() -> None:
     stream_type, data = proc._read_frame()
     assert stream_type == 0
     assert data == b''
-
-
-# --- E2BEnvironment: mocked tests ---
-
-
-def _make_mock_e2b_sandbox() -> Any:  # pragma: lax no cover
-    """Create a mock E2B sandbox with AsyncMock for all async methods."""
-    mock_sandbox = MagicMock()
-
-    # Mock commands.run (async)
-    mock_result = MagicMock()
-    mock_result.stdout = 'output\n'
-    mock_result.stderr = ''
-    mock_result.exit_code = 0
-    mock_sandbox.commands.run = AsyncMock(return_value=mock_result)
-
-    # Mock commands.start (async) — returns a process-like object
-    mock_proc = MagicMock()
-    mock_proc.send_stdin = AsyncMock()
-    mock_proc.kill = AsyncMock()
-    mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
-
-    # Mock files (async)
-    mock_sandbox.files.read = AsyncMock(return_value='file content')
-    mock_sandbox.files.write = AsyncMock()
-    mock_sandbox.files.list = AsyncMock(return_value=[])
-
-    # Mock close (async)
-    mock_sandbox.close = AsyncMock()
-
-    return mock_sandbox
-
-
-@pytest.fixture
-def mock_e2b_sandbox() -> Any:  # pragma: lax no cover
-    """Create an E2BEnvironment with mocked internals."""
-    if not e2b_installed:
-        pytest.skip('e2b-code-interpreter package not installed')
-
-    sandbox = E2BEnvironment(template='base', api_key='test-key')
-    sandbox._sandbox = _make_mock_e2b_sandbox()
-    return sandbox
-
-
-async def test_e2b_execute(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.execute runs commands."""
-    result = await mock_e2b_sandbox.shell('echo hello')
-    assert result.exit_code == 0
-    assert isinstance(result.output, str)
-
-
-async def test_e2b_execute_with_env(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.execute passes merged env vars."""
-    result = await mock_e2b_sandbox.shell('echo test', env={'KEY': 'val'})
-    assert result.exit_code == 0
-
-
-async def test_e2b_execute_truncation(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.execute truncates long output."""
-    mock_result = MagicMock()
-    mock_result.stdout = 'x' * 200_000
-    mock_result.stderr = ''
-    mock_result.exit_code = 0
-    mock_e2b_sandbox.sandbox.commands.run.return_value = mock_result
-
-    result = await mock_e2b_sandbox.shell('long command')
-    assert result.truncated is True
-    assert len(result.output) == 100_000
-
-
-async def test_e2b_read_file(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.read_file returns content."""
-    # The mock commands.run returns mock_result with stdout
-    content = await mock_e2b_sandbox.read_file('test.txt')
-    assert isinstance(content, str)
-
-
-async def test_e2b_read_file_not_found(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.read_file raises on missing files."""
-    mock_result = MagicMock()
-    mock_result.exit_code = 1
-    mock_result.stdout = ''
-    mock_e2b_sandbox.sandbox.commands.run.return_value = mock_result
-
-    with pytest.raises(FileNotFoundError):
-        await mock_e2b_sandbox.read_file('missing.txt')
-
-
-async def test_e2b_read_file_image(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.read_file returns raw bytes for image files."""
-    png_data = b'\x89PNG\r\n\x1a\n'
-    mock_e2b_sandbox.sandbox.files.read.return_value = png_data
-    result = await mock_e2b_sandbox.read_file('image.png')
-    assert isinstance(result, bytes)
-    assert result == png_data
-
-
-async def test_e2b_write_file(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.write_file creates files."""
-    await mock_e2b_sandbox.write_file('test.txt', 'content')
-    mock_e2b_sandbox.sandbox.files.write.assert_called()
-
-
-async def test_e2b_write_file_binary(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.write_file handles binary content."""
-    await mock_e2b_sandbox.write_file('data.bin', b'\x00\x01\x02')
-    mock_e2b_sandbox.sandbox.files.write.assert_called()
-
-
-async def test_e2b_write_file_with_parent_dir(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.write_file creates parent directories."""
-    await mock_e2b_sandbox.write_file('sub/dir/file.txt', 'content')
-    # Should have run mkdir -p for the parent
-    mock_e2b_sandbox.sandbox.commands.run.assert_called()
-
-
-async def test_e2b_edit_file(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.edit_file replaces text."""
-    mock_e2b_sandbox.sandbox.files.read.return_value = 'old_value = 1'
-    count = await mock_e2b_sandbox.replace_str('code.py', 'old_value', 'new_value')
-    assert count == 1
-    mock_e2b_sandbox.sandbox.files.write.assert_called()
-
-
-async def test_e2b_edit_file_bytes(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.edit_file handles bytes content."""
-    mock_e2b_sandbox.sandbox.files.read.return_value = b'old bytes data'
-    count = await mock_e2b_sandbox.replace_str('data.txt', 'old', 'new')
-    assert count == 1
-
-
-async def test_e2b_ls(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.ls returns entries."""
-    mock_entry = MagicMock()
-    mock_entry.name = 'test.txt'
-    mock_entry.type = 'file'
-    mock_e2b_sandbox.sandbox.files.list.return_value = [mock_entry]
-
-    entries = await mock_e2b_sandbox.ls('.')
-    assert len(entries) == 1
-    assert entries[0].name == 'test.txt'
-    assert entries[0].is_dir is False
-
-
-async def test_e2b_ls_dir(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.ls handles directories."""
-    mock_entry = MagicMock()
-    mock_entry.name = 'subdir'
-    mock_entry.type = 'dir'
-    mock_e2b_sandbox.sandbox.files.list.return_value = [mock_entry]
-
-    entries = await mock_e2b_sandbox.ls('src')
-    assert len(entries) == 1
-    assert entries[0].is_dir is True
-    assert entries[0].path == 'src/subdir'
-
-
-async def test_e2b_glob(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.glob returns matches."""
-    mock_result = MagicMock()
-    mock_result.stdout = 'a.py\nb.py\n'
-    mock_e2b_sandbox.sandbox.commands.run.return_value = mock_result
-
-    matches = await mock_e2b_sandbox.glob('*.py')
-    assert matches == ['a.py', 'b.py']
-
-
-async def test_e2b_grep(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.grep returns matches."""
-    mock_result = MagicMock()
-    mock_result.stdout = 'file.py:1:match\n'
-    mock_e2b_sandbox.sandbox.commands.run.return_value = mock_result
-
-    result = await mock_e2b_sandbox.grep('pattern')
-    assert 'match' in result
-
-
-async def test_e2b_grep_count(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.grep count mode filters zeros."""
-    mock_result = MagicMock()
-    mock_result.stdout = 'a.py:3\nb.py:0\n'
-    mock_e2b_sandbox.sandbox.commands.run.return_value = mock_result
-
-    result = await mock_e2b_sandbox.grep('pattern', output_mode='count')
-    assert 'a.py:3' in result
-    assert 'b.py:0' not in result
-
-
-async def test_e2b_instructions(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.instructions provides per-tool descriptions."""
-    grep_desc = mock_e2b_sandbox.instructions('grep')
-    assert grep_desc is not None
-    assert 'POSIX' in grep_desc
-
-
-@e2b_skip
-async def test_e2b_sandbox_property() -> None:  # pragma: lax no cover
-    """E2BEnvironment.sandbox raises when not started."""
-
-    sandbox = E2BEnvironment(api_key='test')
-    with pytest.raises(RuntimeError, match='not started'):
-        _ = sandbox.sandbox
-
-
-async def test_e2b_merge_env(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment._merge_env merges baseline and per-call env."""
-    mock_e2b_sandbox._env_vars = {'BASE': 'val'}
-    merged = mock_e2b_sandbox._merge_env({'EXTRA': 'extra'})
-    assert merged == {'BASE': 'val', 'EXTRA': 'extra'}
-
-
-async def test_e2b_merge_env_override(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment._merge_env per-call overrides baseline."""
-    mock_e2b_sandbox._env_vars = {'KEY': 'old'}
-    merged = mock_e2b_sandbox._merge_env({'KEY': 'new'})
-    assert merged == {'KEY': 'new'}
-
-
-async def test_e2b_merge_env_empty(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment._merge_env returns None when nothing to merge."""
-    mock_e2b_sandbox._env_vars = {}
-    result = mock_e2b_sandbox._merge_env(None)
-    assert result is None
-
-
-async def test_e2b_create_process(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.create_process returns an E2BEnvironmentProcess."""
-
-    proc = await mock_e2b_sandbox.create_process('echo test')
-    assert isinstance(proc, E2BEnvironmentProcess)
-
-    # Clean up the memory streams created in __init__ to avoid ResourceWarning
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
 
 
 # --- Additional coverage: _base.py ---
@@ -2777,60 +2473,6 @@ async def test_docker_teardown_cleanup_errors() -> None:
 
 
 @docker_skip
-async def test_docker_resolve_image_no_packages() -> None:
-    """DockerEnvironment._resolve_image returns base image when no packages."""
-
-    sandbox = DockerEnvironment(image='python:3.12-slim')
-    sandbox._client = MagicMock()
-    result = sandbox._resolve_image()
-    assert result == 'python:3.12-slim'
-
-
-@docker_skip
-async def test_docker_resolve_image_with_cache() -> None:
-    """DockerEnvironment._resolve_image returns cached image if it exists."""
-
-    sandbox = DockerEnvironment(image='python:3.12-slim', packages=['numpy'])
-    mock_client = MagicMock()
-    mock_client.images.get.return_value = MagicMock()  # Image exists
-    sandbox._client = mock_client
-
-    result = sandbox._resolve_image()
-    assert result.startswith('pydantic-ai-sandbox:')
-    mock_client.images.build.assert_not_called()
-
-
-@docker_skip
-async def test_docker_resolve_image_build_new() -> None:
-    """DockerEnvironment._resolve_image builds when cache miss."""
-
-    sandbox = DockerEnvironment(image='python:3.12-slim', packages=['numpy'])
-    mock_client = MagicMock()
-    mock_client.images.get.side_effect = ImageNotFound('not found')
-    mock_client.images.build.return_value = (MagicMock(), [])
-    sandbox._client = mock_client
-
-    result = sandbox._resolve_image()
-    assert result.startswith('pydantic-ai-sandbox:')
-    mock_client.images.build.assert_called_once()
-
-
-@docker_skip
-async def test_docker_resolve_image_no_cache() -> None:
-    """DockerEnvironment._resolve_image skips cache check when disabled."""
-
-    sandbox = DockerEnvironment(image='python:3.12-slim', packages=['numpy'], cache_built_image=False)
-    mock_client = MagicMock()
-    mock_client.images.build.return_value = (MagicMock(), [])
-    sandbox._client = mock_client
-
-    result = sandbox._resolve_image()
-    assert result.startswith('pydantic-ai-sandbox:')
-    mock_client.images.get.assert_not_called()
-    mock_client.images.build.assert_called_once()
-
-
-@docker_skip
 async def test_docker_setup_with_all_options() -> None:
     """DockerEnvironment._setup passes all container options."""
     from unittest.mock import patch as mock_patch
@@ -3147,641 +2789,6 @@ async def test_docker_read_file_image_not_found(mock_docker_sandbox: Any, mock_c
         await mock_docker_sandbox.read_file('missing.png')
 
 
-# --- Additional E2B coverage: process methods, lifecycle ---
-
-
-@e2b_skip
-async def test_e2b_process_start_with_env() -> None:  # pragma: lax no cover
-    """E2BEnvironmentProcess._start passes env to commands.start."""
-
-    mock_sandbox = MagicMock()
-    mock_proc = MagicMock()
-    mock_proc.send_stdin = AsyncMock()
-    mock_proc.kill = AsyncMock()
-    mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
-
-    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test', env={'KEY': 'val'})
-    await proc._start()
-
-    mock_sandbox.commands.start.assert_called_once()
-    call_kwargs = mock_sandbox.commands.start.call_args[1]
-    assert call_kwargs['envs'] == {'KEY': 'val'}
-    assert proc._proc is mock_proc
-
-    # Clean up
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
-
-
-@e2b_skip
-async def test_e2b_process_aenter() -> None:  # pragma: lax no cover
-    """E2BEnvironmentProcess.__aenter__ starts the process."""
-
-    mock_sandbox = MagicMock()
-    mock_proc = MagicMock()
-    mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
-
-    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
-    entered = await proc.__aenter__()
-    assert entered is proc
-    assert proc._proc is mock_proc
-
-    # Clean up
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
-
-
-@e2b_skip
-async def test_e2b_process_send() -> None:  # pragma: lax no cover
-    """E2BEnvironmentProcess.send writes to process stdin."""
-
-    mock_sandbox = MagicMock()
-    mock_proc = MagicMock()
-    mock_proc.send_stdin = AsyncMock()
-    mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
-
-    proc = E2BEnvironmentProcess(mock_sandbox, 'cat')
-    await proc._start()
-    await proc.send(b'hello\n')
-    mock_proc.send_stdin.assert_called_once_with('hello\n')
-
-    # Clean up
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
-
-
-@e2b_skip
-async def test_e2b_process_recv() -> None:  # pragma: lax no cover
-    """E2BEnvironmentProcess.recv reads from stdout stream."""
-
-    mock_sandbox = MagicMock()
-    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
-
-    # Simulate stdout callback
-    proc._stdout_send.send_nowait(b'hello\n')
-    data = await proc.recv(timeout=1.0)
-    assert data == b'hello\n'
-
-    # Clean up
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
-
-
-@e2b_skip
-async def test_e2b_process_recv_no_timeout() -> None:  # pragma: lax no cover
-    """E2BEnvironmentProcess.recv without timeout."""
-
-    mock_sandbox = MagicMock()
-    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
-
-    proc._stdout_send.send_nowait(b'data\n')
-    data = await proc.recv()
-    assert data == b'data\n'
-
-    # Clean up
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
-
-
-@e2b_skip
-async def test_e2b_process_recv_stderr() -> None:  # pragma: lax no cover
-    """E2BEnvironmentProcess.recv_stderr reads from stderr stream."""
-
-    mock_sandbox = MagicMock()
-    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
-
-    proc._stderr_send.send_nowait(b'error\n')
-    data = await proc.recv_stderr(timeout=1.0)
-    assert data == b'error\n'
-
-    # Clean up
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
-
-
-@e2b_skip
-async def test_e2b_process_recv_stderr_no_timeout() -> None:  # pragma: lax no cover
-    """E2BEnvironmentProcess.recv_stderr without timeout."""
-
-    mock_sandbox = MagicMock()
-    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
-
-    proc._stderr_send.send_nowait(b'err\n')
-    data = await proc.recv_stderr()
-    assert data == b'err\n'
-
-    # Clean up
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
-
-
-@e2b_skip
-async def test_e2b_process_returncode() -> None:  # pragma: lax no cover
-    """E2BEnvironmentProcess.returncode reflects exit status."""
-
-    mock_sandbox = MagicMock()
-    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
-
-    assert proc.returncode is None
-    proc._on_exit(42)
-    assert proc.returncode == 42
-
-    # Clean up
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
-
-
-@e2b_skip
-async def test_e2b_process_wait() -> None:  # pragma: lax no cover
-    """E2BEnvironmentProcess.wait returns exit code."""
-
-    mock_sandbox = MagicMock()
-    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
-
-    # Simulate immediate exit
-    proc._on_exit(0)
-    exit_code = await proc.wait(timeout=1.0)
-    assert exit_code == 0
-
-    # Clean up
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
-
-
-@e2b_skip
-async def test_e2b_process_wait_no_timeout() -> None:  # pragma: lax no cover
-    """E2BEnvironmentProcess.wait without timeout."""
-
-    mock_sandbox = MagicMock()
-    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
-
-    proc._on_exit(1)
-    exit_code = await proc.wait()
-    assert exit_code == 1
-
-    # Clean up
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
-
-
-@e2b_skip
-async def test_e2b_process_kill() -> None:  # pragma: lax no cover
-    """E2BEnvironmentProcess.kill terminates the process."""
-
-    mock_sandbox = MagicMock()
-    mock_proc = MagicMock()
-    mock_proc.kill = AsyncMock()
-    mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
-
-    proc = E2BEnvironmentProcess(mock_sandbox, 'sleep 60')
-    await proc._start()
-    await proc.kill()
-    mock_proc.kill.assert_called_once()
-
-    # Clean up
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
-
-
-@e2b_skip
-async def test_e2b_process_kill_not_started() -> None:  # pragma: lax no cover
-    """E2BEnvironmentProcess.kill does nothing when process not started."""
-
-    mock_sandbox = MagicMock()
-    proc = E2BEnvironmentProcess(mock_sandbox, 'echo test')
-    # _proc is None, should not raise
-    await proc.kill()
-
-    # Clean up
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
-
-
-@e2b_skip
-async def test_e2b_process_kill_error() -> None:  # pragma: lax no cover
-    """E2BEnvironmentProcess.kill handles exceptions gracefully."""
-
-    mock_sandbox = MagicMock()
-    mock_proc = MagicMock()
-    mock_proc.kill = AsyncMock(side_effect=Exception('kill failed'))
-    mock_sandbox.commands.start = AsyncMock(return_value=mock_proc)
-
-    proc = E2BEnvironmentProcess(mock_sandbox, 'sleep 60')
-    await proc._start()
-    # Should not raise
-    await proc.kill()
-
-    # Clean up
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
-
-
-async def test_e2b_write_file_with_parent_creates_dir(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.write_file calls mkdir for parent directories."""
-    await mock_e2b_sandbox.write_file('deep/nested/file.txt', 'content')
-    # Should have called commands.run for mkdir -p
-    calls = mock_e2b_sandbox.sandbox.commands.run.call_args_list
-    mkdir_call = next(c for c in calls if 'mkdir' in str(c))
-    assert 'deep/nested' in str(mkdir_call)
-
-
-async def test_e2b_write_file_no_parent_dir(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.write_file skips mkdir for root-level files."""
-    await mock_e2b_sandbox.write_file('root_file.txt', 'content')
-    mock_e2b_sandbox.sandbox.files.write.assert_called()
-
-
-async def test_e2b_execute_with_timeout(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.execute passes timeout to commands.run."""
-    result = await mock_e2b_sandbox.shell('echo test', timeout=30)
-    assert result.exit_code == 0
-    call_kwargs = mock_e2b_sandbox.sandbox.commands.run.call_args[1]
-    assert call_kwargs['timeout'] == 30
-
-
-async def test_e2b_execute_no_timeout(mock_e2b_sandbox: Any) -> None:  # pragma: lax no cover
-    """E2BEnvironment.execute with timeout=None."""
-    result = await mock_e2b_sandbox.shell('echo test', timeout=None)
-    assert result.exit_code == 0
-    call_kwargs = mock_e2b_sandbox.sandbox.commands.run.call_args
-    assert 'timeout' not in call_kwargs[1]
-
-
-# --- Final coverage gap tests ---
-
-
-@docker_skip
-async def test_docker_process_recv_stderr_no_timeout_no_buffer() -> None:
-    """DockerEnvironmentProcess.recv_stderr without timeout and no buffer hits line 175."""
-
-    container = MockContainer()
-    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
-
-    stderr_data = b'stderr output'
-    header = struct.pack('>BxxxI', 2, len(stderr_data))
-    mock_socket = MagicMock()
-    mock_socket.recv.side_effect = [header, stderr_data]
-    proc._socket = mock_socket
-
-    # No timeout, no buffer -> hits line 175
-    result = await proc.recv_stderr()
-    assert result == stderr_data
-
-
-@docker_skip
-async def test_docker_process_recv_stream_buffers_stdout_for_stderr() -> None:
-    """DockerEnvironmentProcess._recv_stream buffers stdout when requesting stderr (line 187)."""
-
-    container = MockContainer()
-    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
-
-    # First frame is stdout (type 1), second is stderr (type 2)
-    stdout_data = b'stdout first'
-    stderr_data = b'stderr second'
-    stdout_header = struct.pack('>BxxxI', 1, len(stdout_data))
-    stderr_header = struct.pack('>BxxxI', 2, len(stderr_data))
-
-    mock_socket = MagicMock()
-    mock_socket.recv.side_effect = [stdout_header, stdout_data, stderr_header, stderr_data]
-    proc._socket = mock_socket
-
-    # Requesting stderr should buffer stdout and return stderr
-    result = await proc.recv_stderr()
-    assert result == stderr_data
-    assert proc._stdout_buffer == [stdout_data]
-
-
-@docker_skip
-async def test_docker_process_wait_with_timeout() -> None:
-    """DockerEnvironmentProcess.wait with timeout (lines 247-257)."""
-
-    container = MockContainer()
-    container.client.api.exec_inspect.return_value = {'ExitCode': 0}
-    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
-    proc._exec_id = 'exec-wait'
-
-    exit_code = await proc.wait(timeout=5.0)
-    assert exit_code == 0
-
-
-@docker_skip
-async def test_docker_process_wait_no_timeout() -> None:
-    """DockerEnvironmentProcess.wait without timeout (line 257)."""
-
-    container = MockContainer()
-    container.client.api.exec_inspect.return_value = {'ExitCode': 1}
-    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
-    proc._exec_id = 'exec-wait-2'
-
-    exit_code = await proc.wait()
-    assert exit_code == 1
-
-
-@docker_skip
-async def test_docker_aenter_aexit() -> None:
-    """DockerEnvironment.__aenter__ and __aexit__ (lines 355-356, 434-435)."""
-    from unittest.mock import patch as mock_patch
-
-    sandbox = DockerEnvironment(image='python:3.12-slim')
-
-    mock_client = MagicMock()
-    mock_container_obj = MagicMock()
-    mock_client.containers.run.return_value = mock_container_obj
-
-    with mock_patch('pydantic_ai.environments.docker.docker') as mock_docker:
-        mock_docker.from_env.return_value = mock_client
-        async with sandbox:
-            assert sandbox._container is not None
-
-    assert sandbox._container is None
-
-
-async def test_docker_read_file_image_empty_tar(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerEnvironment.read_file raises on empty tar for image files."""
-    # Create an empty tar
-    f = io.BytesIO()
-    with tarfile.open(fileobj=f, mode='w'):
-        pass  # empty tar
-    f.seek(0)
-    empty_tar = f.read()
-
-    def empty_get_archive(path: str) -> tuple[list[bytes], dict[str, Any]]:
-        return [empty_tar], {}
-
-    mock_container.get_archive = empty_get_archive
-    with pytest.raises(FileNotFoundError, match='not found'):
-        await mock_docker_sandbox.read_file('empty.png')
-
-
-async def test_docker_read_file_image_directory_tar(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerEnvironment.read_file raises when tar contains a directory for image files."""
-    f = io.BytesIO()
-    with tarfile.open(fileobj=f, mode='w') as tar:
-        info = tarfile.TarInfo(name='somedir')
-        info.type = tarfile.DIRTYPE
-        tar.addfile(info)
-    f.seek(0)
-    dir_tar = f.read()
-
-    def dir_get_archive(path: str) -> tuple[list[bytes], dict[str, Any]]:
-        return [dir_tar], {}
-
-    mock_container.get_archive = dir_get_archive
-    with pytest.raises(FileNotFoundError, match='Cannot read'):
-        await mock_docker_sandbox.read_file('somedir.png')
-
-
-async def test_docker_ls_short_lines(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerEnvironment.ls skips short lines (line 580) and handles non-numeric size (585-586)."""
-    original = mock_container.exec_run
-
-    def custom_ls(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
-        if isinstance(cmd, list) and 'ls -la' in ' '.join(cmd):
-            output = (
-                'total 8\n'
-                '-rw-r--r-- 1 root root 42 Jan  1 00:00 normal.txt\n'
-                'short\n'  # short line, < 9 parts -> skipped
-                'drwxr-xr-x 2 root root 4096 Jan  1 00:00 subdir\n'
-            )
-            return 0, output.encode()
-        return original(cmd, **kwargs)  # pragma: no cover
-
-    mock_container.exec_run = custom_ls  # type: ignore[assignment]
-    entries = await mock_docker_sandbox.ls('.')
-    names = {e.name for e in entries}
-    assert 'normal.txt' in names
-    assert 'subdir' in names
-
-
-async def test_docker_is_alive_exception(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerEnvironment.is_alive returns False on exception (lines 641-642)."""
-    mock_container.reload = MagicMock(side_effect=Exception('connection lost'))
-    result = await mock_docker_sandbox.is_alive()
-    assert result is False
-
-
-async def test_local_process_recv_with_timeout(tmp_path: Path):
-    """LocalEnvironmentProcess.recv with timeout (lines 50-52)."""
-    env = LocalEnvironment(tmp_path)
-    proc = await env.create_process('echo hello')
-    async with proc:
-        data = await proc.recv(timeout=5.0)
-        assert b'hello' in data
-
-
-async def test_local_process_kill_process_lookup_error(tmp_path: Path):
-    """LocalEnvironmentProcess.kill handles ProcessLookupError (line 74)."""
-    env = LocalEnvironment(tmp_path)
-    proc = await env.create_process('echo done')
-    async with proc:
-        await proc.wait(timeout=5.0)
-        # Process already exited, kill should handle ProcessLookupError
-        await proc.kill()
-
-
-async def test_local_grep_oserror(tmp_path: Path):
-    """LocalEnvironment.grep handles OSError when reading files (lines 325-326)."""
-    # Create a file, then make it unreadable
-    target = tmp_path / 'unreadable.txt'
-    target.write_text('findme\n')
-    target.chmod(0o000)
-
-    env = LocalEnvironment(tmp_path)
-    # Should not raise, just skip the unreadable file
-    result = await env.grep('findme')
-    # Should be empty since the only file is unreadable
-    assert result == '' or 'findme' not in result
-
-    # Restore permissions for cleanup
-    target.chmod(0o644)
-
-
-async def test_local_grep_truncation(tmp_path: Path):
-    """LocalEnvironment.grep truncates at 1000 matches (lines 337-338)."""
-    # Create a file with > 1000 matching lines
-    content = '\n'.join(f'match_{i}' for i in range(1100))
-    (tmp_path / 'big.txt').write_text(content)
-
-    env = LocalEnvironment(tmp_path)
-    result = await env.grep('match_', output_mode='content')
-    assert 'truncated' in result
-
-
-async def test_memory_normalize_slash():
-    """MemoryEnvironment normalizes / to empty (line 76 edge case)."""
-    env = MemoryEnvironment()
-    # The normalize function strips leading / but posixpath.normpath('/') = '/'
-    # so '/' becomes '' after stripping
-    normalized = env._normalize('/')
-    assert normalized in ('', '.')
-
-
-async def test_memory_ls_deduplicate():
-    """MemoryEnvironment.ls deduplicates directory entries (line 184)."""
-    env = MemoryEnvironment(files={'dir/a.txt': 'a', 'dir/b.txt': 'b'})
-    entries = await env.ls('.')
-    # Should show 'dir' only once, not twice
-    dir_entries = [e for e in entries if e.name == 'dir']
-    assert len(dir_entries) == 1
-
-
-async def test_memory_grep_truncation():
-    """MemoryEnvironment.grep truncates at 1000 matches (lines 265-266)."""
-    # Create files with many matching lines
-    content = '\n'.join(f'match_{i}' for i in range(600))
-    env = MemoryEnvironment(files={'a.txt': content, 'b.txt': content})
-
-    result = await env.grep('match_', output_mode='content')
-    assert 'truncated' in result
-
-
-async def test_local_process_recv_no_timeout(tmp_path: Path):
-    """LocalEnvironmentProcess.recv without timeout (line 50)."""
-    env = LocalEnvironment(tmp_path)
-    proc = await env.create_process('echo hello')
-    async with proc:
-        data = await proc.recv()  # no timeout
-        assert b'hello' in data
-
-
-async def test_local_process_recv_eof(tmp_path: Path):
-    """LocalEnvironmentProcess.recv returns empty on EndOfStream (lines 51-52)."""
-    env = LocalEnvironment(tmp_path)
-    proc = await env.create_process('true')
-    async with proc:
-        await proc.wait(timeout=5.0)
-        # After process exits and stdout is drained, should get empty bytes
-        data = await proc.recv()
-        assert data == b''
-
-
-@docker_skip
-async def test_docker_process_wait_poll_loop() -> None:
-    """DockerEnvironmentProcess.wait poll loop (line 252)."""
-
-    container = MockContainer()
-    # First two calls return still running, third returns exited
-    container.client.api.exec_inspect.side_effect = [
-        {'ExitCode': 0, 'Running': True},
-        {'ExitCode': 0, 'Running': True},
-        {'ExitCode': 0, 'Running': False},
-    ]
-    proc = DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
-    proc._exec_id = 'exec-poll'
-
-    exit_code = await proc.wait(timeout=5.0)
-    assert exit_code == 0
-
-
-async def test_docker_ls_size_value_error(mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-    """DockerEnvironment.ls handles non-numeric size (lines 585-586)."""
-    original = mock_container.exec_run
-
-    def custom_ls(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
-        if isinstance(cmd, list) and 'ls -la' in ' '.join(cmd):
-            output = 'total 8\n-rw-r--r-- 1 root root NaN Jan  1 00:00 weird.txt\n'
-            return 0, output.encode()
-        return original(cmd, **kwargs)  # pragma: no cover
-
-    mock_container.exec_run = custom_ls  # type: ignore[assignment]
-    entries = await mock_docker_sandbox.ls('.')
-    assert len(entries) == 1
-    assert entries[0].name == 'weird.txt'
-    assert entries[0].size is None  # NaN couldn't be parsed
-
-
-@e2b_skip
-async def test_e2b_lifecycle() -> None:  # pragma: lax no cover
-    """E2BEnvironment.__aenter__ and __aexit__ (lines 166-186)."""
-    from unittest.mock import patch as mock_patch
-
-    mock_sandbox_instance = MagicMock()
-    mock_sandbox_instance.close = AsyncMock()
-
-    with mock_patch('pydantic_ai.environments.e2b.E2BAsyncSandbox') as MockSandboxClass:
-        MockSandboxClass.create = AsyncMock(return_value=mock_sandbox_instance)
-
-        sandbox = E2BEnvironment(
-            template='test', api_key='test-key', timeout=60, metadata={'env': 'test'}, env_vars={'KEY': 'val'}
-        )
-        async with sandbox:
-            assert sandbox._sandbox is mock_sandbox_instance
-
-        # After exit, sandbox should be None and close called
-        assert sandbox._sandbox is None
-        mock_sandbox_instance.close.assert_called_once()
-
-
-@e2b_skip
-async def test_e2b_lifecycle_close_error() -> None:  # pragma: lax no cover
-    """E2BEnvironment.__aexit__ handles close errors gracefully (lines 183-185)."""
-    from unittest.mock import patch as mock_patch
-
-    mock_sandbox_instance = MagicMock()
-    mock_sandbox_instance.close = AsyncMock(side_effect=Exception('close failed'))
-
-    with mock_patch('pydantic_ai.environments.e2b.E2BAsyncSandbox') as MockSandboxClass:
-        MockSandboxClass.create = AsyncMock(return_value=mock_sandbox_instance)
-
-        sandbox = E2BEnvironment(template='test', api_key='test-key')
-        async with sandbox:
-            pass
-        # Should not raise despite close failure
-        assert sandbox._sandbox is None
-
-
-@e2b_skip
-async def test_e2b_process_wait_polls() -> None:  # pragma: lax no cover
-    """E2BEnvironmentProcess.wait polls until exit code appears (line 110)."""
-
-    import anyio
-
-    mock_sandbox = MagicMock()
-    proc = E2BEnvironmentProcess(mock_sandbox, 'sleep 1')
-
-    # Simulate delayed exit: set returncode after a short delay
-    async def delayed_exit():
-        await anyio.sleep(0.2)
-        proc._on_exit(0)
-
-    async with anyio.create_task_group() as tg:
-        tg.start_soon(delayed_exit)
-        exit_code = await proc.wait(timeout=5.0)
-
-    assert exit_code == 0
-
-    # Clean up
-    await proc._stdout_send.aclose()
-    await proc._stdout_recv.aclose()
-    await proc._stderr_send.aclose()
-    await proc._stderr_recv.aclose()
-
 
 async def test_local_process_wait_no_timeout(tmp_path: Path):
     """LocalEnvironmentProcess.wait without timeout (line 74)."""
@@ -3973,8 +2980,8 @@ async def test_base_run_python_success():
 
         async def shell(
             self, command: str, *, timeout: float | None = 120, env: dict[str, str] | None = None
-        ) -> ExecuteResult:
-            return ExecuteResult(output='hello world\n', exit_code=0)
+        ) -> ExecutionResult:
+            return ExecutionResult(output='hello world\n', exit_code=0)
 
     env = _ShellEnv()
     result = await env.run_python('print("hello world")')
@@ -3997,8 +3004,8 @@ async def test_base_run_python_error():
 
         async def shell(
             self, command: str, *, timeout: float | None = 120, env: dict[str, str] | None = None
-        ) -> ExecuteResult:
-            return ExecuteResult(output='Exception: fail\n', exit_code=1)
+        ) -> ExecutionResult:
+            return ExecutionResult(output='Exception: fail\n', exit_code=1)
 
     env = _ShellEnv()
     with pytest.raises(CodeRuntimeError, match='Exception: fail'):

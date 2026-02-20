@@ -6,7 +6,7 @@
         - ExecutionEnvironment
         - ExecutionEnvironmentToolset
         - ExecutionProcess
-        - ExecuteResult
+        - ExecutionResult
         - FileInfo
 
 ## `pydantic_ai.environments.local`
@@ -22,13 +22,6 @@
     options:
         members:
         - DockerEnvironment
-
-## `pydantic_ai.environments.e2b`
-
-::: pydantic_ai.environments.e2b
-    options:
-        members:
-        - E2BEnvironment
 
 ## `pydantic_ai.environments.memory`
 

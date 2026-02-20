@@ -46,7 +46,7 @@ Toolsets are responsible for mapping these to LLM-facing tool names.
 
 
 @dataclass
-class ExecuteResult:
+class ExecutionResult:
     """Result of a completed command execution."""
 
     output: str
@@ -248,7 +248,7 @@ class ExecutionEnvironment(ABC):
         *,
         timeout: float | None = 120,
         env: dict[str, str] | None = None,
-    ) -> ExecuteResult:
+    ) -> ExecutionResult:
         """Execute a shell command and return the result.
 
         Args:
@@ -259,7 +259,7 @@ class ExecutionEnvironment(ABC):
                 Merged with (and overrides) any baseline environment variables.
 
         Returns:
-            An `ExecuteResult` with the command output and exit code.
+            An `ExecutionResult` with the command output and exit code.
         """
         raise NotImplementedError(f'{type(self).__name__} does not support shell.')
 
@@ -560,7 +560,7 @@ def glob_match(path: str, pattern: str) -> bool:
     return bool(re.fullmatch(regex, path))
 
 
-# --- Shell command builders for Docker/E2B environments ---
+# --- Shell command builders for Docker environments ---
 
 
 def build_read_file_cmd(path: str, *, offset: int = 0, limit: int = 2000) -> str:

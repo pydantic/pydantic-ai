@@ -133,7 +133,6 @@ dbos = ["dbos>=2.10.0"]
 prefect = ["prefect>=3.4.21"]
 # Sandboxes
 docker-sandbox = ["docker>=7.0"]
-e2b-sandbox = ["e2b-code-interpreter>=1.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

@@ -249,7 +249,7 @@ env = DockerEnvironment(container_id='my-sandbox-container')
 
 #### Building a Custom Environment
 
-To support a new sandbox (e.g., E2B, Firecracker, WebAssembly), implement the [`DriverTransport`][pydantic_ai.environments._driver.DriverTransport] protocol:
+To support a new sandbox (e.g., Firecracker, WebAssembly), implement the [`DriverTransport`][pydantic_ai.environments._driver.DriverTransport] protocol:
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai.environments._driver import DriverTransport
