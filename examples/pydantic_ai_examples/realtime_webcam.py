@@ -22,10 +22,13 @@ Run with::
 
 from __future__ import annotations as _annotations
 
+import math
 import os
 import queue
+import struct
 import sys
 import threading
+import time
 from typing import Any
 
 import anyio
@@ -62,6 +65,8 @@ console = Console()
 
 INPUT_SAMPLE_RATE = 16_000  # Gemini expects 16kHz mono PCM16
 OUTPUT_SAMPLE_RATE = 24_000  # Gemini outputs 24kHz mono PCM16
+MIC_ENERGY_THRESHOLD = 300  # RMS threshold for voice activity detection
+MIC_HOLD_SECONDS = 2.0  # Keep sending audio this long after speech stops (for end-of-speech detection)
 
 playwright_server = MCPServerStdio('npx', args=['@playwright/mcp@latest'])
 
@@ -119,19 +124,30 @@ async def _run_session(model: Any, stop: threading.Event) -> None:
             await session.send(ImageInput(data=jpeg, mime_type='image/jpeg'))
             await anyio.sleep(1.0)
 
+    def _rms(pcm16: bytes) -> float:
+        n = len(pcm16) // 2
+        if n == 0:
+            return 0.0
+        samples = struct.unpack(f'<{n}h', pcm16)
+        return math.sqrt(sum(s * s for s in samples) / n)
+
     async def send_mic(session: RealtimeSession) -> None:
         audio_q: queue.Queue[bytes] = queue.Queue()
 
         def callback(data: Any, *_args: Any) -> None:
             audio_q.put_nowait(bytes(data))
 
-        with sd.RawInputStream(
+        stream = sd.RawInputStream(
             samplerate=INPUT_SAMPLE_RATE,
             channels=1,
             dtype='int16',
             blocksize=4000,
             callback=callback,
-        ):
+        )
+        console.print(f'[dim]Audio device: {stream.device}, samplerate: {stream.samplerate}, channels: {stream.channels}[/dim]')
+        with stream:
+            console.print('[green]Mic open - listening...[/green]')
+            last_speech = 0.0
             while True:
                 try:
                     chunk = await anyio.to_thread.run_sync(
@@ -139,7 +155,14 @@ async def _run_session(model: Any, stop: threading.Event) -> None:
                     )
                 except queue.Empty:
                     continue
-                await session.send(AudioInput(data=chunk))
+                rms = _rms(chunk)
+                now = time.monotonic()
+                if rms >= MIC_ENERGY_THRESHOLD:
+                    last_speech = now
+                    logfire.info('mic audio sent rms={rms:.0f} bytes={size}', rms=rms, size=len(chunk))
+                # Send audio during speech and for HOLD seconds after
+                if now - last_speech < MIC_HOLD_SECONDS:
+                    await session.send(AudioInput(data=chunk))
 
     try:
         async with agent.realtime_session(model=model) as session:
@@ -148,8 +171,9 @@ async def _run_session(model: Any, stop: threading.Event) -> None:
                 tg.start_soon(send_frames, session)
                 tg.start_soon(send_mic, session)
                 tg.start_soon(_play_responses, session, tg)
-    except Exception as e:
-        console.print(f'[red]Session error: {e}[/red]')
+    except BaseException as e:
+        logfire.error('session error {error}', error=str(e))
+        console.print_exception()
     finally:
         stop.set()
 
