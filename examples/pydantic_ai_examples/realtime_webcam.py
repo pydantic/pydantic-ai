@@ -36,7 +36,14 @@ from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
-from pydantic_ai.realtime import AudioDelta, AudioInput, ImageInput, InputTranscript, RealtimeSession, Transcript
+from pydantic_ai.realtime import (
+    AudioDelta,
+    AudioInput,
+    ImageInput,
+    InputTranscript,
+    RealtimeSession,
+    Transcript,
+)
 
 try:
     import cv2
@@ -104,7 +111,9 @@ async def _run_session(model: Any, stop: threading.Event) -> None:
     async def send_frames(session: RealtimeSession) -> None:
         while True:
             try:
-                jpeg = await anyio.to_thread.run_sync(lambda: frame_queue.get(True, 0.5))
+                jpeg = await anyio.to_thread.run_sync(
+                    lambda: frame_queue.get(True, 0.5)
+                )
             except queue.Empty:
                 continue
             await session.send(ImageInput(data=jpeg, mime_type='image/jpeg'))
@@ -117,11 +126,17 @@ async def _run_session(model: Any, stop: threading.Event) -> None:
             audio_q.put_nowait(bytes(data))
 
         with sd.RawInputStream(
-            samplerate=INPUT_SAMPLE_RATE, channels=1, dtype='int16', blocksize=4000, callback=callback
+            samplerate=INPUT_SAMPLE_RATE,
+            channels=1,
+            dtype='int16',
+            blocksize=4000,
+            callback=callback,
         ):
             while True:
                 try:
-                    chunk = await anyio.to_thread.run_sync(lambda: audio_q.get(True, 0.5))
+                    chunk = await anyio.to_thread.run_sync(
+                        lambda: audio_q.get(True, 0.5)
+                    )
                 except queue.Empty:
                     continue
                 await session.send(AudioInput(data=chunk))
