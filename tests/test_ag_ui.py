@@ -314,7 +314,6 @@ async def test_empty_messages() -> None:
     )
 
 
-@pytest.mark.filterwarnings('ignore:Frontend system prompts were provided:UserWarning')
 async def test_multiple_messages() -> None:
     """Test with multiple different message types."""
     agent = Agent(
@@ -351,7 +350,10 @@ async def test_multiple_messages() -> None:
         ),
     )
 
-    events = await run_and_collect_events(agent, run_input)
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept_frontend_system_prompt=True)
+    events: list[dict[str, Any]] = [
+        json.loads(event.removeprefix('data: ')) async for event in adapter.encode_stream(adapter.run_stream())
+    ]
 
     assert events == simple_result()
 
@@ -2564,6 +2566,61 @@ async def test_frontend_system_prompt_stripped_no_agent_prompt():
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_only_request_dropped():
+    """Test that a `ModelRequest` containing only `SystemPromptParts` is dropped entirely when filtering."""
+
+    agent = Agent(model=TestModel())
+
+    run_input = create_input(
+        SystemMessage(
+            id='msg_sys',
+            content='Frontend system prompt',
+        ),
+        AssistantMessage(
+            id='msg_assistant',
+            content='Previous response',
+        ),
+        UserMessage(
+            id='msg_1',
+            content='Hello',
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    with capture_run_messages() as messages:
+        with pytest.warns(UserWarning, match='accept_frontend_system_prompt'):
+            async for _ in adapter.encode_stream(adapter.run_stream()):
+                pass
+
+    assert not any(
+        isinstance(part, SystemPromptPart) for msg in messages if isinstance(msg, ModelRequest) for part in msg.parts
+    )
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='Previous response')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',

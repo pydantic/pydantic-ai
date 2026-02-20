@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import KW_ONLY, Field, dataclass
+from dataclasses import KW_ONLY, Field, dataclass, replace
 from functools import cached_property
 from http import HTTPStatus
 from typing import (
@@ -281,7 +281,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 if isinstance(msg, ModelRequest):
                     filtered_parts = [part for part in msg.parts if not isinstance(part, SystemPromptPart)]
                     if filtered_parts:
-                        filtered.append(ModelRequest(parts=filtered_parts, instructions=msg.instructions))
+                        filtered.append(replace(msg, parts=filtered_parts))
                 else:
                     filtered.append(msg)
             frontend_messages = filtered
