@@ -5,14 +5,20 @@ from typing import Any
 
 from pydantic_ai.messages import ProviderDetailsDelta, ToolReturnPart
 from pydantic_ai.ui.vercel_ai.request_types import (
+    DynamicToolApprovalRequestedPart,
+    DynamicToolApprovalRespondedPart,
     DynamicToolInputAvailablePart,
     DynamicToolInputStreamingPart,
     DynamicToolOutputAvailablePart,
+    DynamicToolOutputDeniedPart,
     DynamicToolOutputErrorPart,
+    ToolApprovalRequestedPart,
+    ToolApprovalRespondedPart,
     ToolApprovalResponded,
     ToolInputAvailablePart,
     ToolInputStreamingPart,
     ToolOutputAvailablePart,
+    ToolOutputDeniedPart,
     ToolOutputErrorPart,
     UIMessage,
 )
@@ -100,10 +106,16 @@ _TOOL_PART_TYPES = (
     ToolInputAvailablePart,
     ToolOutputAvailablePart,
     ToolOutputErrorPart,
+    ToolApprovalRequestedPart,
+    ToolApprovalRespondedPart,
+    ToolOutputDeniedPart,
     DynamicToolInputStreamingPart,
     DynamicToolInputAvailablePart,
     DynamicToolOutputAvailablePart,
     DynamicToolOutputErrorPart,
+    DynamicToolApprovalRequestedPart,
+    DynamicToolApprovalRespondedPart,
+    DynamicToolOutputDeniedPart,
 )
 
 
