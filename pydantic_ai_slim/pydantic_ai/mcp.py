@@ -956,7 +956,7 @@ class MCPServerStdio(MCPServer):
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
                 See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
-            add_server_instructions: Whether to include the server's instructions in the agent's system prompt.
+            add_server_instructions: Whether to include the server's instructions in the agent's instructions
                 See [`MCPServer.add_server_instructions`][pydantic_ai.mcp.MCPServer.add_server_instructions].
             id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
             client_info: Information describing the MCP client implementation.
