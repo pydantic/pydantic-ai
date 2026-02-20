@@ -157,6 +157,9 @@ class GeminiRealtimeModel(RealtimeModel):
         client: Pre-built ``google.GenaiClient`` instance. If provided, other auth args are ignored.
         voice: Voice name for audio output (e.g. ``'Kore'``, ``'Puck'``, ``'Charon'``).
         language_code: BCP-47 language code (e.g. ``'en-US'``).
+        response_modalities: Output modalities. Defaults to ``[Modality.AUDIO]``.
+            Pass ``[Modality.TEXT]`` for text-only or ``[Modality.AUDIO, Modality.TEXT]`` for both.
+        enable_transcription: Whether to enable input/output audio transcription. Defaults to ``True``.
     """
 
     model: str = 'gemini-2.5-flash-native-audio-preview'
@@ -166,6 +169,8 @@ class GeminiRealtimeModel(RealtimeModel):
     client: GenaiClient | None = field(default=None, repr=False)
     voice: str | None = None
     language_code: str | None = None
+    response_modalities: list[genai_types.Modality] | None = None
+    enable_transcription: bool = True
 
     @property
     def model_name(self) -> str:
@@ -211,17 +216,18 @@ class GeminiRealtimeModel(RealtimeModel):
         if speech_kwargs:
             speech_config = genai_types.SpeechConfig(**speech_kwargs)
 
+        modalities = self.response_modalities or [genai_types.Modality.AUDIO]
+
+        transcription_config = genai_types.AudioTranscriptionConfig() if self.enable_transcription else None
+
         config = genai_types.LiveConnectConfig(
-            response_modalities=[genai_types.Modality.AUDIO],
+            response_modalities=modalities,
             system_instruction=instructions,
-            input_audio_transcription=genai_types.AudioTranscriptionConfig(),
-            output_audio_transcription=genai_types.AudioTranscriptionConfig(),
+            input_audio_transcription=transcription_config,
+            output_audio_transcription=transcription_config,
             tools=gemini_tools,
             speech_config=speech_config,
         )
 
-        async with client.aio.live.connect(
-            model=self.model,
-            config=config,
-        ) as session:
+        async with client.aio.live.connect(model=self.model, config=config) as session:
             yield GeminiRealtimeConnection(session)
