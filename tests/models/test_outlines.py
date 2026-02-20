@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
@@ -39,6 +38,7 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
@@ -130,10 +130,10 @@ def mock_async_model() -> OutlinesModel:
 @pytest.fixture(scope='module')
 def transformers_model() -> OutlinesModel:
     hf_model = transformers.AutoModelForCausalLM.from_pretrained(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        'erwanf/gpt2-mini',
+        'hf-internal-testing/tiny-random-gpt2',
         device_map='cpu',
     )
-    hf_tokenizer = transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    hf_tokenizer = transformers.AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     chat_template = '{% for message in messages %}{{ message.role }}: {{ message.content }}{% endfor %}'
     hf_tokenizer.chat_template = chat_template
     outlines_model = outlines.models.transformers.from_transformers(
@@ -202,10 +202,10 @@ outlines_parameters = [
         'from_transformers',
         lambda: (  # pyright: ignore[reportUnknownLambdaType]
             transformers.AutoModelForCausalLM.from_pretrained(  # pyright: ignore[reportUnknownMemberType]
-                'erwanf/gpt2-mini',
+                'hf-internal-testing/tiny-random-gpt2',
                 device_map='cpu',
             ),
-            transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),  # pyright: ignore[reportUnknownMemberType]
+            transformers.AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),  # pyright: ignore[reportUnknownMemberType]
         ),
         marks=skip_if_transformers_imports_unsuccessful,
     ),
@@ -263,10 +263,10 @@ pydantic_ai_parameters = [
         'from_transformers',
         lambda: (  # pyright: ignore[reportUnknownLambdaType]
             transformers.AutoModelForCausalLM.from_pretrained(  # pyright: ignore[reportUnknownMemberType]
-                'erwanf/gpt2-mini',
+                'hf-internal-testing/tiny-random-gpt2',
                 device_map='cpu',
             ),
-            transformers.AutoTokenizer.from_pretrained('erwanf/gpt2-mini'),  # pyright: ignore[reportUnknownMemberType]
+            transformers.AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),  # pyright: ignore[reportUnknownMemberType]
         ),
         marks=skip_if_transformers_imports_unsuccessful,
     ),

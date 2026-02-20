@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
-from pydantic import BaseModel, Json, ValidationError
+from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
 from typing_extensions import assert_never
 
@@ -193,24 +193,26 @@ class GroqModel(Model):
                 messages, False, cast(GroqModelSettings, model_settings or {}), model_request_parameters
             )
         except ModelHTTPError as e:
-            if isinstance(e.body, dict):  # pragma: no branch
-                # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
-                # but we'd rather handle it ourselves so we can tell the model to retry the tool call.
-                try:
-                    error = _GroqToolUseFailedError.model_validate(e.body)  # pyright: ignore[reportUnknownMemberType]
-                    tool_call_part = ToolCallPart(
-                        tool_name=error.error.failed_generation.name,
-                        args=error.error.failed_generation.arguments,
+            # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
+            # but we'd rather handle it ourselves so we can tell the model to retry the tool call.
+            if (failed_generation := _parse_tool_use_failed_error(e.body)) is not None:
+                if isinstance(failed_generation, _GroqToolUseFailedGeneration):
+                    part = ToolCallPart(
+                        tool_name=failed_generation.name,
+                        args=failed_generation.arguments,
                     )
-                    return ModelResponse(
-                        parts=[tool_call_part],
-                        model_name=e.model_name,
-                        provider_name=self._provider.name,
-                        provider_url=self.base_url,
-                        finish_reason='error',
-                    )
-                except ValidationError:
-                    pass
+                elif failed_generation:
+                    part = TextPart(content=failed_generation)
+                else:  # pragma: no cover
+                    part = None
+
+                return ModelResponse(
+                    parts=[part] if part else [],
+                    model_name=e.model_name,
+                    provider_name=self._provider.name,
+                    provider_url=self.base_url,
+                    finish_reason='error',
+                )
             raise
         model_response = self._process_response(response)
         return model_response
@@ -481,9 +483,7 @@ class GroqModel(Model):
                 )
             elif isinstance(part, RetryPromptPart):  # pragma: no branch
                 if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
-                        role='user', content=part.model_response()
-                    )
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
@@ -603,19 +603,27 @@ class GroqStreamedResponse(StreamedResponse):
                     if maybe_event is not None:
                         yield maybe_event
         except APIError as e:
-            if isinstance(e.body, dict):  # pragma: no branch
-                # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
-                # but we'd rather handle it ourselves so we can tell the model to retry the tool call
-                try:
-                    error = _GroqToolUseFailedInnerError.model_validate(e.body)  # pyright: ignore[reportUnknownMemberType]
+            # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
+            # but we'd rather handle it ourselves so we can tell the model to retry the tool call
+            if (failed_generation := _parse_tool_use_failed_error(e.body)) is not None:
+                if isinstance(failed_generation, _GroqToolUseFailedGeneration):
                     yield self._parts_manager.handle_tool_call_part(
                         vendor_part_id='tool_use_failed',
-                        tool_name=error.failed_generation.name,
-                        args=error.failed_generation.arguments,
+                        tool_name=failed_generation.name,
+                        args=failed_generation.arguments,
                     )
-                    return
-                except ValidationError as e:  # pragma: no cover
-                    pass
+                elif failed_generation:  # pragma: no cover
+                    # This branch is not covered because when streaming, the non-tool call text would already
+                    # have streamed before the `tool_use_failed` error which comes with `failed_generation=''`,
+                    # but we keep this here for (hypothetical?) cases where that field would not be empty.
+                    for event in self._parts_manager.handle_text_delta(
+                        vendor_part_id='tool_use_failed',
+                        content=failed_generation,
+                        thinking_tags=self._model_profile.thinking_tags,
+                        ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                    ):
+                        yield event
+                return
             raise  # pragma: no cover
 
     @property
@@ -664,7 +672,7 @@ class _GroqToolUseFailedInnerError(BaseModel):
     message: str
     type: Literal['invalid_request_error']
     code: Literal['tool_use_failed']
-    failed_generation: Json[_GroqToolUseFailedGeneration]
+    failed_generation: str
 
 
 class _GroqToolUseFailedError(BaseModel):
@@ -681,6 +689,25 @@ class _GroqToolUseFailedError(BaseModel):
     # }
 
     error: _GroqToolUseFailedInnerError
+
+
+def _parse_tool_use_failed_error(body: Any) -> _GroqToolUseFailedGeneration | str | None:
+    if not isinstance(body, dict):
+        return None  # pragma: no cover
+
+    try:
+        error = _GroqToolUseFailedError.model_validate(body)
+        error = error.error
+    except ValidationError:
+        try:
+            error = _GroqToolUseFailedInnerError.model_validate(body)
+        except ValidationError:
+            return None
+
+    try:
+        return _GroqToolUseFailedGeneration.model_validate_json(error.failed_generation)
+    except ValidationError:
+        return error.failed_generation
 
 
 def _map_executed_tool(
