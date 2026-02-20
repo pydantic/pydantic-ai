@@ -206,13 +206,12 @@ async def test_server_instructions_enabled(run_context: RunContext[int]):
 async def test_server_instructions_not_initialized():
     """Test that AttributeError is raised when include_instructions=True but server not initialized."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
-    
+
     # Don't enter the context manager to avoid initialization
     ctx = build_run_context(0)
-    
+
     with pytest.raises(
-        AttributeError, 
-        match='The `MCPServerStdio.get_instructions` is only instantiated after initialization.'
+        AttributeError, match='The `MCPServerStdio.get_instructions` is only instantiated after initialization.'
     ):
         await server.get_instructions(ctx)
 
@@ -237,19 +236,13 @@ def test_sse_server():
 
 def test_sse_server_with_include_instructions():
     """Test that SSE server can be configured with include_instructions=True."""
-    sse_server = MCPServerSSE(
-        url='http://localhost:8000/sse',
-        include_instructions=True
-    )
+    sse_server = MCPServerSSE(url='http://localhost:8000/sse', include_instructions=True)
     assert sse_server.include_instructions is True
 
 
 def test_streamable_http_server_with_include_instructions():
     """Test that StreamableHTTP server can be configured with include_instructions=True."""
-    http_server = MCPServerStreamableHTTP(
-        url='http://localhost:8000/mcp',
-        include_instructions=True
-    )
+    http_server = MCPServerStreamableHTTP(url='http://localhost:8000/mcp', include_instructions=True)
     assert http_server.include_instructions is True
 
 
@@ -2189,13 +2182,6 @@ def test_load_mcp_servers_with_complex_default_values(tmp_path: Path, monkeypatc
     assert isinstance(server, MCPServerStdio)
     assert server.command == '/usr/local/bin/python-3.10'
 
-async def test_instructions(mcp_server: MCPServerStdio) -> None:
-    with pytest.raises(
-        AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
-    ):
-        mcp_server.instructions
-    async with mcp_server:
-        assert mcp_server.instructions == 'Be a helpful assistant.'
 
 def test_load_mcp_servers_with_mixed_syntax(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Test mixing ${VAR} and ${VAR:-default} syntax in the same config."""

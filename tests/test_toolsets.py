@@ -198,10 +198,10 @@ async def test_abstract_toolset_instructions_custom():
 
 async def test_abstract_toolset_instructions_empty_string():
     """Test that instructions can return an empty string."""
-    toolset = MockToolsetWithInstructions(instructions="")
+    toolset = MockToolsetWithInstructions(instructions='')
     ctx = build_run_context(None)
     instructions = await toolset.get_instructions(ctx)
-    assert instructions == ""
+    assert instructions == ''
 
 
 async def test_function_toolset_with_defaults_overridden():
@@ -932,7 +932,7 @@ async def test_wrapper_toolsets_delegate_instructions():
     # Test FilteredToolset delegation
     def allow_all_filter(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
         return True
-    
+
     filtered_toolset = base_toolset.filtered(allow_all_filter)
     assert await filtered_toolset.get_instructions(ctx) == base_instructions
 
@@ -974,10 +974,10 @@ async def test_combined_toolset_instructions_all_none():
     """Test that CombinedToolset returns None when all toolsets have no instructions."""
     toolset1 = MockToolsetWithInstructions(instructions=None, id='toolset1')
     toolset2 = MockToolsetWithInstructions(instructions=None, id='toolset2')
-    
+
     combined = CombinedToolset([toolset1, toolset2])
     ctx = build_run_context(None)
-    
+
     instructions = await combined.get_instructions(ctx)
     assert instructions is None
 
@@ -986,7 +986,7 @@ async def test_combined_toolset_instructions_empty():
     """Test that CombinedToolset returns None when no toolsets are provided."""
     combined = CombinedToolset([])
     ctx = build_run_context(None)
-    
+
     instructions = await combined.get_instructions(ctx)
     assert instructions is None
 
@@ -1133,7 +1133,7 @@ async def test_function_toolset_instructions_decorator_combined_with_constructor
 
 async def test_function_toolset_instructions_none_filtered():
     """Instructions returning None are excluded."""
-    toolset = FunctionToolset(instructions=[lambda: None, 'Only this.'])  # type: ignore[arg-type]
+    toolset = FunctionToolset(instructions=[lambda: None, 'Only this.'])
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
