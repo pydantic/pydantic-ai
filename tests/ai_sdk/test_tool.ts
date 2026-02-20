@@ -1,11 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { isTextUIPart, isToolUIPart } from 'ai';
-import { SERVER_URL, TestChat, awaitRoundTrip } from './helpers.ts';
+import { TestChat, awaitRoundTrip } from './helpers.ts';
 
 describe('tool call without approval', () => {
   it('executes tool and returns text result', async () => {
-    const chat = new TestChat(`${SERVER_URL}/api/chat/tool`);
+    const chat = new TestChat();
     const trip = awaitRoundTrip(chat);
     chat.sendMessage({ text: 'What is the weather?' });
     await trip.done;

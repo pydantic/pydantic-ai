@@ -1,8 +1,6 @@
 """Starlette server for AI SDK E2E integration testing.
 
-Provides multiple endpoints exercising different response shapes:
-text, thinking, tool calls (with and without approval), and combinations.
-Each agent uses TestModel which naturally calls tools and produces responses.
+Takes an agent name as a CLI argument and serves it at /api/chat.
 """
 
 from __future__ import annotations
@@ -22,23 +20,17 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-# --- Text-only ---
+# --- Agents ---
 
 text_agent = Agent(model=TestModel(custom_output_text='Hello, world!'), output_type=str)
 
 
-# --- Thinking + text (requires FunctionModel since TestModel doesn't produce thinking) ---
-
-
-async def thinking_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaThinkingCalls | str]:
+async def _thinking_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaThinkingCalls | str]:
     yield {0: DeltaThinkingPart(content='Let me think about this... The answer is clear.')}
     yield 'The answer is 42.'
 
 
-thinking_agent = Agent(model=FunctionModel(stream_function=thinking_stream), output_type=str)
-
-
-# --- Tool (no approval) ---
+thinking_agent = Agent(model=FunctionModel(stream_function=_thinking_stream), output_type=str)
 
 tool_agent: Agent[None, str] = Agent(model=TestModel(), output_type=str)
 
@@ -47,8 +39,6 @@ tool_agent: Agent[None, str] = Agent(model=TestModel(), output_type=str)
 def get_weather(city: str) -> str:
     return f'Sunny in {city}'
 
-
-# --- Tool with approval ---
 
 approval_agent: Agent[None, str | DeferredToolRequests] = Agent(
     model=TestModel(),
@@ -60,8 +50,6 @@ approval_agent: Agent[None, str | DeferredToolRequests] = Agent(
 def delete_file(path: str) -> str:
     return f'Deleted {path}'
 
-
-# --- Multiple tools ---
 
 multi_tool_agent: Agent[None, str] = Agent(model=TestModel(), output_type=str)
 
@@ -76,42 +64,26 @@ def lookup_time(timezone: str) -> str:
     return f'12:00 {timezone}'
 
 
-# --- Routes ---
+AGENTS: dict[str, Agent[None, ...]] = {
+    'text': text_agent,
+    'thinking': thinking_agent,
+    'tool': tool_agent,
+    'tool_approval': approval_agent,
+    'multi_tool': multi_tool_agent,
+}
 
 
-async def text_endpoint(request: Request) -> Response:
-    return await VercelAIAdapter.dispatch_request(request, agent=text_agent, sdk_version=6)
+def create_app(agent: Agent[None, ...]) -> Starlette:
+    async def chat_endpoint(request: Request) -> Response:
+        return await VercelAIAdapter.dispatch_request(request, agent=agent, sdk_version=6)
 
-
-async def thinking_endpoint(request: Request) -> Response:
-    return await VercelAIAdapter.dispatch_request(request, agent=thinking_agent, sdk_version=6)
-
-
-async def tool_endpoint(request: Request) -> Response:
-    return await VercelAIAdapter.dispatch_request(request, agent=tool_agent, sdk_version=6)
-
-
-async def approval_endpoint(request: Request) -> Response:
-    return await VercelAIAdapter.dispatch_request(request, agent=approval_agent, sdk_version=6)
-
-
-async def multi_tool_endpoint(request: Request) -> Response:
-    return await VercelAIAdapter.dispatch_request(request, agent=multi_tool_agent, sdk_version=6)
-
-
-app = Starlette(
-    routes=[
-        Route('/api/chat/text', text_endpoint, methods=['POST']),
-        Route('/api/chat/thinking', thinking_endpoint, methods=['POST']),
-        Route('/api/chat/tool', tool_endpoint, methods=['POST']),
-        Route('/api/chat/approval', approval_endpoint, methods=['POST']),
-        Route('/api/chat/multi-tool', multi_tool_endpoint, methods=['POST']),
-    ]
-)
+    return Starlette(routes=[Route('/api/chat', chat_endpoint, methods=['POST'])])
 
 
 if __name__ == '__main__':
     import uvicorn
 
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
-    uvicorn.run(app, host='127.0.0.1', port=port, log_level='warning')
+    agent_name = sys.argv[1]
+    port = int(sys.argv[2]) if len(sys.argv) > 2 else 8000
+    agent = AGENTS[agent_name]
+    uvicorn.run(create_app(agent), host='127.0.0.1', port=port, log_level='warning')
