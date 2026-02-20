@@ -50,7 +50,7 @@ def _get_cassette_bodies_from_yaml(path: Path) -> list[str]:
     return bodies
 
 
-def _get_xai_cassette_request_bodies(cassette_path: Path) -> list[str]:  # pragma: no cover
+def _get_xai_cassette_request_bodies(cassette_path: Path) -> list[str]:
     """Get all request and response bodies from an XAI cassette as strings."""
     from tests.models.xai_proto_cassettes import (
         SampleInteraction,
@@ -115,7 +115,7 @@ class CassetteContext:
         """Get request/response bodies from the appropriate cassette format."""
         if self.provider == 'xai':
             path = self._xai_cassette_path()
-            if path.exists():  # pragma: no cover
+            if path.exists():
                 return _get_xai_cassette_request_bodies(path)
             return []
         if self.vcr is not None:

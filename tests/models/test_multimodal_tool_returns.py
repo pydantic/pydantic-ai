@@ -423,7 +423,7 @@ def vertex_provider(request: pytest.FixtureRequest, vertex_provider_auth: None) 
         pytest.skip('google is not installed')
 
     project = os.getenv('GOOGLE_CLOUD_PROJECT', os.getenv('GOOGLE_PROJECT'))
-    if not project:  # pragma: no cover
+    if not project:
         pytest.skip('GOOGLE_CLOUD_PROJECT not set')
     location = os.getenv('GOOGLE_LOCATION', 'global')  # pragma: no cover
     return GoogleProvider(project=project, location=cast(VertexAILocation, location))  # pragma: no cover
