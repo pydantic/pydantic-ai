@@ -1,7 +1,7 @@
 import datetime
 import json
 from collections.abc import Sequence
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -27,8 +27,16 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.openrouter import (
+    OpenRouterModel,
+    OpenRouterModelSettings,
+    _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
+    _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
+    _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
+)
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -524,15 +532,8 @@ async def test_openrouter_validate_error_response(openrouter_api_key: str) -> No
 
 
 async def test_openrouter_with_provider_details_but_no_parent_details(openrouter_api_key: str) -> None:
-    from typing import Any
-
     class TestOpenRouterModel(OpenRouterModel):
         def _process_provider_details(self, response: ChatCompletion) -> dict[str, Any] | None:
-            from pydantic_ai.models.openrouter import (
-                _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
-                _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
-            )
-
             assert isinstance(response, _OpenRouterChatCompletion)
             openrouter_details = _map_openrouter_provider_details(response)
             return openrouter_details or None
@@ -865,3 +866,125 @@ async def test_openrouter_document_url_no_force_download(
             'type': 'file',
         }
     )
+
+
+async def test_openrouter_supported_builtin_tools() -> None:
+    """Test that OpenRouterModel declares support for WebSearchTool."""
+    from pydantic_ai.builtin_tools import WebSearchTool
+
+    supported = OpenRouterModel.supported_builtin_tools()
+    assert WebSearchTool in supported
+
+
+async def test_openrouter_web_search_prepare_request(openrouter_api_key: str) -> None:
+    """Test that prepare_request injects web search plugins when WebSearchTool is present."""
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+
+    model_request_parameters = ModelRequestParameters(
+        builtin_tools=[WebSearchTool(search_context_size='high')],
+    )
+
+    new_settings, _ = model.prepare_request(None, model_request_parameters)
+
+    assert new_settings is not None
+    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
+    assert 'plugins' in extra_body
+    assert extra_body['plugins'] == [{'id': 'web'}]
+    assert 'web_search_options' in extra_body
+    assert extra_body['web_search_options'] == {'search_context_size': 'high'}
+
+
+async def test_openrouter_web_search_with_settings(openrouter_api_key: str) -> None:
+    """Test that OpenRouter-specific WebSearchTool fields are applied to the plugin."""
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+
+    model_request_parameters = ModelRequestParameters(
+        builtin_tools=[
+            WebSearchTool(
+                provider_metadata={
+                    'openrouter': {
+                        'engine': 'exa',
+                        'max_results': 3,
+                        'search_prompt': 'Search for recent news',
+                    }
+                }
+            )
+        ],
+    )
+
+    new_settings, _ = model.prepare_request(None, model_request_parameters)
+
+    assert new_settings is not None
+    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
+    assert 'plugins' in extra_body
+    assert extra_body['plugins'] == [
+        {
+            'id': 'web',
+            'engine': 'exa',
+            'max_results': 3,
+            'search_prompt': 'Search for recent news',
+        }
+    ]
+
+
+async def test_openrouter_no_web_search_without_tool(openrouter_api_key: str) -> None:
+    """Test that no plugins are added when WebSearchTool is not present."""
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+
+    model_request_parameters = ModelRequestParameters()
+
+    new_settings, _ = model.prepare_request(None, model_request_parameters)
+
+    assert new_settings is not None
+    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
+    assert 'plugins' not in extra_body
+    assert 'web_search_options' not in extra_body
+
+
+async def test_openrouter_settings_to_openai_settings_no_web_search_options() -> None:
+    """Test _openrouter_settings_to_openai_settings when WebSearchTool has no provider_metadata."""
+    settings = OpenRouterModelSettings()
+    model_request_parameters = ModelRequestParameters(
+        builtin_tools=[WebSearchTool(search_context_size='high')],
+    )
+
+    result = _openrouter_settings_to_openai_settings(settings, model_request_parameters)
+
+    extra_body = cast(dict[str, Any], result.get('extra_body', {}))
+    assert 'plugins' in extra_body
+    assert extra_body['plugins'] == [{'id': 'web'}]
+    assert 'web_search_options' in extra_body
+    assert extra_body['web_search_options'] == {'search_context_size': 'high'}
+
+
+async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrouter_api_key: str) -> None:
+    """Test prepare_request loop continuation when first tool is not WebSearchTool."""
+    from typing import Any
+    from unittest.mock import Mock, patch
+
+    from pydantic_ai.builtin_tools import WebSearchTool
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+
+    non_web_tool = Mock(spec=[])
+    web_tool = WebSearchTool(search_context_size='medium', provider_metadata={'openrouter': {'engine': 'native'}})
+
+    model_request_parameters = ModelRequestParameters(
+        builtin_tools=[non_web_tool, web_tool],
+    )
+
+    with patch.object(model.__class__.__bases__[0], 'prepare_request', return_value=({}, model_request_parameters)):
+        new_settings, _ = model.prepare_request(None, model_request_parameters)
+
+    assert new_settings is not None
+    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
+    assert 'plugins' in extra_body
+    assert extra_body['plugins'] == [{'id': 'web', 'engine': 'native'}]
+    assert extra_body['web_search_options'] == {'search_context_size': 'medium'}

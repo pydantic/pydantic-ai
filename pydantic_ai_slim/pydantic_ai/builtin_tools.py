@@ -35,6 +35,26 @@ ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '
 """Supported aspect ratios for image generation tools."""
 
 
+class WebSearchToolOpenRouterMetadata(TypedDict, total=False):
+    """OpenRouter specific metadata for web search configuration."""
+
+    engine: Literal['native', 'exa']
+    """Which search engine to use."""
+
+    max_results: int
+    """Maximum number of search results to return."""
+
+    search_prompt: str
+    """Custom prompt for attaching web search results."""
+
+
+class WebSearchToolProviderMetadata(TypedDict, total=False):
+    """Provider-specific metadata for web search configuration."""
+
+    openrouter: WebSearchToolOpenRouterMetadata
+    """OpenRouter specific configuration."""
+
+
 @dataclass(kw_only=True)
 class AbstractBuiltinTool(ABC):
     """A builtin tool that can be used by an agent.
@@ -97,6 +117,7 @@ class WebSearchTool(AbstractBuiltinTool):
     * Groq
     * Google
     * xAI
+    * OpenRouter
     """
 
     search_context_size: Literal['low', 'medium', 'high'] = 'medium'
@@ -105,6 +126,7 @@ class WebSearchTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses
+    * OpenRouter
     """
 
     user_location: WebSearchUserLocation | None = None
@@ -147,6 +169,28 @@ class WebSearchTool(AbstractBuiltinTool):
     Supported by:
 
     * Anthropic
+    """
+
+    provider_metadata: WebSearchToolProviderMetadata | None = None
+    """Provider-specific metadata for web search configuration.
+
+    This field allows you to pass provider-specific settings that are not part of the common interface.
+
+    Example for OpenRouter:
+        ```python
+        from pydantic_ai import WebSearchTool
+
+        WebSearchTool(
+            search_context_size='high',
+            provider_metadata={
+                'openrouter': {
+                    'engine': 'exa',  # 'native' or 'exa'
+                    'max_results': 3,  # Maximum number of search results
+                    'search_prompt': 'Search for recent news'  # Custom prompt
+                }
+            }
+        )
+        ```
     """
 
     kind: str = 'web_search'
