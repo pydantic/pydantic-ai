@@ -143,12 +143,12 @@ def map_message(msg: Any) -> list[RealtimeEvent]:
                 events.append(Transcript(text=part.text, is_final=False))
 
     # Output transcription (model speech -> text)
-    if sc.output_transcription and sc.output_transcription.text:
-        events.append(Transcript(text=sc.output_transcription.text, is_final=bool(sc.output_transcription.finished)))
+    if sc.output_transcription and (sc.output_transcription.text or sc.output_transcription.finished):
+        events.append(Transcript(text=sc.output_transcription.text or '', is_final=bool(sc.output_transcription.finished)))
 
     # Input transcription (user speech -> text)
-    if sc.input_transcription and sc.input_transcription.text:
-        events.append(InputTranscript(text=sc.input_transcription.text, is_final=bool(sc.input_transcription.finished)))
+    if sc.input_transcription and (sc.input_transcription.text or sc.input_transcription.finished):
+        events.append(InputTranscript(text=sc.input_transcription.text or '', is_final=bool(sc.input_transcription.finished)))
 
     # Turn complete / interrupted
     if sc.turn_complete:

@@ -151,7 +151,19 @@ def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
 
     if event_type == 'response.done':
         response = data.get('response')
-        interrupted = isinstance(response, dict) and cast(dict[str, Any], response).get('status') == 'cancelled'
+        if isinstance(response, dict):
+            response_dict = cast(dict[str, Any], response)
+            # Skip TurnComplete for function-call-only responses - the session
+            # handles tool execution and the model will send another response.done
+            # after receiving the tool result with the actual answer.
+            output = response_dict.get('output', [])
+            if isinstance(output, list) and output and all(
+                isinstance(item, dict) and item.get('type') == 'function_call' for item in output
+            ):
+                return None
+            interrupted = response_dict.get('status') == 'cancelled'
+        else:
+            interrupted = False
         return TurnComplete(interrupted=interrupted)
 
     if event_type == 'error':
