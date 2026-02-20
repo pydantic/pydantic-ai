@@ -1,7 +1,7 @@
-"""Pytest orchestration for AI SDK ↔ Pydantic AI integration tests.
+"""Pytest orchestration for AI SDK <-> Pydantic AI integration tests.
 
-Starts a real HTTP server, runs node --test against it, and fails if the
-JS tests fail. Requires node >= 18.
+Starts a real HTTP server, runs TypeScript tests against it, and fails if the
+tests fail. Requires node >= 22.6 (built-in TypeScript strip).
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ from pathlib import Path
 
 import pytest
 
-JS_DIR = Path(__file__).parent
-REPO_ROOT = JS_DIR.parents[1]
-SERVER_MODULE = 'tests.js_integration.server'
+SDK_DIR = Path(__file__).parent
+REPO_ROOT = SDK_DIR.parents[1]
+SERVER_MODULE = 'tests.ai_sdk.server'
 STARTUP_TIMEOUT = 10.0
 STARTUP_POLL = 0.25
 
@@ -29,8 +29,8 @@ pytestmark = pytest.mark.skipif(not shutil.which('node'), reason='node not insta
 
 @pytest.fixture(scope='module')
 def _npm_install() -> None:
-    if not (JS_DIR / 'node_modules').is_dir():
-        subprocess.run(['npm', 'install'], cwd=JS_DIR, check=True, capture_output=True)
+    if not (SDK_DIR / 'node_modules').is_dir():
+        subprocess.run(['npm', 'install'], cwd=SDK_DIR, check=True, capture_output=True)
 
 
 def _free_port() -> int:
@@ -75,11 +75,11 @@ def server_url() -> Iterator[str]:
 
 def test_tool_approval(_npm_install: None, server_url: str) -> None:
     result = subprocess.run(
-        ['node', '--test', str(JS_DIR / 'test_tool_approval.mjs')],
+        ['node', '--test', str(SDK_DIR / 'test_tool_approval.ts')],
         env={**os.environ, 'SERVER_URL': server_url},
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=60,
     )
 
     if result.returncode != 0:
