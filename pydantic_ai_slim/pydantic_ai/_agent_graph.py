@@ -749,6 +749,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
+        # Set global output retry info so output validators see the correct retry counter
+        assert ctx.deps.tool_manager.ctx is not None
+        ctx.deps.tool_manager.ctx = replace(
+            ctx.deps.tool_manager.ctx,
+            retry=ctx.state.retries,
+            max_retries=ctx.deps.max_result_retries,
+        )
+
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
@@ -783,17 +791,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         text: str,
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
-        run_context = build_run_context(ctx)
-        run_context = replace(
-            run_context,
-            retry=ctx.state.retries,
-            max_retries=ctx.deps.max_result_retries,
-        )
-
+        run_context = _build_output_run_context(ctx)
         result_data = await text_processor.process(text, run_context=run_context)
-
-        for validator in ctx.deps.output_validators:
-            result_data = await validator.validate(result_data, run_context)
+        result_data = await _run_output_validators(ctx, result_data, run_context)
         return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     async def _handle_image_response(
@@ -801,15 +801,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         image: _messages.BinaryImage,
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
-        run_context = build_run_context(ctx)
-        run_context = replace(
-            run_context,
-            retry=ctx.state.retries,
-            max_retries=ctx.deps.max_result_retries,
-        )
-        result_data = cast(NodeRunEndT, image)
-        for validator in ctx.deps.output_validators:
-            result_data = await validator.validate(result_data, run_context)
+        run_context = _build_output_run_context(ctx)
+        result_data = await _run_output_validators(ctx, cast(NodeRunEndT, image), run_context)
         return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     def _handle_final_result(
@@ -876,6 +869,29 @@ def build_validation_context(
         return fn(run_context)
     else:
         return validation_ctx
+
+
+def _build_output_run_context(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+) -> RunContext[DepsT]:
+    """Build a RunContext with global output retry info for output validation."""
+    run_context = build_run_context(ctx)
+    return replace(
+        run_context,
+        retry=ctx.state.retries,
+        max_retries=ctx.deps.max_result_retries,
+    )
+
+
+async def _run_output_validators(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    result_data: NodeRunEndT,
+    run_context: RunContext[DepsT],
+) -> NodeRunEndT:
+    """Run all output validators on the result data."""
+    for validator in ctx.deps.output_validators:
+        result_data = await validator.validate(result_data, run_context)
+    return result_data
 
 
 async def process_tool_calls(  # noqa: C901
@@ -969,9 +985,6 @@ async def process_tool_calls(  # noqa: C901
                 # In both `early` and `exhaustive` modes, use the first output tool's result as the final result
                 if not final_result:
                     final_result = result.FinalResult(result_data, call.tool_name, call.tool_call_id)
-
-    # Check for incomplete tool calls from truncated responses before processing
-    _check_incomplete_tool_calls(ctx.state.message_history, ctx.deps.model_settings)
 
     # Then, we handle function tool calls
     calls_to_run: list[_messages.ToolCallPart] = []

@@ -29,7 +29,6 @@ from pydantic_ai import (
     FilePart,
     FunctionToolset,
     ImageUrl,
-    IncompleteToolCall,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelProfile,
@@ -3149,7 +3148,9 @@ def test_unknown_tool_multiple_retries():
     )
 
 
-def test_tool_exceeds_token_limit_error():
+def test_tool_exceeds_token_limit_retries():
+    """Truncated function tool calls get retried via validation errors rather than failing immediately."""
+
     def return_incomplete_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar",')])
         resp.finish_reason = 'length'
@@ -3157,31 +3158,13 @@ def test_tool_exceeds_token_limit_error():
 
     agent = Agent(FunctionModel(return_incomplete_tool), output_type=str)
 
-    with pytest.raises(
-        IncompleteToolCall,
-        match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments.',
-    ):
-        agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+    @agent.tool_plain
+    def dummy_tool(foo: str) -> str:
+        return 'tool-ok'  # pragma: no cover
 
     with pytest.raises(
-        IncompleteToolCall,
-        match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments.',
-    ):
-        agent.run_sync('Hello')
-
-
-def test_output_tool_exceeds_token_limit_error():
-    def return_incomplete_output_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        assert info.output_tools
-        resp = ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args='{"response": "bar",')])
-        resp.finish_reason = 'length'
-        return resp
-
-    agent = Agent(FunctionModel(return_incomplete_output_tool), output_type=tuple[str, str], retries=0)
-
-    with pytest.raises(
-        IncompleteToolCall,
-        match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments.',
+        UnexpectedModelBehavior,
+        match=r"Tool 'dummy_tool' exceeded max retries count of 1",
     ):
         agent.run_sync('Hello')
 
@@ -7950,3 +7933,45 @@ async def test_parallel_tool_tasks_cancelled_on_exception():
     # Wait long enough for the orphaned task to complete if it wasn't cancelled
     await asyncio.sleep(0.2)
     assert not slow_tool_completed, 'slow_tool task was not cancelled and completed as an orphan'
+
+
+def test_output_validator_retry_with_function_tool():
+    """Test that output validators on the tool path see global retry/max_retries, not per-tool values.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4385.
+    """
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+    target_retries = 2
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools
+        # Always return both a function tool call and an output tool call
+        return ModelResponse(
+            parts=[
+                ToolCallPart('my_tool', '{}'),
+                ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(return_model), output_type=Foo, output_retries=target_retries)
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        return 'tool-ok'
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        if ctx.retry == target_retries:
+            return o
+        raise ModelRetry(f'Retry {ctx.retry}')
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+    assert retries_log == [0, 1, 2]
+    assert max_retries_log == [target_retries] * (target_retries + 1)
