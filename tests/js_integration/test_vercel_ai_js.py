@@ -1,0 +1,86 @@
+"""Pytest orchestration for AI SDK ↔ Pydantic AI integration tests.
+
+Starts a real HTTP server, runs node --test against it, and fails if the
+JS tests fail. Requires node >= 18.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
+JS_DIR = Path(__file__).parent
+REPO_ROOT = JS_DIR.parents[1]
+SERVER_MODULE = 'tests.js_integration.server'
+STARTUP_TIMEOUT = 10.0
+STARTUP_POLL = 0.25
+
+pytestmark = pytest.mark.skipif(not shutil.which('node'), reason='node not installed')
+
+
+@pytest.fixture(scope='module')
+def _npm_install() -> None:
+    if not (JS_DIR / 'node_modules').is_dir():
+        subprocess.run(['npm', 'install'], cwd=JS_DIR, check=True, capture_output=True)
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
+
+def _wait_for_server(port: int, timeout: float = STARTUP_TIMEOUT) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(('127.0.0.1', port), timeout=0.5):
+                return
+        except OSError:
+            time.sleep(STARTUP_POLL)
+    raise TimeoutError(f'Server on port {port} did not start within {timeout}s')
+
+
+@pytest.fixture(scope='module')
+def server_url() -> Iterator[str]:
+    port = _free_port()
+    log = tempfile.TemporaryFile()
+    proc = subprocess.Popen(
+        [sys.executable, '-m', SERVER_MODULE, str(port)],
+        cwd=REPO_ROOT,
+        stdout=log,
+        stderr=log,
+    )
+    try:
+        _wait_for_server(port)
+        yield f'http://127.0.0.1:{port}'
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+        log.seek(0)
+        output = log.read().decode(errors='replace')
+        log.close()
+        if output:
+            print(f'\n--- server log ---\n{output}--- end server log ---')
+
+
+def test_tool_approval(_npm_install: None, server_url: str) -> None:
+    result = subprocess.run(
+        ['node', '--test', str(JS_DIR / 'test_tool_approval.mjs')],
+        env={**os.environ, 'SERVER_URL': server_url},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    if result.returncode != 0:
+        pytest.fail(f'node --test exited {result.returncode}\n\nstdout:\n{result.stdout}\n\nstderr:\n{result.stderr}')
