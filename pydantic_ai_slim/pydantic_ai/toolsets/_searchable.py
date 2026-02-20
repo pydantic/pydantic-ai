@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from pydantic_core import SchemaValidator, core_schema
@@ -87,7 +87,7 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
         # limit rather than 0 as a safeguard. TODO: participate in the agent's retry pool instead.
         search_tool = _SearchTool(
             toolset=self,
-            tool_def=_SEARCH_TOOL_DEF,
+            tool_def=replace(_SEARCH_TOOL_DEF),
             max_retries=1,
             args_validator=_SEARCH_TOOLS_VALIDATOR,
             deferred_tools=deferred,

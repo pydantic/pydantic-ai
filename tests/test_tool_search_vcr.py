@@ -11,6 +11,14 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 
+from .conftest import try_import
+
+with try_import() as anthropic_available:
+    import anthropic  # pyright: ignore[reportUnusedImport]  # noqa: F401
+
+with try_import() as google_available:
+    import google.genai  # pyright: ignore[reportUnusedImport]  # noqa: F401
+
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
@@ -66,6 +74,7 @@ This monthly payment includes principal and interest. Keep in mind that your act
 """),
             ),
             id='anthropic',
+            marks=pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed'),
         ),
         pytest.param(
             Case(
@@ -75,6 +84,7 @@ This monthly payment includes principal and interest. Keep in mind that your act
                 ),
             ),
             id='google',
+            marks=pytest.mark.skipif(not google_available(), reason='google-genai not installed'),
         ),
     ],
 )
