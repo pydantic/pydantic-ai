@@ -41,14 +41,12 @@ from pydantic_ai.realtime import AudioDelta, AudioInput, ImageInput, InputTransc
 try:
     import cv2
 except ImportError:
-    print('This example requires opencv-python: pip install opencv-python')
-    sys.exit(1)
+    cv2 = None
 
 try:
     import sounddevice as sd
 except ImportError:
-    print('This example requires sounddevice: pip install sounddevice')
-    sys.exit(1)
+    sd = None
 
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
@@ -77,11 +75,28 @@ agent: Agent[None, str] = Agent(
 frame_queue: queue.Queue[bytes] = queue.Queue(maxsize=2)
 
 
+async def _play_responses(session: RealtimeSession, tg: anyio.abc.TaskGroup) -> None:
+    """Play model audio through speakers and show transcripts."""
+    out = sd.RawOutputStream(samplerate=OUTPUT_SAMPLE_RATE, channels=1, dtype='int16')
+    out.start()
+    try:
+        async for event in session:
+            if isinstance(event, AudioDelta):
+                out.write(event.data)
+            elif isinstance(event, Transcript) and event.is_final:
+                console.print(f'  [magenta]Roberto:[/magenta] {event.text}')
+            elif isinstance(event, InputTranscript) and event.is_final:
+                console.print(f'  [blue]You:[/blue] {event.text}')
+    finally:
+        out.stop()
+        out.close()
+        tg.cancel_scope.cancel()
+
+
 async def _run_session(model: Any, stop: threading.Event) -> None:
     """Run the realtime session - sends frames + mic audio, plays responses."""
 
     async def bridge_stop(tg: anyio.abc.TaskGroup) -> None:
-        """Poll the threading stop event and cancel the task group."""
         while not stop.is_set():
             await anyio.sleep(0.2)
         tg.cancel_scope.cancel()
@@ -111,29 +126,13 @@ async def _run_session(model: Any, stop: threading.Event) -> None:
                     continue
                 await session.send(AudioInput(data=chunk))
 
-    async def play_responses(session: RealtimeSession, tg: anyio.abc.TaskGroup) -> None:
-        out = sd.RawOutputStream(samplerate=OUTPUT_SAMPLE_RATE, channels=1, dtype='int16')
-        out.start()
-        try:
-            async for event in session:
-                if isinstance(event, AudioDelta):
-                    out.write(event.data)
-                elif isinstance(event, Transcript) and event.is_final:
-                    console.print(f'  [magenta]Roberto:[/magenta] {event.text}')
-                elif isinstance(event, InputTranscript) and event.is_final:
-                    console.print(f'  [blue]You:[/blue] {event.text}')
-        finally:
-            out.stop()
-            out.close()
-            tg.cancel_scope.cancel()
-
     try:
         async with agent.realtime_session(model=model) as session:
             async with anyio.create_task_group() as tg:
                 tg.start_soon(bridge_stop, tg)
                 tg.start_soon(send_frames, session)
                 tg.start_soon(send_mic, session)
-                tg.start_soon(play_responses, session, tg)
+                tg.start_soon(_play_responses, session, tg)
     except Exception as e:
         console.print(f'[red]Session error: {e}[/red]')
     finally:
@@ -141,6 +140,13 @@ async def _run_session(model: Any, stop: threading.Event) -> None:
 
 
 def main() -> None:
+    if cv2 is None:
+        print('This example requires opencv-python: pip install opencv-python')
+        sys.exit(1)
+    if sd is None:
+        print('This example requires sounddevice: pip install sounddevice')
+        sys.exit(1)
+
     from pydantic_ai.realtime.gemini import GeminiRealtimeModel
 
     project = os.environ.get('GOOGLE_CLOUD_PROJECT')
