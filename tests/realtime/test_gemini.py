@@ -275,7 +275,9 @@ class FakeGeminiSession:
         self.sent_tool_responses.extend(function_responses)
 
     async def receive(self) -> AsyncIterator[Any]:
-        for msg in self._messages:
+        messages = self._messages
+        self._messages = []
+        for msg in messages:
             yield msg
 
 
