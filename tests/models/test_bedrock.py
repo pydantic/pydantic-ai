@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from typing_extensions import TypedDict
