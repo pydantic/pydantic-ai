@@ -62,7 +62,7 @@ from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncAnthropic
+    from anthropic import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncAnthropic, omit as OMIT
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
@@ -1407,6 +1407,55 @@ async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
     result = await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_metadata={'user_id': '123'}))
     assert result.output == 'world'
     assert get_mock_chat_completion_kwargs(mock_client)[0]['metadata']['user_id'] == '123'
+
+
+@pytest.mark.parametrize('speed', ['fast', 'standard', None])
+async def test_anthropic_speed_setting(allow_model_requests: None, speed: str | None) -> None:
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    # Use opus-4-6 for 'fast' so the profile supports fast speed; haiku for others
+    model_name = 'claude-opus-4-6' if speed == 'fast' else 'claude-haiku-4-5'
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    if speed == 'fast':
+        model_settings = AnthropicModelSettings(anthropic_speed='fast')
+    elif speed == 'standard':
+        model_settings = AnthropicModelSettings(anthropic_speed='standard', anthropic_betas=['custom-beta'])
+    else:
+        model_settings = AnthropicModelSettings(anthropic_betas=['custom-beta'])
+    await agent.run('hello', model_settings=model_settings)
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+
+    if speed is not None:
+        assert kwargs['speed'] == speed
+    else:
+        assert kwargs.get('speed') is OMIT
+    if speed == 'fast':
+        assert 'fast-mode-2026-02-01' in kwargs['betas']
+    else:
+        betas = kwargs.get('betas')
+        assert isinstance(betas, (list, tuple))
+        assert 'fast-mode-2026-02-01' not in betas
+
+
+async def test_anthropic_speed_fast_ignored_on_unsupported_model(allow_model_requests: None) -> None:
+    """When anthropic_speed='fast' is set on a model that does not support fast (e.g. haiku), we do not send speed or the fast-mode beta."""
+    c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run(
+        'hello',
+        model_settings=AnthropicModelSettings(anthropic_speed='fast', anthropic_betas=['custom-beta']),
+    )
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    # Haiku does not support fast; profile.anthropic_supports_fast_speed is False, so we omit speed and the beta
+    assert kwargs.get('speed') is OMIT
+    betas = kwargs.get('betas')
+    assert isinstance(betas, (list, tuple))
+    assert 'fast-mode-2026-02-01' not in betas
 
 
 async def test_stream_structured(allow_model_requests: None):
