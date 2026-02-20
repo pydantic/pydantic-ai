@@ -68,6 +68,23 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     return profile  # pragma: no cover
 
 
+def _bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an Anthropic model used via Bedrock.
+
+    Bedrock's Converse API does not support native JSON schema output for
+    Anthropic models, even though the direct Anthropic API does. We merge
+    the base Anthropic profile but explicitly disable JSON schema output.
+    """
+    profile = BedrockModelProfile(
+        bedrock_supports_tool_choice=True,
+        bedrock_send_back_thinking_parts=True,
+        bedrock_supports_prompt_caching=True,
+        bedrock_supports_tool_caching=True,
+    ).update(_without_builtin_tools(anthropic_model_profile(model_name)))
+    profile.supports_json_schema_output = False
+    return profile
+
+
 # Known geo prefixes for cross-region inference profile IDs
 BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', 'global', 'us-gov')
 
@@ -109,12 +126,7 @@ class BedrockProvider(Provider[BaseClient]):
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': lambda model_name: BedrockModelProfile(
-                bedrock_supports_tool_choice=True,
-                bedrock_send_back_thinking_parts=True,
-                bedrock_supports_prompt_caching=True,
-                bedrock_supports_tool_caching=True,
-            ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
+            'anthropic': lambda model_name: _bedrock_anthropic_model_profile(model_name),
             'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
                 _without_builtin_tools(mistral_model_profile(model_name))
             ),
