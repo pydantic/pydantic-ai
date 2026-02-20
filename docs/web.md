@@ -73,7 +73,7 @@ from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 agent = Agent('openai:gpt-5.2')
 
 app = agent.to_web(
-    models=['anthropic:claude-sonnet-4-5'],
+    models=['anthropic:claude-sonnet-4-6'],
     builtin_tools=[CodeExecutionTool(), WebSearchTool()],
 )
 ```

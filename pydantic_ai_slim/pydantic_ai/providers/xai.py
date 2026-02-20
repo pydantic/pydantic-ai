@@ -1,7 +1,8 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import os
-from typing import overload
+from typing import Any, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -17,6 +18,35 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
+class _LazyAsyncClient:
+    """Wrapper that creates a fresh AsyncClient per event loop.
+
+    gRPC async channels bind to the event loop at creation time. If the client
+    is created outside an async context (e.g. at module level) and later used
+    inside asyncio.run(), the loop will differ, causing RuntimeError.
+    This wrapper defers client creation and recreates it when the loop changes.
+    See https://github.com/grpc/grpc/issues/32480.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._kwargs = kwargs
+        self._client: AsyncClient | None = None
+        self._event_loop: asyncio.AbstractEventLoop | None = None
+
+    def get_client(self) -> AsyncClient:
+        running_loop: asyncio.AbstractEventLoop | None = None
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+
+        if self._client is None or (running_loop is not None and running_loop is not self._event_loop):
+            self._client = AsyncClient(**self._kwargs)
+            self._event_loop = running_loop
+
+        return self._client
+
+
 class XaiProvider(Provider[AsyncClient]):
     """Provider for xAI API (native xAI SDK)."""
 
@@ -30,6 +60,8 @@ class XaiProvider(Provider[AsyncClient]):
 
     @property
     def client(self) -> AsyncClient:
+        if self._lazy_client is not None:
+            return self._lazy_client.get_client()
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
@@ -57,6 +89,7 @@ class XaiProvider(Provider[AsyncClient]):
                 will be used if available.
             xai_client: An existing `xai_sdk.AsyncClient` to use.  This takes precedence over `api_key`.
         """
+        self._lazy_client: _LazyAsyncClient | None = None
         if xai_client is not None:
             self._client = xai_client
         else:
@@ -66,4 +99,5 @@ class XaiProvider(Provider[AsyncClient]):
                     'Set the `XAI_API_KEY` environment variable or pass it via `XaiProvider(api_key=...)`'
                     'to use the xAI provider.'
                 )
-            self._client = AsyncClient(api_key=api_key)
+            self._lazy_client = _LazyAsyncClient(api_key=api_key)
+            self._client = None  # type: ignore[assignment]
