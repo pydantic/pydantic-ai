@@ -86,6 +86,8 @@ from .messages import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextFormat,
+    TextMediaType,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -270,5 +272,7 @@ __all__ = (
     'AgentRun',
     'AgentRunResult',
     'AgentRunResultEvent',
+    'TextFormat',
+    'TextMediaType',
 )
 __version__ = _metadata_version('pydantic_ai_slim')

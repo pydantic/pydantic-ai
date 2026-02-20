@@ -3016,7 +3016,9 @@ async def test_adapter_load_messages():
                     UserPromptPart(
                         content=[
                             'Here are some files:',
-                            BinaryImage(data=b'fake', media_type='image/png', _identifier='c053ec'),
+                            BinaryImage(
+                                data=b'fake', media_type='image/png', _media_type='image/png', _identifier='c053ec'
+                            ),
                             ImageUrl(url='https://example.com/image.png', _media_type='image/png'),
                             VideoUrl(url='https://example.com/video.mp4', _media_type='video/mp4'),
                             AudioUrl(url='https://example.com/audio.mp3', _media_type='audio/mpeg'),
@@ -3030,7 +3032,11 @@ async def test_adapter_load_messages():
                 parts=[
                     ThinkingPart(content='I should tell the user how nice those files are and share another one'),
                     TextPart(content='Nice files, here is another one:'),
-                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png', _identifier='c053ec')),
+                    FilePart(
+                        content=BinaryImage(
+                            data=b'fake', media_type='image/png', _media_type='image/png', _identifier='c053ec'
+                        )
+                    ),
                 ],
                 timestamp=IsDatetime(),
             ),
@@ -3134,7 +3140,9 @@ async def test_adapter_load_messages():
                     TextPart(
                         content='Here are the Table of Contents for both repositories:... Both products are designed to work together - Pydantic AI for building AI agents and Logfire for observing and monitoring them in production.'
                     ),
-                    FilePart(content=BinaryContent(data=b'fake', media_type='application/pdf')),
+                    FilePart(
+                        content=BinaryContent(data=b'fake', _media_type='application/pdf', media_type='application/pdf')
+                    ),
                     ToolCallPart(
                         tool_name='get_table_of_contents', args={'repo': 'pydantic'}, tool_call_id='toolu_01XX3rjFfG77h'
                     ),
@@ -4715,7 +4723,9 @@ async def test_adapter_load_messages_file_with_provider_metadata():
             ModelResponse(
                 parts=[
                     FilePart(
-                        content=BinaryImage(data=b'file_data', media_type='image/png', _identifier='cdd967'),
+                        content=BinaryImage(
+                            data=b'file_data', media_type='image/png', _media_type='image/png', _identifier='cdd967'
+                        ),
                         id='file_456',
                         provider_name='anthropic',
                         provider_details={'source': 'generated'},

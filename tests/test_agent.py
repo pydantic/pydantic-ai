@@ -4974,6 +4974,7 @@ def test_binary_content_serializable():
                             {
                                 'data': 'SGVsbG8=',
                                 'media_type': 'text/plain',
+                                'file_name': None,
                                 'vendor_metadata': None,
                                 'kind': 'binary',
                                 'identifier': 'f7ff9e',
@@ -5191,6 +5192,7 @@ def test_tool_return_part_binary_content_serialization():
         {
             'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzgAAAAASUVORK5CYII=',
             'media_type': 'image/png',
+            'file_name': None,
             'vendor_metadata': None,
             'kind': 'binary',
             'identifier': '14a01a',
@@ -5254,6 +5256,7 @@ def test_tool_returning_binary_content_with_identifier():
                         BinaryContent(
                             data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
                             media_type='image/png',
+                            _media_type='image/png',
                             _identifier='image_id_1',
                         ),
                     ],
