@@ -38,8 +38,9 @@ from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
-    from mcp import ErrorData, McpError, SamplingMessage
+    from mcp import ErrorData, McpError, SamplingMessage, types as mcp_types
     from mcp.client.session import ClientSession
+    from mcp.server.lowlevel.server import Server as MCPLowLevelServer
     from mcp.shared.context import RequestContext
     from mcp.types import (
         CreateMessageRequestParams,
@@ -2403,3 +2404,154 @@ async def test_server_capabilities_list_changed_fields() -> None:
         assert isinstance(caps.prompts_list_changed, bool)
         assert isinstance(caps.tools_list_changed, bool)
         assert isinstance(caps.resources_list_changed, bool)
+
+
+# ============================================================================
+# agent_to_mcp Tests
+# ============================================================================
+
+
+async def _list_tools(server: MCPLowLevelServer) -> mcp_types.ListToolsResult:
+    handler = server.request_handlers[mcp_types.ListToolsRequest]
+    result = await handler(None)
+    assert isinstance(result.root, mcp_types.ListToolsResult)
+    return result.root
+
+
+async def _call_tool(server: MCPLowLevelServer, name: str, args: dict[str, Any]) -> mcp_types.CallToolResult:
+    handler = server.request_handlers[mcp_types.CallToolRequest]
+    req = mcp_types.CallToolRequest(
+        method='tools/call',
+        params=mcp_types.CallToolRequestParams(name=name, arguments=args),
+    )
+    result = await handler(req)
+    assert isinstance(result.root, mcp_types.CallToolResult)
+    return result.root
+
+
+def _error_text(result: mcp_types.CallToolResult) -> str:
+    content = result.content[0]
+    assert isinstance(content, TextContent)
+    return content.text
+
+
+async def test_agent_to_mcp_list_tools():
+    agent = Agent(TestModel(), name='My Agent')
+    with pytest.warns(UserWarning, match='experimental'):
+        server = agent.to_mcp()
+
+    tools_result = await _list_tools(server)
+    assert len(tools_result.tools) == 1
+
+    tool = tools_result.tools[0]
+    assert tool.name == 'my_agent'
+    assert tool.inputSchema == {
+        'type': 'object',
+        'properties': {'prompt': {'type': 'string'}},
+        'required': ['prompt'],
+    }
+    assert tool.outputSchema == {
+        'type': 'object',
+        'properties': {'result': {'type': 'string'}},
+        'required': ['result'],
+    }
+
+
+async def test_agent_to_mcp_call_tool():
+    agent = Agent(TestModel(custom_output_text='test output'), name='My Agent')
+    with pytest.warns(UserWarning, match='experimental'):
+        server = agent.to_mcp()
+
+    result = await _call_tool(server, 'my_agent', {'prompt': 'hello'})
+    assert result.isError is False
+    assert result.structuredContent == {'result': 'test output'}
+
+
+async def test_agent_to_mcp_unknown_tool():
+    agent = Agent(TestModel(), name='My Agent')
+    with pytest.warns(UserWarning, match='experimental'):
+        server = agent.to_mcp()
+
+    result = await _call_tool(server, 'unknown_tool', {'prompt': 'hello'})
+    assert result.isError is True
+    assert _error_text(result) == 'Unknown tool: unknown_tool'
+
+
+async def test_agent_to_mcp_missing_prompt():
+    agent = Agent(TestModel(), name='My Agent')
+    with pytest.warns(UserWarning, match='experimental'):
+        server = agent.to_mcp()
+
+    result = await _call_tool(server, 'my_agent', {})
+    assert result.isError is True
+    # MCP server's input validation catches the missing required property
+    assert "'prompt' is a required property" in _error_text(result)
+
+
+async def test_agent_to_mcp_non_string_prompt():
+    agent = Agent(TestModel(), name='My Agent')
+    with pytest.warns(UserWarning, match='experimental'):
+        server = agent.to_mcp()
+
+    result = await _call_tool(server, 'my_agent', {'prompt': 123})
+    assert result.isError is True
+    # MCP server's input validation catches this before our handler
+    assert '123 is not of type' in _error_text(result)
+
+
+async def test_agent_to_mcp_custom_names():
+    agent = Agent(TestModel(), name='My Agent')
+    with pytest.warns(UserWarning, match='experimental'):
+        server = agent.to_mcp(
+            server_name='custom_server',
+            tool_name='custom_tool',
+            tool_description='A custom description',
+        )
+
+    assert server.name == 'custom_server'
+    tools_result = await _list_tools(server)
+    tool = tools_result.tools[0]
+    assert tool.name == 'custom_tool'
+    assert tool.description == 'A custom description'
+
+
+async def test_agent_to_mcp_structured_output_schema():
+    from pydantic import BaseModel
+
+    class MyOutput(BaseModel):
+        value: int
+        label: str
+
+    agent = Agent(TestModel(), output_type=MyOutput, name='Structured Agent')
+    with pytest.warns(UserWarning, match='experimental'):
+        server = agent.to_mcp()
+
+    tools_result = await _list_tools(server)
+    tool = tools_result.tools[0]
+    assert tool.outputSchema == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'result': {
+                    'properties': {
+                        'value': {'title': 'Value', 'type': 'integer'},
+                        'label': {'title': 'Label', 'type': 'string'},
+                    },
+                    'required': ['value', 'label'],
+                    'title': 'MyOutput',
+                    'type': 'object',
+                }
+            },
+            'required': ['result'],
+        }
+    )
+
+
+async def test_agent_to_mcp_default_name():
+    agent = Agent(TestModel())
+    with pytest.warns(UserWarning, match='experimental'):
+        server = agent.to_mcp()
+
+    assert server.name == 'pydantic_ai_agent'
+    tools_result = await _list_tools(server)
+    assert tools_result.tools[0].name == 'pydantic_ai_agent'
