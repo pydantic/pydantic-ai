@@ -77,9 +77,8 @@ if TYPE_CHECKING:
 
     from ..builtin_tools import AbstractBuiltinTool
     from ..mcp import MCPServer
-    from ..models.realtime import RealtimeModel
+    from ..realtime import RealtimeModel, RealtimeSession
     from ..ui._web import ModelsParam
-    from .voice import VoiceSession
 
 __all__ = (
     'Agent',
@@ -103,23 +102,23 @@ S = TypeVar('S')
 NoneType = type(None)
 
 
-class _VoiceModelStub(models.Model):
+class _RealtimeModelStub(models.Model):
     """Minimal Model stub used as RunContext.model when no text model is configured.
 
-    Voice sessions don't use the text Model for requests, but RunContext requires one.
+    Realtime sessions don't use the text Model for requests, but RunContext requires one.
     Tool functions that access ctx.model will get this stub.
     """
 
     @property
     def model_name(self) -> str:
-        return 'voice-session-stub'
+        return 'realtime-session-stub'
 
     @property
     def system(self) -> str:
-        return 'voice'
+        return 'realtime'
 
     async def request(self, messages: Any, model_settings: Any, model_request_parameters: Any) -> Any:
-        raise NotImplementedError('Text model requests are not available in voice sessions')
+        raise NotImplementedError('Text model requests are not available in realtime sessions')
 
 
 @dataclasses.dataclass(init=False)
@@ -1617,23 +1616,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return schema
 
     @asynccontextmanager
-    async def voice_session(
+    async def realtime_session(
         self,
         model: RealtimeModel,
         *,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
-    ) -> AsyncIterator[VoiceSession]:
-        """Open a realtime voice session using the agent's tools.
+    ) -> AsyncIterator[RealtimeSession]:
+        """Open a realtime session using the agent's tools.
 
-        The session connects to a speech-to-speech model and automatically
+        The session connects to a realtime model and automatically
         executes tool calls using the agent's registered tools.
 
         Example:
         ```python
         from pydantic_ai import Agent
-        from pydantic_ai.models.openai_realtime import OpenAIRealtimeModel
+        from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
         agent = Agent()
 
@@ -1643,7 +1642,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         async def main():
             rt = OpenAIRealtimeModel('gpt-4o-realtime-preview')
-            async with agent.voice_session(model=rt) as session:
+            async with agent.realtime_session(model=rt) as session:
                 await session.send_audio(b'...')
                 async for event in session:
                     print(event)
@@ -1654,9 +1653,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps: Dependencies to pass to tool functions.
             model_settings: Optional settings for the realtime model.
             instructions: Override the agent's instructions. If not provided, the
-                agent's literal instructions are used.
+                agent's literal instructions are used. Note that dynamic instructions
+                (functions registered via ``@agent.instructions``) are not supported
+                in realtime sessions - only static string instructions are used.
         """
-        from .voice import VoiceSession
+        from ..realtime import RealtimeSession
 
         # Resolve instructions from the agent if not explicitly provided
         if instructions is None:
@@ -1670,7 +1671,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Build a minimal RunContext for tool execution
             run_context = RunContext[AgentDepsT](
                 deps=deps,
-                model=self._get_model(None) if self._model else _VoiceModelStub(),
+                model=self._get_model(None) if self._model else _RealtimeModelStub(),
                 usage=_usage.RunUsage(),
             )
             tools_map = await toolset.get_tools(run_context)
@@ -1692,7 +1693,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 tools=tool_defs,
                 model_settings=model_settings,
             ) as connection:
-                yield VoiceSession(connection, tool_runner)
+                yield RealtimeSession(connection, tool_runner)
 
     async def __aenter__(self) -> Self:
         """Enter the agent context.

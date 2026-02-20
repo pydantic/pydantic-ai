@@ -1,11 +1,11 @@
-"""Abstractions for realtime speech-to-speech models.
+"""Abstractions for realtime multimodal models.
 
 Providers like OpenAI Realtime, Gemini Live, and Nova Sonic offer bidirectional
-streaming audio APIs. These use persistent connections (WebSocket or HTTP/2) rather
+streaming APIs. These use persistent connections (WebSocket or HTTP/2) rather
 than the request-response pattern of the standard `Model` interface.
 
 This module defines the provider-facing ABCs (`RealtimeModel`, `RealtimeConnection`)
-and all event types yielded during a realtime session.
+and all event/input types for a realtime session.
 """
 
 from __future__ import annotations as _annotations
@@ -13,12 +13,51 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from typing_extensions import TypeAliasType
+from typing_extensions import TypeAliasType, TypeVar
 
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
+
+# ---------------------------------------------------------------------------
+# Input content types (fed into the connection via send())
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AudioInput:
+    """A chunk of audio data to send to the model."""
+
+    data: bytes
+
+
+@dataclass
+class ImageInput:
+    """An image frame to send to the model (e.g. for Gemini Live video).
+
+    Not all providers support image input. Sending this to a provider that
+    doesn't will raise `NotImplementedError` at runtime (and be caught by
+    type checkers for providers that don't include `ImageInput` in their
+    type parameter).
+    """
+
+    data: bytes
+    mime_type: str = 'image/jpeg'
+
+
+@dataclass
+class ToolResult:
+    """The result of a tool call to send back to the model."""
+
+    tool_call_id: str
+    output: str
+
+
+RealtimeInput = TypeAliasType(
+    'RealtimeInput',
+    AudioInput | ImageInput | ToolResult,
+)
 
 # ---------------------------------------------------------------------------
 # Connection-level events (yielded by RealtimeConnection.__aiter__)
@@ -77,7 +116,7 @@ RealtimeEvent = TypeAliasType(
 )
 
 # ---------------------------------------------------------------------------
-# Session-level events (yielded by VoiceSession.__aiter__)
+# Session-level events (yielded by RealtimeSession.__aiter__)
 # ---------------------------------------------------------------------------
 
 
@@ -98,8 +137,8 @@ class ToolCallCompleted:
     result: str
 
 
-VoiceSessionEvent = TypeAliasType(
-    'VoiceSessionEvent',
+RealtimeSessionEvent = TypeAliasType(
+    'RealtimeSessionEvent',
     AudioDelta | Transcript | InputTranscript | ToolCallStarted | ToolCallCompleted | TurnComplete | SessionError,
 )
 
@@ -108,26 +147,25 @@ VoiceSessionEvent = TypeAliasType(
 # Provider ABCs
 # ---------------------------------------------------------------------------
 
+InputT = TypeVar('InputT', bound=RealtimeInput, default=RealtimeInput)
+
 
 class RealtimeConnection(ABC):
     """A live connection to a realtime model.
 
     Providers implement this to handle protocol-specific framing (WebSocket
-    messages, HTTP/2 frames, etc.).
+    messages, HTTP/2 frames, etc.). Content is fed in via `send()` and events
+    are yielded via `__aiter__` - similar to a sans-IO protocol handler.
     """
 
     @abstractmethod
-    async def send_audio(self, data: bytes) -> None:
-        """Send an audio chunk to the model.
+    async def send(self, content: RealtimeInput) -> None:
+        """Feed content into the realtime session.
 
-        The expected format (sample rate, encoding) is provider-specific.
-        See each provider's documentation for details.
+        The concrete input types accepted depend on the provider. For example,
+        OpenAI accepts `AudioInput` and `ToolResult`, while Gemini Live also
+        accepts `ImageInput`.
         """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def send_tool_result(self, tool_call_id: str, output: str) -> None:
-        """Send the result of a tool call back to the model."""
         raise NotImplementedError
 
     @abstractmethod
@@ -137,10 +175,10 @@ class RealtimeConnection(ABC):
 
 
 class RealtimeModel(ABC):
-    """Abstract base for realtime speech-to-speech model providers.
+    """Abstract base for realtime model providers.
 
     Unlike the standard `Model` ABC which uses request-response, this opens a
-    persistent bidirectional connection for streaming audio in and out.
+    persistent bidirectional connection for streaming content in and out.
     """
 
     @abstractmethod
@@ -148,7 +186,7 @@ class RealtimeModel(ABC):
         self,
         *,
         instructions: str,
-        tools: list[ToolDefinition] = field(default_factory=list),
+        tools: list[ToolDefinition] | None = None,
         model_settings: ModelSettings | None = None,
     ) -> AbstractAsyncContextManager[RealtimeConnection]:
         """Open a connection to the realtime model.

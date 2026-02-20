@@ -1,24 +1,28 @@
-"""Voice session that wraps a `RealtimeConnection` with automatic tool execution."""
+"""Realtime session that wraps a `RealtimeConnection` with automatic tool execution."""
 
 from __future__ import annotations as _annotations
 
-import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
-from ..models.realtime import (
+import pydantic_core
+
+from ._base import (
+    AudioInput,
     RealtimeConnection,
+    RealtimeInput,
+    RealtimeSessionEvent,
     ToolCall,
     ToolCallCompleted,
     ToolCallStarted,
-    VoiceSessionEvent,
+    ToolResult,
 )
 
 ToolRunner = Callable[[str, dict[str, Any]], Awaitable[str]]
 """Async callable that executes a tool by name with parsed args, returning the string result."""
 
 
-class VoiceSession:
+class RealtimeSession:
     """Wraps a `RealtimeConnection` and auto-executes tool calls.
 
     When iterating, `ToolCall` events from the connection are intercepted:
@@ -35,22 +39,26 @@ class VoiceSession:
         self._connection = connection
         self._tool_runner = tool_runner
 
-    async def send_audio(self, data: bytes) -> None:
-        """Forward audio data to the underlying connection."""
-        await self._connection.send_audio(data)
+    async def send(self, content: RealtimeInput) -> None:
+        """Feed content into the underlying connection."""
+        await self._connection.send(content)
 
-    async def __aiter__(self) -> AsyncIterator[VoiceSessionEvent]:
+    async def send_audio(self, data: bytes) -> None:
+        """Convenience method to send audio data."""
+        await self._connection.send(AudioInput(data=data))
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeSessionEvent]:
         async for event in self._connection:
             if isinstance(event, ToolCall):
                 yield ToolCallStarted(tool_name=event.tool_name, tool_call_id=event.tool_call_id)
 
                 try:
-                    args = json.loads(event.args) if event.args else {}
-                except json.JSONDecodeError:
+                    args: dict[str, Any] = pydantic_core.from_json(event.args) if event.args else {}
+                except ValueError:
                     args = {}
 
                 result = await self._tool_runner(event.tool_name, args)
-                await self._connection.send_tool_result(event.tool_call_id, result)
+                await self._connection.send(ToolResult(tool_call_id=event.tool_call_id, output=result))
 
                 yield ToolCallCompleted(
                     tool_name=event.tool_name,
