@@ -215,3 +215,19 @@ class RealtimeModel(ABC):
     def model_name(self) -> str:
         """The model name, e.g. ``'gpt-4o-realtime'``."""
         raise NotImplementedError
+
+    @property
+    def system(self) -> str:
+        """The provider name for OpenTelemetry semantic conventions.
+
+        Use to populate the ``gen_ai.system`` attribute. Should use well-known values listed in
+        https://opentelemetry.io/docs/specs/semconv/attributes-registry/gen-ai/#gen-ai-system
+
+        By default, infers from the class name by stripping ``RealtimeModel`` / ``Model`` suffixes.
+        """
+        name = type(self).__name__.lower()
+        for suffix in ('realtimemodel', 'model'):
+            if name.endswith(suffix):
+                name = name[: -len(suffix)]
+                break
+        return name or 'unknown'

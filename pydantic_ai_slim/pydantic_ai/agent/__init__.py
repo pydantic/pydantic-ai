@@ -1688,6 +1688,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 except Exception as e:
                     return f'Error: {e}'
 
+            # Instrument the realtime model if configured
+            from ..realtime.instrumented import instrument_realtime_model
+
+            instrument = self.instrument
+            if instrument is None:
+                instrument = self._instrument_default
+            if instrument:
+                model = instrument_realtime_model(model, instrument)
+
             async with model.connect(
                 instructions=instructions,
                 tools=tool_defs,

@@ -186,6 +186,10 @@ class OpenAIRealtimeModel(RealtimeModel):
     def model_name(self) -> str:
         return self.model
 
+    @property
+    def system(self) -> str:
+        return 'openai'
+
     @asynccontextmanager
     async def connect(
         self,

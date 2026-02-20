@@ -20,12 +20,14 @@ from ._base import (
     TurnComplete,
 )
 from ._session import RealtimeSession, ToolRunner
+from .instrumented import InstrumentedRealtimeModel, instrument_realtime_model
 
 __all__ = (
     'AudioDelta',
     'AudioInput',
     'ImageInput',
     'InputTranscript',
+    'InstrumentedRealtimeModel',
     'RealtimeConnection',
     'RealtimeEvent',
     'RealtimeInput',
@@ -41,4 +43,5 @@ __all__ = (
     'ToolRunner',
     'Transcript',
     'TurnComplete',
+    'instrument_realtime_model',
 )
