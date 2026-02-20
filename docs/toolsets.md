@@ -123,7 +123,6 @@ Instructions can be provided as strings, functions (sync or async, with or witho
 from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.models.test import TestModel
 
-
 search_toolset = FunctionToolset(
     instructions='Always use the search tool before answering factual questions.',
 )
@@ -149,7 +148,6 @@ You can also use the [`@toolset.instructions`][pydantic_ai.toolsets.FunctionTool
 ```python {title="toolset_instructions_decorator.py"}
 from pydantic_ai import Agent, FunctionToolset, RunContext
 from pydantic_ai.models.test import TestModel
-
 
 math_toolset = FunctionToolset[str]()
 
@@ -179,7 +177,6 @@ When a toolset with instructions is used alongside agent-level [`instructions`][
 ```python {title="toolset_instructions_combined.py"}
 from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.models.test import TestModel
-
 
 toolset = FunctionToolset(instructions='Use the greeting tool for all greetings.')
 
@@ -212,7 +209,6 @@ When multiple toolsets with instructions are registered on an agent, all their i
 ```python {title="toolset_instructions_multiple.py"}
 from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.models.test import TestModel
-
 
 weather_toolset = FunctionToolset(instructions='Use weather tools for forecasts.')
 
