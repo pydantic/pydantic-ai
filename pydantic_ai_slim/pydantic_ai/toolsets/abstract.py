@@ -121,7 +121,6 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         Returns:
             Instructions string to add to the system prompt, or None if no instructions.
         """
-        del ctx  # unused in base implementation
         return None
 
     @abstractmethod

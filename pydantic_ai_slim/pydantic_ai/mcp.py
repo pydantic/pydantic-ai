@@ -359,7 +359,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     Set to `False` for servers that change resources dynamically without sending notifications.
     """
 
-    add_server_instructions: bool
+    include_instructions: bool
     """Whether to include the server's instructions in the agent's system prompt.
 
     When enabled, the instructions sent by the MCP server during initialization
@@ -399,7 +399,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         elicitation_callback: ElicitationFnT | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
-        add_server_instructions: bool = False,
+        include_instructions: bool = False,
         *,
         id: str | None = None,
         client_info: mcp_types.Implementation | None = None,
@@ -416,7 +416,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.elicitation_callback = elicitation_callback
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
-        self.add_server_instructions = add_server_instructions
+        self.include_instructions = include_instructions
         self.client_info = client_info
 
         self._id = id or tool_prefix
@@ -484,15 +484,10 @@ class MCPServer(AbstractToolset[Any], ABC):
     @property
     @deprecated(
         'The `instructions` property is deprecated. '
-        "Use `add_server_instructions=True` when constructing the server to have instructions automatically injected into the agent's system prompt."
+        "Use `include_instructions=True` when constructing the server to have instructions automatically injected into the agent's system prompt."
     )
     def instructions(self) -> str | None:
-        """Access the instructions sent by the MCP server during initialization.
-
-        .. deprecated::
-            Use ``add_server_instructions=True`` when constructing the server to have instructions
-            automatically injected into the agent's system prompt.
-        """
+        """Access the instructions sent by the MCP server during initialization."""
         if not hasattr(self, '_instructions'):
             raise AttributeError(
                 f'The `{self.__class__.__name__}.instructions` is only available after initialization.'
@@ -502,21 +497,21 @@ class MCPServer(AbstractToolset[Any], ABC):
     async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         """Return instructions to inject into the agent's system prompt.
 
-        If ``add_server_instructions`` is ``True``, returns the instructions
+        If ``include_instructions`` is ``True``, returns the instructions
         sent by the MCP server during initialization. Otherwise, returns ``None``.
 
         Args:
             ctx: The run context for this agent run.
 
         Returns:
-            The server's instructions if ``add_server_instructions`` is enabled,
+            The server's instructions if ``include_instructions`` is enabled,
             otherwise ``None``.
 
         Raises:
-            AttributeError: If ``add_server_instructions`` is ``True`` but the server
+            AttributeError: If ``include_instructions`` is ``True`` but the server
                 has not been initialized yet.
         """
-        if self.add_server_instructions:
+        if self.include_instructions:
             if not hasattr(self, '_instructions'):
                 raise AttributeError(
                     f'The `{self.__class__.__name__}.get_instructions` is only instantiated after initialization.'
@@ -910,7 +905,7 @@ class MCPServerStdio(MCPServer):
     elicitation_callback: ElicitationFnT | None = None
     cache_tools: bool
     cache_resources: bool
-    add_server_instructions: bool
+    include_instructions: bool
 
     def __init__(
         self,
@@ -931,7 +926,7 @@ class MCPServerStdio(MCPServer):
         elicitation_callback: ElicitationFnT | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
-        add_server_instructions: bool = False,
+        include_instructions: bool = False,
         id: str | None = None,
         client_info: mcp_types.Implementation | None = None,
     ):
@@ -956,8 +951,8 @@ class MCPServerStdio(MCPServer):
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
                 See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
-            add_server_instructions: Whether to include the server's instructions in the agent's instructions
-                See [`MCPServer.add_server_instructions`][pydantic_ai.mcp.MCPServer.add_server_instructions].
+            include_instructions: Whether to include the server's instructions in the agent's instructions
+                See [`MCPServer.include_instructions`][pydantic_ai.mcp.MCPServer.include_instructions].
             id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
             client_info: Information describing the MCP client implementation.
         """
@@ -980,7 +975,7 @@ class MCPServerStdio(MCPServer):
             cache_tools,
             cache_resources,
             id=id,
-            add_server_instructions=add_server_instructions,
+            include_instructions=include_instructions,
             client_info=client_info,
         )
 
@@ -1082,7 +1077,7 @@ class _MCPServerHTTP(MCPServer):
     elicitation_callback: ElicitationFnT | None = None
     cache_tools: bool
     cache_resources: bool
-    add_server_instructions: bool
+    include_instructions: bool
 
     def __init__(
         self,
@@ -1103,7 +1098,7 @@ class _MCPServerHTTP(MCPServer):
         elicitation_callback: ElicitationFnT | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
-        add_server_instructions: bool = False,
+        include_instructions: bool = False,
         client_info: mcp_types.Implementation | None = None,
         **_deprecated_kwargs: Any,
     ):
@@ -1128,8 +1123,8 @@ class _MCPServerHTTP(MCPServer):
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
                 See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
-            add_server_instructions: Whether to include the server's instructions in the agent's system prompt.
-                See [`MCPServer.add_server_instructions`][pydantic_ai.mcp.MCPServer.add_server_instructions].
+            include_instructions: Whether to include the server's instructions in the agent's system prompt.
+                See [`MCPServer.include_instructions`][pydantic_ai.mcp.MCPServer.include_instructions].
             client_info: Information describing the MCP client implementation.
         """
         if 'sse_read_timeout' in _deprecated_kwargs:
@@ -1163,7 +1158,7 @@ class _MCPServerHTTP(MCPServer):
             elicitation_callback=elicitation_callback,
             cache_tools=cache_tools,
             cache_resources=cache_resources,
-            add_server_instructions=add_server_instructions,
+            include_instructions=include_instructions,
             id=id,
             client_info=client_info,
         )
