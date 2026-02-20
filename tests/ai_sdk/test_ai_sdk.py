@@ -93,4 +93,6 @@ def test_ai_sdk(_npm_install: None, server_url: str, test_file: str) -> None:
     )
 
     if result.returncode != 0:
-        pytest.fail(f'node --test {test_file} exited {result.returncode}\n\nstdout:\n{result.stdout}\n\nstderr:\n{result.stderr}')
+        pytest.fail(
+            f'node --test {test_file} exited {result.returncode}\n\nstdout:\n{result.stdout}\n\nstderr:\n{result.stderr}'
+        )
