@@ -15,7 +15,7 @@ if (!url) {
   console.error('Set SERVER_URL environment variable');
   process.exit(2);
 }
-export const SERVER_URL: string = url;
+const SERVER_URL: string = url;
 
 class SimpleChatState implements ChatState<UIMessage> {
   status: ChatStatus = 'ready';
@@ -35,11 +35,7 @@ class SimpleChatState implements ChatState<UIMessage> {
   }
 
   replaceMessage(index: number, message: UIMessage) {
-    this.messages = [
-      ...this.messages.slice(0, index),
-      message,
-      ...this.messages.slice(index + 1),
-    ];
+    this.messages = this.messages.with(index, message);
   }
 
   snapshot<T>(thing: T): T {
@@ -50,9 +46,9 @@ class SimpleChatState implements ChatState<UIMessage> {
 type SendAutomaticallyWhen = (options: { messages: UIMessage[] }) => boolean;
 
 export class TestChat extends AbstractChat<UIMessage> {
-  constructor(apiUrl: string, sendAutomaticallyWhen?: SendAutomaticallyWhen) {
+  constructor(sendAutomaticallyWhen?: SendAutomaticallyWhen) {
     super({
-      transport: new DefaultChatTransport({ api: apiUrl }),
+      transport: new DefaultChatTransport({ api: `${SERVER_URL}/api/chat` }),
       state: new SimpleChatState(),
       ...(sendAutomaticallyWhen ? { sendAutomaticallyWhen } : {}),
     });

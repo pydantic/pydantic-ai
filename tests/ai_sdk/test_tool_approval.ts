@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { isToolUIPart, lastAssistantMessageIsCompleteWithApprovalResponses } from 'ai';
-import { SERVER_URL, TestChat, awaitRoundTrip } from './helpers.ts';
+import { TestChat, awaitRoundTrip } from './helpers.ts';
 
 async function sendAndGetApprovalId(chat: TestChat): Promise<string> {
   const trip = awaitRoundTrip(chat);
@@ -12,19 +12,14 @@ async function sendAndGetApprovalId(chat: TestChat): Promise<string> {
   const assistant = chat.messages.find((m) => m.role === 'assistant');
   assert.ok(assistant, 'should have an assistant message');
 
-  for (const part of assistant.parts) {
-    if (isToolUIPart(part) && part.state === 'approval-requested') {
-      return part.approval.id;
-    }
-  }
-  return assert.fail('no tool part with state=approval-requested');
+  const toolParts = assistant.parts.filter(isToolUIPart);
+  const approvalPart = toolParts.find((p) => p.state === 'approval-requested');
+  assert.ok(approvalPart, 'no tool part with state=approval-requested');
+  return approvalPart.approval.id;
 }
 
 function createApprovalChat() {
-  return new TestChat(
-    `${SERVER_URL}/api/chat/approval`,
-    lastAssistantMessageIsCompleteWithApprovalResponses,
-  );
+  return new TestChat(lastAssistantMessageIsCompleteWithApprovalResponses);
 }
 
 describe('tool approval', () => {
