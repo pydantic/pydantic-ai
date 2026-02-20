@@ -1,11 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { isTextUIPart } from 'ai';
-import { SERVER_URL, TestChat, awaitRoundTrip } from './helpers.ts';
+import { TestChat, awaitRoundTrip } from './helpers.ts';
 
 describe('text streaming', () => {
   it('receives streamed text parts', async () => {
-    const chat = new TestChat(`${SERVER_URL}/api/chat/text`);
+    const chat = new TestChat();
     const trip = awaitRoundTrip(chat);
     chat.sendMessage({ text: 'Say hello' });
     await trip.done;

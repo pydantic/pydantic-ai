@@ -1,11 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { isReasoningUIPart, isTextUIPart } from 'ai';
-import { SERVER_URL, TestChat, awaitRoundTrip } from './helpers.ts';
+import { TestChat, awaitRoundTrip } from './helpers.ts';
 
 describe('thinking', () => {
   it('receives reasoning and text parts', async () => {
-    const chat = new TestChat(`${SERVER_URL}/api/chat/thinking`);
+    const chat = new TestChat();
     const trip = awaitRoundTrip(chat);
     chat.sendMessage({ text: 'What is the answer?' });
     await trip.done;
