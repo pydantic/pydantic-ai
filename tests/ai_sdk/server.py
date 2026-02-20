@@ -22,7 +22,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-
 # --- Text-only ---
 
 text_agent = Agent(model=TestModel(custom_output_text='Hello, world!'), output_type=str)
@@ -31,9 +30,7 @@ text_agent = Agent(model=TestModel(custom_output_text='Hello, world!'), output_t
 # --- Thinking + text (requires FunctionModel since TestModel doesn't produce thinking) ---
 
 
-async def thinking_stream(
-    messages: list[ModelMessage], info: AgentInfo
-) -> AsyncIterator[DeltaThinkingCalls | str]:
+async def thinking_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaThinkingCalls | str]:
     yield {0: DeltaThinkingPart(content='Let me think about this... The answer is clear.')}
     yield 'The answer is 42.'
 
