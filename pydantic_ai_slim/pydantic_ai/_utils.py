@@ -26,7 +26,7 @@ from typing import (
 )
 
 from anyio.to_thread import run_sync
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import (
     ParamSpec,
@@ -556,3 +556,72 @@ def get_event_loop():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+# Optional JSON repair functionality
+try:
+    # fast_json_repair lacks py.typed marker, so we suppress the type warning on import
+    # and provide our own typed wrapper below
+    from fast_json_repair import repair_json as _repair_json  # pyright: ignore[reportUnknownVariableType]
+
+    def maybe_repair_json(json_string: str) -> str:
+        """Attempt to repair malformed JSON using fast_json_repair.
+
+        This is useful when LLMs produce broken JSON (missing braces, trailing
+        commas, single quotes, etc.). Install with: pip install 'pydantic-ai-slim[json-repair]'
+
+        Args:
+            json_string: The potentially malformed JSON string.
+
+        Returns:
+            The repaired JSON string if repairs were made, otherwise the original string.
+        """
+        result: str = _repair_json(json_string, return_objects=False)
+        return result
+
+except ImportError as _import_error:
+
+    def maybe_repair_json(json_string: str) -> str:
+        """Fallback when fast_json_repair is not available - returns input unchanged."""
+        return json_string
+
+
+def validate_json_with_repair(
+    validator: Any,
+    json_str: str,
+    *,
+    allow_partial: bool,
+    validation_context: Any,
+) -> Any:
+    """Validate JSON string, attempting repair if validation fails.
+
+    This is a shared helper used by both tool argument parsing and output validation.
+
+    Args:
+        validator: Pydantic schema validator (e.g., from TypeAdapter.validator)
+        json_str: JSON string to validate
+        allow_partial: Whether to allow partial JSON (for streaming)
+        validation_context: Pydantic validation context
+
+    Returns:
+        Validated data (type depends on the validator's schema)
+
+    Raises:
+        ValidationError: If validation fails (even after repair attempt)
+    """
+    pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
+    try:
+        return validator.validate_json(json_str, allow_partial=pyd_allow_partial, context=validation_context)
+    except ValidationError as original_error:
+        # Attempt JSON repair - this works for both partial (streaming) and final calls.
+        # fast_json_repair preserves partial string values while fixing syntax errors
+        # like single quotes, trailing commas, etc.
+        repaired = maybe_repair_json(json_str)
+        if repaired == json_str:
+            # Repair didn't change anything, re-raise original error
+            raise
+        try:
+            return validator.validate_json(repaired, allow_partial=pyd_allow_partial, context=validation_context)
+        except ValidationError:
+            # Repair didn't help, re-raise the original error for consistent behavior
+            raise original_error from None

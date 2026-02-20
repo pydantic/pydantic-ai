@@ -1865,6 +1865,22 @@ lua = [
 ]
 
 [[package]]
+name = "fast-json-repair"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "orjson", marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ce/a1/8a3804b79e283d7482b21d60338a9672c60410452f68521658a31eefd869/fast_json_repair-0.2.0.tar.gz", hash = "sha256:e8c188bd6534dd753b6499d7a24ef455c7aa26f5a558da097a11a16d5e291bb9", size = 67752, upload-time = "2025-10-23T14:00:51.459Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/7c/ec7a9b21c417e1365372899fb57d1c537d6c1f7592d11b5a15e73d71275b/fast_json_repair-0.2.0-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:77b948676a302d8e9a712115a89a80b59bd1bdf4a5e120e303ae172e47b14926", size = 230909, upload-time = "2025-10-23T14:00:50.55Z" },
+    { url = "https://files.pythonhosted.org/packages/80/ab/4eea9ea8cbbfe5b158496d63d85bd6d97bff3dfa7e843401b4971a3b2e9e/fast_json_repair-0.2.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:2481db7ff64a52fc32cc5bcd9b98cddb0d598100350e00b1d9646e006dfec4ca", size = 217111, upload-time = "2025-10-23T14:00:49.672Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/7b/38d0597015cca95c63dafab8fcb929517ad1dd21aabeedc86f06bcd7c3aa/fast_json_repair-0.2.0-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ebb6799c580d5222835e280ce79effb97045f4d9db87c836db380a4a99d5f59b", size = 237127, upload-time = "2025-10-23T14:00:46.294Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/8c/1a345a69f79acafb83d8025eaabd9dcbdfca0330795945569d0458c3937e/fast_json_repair-0.2.0-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:112cc0e60b57dbc2e461baac69c3a3b7ab58f84528bdaad502af1786699b8f32", size = 249630, upload-time = "2025-10-23T14:00:47.486Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/fe/e6cdccaec098d937aca227c820648d46258e47affb4a683519ee81f38ae0/fast_json_repair-0.2.0-cp311-abi3-win_amd64.whl", hash = "sha256:4b0aef384ddb30c49c82ab8773caa21fb62dd6a3f3394bdaed21f611e9c8f13a", size = 148213, upload-time = "2025-10-23T14:00:52.156Z" },
+]
+
+[[package]]
 name = "fasta2a"
 version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6573,6 +6589,7 @@ dev = [
     { name = "dirty-equals" },
     { name = "duckduckgo-search" },
     { name = "exa-py" },
+    { name = "fast-json-repair", marker = "python_full_version >= '3.11'" },
     { name = "genai-prices" },
     { name = "inline-snapshot" },
     { name = "pip" },
@@ -6635,6 +6652,7 @@ dev = [
     { name = "dirty-equals", specifier = ">=0.9.0" },
     { name = "duckduckgo-search", specifier = ">=7.0.0" },
     { name = "exa-py", specifier = ">=2.0.0" },
+    { name = "fast-json-repair", marker = "python_full_version >= '3.11'", specifier = ">=0.2.0" },
     { name = "genai-prices", specifier = ">=0.0.28" },
     { name = "inline-snapshot", specifier = ">=0.19.3" },
     { name = "pip", specifier = ">=26.0" },
@@ -6769,6 +6787,9 @@ groq = [
 huggingface = [
     { name = "huggingface-hub" },
 ]
+json-repair = [
+    { name = "fast-json-repair", marker = "python_full_version >= '3.11'" },
+]
 logfire = [
     { name = "logfire", extra = ["httpx"] },
 ]
@@ -6851,6 +6872,7 @@ requires-dist = [
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
+    { name = "fast-json-repair", marker = "python_full_version >= '3.11' and extra == 'json-repair'", specifier = ">=0.2.0" },
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=2.14.0" },
     { name = "genai-prices", specifier = ">=0.0.48" },
@@ -6899,7 +6921,7 @@ requires-dist = [
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.5.0" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "xai"]
+provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "json-repair", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "xai"]
 
 [[package]]
 name = "pydantic-core"

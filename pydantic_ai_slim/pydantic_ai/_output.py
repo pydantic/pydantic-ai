@@ -17,6 +17,7 @@ from pydantic_ai._instrumentation import InstrumentationNames
 
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
+from ._utils import validate_json_with_repair
 from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
     DeferredToolRequests,
@@ -643,12 +644,15 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         allow_partial: bool = False,
         validation_context: Any | None = None,
     ) -> dict[str, Any]:
-        pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
         if isinstance(data, str):
-            return self.validator.validate_json(
-                data or '{}', allow_partial=pyd_allow_partial, context=validation_context
+            return validate_json_with_repair(
+                self.validator,
+                data or '{}',
+                allow_partial=allow_partial,
+                validation_context=validation_context,
             )
         else:
+            pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
             return self.validator.validate_python(
                 data or {}, allow_partial=pyd_allow_partial, context=validation_context
             )

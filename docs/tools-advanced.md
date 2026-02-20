@@ -420,6 +420,73 @@ The `'exhaustive'` strategy ensures all tools are executed even after a final re
 
 For more information of how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
 
+## Automatic JSON Repair
+
+LLMs sometimes produce malformed JSON when calling tools — missing closing braces, trailing commas, single quotes instead of double quotes, and other syntax errors. Pydantic AI can automatically repair these issues using the [`fast-json-repair`](https://pypi.org/project/fast-json-repair/) library.
+
+To enable automatic JSON repair, install with the `json-repair` extra:
+
+```bash
+pip install 'pydantic-ai-slim[json-repair]'
+```
+
+Or with uv:
+
+```bash
+uv add 'pydantic-ai-slim[json-repair]'
+```
+
+Once installed, JSON repair is applied automatically when:
+
+1. **Validation fails** on the original JSON from the model
+2. **The repair changes the JSON** — if the repaired JSON is identical to the original, the original validation error is re-raised
+
+JSON repair works for both [tool arguments](#tool-retries) and [structured outputs](output.md#tool-output), and is also applied during streaming/partial validation.
+
+!!! note "Python 3.11+ only"
+    The `fast-json-repair` package requires Python 3.11 or later.
+
+### Example
+
+Here's an example showing JSON repair in action using a `FunctionModel` that intentionally returns malformed JSON:
+
+```python {title="json_repair_example.py" requires="fast_json_repair"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+class UserInfo(BaseModel):
+    name: str
+    age: int
+
+
+def malformed_json_model(
+    messages: list[ModelMessage], agent_info: AgentInfo
+) -> ModelResponse:
+    """A model that returns malformed JSON with single quotes."""
+    assert agent_info.output_tools is not None
+    output_tool_name = agent_info.output_tools[0].name
+
+    # This JSON has single quotes instead of double quotes - invalid JSON!
+    malformed_args = "{'name': 'Alice', 'age': 30}"
+    return ModelResponse(
+        parts=[ToolCallPart(tool_name=output_tool_name, args=malformed_args)]
+    )
+
+
+# Using output_type makes the model return structured data via an output tool
+agent = Agent(FunctionModel(malformed_json_model), output_type=UserInfo)
+
+# Even though the model returns malformed JSON with single quotes,
+# Pydantic AI automatically repairs it before validation
+result = agent.run_sync('Get info for Alice who is 30')
+print(result.output)
+#> name='Alice' age=30
+```
+
 ## See Also
 
 - [Function Tools](tools.md) - Basic tool concepts and registration
