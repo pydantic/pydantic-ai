@@ -170,9 +170,7 @@ def test_xai_get_builtin_tools_rejects_unsupported_builtin_tool():
 
     import pydantic_ai.models.xai as xai_module
 
-    params = ModelRequestParameters(
-        builtin_tools=cast(Any, [_UnsupportedBuiltinTool()])
-    )
+    params = ModelRequestParameters(builtin_tools=cast(Any, [_UnsupportedBuiltinTool()]))
 
     with pytest.raises(UserError, match='is not supported by `XaiModel`'):
         cast(Any, xai_module)._get_builtin_tools(params)
