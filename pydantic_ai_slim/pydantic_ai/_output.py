@@ -534,6 +534,12 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     validator: SchemaValidator
     _function_schema: _function_schema.FunctionSchema | None = None
 
+    @property
+    def single_arg_name(self) -> str | None:
+        if self._function_schema:
+            return self._function_schema.single_arg_name
+        return None
+
     def __init__(
         self,
         output: OutputTypeOrFunction[OutputDataT],
@@ -891,11 +897,13 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             name = None
             description = None
             strict = None
+            examples = None
             if isinstance(output, ToolOutput):
                 # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
                 name = output.name
                 description = output.description
                 strict = output.strict
+                examples = output.examples
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -903,7 +911,28 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             if strict is None:
                 strict = default_strict
 
-            processor = ObjectOutputProcessor(output=output, description=description, strict=strict)  # pyright: ignore[reportUnknownArgumentType]
+            processor = ObjectOutputProcessor(
+                output=cast('OutputTypeOrFunction[OutputDataT]', output),
+                description=description,
+                strict=strict,
+            )
+
+            if examples:
+                # Flatten examples if the output function has a single argument that gets flattened in the schema
+                if processor.single_arg_name:
+                    arg_name = processor.single_arg_name
+                    examples = [ex[arg_name] if isinstance(ex, dict) and arg_name in ex else ex for ex in examples]
+
+                # Serialize examples to JSON-compatible dicts
+                examples = [
+                    TypeAdapter(Any).dump_python(ex, mode='json')  # pyright: ignore[reportUnknownMemberType]
+                    for ex in examples
+                ]
+
+                # Wrap examples if the output type is wrapped in a TypedDict
+                if processor.outer_typed_dict_key:
+                    examples = [{processor.outer_typed_dict_key: ex} for ex in examples]
+
             object_def = processor.object_def
 
             if name is None:
@@ -925,12 +954,18 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 if multiple:
                     description = f'{object_def.name}: {description}'
 
+            # Append examples to description so they are visible to models that don't support input_examples
+            if examples:
+                examples_str = json.dumps(examples, indent=2)
+                description = f'{description}\n\nExamples:\n{examples_str}'
+
             tool_def = ToolDefinition(
                 name=name,
                 description=description,
                 parameters_json_schema=object_def.json_schema,
                 strict=object_def.strict,
                 outer_typed_dict_key=processor.outer_typed_dict_key,
+                examples=examples,
                 kind='output',
             )
             processors[name] = processor

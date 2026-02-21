@@ -68,6 +68,7 @@ def test_model_request_parameters_are_serializable():
                     'strict': None,
                     'sequential': False,
                     'kind': 'function',
+                    'examples': None,
                     'metadata': None,
                     'timeout': None,
                 }
@@ -133,6 +134,7 @@ def test_model_request_parameters_are_serializable():
                     'strict': None,
                     'sequential': False,
                     'kind': 'function',
+                    'examples': None,
                     'metadata': None,
                     'timeout': None,
                 }
