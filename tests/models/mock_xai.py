@@ -423,7 +423,12 @@ def _get_example_tool_output(
     if tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_CODE_EXECUTION_TOOL:
         return {'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''}
     elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL:
-        return {}  # Web search has no content currently, in future will return inline citations
+        return {
+            'sources': [
+                {'url': 'https://example.com/article1', 'id': '1'},
+                {'url': 'https://wikipedia.org/wiki/Topic', 'id': '2'},
+            ]
+        }
     elif tool_type == chat_pb2.ToolCallType.TOOL_CALL_TYPE_MCP_TOOL:
         return [
             {
@@ -573,17 +578,22 @@ def create_web_search_response(
     *,
     tool_call_id: str = 'web_search_001',
     assistant_text: str,
+    citations: list[str] | None = None,
 ) -> chat_types.Response:
     """Create a Response with web search tool outputs.
 
     Args:
+        query: The search query.
+        content: Custom content to return (optional, uses default if not provided).
+        tool_call_id: Tool call ID.
         assistant_text: Text for the final assistant message (required to match real API).
+        citations: List of citation URLs to include in the response.
 
     Example:
         >>> response = create_web_search_response(
         ...     query='date of Jan 1 in 2026',
-        ...     content='Thursday',
         ...     assistant_text='January 1, 2026 is a Thursday.',
+        ...     citations=['https://example.com/calendar'],
         ... )
     """
     tool_type = chat_pb2.ToolCallType.TOOL_CALL_TYPE_WEB_SEARCH_TOOL
@@ -607,7 +617,13 @@ def create_web_search_response(
             ),
         )
     )
-    return _build_response_with_outputs(response_id=f'grok-{tool_call_id}', outputs=outputs)
+    response = _build_response_with_outputs(response_id=f'grok-{tool_call_id}', outputs=outputs)
+
+    # Add citations to the response proto if provided
+    if citations:
+        response.proto.citations.extend(citations)
+
+    return response
 
 
 def create_mcp_server_response(
