@@ -154,7 +154,6 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
                     '`key` and `value` fields instead, '
                     'or use `output_type=PromptedOutput(...)` as an alternative.',
                     UserWarning,
-                    stacklevel=2,
                 )
         return schema
 
