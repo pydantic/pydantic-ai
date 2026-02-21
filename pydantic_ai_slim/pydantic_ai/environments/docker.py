@@ -348,7 +348,7 @@ class DockerEnvironment(ExecutionEnvironment):
                 'shell',
                 'read_file',
                 'write_file',
-                'replace_str',
+                'edit_file:replace_str',
                 'glob',
                 'grep',
             }

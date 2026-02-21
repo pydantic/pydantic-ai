@@ -15,8 +15,8 @@ from typing_extensions import Self
 from ..environments._base import (
     IMAGE_EXTENSIONS,
     IMAGE_MEDIA_TYPES,
-    Capability,
     ExecutionEnvironment,
+    ToolName,
 )
 from ..exceptions import ModelRetry
 from ..messages import BinaryContent
@@ -62,9 +62,9 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         shared_environment: ExecutionEnvironment | None = None,
         *,
         environment_factory: Callable[[], ExecutionEnvironment] | None = None,
-        include: Sequence[Capability] | None = None,
-        exclude: Sequence[Capability] | None = None,
-        edit_strategy: Literal['replace_str', 'apply_patch'] | None = None,
+        include: Sequence[ToolName] | None = None,
+        exclude: Sequence[ToolName] | None = None,
+        edit_strategy: Literal['edit_file:replace_str', 'edit_file:apply_patch'] | None = None,
         require_shell_approval: bool = False,
         require_write_approval: bool = False,
         image_support: bool = True,
@@ -82,13 +82,13 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                 `async with toolset:` entry. Use this for concurrent runs that need
                 isolation (e.g. separate Docker containers). Mutually exclusive with
                 `shared_environment`.
-            include: Capabilities to include. `None` means all capabilities
-                from the environment. Pass an explicit set to restrict to
-                specific capabilities.
-            exclude: Capabilities to exclude. `None` defaults to no exclusions.
-                Pass an explicit set to exclude specific capabilities.
+            include: Tool names to include. `None` means all tools supported
+                by the environment. Pass an explicit sequence to restrict to
+                specific tools.
+            exclude: Tool names to exclude. `None` defaults to no exclusions.
+                Pass an explicit sequence to exclude specific tools.
             edit_strategy: Which edit strategy to use. `None` auto-selects
-                `'replace_str'` if supported by the environment.
+                `'edit_file:replace_str'` if supported by the environment.
             require_shell_approval: Whether the `shell` tool requires human-in-the-loop
                 approval before execution. Recommended for `LocalEnvironment` where
                 commands run directly on the host.
@@ -112,9 +112,9 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         self._per_run_state: ContextVar[tuple[AsyncExitStack, Token[ExecutionEnvironment | None]] | None] = ContextVar(
             f'_per_run_state_{id or "environment"}', default=None
         )
-        self._include: frozenset[Capability] | None = frozenset(include) if include is not None else None
-        self._exclude: frozenset[Capability] = frozenset(exclude) if exclude else frozenset()
-        self._edit_strategy: Literal['replace_str', 'apply_patch'] | None = edit_strategy
+        self._include: frozenset[ToolName] | None = frozenset(include) if include is not None else None
+        self._exclude: frozenset[ToolName] = frozenset(exclude) if exclude else frozenset()
+        self._edit_strategy: Literal['edit_file:replace_str', 'edit_file:apply_patch'] | None = edit_strategy
         self._image_support = image_support
         self._max_image_bytes = max_image_bytes
         self._require_shell_approval = require_shell_approval
@@ -127,25 +127,37 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         # get_tools() filters at runtime based on the current environment's capabilities.
         self._register_tools()
 
-    def _resolve_capabilities(self, env: ExecutionEnvironment) -> frozenset[Capability]:
-        """Determine which capabilities are available, applying include/exclude filters."""
-        available: frozenset[Capability] = env.capabilities
+    def _resolve_tool_names(self, env: ExecutionEnvironment) -> frozenset[str]:
+        """Determine which tool names to expose, based on the environment's capabilities and include/exclude."""
+        # Map env capabilities → tool names (most 1:1, but edit_file:* → edit_file)
+        tool_names: set[str] = set()
+        for cap in env.capabilities:
+            if cap.startswith('edit_file:'):
+                continue  # handled below
+            tool_names.add(cap)
 
+        # Add edit_file if the resolved strategy's capability is available
+        if self._resolve_edit_tool(env) is not None:
+            tool_names.add('edit_file')
+
+        # Apply include/exclude at the tool-name level
         if self._include is not None:
-            available &= self._include
+            tool_names &= self._include
+        tool_names -= self._exclude
 
-        available -= self._exclude
-        return available
+        return frozenset(tool_names)
 
-    def _resolve_edit_tool(self, env: ExecutionEnvironment) -> Literal['replace_str', 'apply_patch'] | None:
+    def _resolve_edit_tool(
+        self, env: ExecutionEnvironment
+    ) -> Literal['edit_file:replace_str', 'edit_file:apply_patch'] | None:
         """Determine which edit strategy to use."""
         if self._edit_strategy is not None:
             return self._edit_strategy
         env_caps = env.capabilities
-        if 'replace_str' in env_caps:
-            return 'replace_str'
-        if 'apply_patch' in env_caps:
-            return 'apply_patch'
+        if 'edit_file:replace_str' in env_caps:
+            return 'edit_file:replace_str'
+        if 'edit_file:apply_patch' in env_caps:
+            return 'edit_file:apply_patch'
         return None
 
     def _register_tools(self) -> None:
@@ -159,7 +171,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         self._register_shell()
         self._register_read_file()
         self._register_write_file()
-        self._register_replace_str()
+        self._register_edit_file()
         self._register_glob()
         self._register_grep()
 
@@ -262,8 +274,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
 
         self.tool(requires_approval=self._require_write_approval)(write_file)
 
-    def _register_replace_str(self) -> None:
-        async def replace_str(path: str, old: str, new: str, replace_all: bool = False) -> str:
+    def _register_edit_file(self) -> None:
+        async def edit_file(path: str, old: str, new: str, replace_all: bool = False) -> str:
             """Edit a file by exact string replacement.
 
             The old string must match exactly (including whitespace and indentation).
@@ -282,7 +294,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             except (FileNotFoundError, ValueError) as e:
                 raise ModelRetry(str(e))
 
-        self.tool(requires_approval=self._require_write_approval)(replace_str)
+        self.tool(requires_approval=self._require_write_approval)(edit_file)
 
     def _register_glob(self) -> None:
         async def glob_tool(pattern: str, path: str = '.') -> str:
@@ -342,8 +354,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await super().get_tools(ctx)
-        caps = self._resolve_capabilities(self.required_environment)
-        return {name: tool for name, tool in all_tools.items() if name in caps}
+        tool_names = self._resolve_tool_names(self.required_environment)
+        return {name: tool for name, tool in all_tools.items() if name in tool_names}
 
     @property
     def tool_name_conflict_hint(self) -> str:

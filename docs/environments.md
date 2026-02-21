@@ -162,7 +162,7 @@ env = DockerEnvironment.hardened(
 | `shell` | Execute shell commands |
 | `read_file` | Read files with line numbers (renders images for multimodal models) |
 | `write_file` | Create or overwrite files |
-| `replace_str` | Edit files by exact string replacement |
+| `edit_file` | Edit files by exact string replacement |
 | `glob` | Find files by pattern |
 | `grep` | Search file contents with regex |
 
@@ -175,7 +175,7 @@ from pydantic_ai.environments.memory import MemoryEnvironment
 # Only file tools — no shell or search
 toolset = ExecutionEnvironmentToolset(
     MemoryEnvironment(),
-    include=['read_file', 'write_file', 'replace_str'],
+    include=['read_file', 'write_file', 'edit_file'],
 )
 ```
 
@@ -321,7 +321,7 @@ from pydantic_ai.environments._base import Capability
 class MyCloudEnvironment(ExecutionEnvironment):
     @property
     def capabilities(self) -> frozenset[Capability]:
-        return frozenset({'shell', 'read_file', 'write_file', 'replace_str', 'ls', 'glob', 'grep'})
+        return frozenset({'shell', 'read_file', 'write_file', 'edit_file:replace_str', 'ls', 'glob', 'grep'})
 
     async def shell(
         self, command: str, *, timeout: float | None = 120, env: dict[str, str] | None = None

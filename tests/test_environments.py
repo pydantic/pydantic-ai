@@ -511,7 +511,7 @@ async def test_toolset_tool_names():
     ctx = build_run_context()
     tools = await toolset.get_tools(ctx)
     tool_names = sorted(tools.keys())
-    assert tool_names == snapshot(['glob', 'grep', 'ls', 'read_file', 'replace_str', 'shell', 'write_file'])
+    assert tool_names == snapshot(['edit_file', 'glob', 'grep', 'ls', 'read_file', 'shell', 'write_file'])
 
 
 async def test_toolset_include_flags():
@@ -581,7 +581,7 @@ async def test_toolset_edit_retry_on_error(tmp_path: Path):
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
             await manager.handle_call(
                 ToolCallPart(
-                    tool_name='replace_str',
+                    tool_name='edit_file',
                     args={'path': 'test.txt', 'old': 'nonexistent', 'new': 'replacement'},
                 )
             )
@@ -742,12 +742,12 @@ async def test_toolset_require_shell_approval():
 
 
 async def test_toolset_require_write_approval():
-    """require_write_approval sets requires_approval on write_file and replace_str."""
+    """require_write_approval sets requires_approval on write_file and edit_file."""
     toolset = ExecutionEnvironmentToolset(MemoryEnvironment(), require_write_approval=True)
     ctx = build_run_context(None)
     tools = await toolset.get_tools(ctx)
     assert tools['write_file'].tool_def.kind == 'unapproved'
-    assert tools['replace_str'].tool_def.kind == 'unapproved'
+    assert tools['edit_file'].tool_def.kind == 'unapproved'
     # read_file and search tools should NOT require approval
     assert tools['read_file'].tool_def.kind == 'function'
     assert tools['glob'].tool_def.kind == 'function'
@@ -1729,7 +1729,7 @@ async def test_toolset_edit_success(tmp_path: Path):
         await env.write_file('code.py', 'old_value = 1\n')
         result = await manager.handle_call(
             ToolCallPart(
-                tool_name='replace_str',
+                tool_name='edit_file',
                 args={'path': 'code.py', 'old': 'old_value', 'new': 'new_value'},
             )
         )
@@ -2841,9 +2841,9 @@ async def test_memory_read_file_that_is_also_directory_prefix():
 def test_resolve_edit_tool_explicit_strategy():
     """Passing edit_strategy to constructor overrides auto-detection."""
     env = MemoryEnvironment()
-    toolset = ExecutionEnvironmentToolset(env, edit_strategy='apply_patch')
+    toolset = ExecutionEnvironmentToolset(env, edit_strategy='edit_file:apply_patch')
     strategy = toolset._resolve_edit_tool(env)
-    assert strategy == 'apply_patch'
+    assert strategy == 'edit_file:apply_patch'
 
 
 def test_resolve_edit_tool_auto_replace_str():
@@ -2851,7 +2851,7 @@ def test_resolve_edit_tool_auto_replace_str():
     env = MemoryEnvironment()
     toolset = ExecutionEnvironmentToolset(env)
     strategy = toolset._resolve_edit_tool(env)
-    assert strategy == 'replace_str'
+    assert strategy == 'edit_file:replace_str'
 
 
 def test_resolve_edit_tool_apply_patch_fallback():
@@ -2861,11 +2861,11 @@ def test_resolve_edit_tool_apply_patch_fallback():
     class _ApplyPatchEnv(BaseEnv):
         @property
         def capabilities(self) -> frozenset[EnvCapability]:
-            return frozenset({'apply_patch'})
+            return frozenset({'edit_file:apply_patch'})
 
     toolset = ExecutionEnvironmentToolset(_ApplyPatchEnv())
     strategy = toolset._resolve_edit_tool(_ApplyPatchEnv())
-    assert strategy == 'apply_patch'
+    assert strategy == 'edit_file:apply_patch'
 
 
 def test_resolve_edit_tool_neither():

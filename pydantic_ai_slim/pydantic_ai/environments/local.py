@@ -136,7 +136,7 @@ class LocalEnvironment(ExecutionEnvironment):
 
     @property
     def capabilities(self) -> frozenset[Capability]:
-        return frozenset({'ls', 'shell', 'read_file', 'write_file', 'replace_str', 'glob', 'grep'})
+        return frozenset({'ls', 'shell', 'read_file', 'write_file', 'edit_file:replace_str', 'glob', 'grep'})
 
     async def __aenter__(self) -> Self:
         self._root_dir.mkdir(parents=True, exist_ok=True)

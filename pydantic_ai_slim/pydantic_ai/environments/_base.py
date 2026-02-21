@@ -20,15 +20,30 @@ Capability = Literal[
     'shell',
     'read_file',
     'write_file',
-    'replace_str',
-    'apply_patch',
+    'edit_file:replace_str',
+    'edit_file:apply_patch',
     'glob',
     'grep',
 ]
-"""Capability identifier corresponding to environment method names.
+"""Capability identifier for environment methods.
 
 Used in `capabilities` to declare which methods an environment implements.
-These are also used as tool names when exposed via `ExecutionEnvironmentToolset`.
+"""
+
+ToolName = Literal[
+    'ls',
+    'shell',
+    'read_file',
+    'write_file',
+    'edit_file',
+    'glob',
+    'grep',
+]
+"""Tool name exposed to the model by `ExecutionEnvironmentToolset`.
+
+Most match `Capability` 1:1, except `edit_file` which maps to either
+`edit_file:replace_str` or `edit_file:apply_patch` depending on environment support.
+Used for `include`/`exclude` filtering on the toolset.
 """
 
 

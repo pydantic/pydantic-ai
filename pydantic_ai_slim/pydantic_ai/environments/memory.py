@@ -71,7 +71,7 @@ class MemoryEnvironment(ExecutionEnvironment):
 
     @property
     def capabilities(self) -> frozenset[Capability]:
-        caps: set[Capability] = {'ls', 'read_file', 'write_file', 'replace_str', 'glob', 'grep'}
+        caps: set[Capability] = {'ls', 'read_file', 'write_file', 'edit_file:replace_str', 'glob', 'grep'}
         if self._command_handler is not None:
             caps.add('shell')
         return frozenset(caps)
