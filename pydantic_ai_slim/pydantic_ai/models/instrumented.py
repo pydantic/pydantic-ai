@@ -186,6 +186,19 @@ class InstrumentationSettings:
             self.tokens_histogram = self.meter.create_histogram(
                 **tokens_histogram_kwargs,  # pyright: ignore
             )
+        try:
+            self.cached_tokens_histogram = self.meter.create_histogram(
+                name='gen_ai.client.cached_token.usage',
+                unit='{token}',
+                description='Measures number of cached read and write tokens',
+                explicit_bucket_boundaries_advisory=TOKEN_HISTOGRAM_BOUNDARIES,
+            )
+        except TypeError:  # pragma: lax no cover
+            self.cached_tokens_histogram = self.meter.create_histogram(
+                name='gen_ai.client.cached_token.usage',
+                unit='{token}',
+                description='Measures number of cached read and write tokens',
+            )
         self.cost_histogram = self.meter.create_histogram(
             'operation.cost',
             unit='{USD}',
@@ -344,13 +357,19 @@ class InstrumentationSettings:
         attributes: dict[str, AttributeValue],
     ):
         for typ in ['input', 'output']:
-            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no cover
+            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
-            if price_calculation:
-                cost = float(getattr(price_calculation, f'{typ}_price'))
+            if price_calculation and (cost_attr := getattr(price_calculation, f'{typ}_price', None)) is not None:
+                cost = float(cost_attr)
                 self.cost_histogram.record(cost, token_attributes)
+
+        for cache_typ in ['cache_read', 'cache_write']:
+            if not (tokens := getattr(response.usage, f'{cache_typ}_tokens', 0)):
+                continue
+            cache_token_attributes = {**attributes, 'gen_ai.token.type': cache_typ}
+            self.cached_tokens_histogram.record(tokens, cache_token_attributes)
 
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'

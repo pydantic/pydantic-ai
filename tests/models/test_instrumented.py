@@ -993,8 +993,120 @@ Fix the errors and try again.\
                     'aggregation_temporality': 1,
                 },
             },
+            {
+                'name': 'gen_ai.client.cached_token.usage',
+                'description': 'Measures number of cached read and write tokens',
+                'unit': '{token}',
+                'data': {
+                    'data_points': [
+                        {
+                            'attributes': {
+                                'gen_ai.provider.name': 'openai',
+                                'gen_ai.system': 'openai',
+                                'gen_ai.operation.name': 'chat',
+                                'gen_ai.request.model': 'gpt-4o',
+                                'gen_ai.response.model': 'gpt-4o-2024-11-20',
+                                'gen_ai.token.type': 'cache_read',
+                            },
+                            'start_time_unix_nano': IsInt(),
+                            'time_unix_nano': IsInt(),
+                            'count': 1,
+                            'sum': 20,
+                            'scale': 20,
+                            'zero_count': 0,
+                            'positive': {'offset': 4531870, 'bucket_counts': [1]},
+                            'negative': {'offset': 0, 'bucket_counts': [0]},
+                            'flags': 0,
+                            'min': 20,
+                            'max': 20,
+                            'exemplars': [],
+                        },
+                        {
+                            'attributes': {
+                                'gen_ai.provider.name': 'openai',
+                                'gen_ai.system': 'openai',
+                                'gen_ai.operation.name': 'chat',
+                                'gen_ai.request.model': 'gpt-4o',
+                                'gen_ai.response.model': 'gpt-4o-2024-11-20',
+                                'gen_ai.token.type': 'cache_write',
+                            },
+                            'start_time_unix_nano': IsInt(),
+                            'time_unix_nano': IsInt(),
+                            'count': 1,
+                            'sum': 10,
+                            'scale': 20,
+                            'zero_count': 0,
+                            'positive': {'offset': 3483294, 'bucket_counts': [1]},
+                            'negative': {'offset': 0, 'bucket_counts': [0]},
+                            'flags': 0,
+                            'min': 10,
+                            'max': 10,
+                            'exemplars': [],
+                        },
+                    ],
+                    'aggregation_temporality': 1,
+                },
+            },
         ]
     )
+
+
+class ModelWithMissingUsage(Model):
+    """Model that returns responses with zero/missing usage attributes."""
+
+    @property
+    def system(self) -> str:
+        return 'openai'
+
+    @property
+    def model_name(self) -> str:
+        return 'gpt-4o'
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        # Return a response with no token usage (all zeros)
+        return ModelResponse(
+            parts=[TextPart('response')],
+            usage=RequestUsage(),  # All token counts default to 0
+            model_name='gpt-4o-2024-11-20',
+        )
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        return RequestUsage(input_tokens=0)  # pragma: no cover
+
+
+async def test_missing_token_usage_not_recorded(capfire: CaptureLogfire):
+    """Test that when token usage is 0/missing, no metrics are recorded to histograms."""
+    model = InstrumentedModel(ModelWithMissingUsage(), InstrumentationSettings())
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('system_prompt'), UserPromptPart('user_prompt')], timestamp=IsDatetime())
+    ]
+
+    await model.request(
+        messages,
+        model_settings=ModelSettings(),
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            allow_text_output=True,
+            output_tools=[],
+            output_mode='text',
+            output_object=None,
+        ),
+    )
+
+    with pytest.raises(AttributeError):
+        # metrics_reader.get_metrics_data() will return None, causing an AttirubteError to be raised
+        capfire.get_collected_metrics()
 
 
 def test_messages_to_otel_events_serialization_errors():
