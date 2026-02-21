@@ -129,6 +129,8 @@ temporal = ["temporalio==1.20.0"]
 dbos = ["dbos>=2.10.0"]
 # Prefect
 prefect = ["prefect>=3.4.21"]
+# Execution environments
+docker-environment = ["docker>=7.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -138,6 +140,14 @@ pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for 
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai"]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "huggingface" },
+        { extra = "outlines-vllm-offline" },
+    ],
+]
 
 [tool.uv.sources]
 pydantic-graph = { workspace = true }
