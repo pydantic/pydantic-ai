@@ -139,6 +139,39 @@ Feel free to click on the links to dive deeper into each story!
 """
 ```
 
+### Configuring Parameters
+
+The `tavily_search_tool` factory accepts optional parameters that control search behavior. `max_results` is always developer-controlled and never appears in the LLM tool schema. Other parameters, when provided, are fixed for all searches and hidden from the LLM's tool schema. Parameters left unset remain available for the LLM to set per-call.
+
+For example, you can lock in `max_results` and `include_domains` at tool creation time while still letting the LLM control `exclude_domains`:
+
+```py {title="tavily_domain_filtering.py"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.tavily import tavily_search_tool
+
+api_key = os.getenv('TAVILY_API_KEY')
+assert api_key is not None
+
+agent = Agent(
+    'openai:gpt-5.2',
+    tools=[tavily_search_tool(api_key, max_results=5, include_domains=['arxiv.org'])],
+    instructions='Search for information and return the results.',
+)
+
+result = agent.run_sync(
+    'Find recent papers about transformer architectures'
+)
+print(result.output)
+"""
+Here are some recent papers about transformer architectures from arxiv.org:
+
+1. "Attention Is All You Need" - The foundational paper on the Transformer model.
+2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.
+"""
+```
+
 ## Exa Search Tool
 
 !!! info

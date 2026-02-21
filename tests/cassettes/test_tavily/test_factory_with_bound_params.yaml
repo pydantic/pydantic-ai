@@ -1,0 +1,66 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '130'
+      content-type:
+      - application/json
+      host:
+      - api.tavily.com
+    method: POST
+    parsed_body:
+      include_domains:
+      - arxiv.org
+      max_results: 2
+      query: attention mechanisms
+      search_depth: basic
+      topic: general
+    uri: https://api.tavily.com/search
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1668'
+      content-security-policy:
+      - default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self'; style-src 'self';base-uri 'self';form-action
+        'self'; require-trusted-types-for 'script'; upgrade-insecure-requests;
+      content-type:
+      - application/json
+    parsed_body:
+      answer: null
+      follow_up_questions: null
+      images: []
+      query: attention mechanisms
+      request_id: 139680ef-e03d-48c8-a3bc-950081750288
+      response_time: 1.31
+      results:
+      - content: by H Hays · 2026 · Cited by 1 -- Attention mechanisms represent a fundamental paradigm shift in neural network
+          architectures, enabling models to selectively focus on relevant
+        raw_content: null
+        score: 0.81770587
+        title: '[2601.03329] Attention mechanisms in neural networks'
+        url: https://arxiv.org/abs/2601.03329
+      - content: '# Title:A General Survey on Attention Mechanisms in Deep Learning. View a PDF of the paper titled A General
+          Survey on Attention Mechanisms in Deep Learning, by Gianni Brauwers and Flavius Frasincar. > Abstract:Attention
+          is an important mechanism that can be employed for a variety of deep learning models across many different domains
+          and tasks. The various attention mechanisms are explained by means of a framework consisting of a general attention
+          model, uniform notation, and a comprehensive taxonomy of attention mechanisms. | Subjects: | Machine Learning (cs.LG)
+          |. | Cite as: | arXiv:2203.14263 [cs.LG] |. |  | (or  arXiv:2203.14263v1 [cs.LG] for this version) |. View a PDF
+          of the paper titled A General Survey on Attention Mechanisms in Deep Learning, by Gianni Brauwers and Flavius Frasincar.
+          ### References & Citations. # Bibliographic and Citation Tools. # Recommenders and Search Tools. Have an idea for
+          a project that will add value for arXiv''s community?'
+        raw_content: null
+        score: 0.8138313
+        title: A General Survey on Attention Mechanisms in Deep ...
+        url: https://arxiv.org/abs/2203.14263
+    status:
+      code: 200
+      message: OK
+version: 1
