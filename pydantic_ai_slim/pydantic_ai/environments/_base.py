@@ -207,27 +207,6 @@ class ExecutionEnvironment(ABC):
         """
         ...
 
-    def instructions(self, capability: EnvCapability) -> str | None:
-        """Per-capability instructions for the LLM.
-
-        Override to provide environment-specific hints that toolsets include
-        in the tool description shown to the model, e.g.::
-
-            def instructions(self, capability):
-                if capability == 'shell':
-                    return 'Bash in Docker container, numpy/pandas installed'
-                if capability == 'grep':
-                    return 'Uses POSIX basic regex, not Python re syntax'
-                return None
-
-        Args:
-            capability: The capability name (e.g. `'shell'`).
-
-        Returns:
-            Instruction text for the LLM, or None for no extra instructions.
-        """
-        return None
-
     # --- Tool methods ---
     # All raise NotImplementedError by default. Concrete subclasses override
     # the methods that match their declared capabilities.

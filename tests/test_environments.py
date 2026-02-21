@@ -1728,20 +1728,6 @@ async def test_toolset_edit_success(tmp_path: Path):
         assert result == snapshot('Replaced 1 occurrence in code.py.')
 
 
-async def test_toolset_with_custom_env_instructions():
-    """Environment instructions is used per-tool."""
-
-    class CustomEnv(MemoryEnvironment):
-        def instructions(self, capability: str) -> str | None:
-            if capability == 'grep':
-                return 'Custom grep description.'
-            return None
-
-    env = CustomEnv()
-    assert env.instructions('grep') == 'Custom grep description.'
-    assert env.instructions('read_file') is None
-
-
 async def test_toolset_lifecycle_ref_counting(tmp_path: Path):
     """Multiple context manager entries share the environment."""
     env = LocalEnvironment(tmp_path)
@@ -2005,13 +1991,6 @@ async def test_docker_create_process(mock_docker_sandbox: Any) -> None:
     """DockerEnvironment.create_process returns a DockerEnvironmentProcess."""
     proc = await mock_docker_sandbox.create_process('echo test')
     assert proc is not None
-
-
-async def test_docker_instructions(mock_docker_sandbox: Any) -> None:
-    """DockerEnvironment.instructions provides per-tool descriptions."""
-    grep_desc = mock_docker_sandbox.instructions('grep')
-    assert grep_desc is not None
-    assert 'POSIX' in grep_desc
 
 
 async def test_docker_is_alive(mock_docker_sandbox: Any) -> None:

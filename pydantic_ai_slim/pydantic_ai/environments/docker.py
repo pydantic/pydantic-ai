@@ -354,15 +354,6 @@ class DockerEnvironment(ExecutionEnvironment):
             }
         )
 
-    def instructions(self, capability: EnvCapability) -> str | None:
-        if capability == 'grep':  # pragma: lax no cover
-            return 'Uses POSIX basic regex, not Python `re` syntax.'
-        elif capability == 'glob':  # pragma: lax no cover
-            return 'Uses `find` for pattern matching; `**` is not supported.'
-        elif capability == 'shell':  # pragma: lax no cover
-            return 'Runs inside a Docker container.'
-        return None  # pragma: lax no cover
-
     async def __aenter__(self) -> Self:
         await anyio.to_thread.run_sync(self._setup)
         return self
