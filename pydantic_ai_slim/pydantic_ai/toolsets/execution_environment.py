@@ -8,28 +8,23 @@ from asyncio import Lock
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AsyncExitStack, contextmanager
 from contextvars import ContextVar, Token
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import Self
 
 from ..environments._base import (
     IMAGE_EXTENSIONS,
     IMAGE_MEDIA_TYPES,
+    Capability,
     ExecutionEnvironment,
 )
 from ..exceptions import ModelRetry
 from ..messages import BinaryContent
 from ..toolsets.function import FunctionToolset
 
-Capability = Literal['ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep']
-"""Toolset-level capability used in `include`/`exclude`.
-
-These are higher-level than the environment's fine-grained capabilities.
-The toolset maps these to the appropriate environment capabilities.
-"""
-
-EditStrategy = Literal['replace_str', 'apply_patch']
-"""Specific edit tool strategy. Expanded from the `edit_file` capability."""
+if TYPE_CHECKING:
+    from .._run_context import AgentDepsT, RunContext
+    from ..toolsets.abstract import ToolsetTool
 
 
 class ExecutionEnvironmentToolset(FunctionToolset[Any]):
@@ -69,7 +64,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         environment_factory: Callable[[], ExecutionEnvironment] | None = None,
         include: Sequence[Capability] | None = None,
         exclude: Sequence[Capability] | None = None,
-        edit_strategy: EditStrategy | None = None,
+        edit_strategy: Literal['replace_str', 'apply_patch'] | None = None,
         require_shell_approval: bool = False,
         require_write_approval: bool = False,
         image_support: bool = True,
@@ -119,7 +114,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         )
         self._include: frozenset[Capability] | None = frozenset(include) if include is not None else None
         self._exclude: frozenset[Capability] = frozenset(exclude) if exclude else frozenset()
-        self._edit_strategy: EditStrategy | None = edit_strategy
+        self._edit_strategy: Literal['replace_str', 'apply_patch'] | None = edit_strategy
         self._image_support = image_support
         self._max_image_bytes = max_image_bytes
         self._require_shell_approval = require_shell_approval
@@ -128,26 +123,13 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         self._running_count: int = 0
         self._exit_stack: AsyncExitStack | None = None
 
-        # Register tools based on what we know at init time.
-        # When using environment_factory, no environment is available yet, so we
-        # register a full set of tools and let runtime errors catch unsupported capabilities.
-        self._register_tools(shared_environment)
+        # Register all tools unconditionally so schemas are built eagerly.
+        # get_tools() filters at runtime based on the current environment's capabilities.
+        self._register_tools()
 
-    def _resolve_capabilities(self, env: ExecutionEnvironment | None) -> set[Capability]:
-        """Determine which toolset-level capabilities to register as tools."""
-        if env is not None:
-            env_caps = env.capabilities
-            available: set[Capability] = set()
-            # Map env capabilities back to toolset capabilities
-            for cap in ('ls', 'shell', 'read_file', 'write_file', 'glob', 'grep'):
-                if cap in env_caps:
-                    available.add(cap)
-            # Check for edit_file: env has replace_str or apply_patch
-            if 'replace_str' in env_caps or 'apply_patch' in env_caps:
-                available.add('edit_file')
-        else:
-            # No environment yet — register everything (runtime will error on unsupported)
-            available = {'ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep'}
+    def _resolve_capabilities(self, env: ExecutionEnvironment) -> frozenset[Capability]:
+        """Determine which capabilities are available, applying include/exclude filters."""
+        available: frozenset[Capability] = env.capabilities
 
         if self._include is not None:
             available &= self._include
@@ -155,40 +137,31 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         available -= self._exclude
         return available
 
-    def _resolve_edit_tool(self, env: ExecutionEnvironment | None) -> EditStrategy | None:
+    def _resolve_edit_tool(self, env: ExecutionEnvironment) -> Literal['replace_str', 'apply_patch'] | None:
         """Determine which edit strategy to use."""
         if self._edit_strategy is not None:
             return self._edit_strategy
-        if env is not None:
-            env_caps = env.capabilities
-            if 'replace_str' in env_caps:
-                return 'replace_str'
-            if 'apply_patch' in env_caps:
-                return 'apply_patch'
-            return None
-        # Default when no environment is available
-        return 'replace_str'
+        env_caps = env.capabilities
+        if 'replace_str' in env_caps:
+            return 'replace_str'
+        if 'apply_patch' in env_caps:
+            return 'apply_patch'
+        return None
 
-    def _register_tools(self, env: ExecutionEnvironment | None) -> None:
-        """Register tools dynamically based on capabilities."""
-        caps = self._resolve_capabilities(env)
+    def _register_tools(self) -> None:
+        """Register all tools unconditionally.
 
-        if 'ls' in caps:
-            self._register_ls()
-        if 'shell' in caps:
-            self._register_shell()
-        if 'read_file' in caps:
-            self._register_read_file()
-        if 'write_file' in caps:
-            self._register_write_file()
-        if 'edit_file' in caps:
-            edit_strategy = self._resolve_edit_tool(env)
-            if edit_strategy == 'replace_str':
-                self._register_replace_str()
-        if 'glob' in caps:
-            self._register_glob()
-        if 'grep' in caps:
-            self._register_grep()
+        Filtering based on the environment's capabilities and include/exclude
+        is deferred to ``get_tools()``, which runs at request time when the
+        active environment is known.
+        """
+        self._register_ls()
+        self._register_shell()
+        self._register_read_file()
+        self._register_write_file()
+        self._register_replace_str()
+        self._register_glob()
+        self._register_grep()
 
     def _register_ls(self) -> None:
         async def ls(path: str = '.') -> str:
@@ -367,6 +340,11 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
 
         self.tool(name='grep')(grep_tool)
 
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        all_tools = await super().get_tools(ctx)
+        caps = self._resolve_capabilities(self.required_environment)
+        return {name: tool for name, tool in all_tools.items() if name in caps}
+
     @property
     def tool_name_conflict_hint(self) -> str:
         return 'Wrap the ExecutionEnvironmentToolset in a PrefixedToolset to avoid name conflicts.'
@@ -442,7 +420,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
     async def __aexit__(self, *args: Any) -> bool | None:
         if self._environment_factory is not None:
             state = self._per_run_state.get()
-            if state is not None:
+            if state is not None:  # pragma: no branch
                 stack, token = state
                 await stack.aclose()
                 self._environment_override.reset(token)

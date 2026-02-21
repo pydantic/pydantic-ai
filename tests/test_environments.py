@@ -508,7 +508,9 @@ async def test_local_creates_root_dir(tmp_path: Path):
 
 async def test_toolset_tool_names():
     toolset = ExecutionEnvironmentToolset(LocalEnvironment('.'))
-    tool_names = sorted(toolset.tools.keys())
+    ctx = build_run_context()
+    tools = await toolset.get_tools(ctx)
+    tool_names = sorted(tools.keys())
     assert tool_names == snapshot(['glob', 'grep', 'ls', 'read_file', 'replace_str', 'shell', 'write_file'])
 
 
@@ -517,7 +519,9 @@ async def test_toolset_include_flags():
         LocalEnvironment('.'),
         include=[],
     )
-    assert toolset.tools == {}
+    ctx = build_run_context()
+    tools = await toolset.get_tools(ctx)
+    assert tools == {}
 
 
 async def test_toolset_include_shell_only():
@@ -525,7 +529,9 @@ async def test_toolset_include_shell_only():
         LocalEnvironment('.'),
         include=['shell'],
     )
-    assert sorted(toolset.tools.keys()) == ['shell']
+    ctx = build_run_context()
+    tools = await toolset.get_tools(ctx)
+    assert sorted(tools.keys()) == ['shell']
 
 
 async def test_toolset_bash_tool(tmp_path: Path):
@@ -726,7 +732,8 @@ async def test_toolset_read_continuation_hint(tmp_path: Path):
 
 async def test_toolset_require_shell_approval():
     """require_shell_approval sets requires_approval on the shell tool."""
-    toolset = ExecutionEnvironmentToolset(require_shell_approval=True)
+    env = MemoryEnvironment(command_handler=lambda cmd: ExecutionResult(output='', exit_code=0))
+    toolset = ExecutionEnvironmentToolset(env, require_shell_approval=True)
     ctx = build_run_context(None)
     tools = await toolset.get_tools(ctx)
     assert tools['shell'].tool_def.kind == 'unapproved'
@@ -736,7 +743,7 @@ async def test_toolset_require_shell_approval():
 
 async def test_toolset_require_write_approval():
     """require_write_approval sets requires_approval on write_file and replace_str."""
-    toolset = ExecutionEnvironmentToolset(require_write_approval=True)
+    toolset = ExecutionEnvironmentToolset(MemoryEnvironment(), require_write_approval=True)
     ctx = build_run_context(None)
     tools = await toolset.get_tools(ctx)
     assert tools['write_file'].tool_def.kind == 'unapproved'
@@ -749,7 +756,7 @@ async def test_toolset_require_write_approval():
 
 async def test_toolset_default_no_approval():
     """By default, no tools require approval."""
-    toolset = ExecutionEnvironmentToolset()
+    toolset = ExecutionEnvironmentToolset(MemoryEnvironment())
     ctx = build_run_context(None)
     tools = await toolset.get_tools(ctx)
     for tool in tools.values():
@@ -1672,6 +1679,18 @@ async def test_toolset_image_read(tmp_path: Path):
         result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'img.png'}))
         assert isinstance(result, BinaryContent)
         assert result.media_type == 'image/png'
+
+
+async def test_toolset_read_binary_non_image():
+    """read_file on a non-image binary file returns a placeholder message."""
+    # Store invalid UTF-8 bytes under a non-image extension so MemoryEnvironment returns raw bytes
+    env = MemoryEnvironment(files={'data.bin': b'\x80\x81\x82'})
+    toolset = ExecutionEnvironmentToolset(env)
+    ctx = build_run_context(None)
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+    async with env:
+        result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'data.bin'}))
+    assert result == '[Binary file: data.bin — cannot display as text]'
 
 
 async def test_toolset_grep_no_matches(tmp_path: Path):
@@ -2827,6 +2846,14 @@ def test_resolve_edit_tool_explicit_strategy():
     assert strategy == 'apply_patch'
 
 
+def test_resolve_edit_tool_auto_replace_str():
+    """Auto-detection picks replace_str when supported by the environment."""
+    env = MemoryEnvironment()
+    toolset = ExecutionEnvironmentToolset(env)
+    strategy = toolset._resolve_edit_tool(env)
+    assert strategy == 'replace_str'
+
+
 def test_resolve_edit_tool_apply_patch_fallback():
     """When env has apply_patch but not replace_str, resolves to apply_patch."""
     from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
@@ -3071,3 +3098,59 @@ async def test_memory_read_image_stored_as_string():
         result = await env.read_file('image.png')
     assert isinstance(result, bytes)
     assert result == b'fake png data'
+
+
+# --- ExecutionEnvironmentToolset: get_tools filters by runtime capabilities ---
+
+
+async def test_toolset_factory_filters_tools_by_capabilities():
+    """When using environment_factory, get_tools() only returns tools supported by the runtime environment."""
+    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _LsOnlyEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'ls'})
+
+        async def ls(self, path: str = '.') -> list[FileInfo]:
+            return []
+
+    toolset = ExecutionEnvironmentToolset(environment_factory=_LsOnlyEnv)
+    # Before entering, all tools are registered (no env to check)
+    ctx = build_run_context()
+
+    async with toolset:
+        tools = await toolset.get_tools(ctx)
+
+    # Only ls should be exposed — the runtime env only supports ls
+    assert set(tools.keys()) == {'ls'}
+
+
+async def test_toolset_use_environment_filters_tools():
+    """use_environment() with a limited env filters tools from get_tools()."""
+    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _LsOnlyEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'ls'})
+
+    # Full-capability shared env registers all tools
+    full_env = MemoryEnvironment()
+    toolset = ExecutionEnvironmentToolset(full_env)
+    ctx = build_run_context()
+
+    async with full_env:
+        all_tools = await toolset.get_tools(ctx)
+        assert 'ls' in all_tools
+        assert 'read_file' in all_tools
+        assert 'write_file' in all_tools
+
+        # Override with a limited env — only ls should remain
+        with toolset.use_environment(_LsOnlyEnv()):
+            limited_tools = await toolset.get_tools(ctx)
+            assert set(limited_tools.keys()) == {'ls'}
+
+        # After exiting use_environment, all tools are back
+        restored_tools = await toolset.get_tools(ctx)
+        assert set(restored_tools.keys()) == set(all_tools.keys())

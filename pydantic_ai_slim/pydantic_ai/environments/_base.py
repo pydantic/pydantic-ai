@@ -25,10 +25,10 @@ Capability = Literal[
     'glob',
     'grep',
 ]
-"""Fine-grained capability identifier listing actual method names.
+"""Capability identifier corresponding to environment method names.
 
 Used in `capabilities` to declare which methods an environment implements.
-Toolsets are responsible for mapping these to LLM-facing tool names.
+These are also used as tool names when exposed via `ExecutionEnvironmentToolset`.
 """
 
 
