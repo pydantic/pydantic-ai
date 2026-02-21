@@ -5723,82 +5723,82 @@ async def test_google_vertex_logprobs(allow_model_requests: None, vertex_provide
             'finish_reason': 'STOP',
             'timestamp': IsDatetime(),
             'logprobs': {
-                'chosenCandidates': [
-                    {'logProbability': -0.01972555, 'token': '2', 'tokenId': 236778},
-                    {'logProbability': -0.006128676, 'token': ' +', 'tokenId': 900},
-                    {'logProbability': -2.3844768e-07, 'token': ' ', 'tokenId': 236743},
-                    {'logProbability': -2.3844768e-07, 'token': '2', 'tokenId': 236778},
-                    {'logProbability': -0.018705286, 'token': ' =', 'tokenId': 578},
-                    {'logProbability': -0.024863577, 'token': ' ', 'tokenId': 236743},
-                    {'logProbability': -4.649037e-06, 'token': '4', 'tokenId': 236812},
+                'chosen_candidates': [
+                    {'log_probability': -0.01972555, 'token': '2', 'token_id': 236778},
+                    {'log_probability': -0.006128676, 'token': ' +', 'token_id': 900},
+                    {'log_probability': -2.3844768e-07, 'token': ' ', 'token_id': 236743},
+                    {'log_probability': -2.3844768e-07, 'token': '2', 'token_id': 236778},
+                    {'log_probability': -0.018705286, 'token': ' =', 'token_id': 578},
+                    {'log_probability': -0.024863577, 'token': ' ', 'token_id': 236743},
+                    {'log_probability': -4.649037e-06, 'token': '4', 'token_id': 236812},
                 ],
-                'topCandidates': [
+                'top_candidates': [
                     {
                         'candidates': [
-                            {'logProbability': -0.01972555, 'token': '2', 'tokenId': 236778},
-                            {'logProbability': -4.1320033, 'token': '4', 'tokenId': 236812},
-                            {'logProbability': -6.808355, 'token': 'Four', 'tokenId': 26391},
-                            {'logProbability': -6.889938, 'token': '$', 'tokenId': 236795},
-                            {'logProbability': -7.830156, 'token': '**', 'tokenId': 1018},
+                            {'log_probability': -0.01972555, 'token': '2', 'token_id': 236778},
+                            {'log_probability': -4.1320033, 'token': '4', 'token_id': 236812},
+                            {'log_probability': -6.808355, 'token': 'Four', 'token_id': 26391},
+                            {'log_probability': -6.889938, 'token': '$', 'token_id': 236795},
+                            {'log_probability': -7.830156, 'token': '**', 'token_id': 1018},
                         ]
                     },
                     {
                         'candidates': [
-                            {'logProbability': -0.006128676, 'token': ' +', 'tokenId': 900},
-                            {'logProbability': -5.1196923, 'token': '+', 'tokenId': 236862},
-                            {'logProbability': -9.429066, 'token': ' plus', 'tokenId': 2915},
-                            {'logProbability': -12.47383, 'token': ' increased', 'tokenId': 4869},
-                            {'logProbability': -12.602639, 'token': ' add', 'tokenId': 1138},
+                            {'log_probability': -0.006128676, 'token': ' +', 'token_id': 900},
+                            {'log_probability': -5.1196923, 'token': '+', 'token_id': 236862},
+                            {'log_probability': -9.429066, 'token': ' plus', 'token_id': 2915},
+                            {'log_probability': -12.47383, 'token': ' increased', 'token_id': 4869},
+                            {'log_probability': -12.602639, 'token': ' add', 'token_id': 1138},
                         ]
                     },
                     {
                         'candidates': [
-                            {'logProbability': -2.3844768e-07, 'token': ' ', 'tokenId': 236743},
-                            {'logProbability': -18.285292, 'token': '2', 'tokenId': 236778},
-                            {'logProbability': -18.646221, 'token': ' \u200b\u200b', 'tokenId': 21297},
-                            {'logProbability': -18.94063, 'token': ' N', 'tokenId': 646},
-                            {'logProbability': -19.028633, 'token': ' an', 'tokenId': 614},
+                            {'log_probability': -2.3844768e-07, 'token': ' ', 'token_id': 236743},
+                            {'log_probability': -18.285292, 'token': '2', 'token_id': 236778},
+                            {'log_probability': -18.646221, 'token': ' \u200b\u200b', 'token_id': 21297},
+                            {'log_probability': -18.94063, 'token': ' N', 'token_id': 646},
+                            {'log_probability': -19.028633, 'token': ' an', 'token_id': 614},
                         ]
                     },
                     {
                         'candidates': [
-                            {'logProbability': -2.3844768e-07, 'token': '2', 'tokenId': 236778},
-                            {'logProbability': -16.029083, 'token': '3', 'tokenId': 236800},
-                            {'logProbability': -16.497353, 'token': '4', 'tokenId': 236812},
-                            {'logProbability': -18.473116, 'token': '1', 'tokenId': 236770},
-                            {'logProbability': -18.963243, 'token': '\n', 'tokenId': 107},
+                            {'log_probability': -2.3844768e-07, 'token': '2', 'token_id': 236778},
+                            {'log_probability': -16.029083, 'token': '3', 'token_id': 236800},
+                            {'log_probability': -16.497353, 'token': '4', 'token_id': 236812},
+                            {'log_probability': -18.473116, 'token': '1', 'token_id': 236770},
+                            {'log_probability': -18.963243, 'token': '\n', 'token_id': 107},
                         ]
                     },
                     {
                         'candidates': [
-                            {'logProbability': -0.018705286, 'token': ' =', 'tokenId': 578},
-                            {'logProbability': -4.2170067, 'token': ' equals', 'tokenId': 14339},
-                            {'logProbability': -5.669649, 'token': ' is', 'tokenId': 563},
-                            {'logProbability': -8.487247, 'token': ' equal', 'tokenId': 4745},
-                            {'logProbability': -10.404134, 'token': ' равно', 'tokenId': 59213},
+                            {'log_probability': -0.018705286, 'token': ' =', 'token_id': 578},
+                            {'log_probability': -4.2170067, 'token': ' equals', 'token_id': 14339},
+                            {'log_probability': -5.669649, 'token': ' is', 'token_id': 563},
+                            {'log_probability': -8.487247, 'token': ' equal', 'token_id': 4745},
+                            {'log_probability': -10.404134, 'token': ' равно', 'token_id': 59213},
                         ]
                     },
                     {
                         'candidates': [
-                            {'logProbability': -0.024863577, 'token': ' ', 'tokenId': 236743},
-                            {'logProbability': -3.70766, 'token': ' **', 'tokenId': 5213},
-                            {'logProbability': -14.454006, 'token': '**', 'tokenId': 1018},
-                            {'logProbability': -14.490942, 'token': ' \u202b', 'tokenId': 67184},
-                            {'logProbability': -14.820812, 'token': ' chemical', 'tokenId': 7395},
+                            {'log_probability': -0.024863577, 'token': ' ', 'token_id': 236743},
+                            {'log_probability': -3.70766, 'token': ' **', 'token_id': 5213},
+                            {'log_probability': -14.454006, 'token': '**', 'token_id': 1018},
+                            {'log_probability': -14.490942, 'token': ' \u202b', 'token_id': 67184},
+                            {'log_probability': -14.820812, 'token': ' chemical', 'token_id': 7395},
                         ]
                     },
                     {
                         'candidates': [
-                            {'logProbability': -4.649037e-06, 'token': '4', 'tokenId': 236812},
-                            {'logProbability': -13.0294285, 'token': '**', 'tokenId': 1018},
-                            {'logProbability': -13.835171, 'token': '\n', 'tokenId': 107},
-                            {'logProbability': -17.38563, 'token': 'けます', 'tokenId': 141784},
-                            {'logProbability': -17.863365, 'token': ' **', 'tokenId': 5213},
+                            {'log_probability': -4.649037e-06, 'token': '4', 'token_id': 236812},
+                            {'log_probability': -13.0294285, 'token': '**', 'token_id': 1018},
+                            {'log_probability': -13.835171, 'token': '\n', 'token_id': 107},
+                            {'log_probability': -17.38563, 'token': 'けます', 'token_id': 141784},
+                            {'log_probability': -17.863365, 'token': ' **', 'token_id': 5213},
                         ]
                     },
                 ],
             },
-            'avgLogprobs': -1.0858495576041085,
+            'avg_logprobs': -1.0858495576041085,
         }
     )
 
