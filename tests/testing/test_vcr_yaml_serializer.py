@@ -3,7 +3,35 @@ from typing import Any
 import pytest
 import yaml
 
-from .json_body_serializer import deserialize, serialize
+from pydantic_ai.testing.vcr_yaml_serializer import deserialize, serialize
+
+
+def _form_cassette(body: str) -> dict[str, Any]:
+    return {
+        'interactions': [
+            {
+                'request': {
+                    'headers': {'Content-Type': ['application/x-www-form-urlencoded']},
+                    'body': body,
+                }
+            }
+        ]
+    }
+
+
+def test_serialize_form_body_no_sensitive_keys():
+    output = serialize(_form_cassette('grant_type=authorization_code&code=mycode'))
+    assert 'grant_type=authorization_code' in output
+    assert 'code=mycode' in output
+
+
+@pytest.mark.parametrize('key', ['client_id', 'client_secret', 'refresh_token'])
+def test_serialize_form_body_scrubs_sensitive_key(key: str):
+    output = serialize(_form_cassette(f'{key}=secret_value&grant_type=refresh_token'))
+    assert f'{key}=scrubbed' in output
+    assert 'secret_value' not in output
+    # Without doseq=True, list values would be encoded as %5B%27scrubbed%27%5D
+    assert '%5B' not in output
 
 
 @pytest.fixture

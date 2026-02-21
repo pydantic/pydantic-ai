@@ -1,3 +1,14 @@
+"""VCR cassette serializer for pydantic-ai testing.
+
+This module provides custom YAML serialization for VCR cassettes that:
+- Parses and pretty-prints JSON bodies
+- Decompresses gzip/brotli encoded responses
+- Normalizes smart quotes and special characters
+- Filters sensitive headers and data
+"""
+
+__all__ = ['serialize', 'deserialize']
+
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 import gzip
 import json
@@ -6,8 +17,23 @@ import urllib.parse
 import zlib
 from typing import TYPE_CHECKING, Any
 
-import brotli
-import yaml
+try:
+    import brotli
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `brotli` to use the testing module, '
+        'you can use the `testing` optional group — '
+        'pip install "pydantic-ai-slim[testing]"'
+    ) from _import_error
+
+try:
+    import yaml
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `pyyaml` to use the testing module, '
+        'you can use the `testing` optional group — '
+        'pip install "pydantic-ai-slim[testing]"'
+    ) from _import_error
 
 # Smart quote and special character normalization.
 # LLM APIs sometimes return smart quotes and special Unicode characters in responses.
@@ -16,7 +42,7 @@ import yaml
 # Fixing these manually in the snapshots doesn't help,
 # because the snapshots are asserted on test reruns against the cassettes.
 # Normalizing to ASCII equivalents ensures consistent, portable cassette files and stable snapshots.
-SMART_CHAR_MAP = {
+_SMART_CHAR_MAP = {
     '\u2018': "'",  # LEFT SINGLE QUOTATION MARK
     '\u2019': "'",  # RIGHT SINGLE QUOTATION MARK
     '\u201c': '"',  # LEFT DOUBLE QUOTATION MARK
@@ -25,25 +51,25 @@ SMART_CHAR_MAP = {
     '\u2014': '--',  # EM DASH
     '\u2026': '...',  # HORIZONTAL ELLIPSIS
 }
-SMART_CHAR_TRANS = str.maketrans(SMART_CHAR_MAP)
+_SMART_CHAR_TRANS = str.maketrans(_SMART_CHAR_MAP)
 
 
-def normalize_smart_chars(text: str) -> str:
+def _normalize_smart_chars(text: str) -> str:
     """Normalize smart quotes and special characters to ASCII equivalents."""
     # First use the translation table for known characters
-    text = text.translate(SMART_CHAR_TRANS)
+    text = text.translate(_SMART_CHAR_TRANS)
     # Then apply NFKC normalization for any remaining special chars
     return unicodedata.normalize('NFKC', text)
 
 
-def normalize_body(obj: Any) -> Any:
+def _normalize_body(obj: Any) -> Any:
     """Recursively normalize smart characters in all strings within a data structure."""
     if isinstance(obj, str):
-        return normalize_smart_chars(obj)
+        return _normalize_smart_chars(obj)
     elif isinstance(obj, dict):
-        return {k: normalize_body(v) for k, v in obj.items()}
+        return {k: _normalize_body(v) for k, v in obj.items()}
     elif isinstance(obj, list):  # pragma: no cover
-        return [normalize_body(item) for item in obj]
+        return [_normalize_body(item) for item in obj]
     return obj  # pragma: no cover
 
 
@@ -55,15 +81,15 @@ else:
     except ImportError:  # pragma: no cover
         from yaml import Dumper, SafeLoader
 
-FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
-FILTERED_HEADERS = {'authorization', 'date', 'request-id', 'server', 'user-agent', 'via', 'set-cookie', 'api-key'}
-ALLOWED_HEADER_PREFIXES = {
+_FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
+_FILTERED_HEADERS = {'authorization', 'date', 'request-id', 'server', 'user-agent', 'via', 'set-cookie', 'api-key'}
+_ALLOWED_HEADER_PREFIXES = {
     # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
     'x-xet-',
     # required for Bedrock embeddings to preserve token count headers
     'x-amzn-bedrock-',
 }
-ALLOWED_HEADERS = {
+_ALLOWED_HEADERS = {
     # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
     'x-repo-commit',
     'x-linked-size',
@@ -74,13 +100,11 @@ ALLOWED_HEADERS = {
 }
 
 
-class LiteralDumper(Dumper):
-    """
-    A custom dumper that will represent multi-line strings using literal style.
-    """
+class _LiteralDumper(Dumper):
+    """A custom dumper that will represent multi-line strings using literal style."""
 
 
-def str_presenter(dumper: Dumper, data: str):
+def _str_presenter(dumper: Dumper, data: str) -> yaml.ScalarNode:
     """If the string contains newlines, represent it as a literal block."""
     if '\n' in data:
         return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
@@ -88,10 +112,20 @@ def str_presenter(dumper: Dumper, data: str):
 
 
 # Register the custom presenter on our dumper
-LiteralDumper.add_representer(str, str_presenter)
+_LiteralDumper.add_representer(str, _str_presenter)
 
 
-def deserialize(cassette_string: str):
+def deserialize(cassette_string: str) -> dict[str, Any]:
+    """Deserialize a VCR cassette from YAML format.
+
+    Converts the parsed_body back to the original body format expected by VCR.
+
+    Args:
+        cassette_string: The YAML string of the cassette.
+
+    Returns:
+        The cassette dict with body restored from parsed_body.
+    """
     cassette_dict = yaml.load(cassette_string, Loader=SafeLoader)
     for interaction in cassette_dict['interactions']:
         for kind, data in interaction.items():
@@ -102,21 +136,47 @@ def deserialize(cassette_string: str):
     return cassette_dict
 
 
-def serialize(cassette_dict: Any):  # pragma: lax no cover
+def _scrub_form_body(body: str) -> str:
+    """Scrub sensitive keys from an application/x-www-form-urlencoded body."""
+    query_params = urllib.parse.parse_qs(body)
+    scrubbed = any(key in query_params for key in ('client_id', 'client_secret', 'refresh_token'))
+    if not scrubbed:
+        return body
+    for key in ('client_id', 'client_secret', 'refresh_token'):
+        if key in query_params:
+            query_params[key] = ['scrubbed']
+    return urllib.parse.urlencode(query_params, doseq=True)
+
+
+def serialize(cassette_dict: Any) -> str:  # pragma: lax no cover
+    """Serialize a VCR cassette to YAML format.
+
+    Processes the cassette to:
+    - Lowercase and filter headers
+    - Decompress and parse JSON bodies
+    - Normalize smart quotes and special characters
+    - Scrub sensitive data (access tokens, client secrets)
+
+    Args:
+        cassette_dict: The cassette dict from VCR.
+
+    Returns:
+        The YAML string representation of the cassette.
+    """
     for interaction in cassette_dict['interactions']:
         for _kind, data in interaction.items():
             headers: dict[str, list[str]] = data.get('headers', {})
             # make headers lowercase
             headers = {k.lower(): v for k, v in headers.items()}
             # filter headers by name
-            headers = {k: v for k, v in headers.items() if k not in FILTERED_HEADERS}
+            headers = {k: v for k, v in headers.items() if k not in _FILTERED_HEADERS}
             # filter headers by prefix
             headers = {
                 k: v
                 for k, v in headers.items()
-                if not any(k.startswith(prefix) for prefix in FILTERED_HEADER_PREFIXES)
-                or k in ALLOWED_HEADERS
-                or any(k.startswith(prefix) for prefix in ALLOWED_HEADER_PREFIXES)
+                if not any(k.startswith(prefix) for prefix in _FILTERED_HEADER_PREFIXES)
+                or k in _ALLOWED_HEADERS
+                or any(k.startswith(prefix) for prefix in _ALLOWED_HEADER_PREFIXES)
             }
             # update headers on source object
             data['headers'] = headers
@@ -146,9 +206,10 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                         body = body.decode('utf-8')
                     parsed = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
                     # Normalize smart quotes and special characters
-                    data['parsed_body'] = normalize_body(parsed)
-                    if 'access_token' in data['parsed_body']:
-                        data['parsed_body']['access_token'] = 'scrubbed'
+                    data['parsed_body'] = _normalize_body(parsed)
+                    for token_key in ('access_token', 'id_token'):
+                        if token_key in data['parsed_body']:
+                            data['parsed_body'][token_key] = 'scrubbed'
                     del data['body']
                     # Update content-length to match the body that will be produced during deserialize.
                     # This is necessary because decompression changes the body size, and botocore
@@ -157,11 +218,7 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                         new_body = json.dumps(data['parsed_body'])
                         headers['content-length'] = [str(len(new_body.encode('utf-8')))]
             if content_type == ['application/x-www-form-urlencoded']:
-                query_params = urllib.parse.parse_qs(data['body'])
-                for key in ['client_id', 'client_secret', 'refresh_token']:  # pragma: no cover
-                    if key in query_params:
-                        query_params[key] = ['scrubbed']
-                        data['body'] = urllib.parse.urlencode(query_params)
+                data['body'] = _scrub_form_body(data['body'])
 
     # Use our custom dumper
-    return yaml.dump(cassette_dict, Dumper=LiteralDumper, allow_unicode=True, width=120)
+    return yaml.dump(cassette_dict, Dumper=_LiteralDumper, allow_unicode=True, width=120)

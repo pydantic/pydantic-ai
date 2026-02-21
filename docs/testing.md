@@ -1,4 +1,6 @@
-# Unit testing
+# Testing
+
+## Unit testing
 
 Writing unit tests for Pydantic AI code is just like unit tests for any other Python code.
 
@@ -270,3 +272,83 @@ async def test_forecast(override_weather_agent: None):
     ...
     # test code here
 ```
+
+## Integration Testing with VCR
+
+While unit testing with [`TestModel`][pydantic_ai.models.test.TestModel] is fast and
+deterministic, you may also want integration tests that verify your application works
+correctly with real LLM APIs. [VCR.py](https://vcrpy.readthedocs.io/) records HTTP
+interactions and replays them in subsequent test runs.
+
+### Why Use VCR for LLM Testing?
+
+- **Reproducible tests**: Record API responses once, replay them reliably
+- **Fast CI runs**: No network calls after initial recording
+- **Cost control**: Avoid repeated API charges during development
+- **Snapshot testing**: Review cassettes to see exactly what the LLM returned
+
+### Setting Up VCR with Pydantic AI
+
+Pydantic AI provides a custom serializer in `pydantic_ai.testing`
+that makes VCR cassettes more readable and maintainable:
+
+```bash
+pip install "pydantic-ai-slim[testing]" pytest-recording
+```
+
+Configure VCR in your `conftest.py`:
+
+```py {title="conftest.py"}
+import pytest
+from vcr import VCR
+
+from pydantic_ai.testing import vcr_yaml_serializer
+
+
+def pytest_recording_configure(config, vcr: VCR):
+    vcr.register_serializer('yaml', vcr_yaml_serializer)
+
+
+@pytest.fixture(scope='module')
+def vcr_config():
+    return {
+        'filter_headers': ['authorization', 'x-api-key'],
+        'decode_compressed_response': True,
+    }
+```
+
+### Writing Integration Tests
+
+Use the `@pytest.mark.vcr` decorator to record and replay HTTP interactions:
+
+```py {title="test_integration.py"}
+import pytest
+
+from pydantic_ai import Agent
+
+agent = Agent('anthropic:claude-sonnet-4-5')
+
+
+@pytest.mark.vcr
+async def test_agent_response():
+    result = await agent.run('What is 2+2?')
+    assert '4' in result.output
+```
+
+Run with `--record-mode=once` to record cassettes on first run:
+
+```bash
+pytest test_integration.py --record-mode=once
+```
+
+### What the Serializer Does
+
+The `vcr_yaml_serializer` module:
+
+1. **Parses JSON bodies**: Stores response bodies as structured YAML instead of escaped strings
+2. **Decompresses responses**: Handles gzip and Brotli encoding transparently
+3. **Normalizes Unicode**: Converts smart quotes (`"`, `'`) to ASCII equivalents
+4. **Filters headers**: Removes noisy headers like `date`, `server`, `cf-*`
+5. **Scrubs secrets**: Redacts `access_token` and OAuth credentials
+
+This produces cassettes that are easy to review in pull requests and stable across test runs.
