@@ -141,5 +141,13 @@ pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai"]
 
+[tool.uv]
+conflicts = [
+    [
+        { extra = "huggingface" },
+        { extra = "outlines-vllm-offline" },
+    ],
+]
+
 [tool.uv.sources]
 pydantic-graph = { workspace = true }
