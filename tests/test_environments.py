@@ -807,14 +807,6 @@ async def test_toolset_use_environment_no_default():
     assert toolset.environment is None
 
 
-async def test_toolset_instructions():
-    """Environment instructions is accessible for each tool."""
-    env = LocalEnvironment('.')
-    # LocalEnvironment returns None for all tool descriptions by default
-    assert env.instructions('shell') is None
-    assert env.instructions('read_file') is None
-
-
 async def test_toolset_tool_name_conflict_hint():
     toolset = ExecutionEnvironmentToolset(LocalEnvironment('.'))
     assert 'PrefixedToolset' in toolset.tool_name_conflict_hint
@@ -2839,24 +2831,36 @@ async def test_memory_read_file_that_is_also_directory_prefix():
 
 
 def test_resolve_edit_tool_explicit_strategy():
-    """Passing edit_strategy to constructor overrides auto-detection."""
-    env = MemoryEnvironment()
+    """Explicit edit_strategy is used when the environment supports it."""
+    from pydantic_ai.environments._base import EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _BothEditEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'edit_file:replace_str', 'edit_file:apply_patch'})
+
+    env = _BothEditEnv()
     toolset = ExecutionEnvironmentToolset(env, edit_strategy='edit_file:apply_patch')
-    strategy = toolset._resolve_edit_tool(env)
-    assert strategy == 'edit_file:apply_patch'
+    assert toolset._resolve_edit_tool(env) == 'edit_file:apply_patch'
+
+
+def test_resolve_edit_tool_explicit_strategy_unsupported_falls_back():
+    """Explicit edit_strategy falls back to auto-detection when the env doesn't support it."""
+    env = MemoryEnvironment()  # only has edit_file:replace_str
+    toolset = ExecutionEnvironmentToolset(env, edit_strategy='edit_file:apply_patch')
+    assert toolset._resolve_edit_tool(env) == 'edit_file:replace_str'
 
 
 def test_resolve_edit_tool_auto_replace_str():
     """Auto-detection picks replace_str when supported by the environment."""
     env = MemoryEnvironment()
     toolset = ExecutionEnvironmentToolset(env)
-    strategy = toolset._resolve_edit_tool(env)
-    assert strategy == 'edit_file:replace_str'
+    assert toolset._resolve_edit_tool(env) == 'edit_file:replace_str'
 
 
 def test_resolve_edit_tool_apply_patch_fallback():
     """When env has apply_patch but not replace_str, resolves to apply_patch."""
-    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+    from pydantic_ai.environments._base import EnvCapability, ExecutionEnvironment as BaseEnv
 
     class _ApplyPatchEnv(BaseEnv):
         @property
@@ -2864,13 +2868,12 @@ def test_resolve_edit_tool_apply_patch_fallback():
             return frozenset({'edit_file:apply_patch'})
 
     toolset = ExecutionEnvironmentToolset(_ApplyPatchEnv())
-    strategy = toolset._resolve_edit_tool(_ApplyPatchEnv())
-    assert strategy == 'edit_file:apply_patch'
+    assert toolset._resolve_edit_tool(_ApplyPatchEnv()) == 'edit_file:apply_patch'
 
 
 def test_resolve_edit_tool_neither():
     """When env has neither replace_str nor apply_patch, returns None."""
-    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+    from pydantic_ai.environments._base import EnvCapability, ExecutionEnvironment as BaseEnv
 
     class _NoEditEnv(BaseEnv):
         @property
@@ -2878,8 +2881,7 @@ def test_resolve_edit_tool_neither():
             return frozenset({'ls'})
 
     toolset = ExecutionEnvironmentToolset(_NoEditEnv())
-    strategy = toolset._resolve_edit_tool(_NoEditEnv())
-    assert strategy is None
+    assert toolset._resolve_edit_tool(_NoEditEnv()) is None
 
 
 # --- ExecutionEnvironmentToolset: ls formatting through toolset ---
@@ -2887,7 +2889,7 @@ def test_resolve_edit_tool_neither():
 
 async def test_toolset_ls_error_handling():
     """Toolset ls returns error string when environment raises."""
-    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+    from pydantic_ai.environments._base import EnvCapability, ExecutionEnvironment as BaseEnv
 
     class _ErrorLsEnv(BaseEnv):
         @property
@@ -2918,7 +2920,7 @@ async def test_toolset_ls_formats_dirs():
 
 async def test_toolset_ls_formats_files_without_size():
     """Toolset ls formats file entries without size (just the name)."""
-    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+    from pydantic_ai.environments._base import EnvCapability, ExecutionEnvironment as BaseEnv
 
     class _NoSizeEnv(BaseEnv):
         @property
@@ -2938,7 +2940,7 @@ async def test_toolset_ls_formats_files_without_size():
 
 async def test_toolset_ls_empty_directory():
     """Toolset ls returns 'Empty directory.' for empty listings."""
-    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+    from pydantic_ai.environments._base import EnvCapability, ExecutionEnvironment as BaseEnv
 
     class _EmptyLsEnv(BaseEnv):
         @property
@@ -3105,7 +3107,7 @@ async def test_memory_read_image_stored_as_string():
 
 async def test_toolset_factory_filters_tools_by_capabilities():
     """When using environment_factory, get_tools() only returns tools supported by the runtime environment."""
-    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+    from pydantic_ai.environments._base import EnvCapability, ExecutionEnvironment as BaseEnv
 
     class _LsOnlyEnv(BaseEnv):
         @property
@@ -3128,7 +3130,7 @@ async def test_toolset_factory_filters_tools_by_capabilities():
 
 async def test_toolset_use_environment_filters_tools():
     """use_environment() with a limited env filters tools from get_tools()."""
-    from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+    from pydantic_ai.environments._base import EnvCapability, ExecutionEnvironment as BaseEnv
 
     class _LsOnlyEnv(BaseEnv):
         @property

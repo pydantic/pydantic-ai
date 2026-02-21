@@ -20,7 +20,7 @@ from typing_extensions import Self
 from ._base import (
     IMAGE_EXTENSIONS,
     MAX_OUTPUT_CHARS,
-    Capability,
+    EnvCapability,
     ExecutionEnvironment,
     ExecutionProcess,
     ExecutionResult,
@@ -341,7 +341,7 @@ class DockerEnvironment(ExecutionEnvironment):
         )
 
     @property
-    def capabilities(self) -> frozenset[Capability]:  # pragma: lax no cover
+    def capabilities(self) -> frozenset[EnvCapability]:  # pragma: lax no cover
         return frozenset(
             {
                 'ls',
@@ -354,7 +354,7 @@ class DockerEnvironment(ExecutionEnvironment):
             }
         )
 
-    def instructions(self, capability: Capability) -> str | None:
+    def instructions(self, capability: EnvCapability) -> str | None:
         if capability == 'grep':  # pragma: lax no cover
             return 'Uses POSIX basic regex, not Python `re` syntax.'
         elif capability == 'glob':  # pragma: lax no cover

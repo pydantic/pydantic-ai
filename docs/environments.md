@@ -316,11 +316,11 @@ You can implement [`ExecutionEnvironment`][pydantic_ai.environments.ExecutionEnv
 from typing import Literal
 
 from pydantic_ai.environments import ExecutionEnvironment, ExecutionProcess, ExecutionResult, FileInfo
-from pydantic_ai.environments._base import Capability
+from pydantic_ai.environments._base import EnvCapability
 
 class MyCloudEnvironment(ExecutionEnvironment):
     @property
-    def capabilities(self) -> frozenset[Capability]:
+    def capabilities(self) -> frozenset[EnvCapability]:
         return frozenset({'shell', 'read_file', 'write_file', 'edit_file:replace_str', 'ls', 'glob', 'grep'})
 
     async def shell(

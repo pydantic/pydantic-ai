@@ -13,9 +13,9 @@ from typing import Any, Literal
 
 from typing_extensions import Self
 
-# --- Capability type alias ---
+# --- Type aliases ---
 
-Capability = Literal[
+EnvCapability = Literal[
     'ls',
     'shell',
     'read_file',
@@ -25,7 +25,7 @@ Capability = Literal[
     'glob',
     'grep',
 ]
-"""Capability identifier for environment methods.
+"""Identifier for an environment method.
 
 Used in `capabilities` to declare which methods an environment implements.
 """
@@ -41,7 +41,7 @@ ToolName = Literal[
 ]
 """Tool name exposed to the model by `ExecutionEnvironmentToolset`.
 
-Most match `Capability` 1:1, except `edit_file` which maps to either
+Most match `EnvCapability` 1:1, except `edit_file` which maps to either
 `edit_file:replace_str` or `edit_file:apply_patch` depending on environment support.
 Used for `include`/`exclude` filtering on the toolset.
 """
@@ -195,11 +195,11 @@ class ExecutionEnvironment(ABC):
     methods that match their declared capabilities.
     """
 
-    # --- Capability introspection ---
+    # --- EnvCapability introspection ---
 
     @property
     @abstractmethod
-    def capabilities(self) -> frozenset[Capability]:
+    def capabilities(self) -> frozenset[EnvCapability]:
         """Capabilities this environment supports (high-level).
 
         Used by toolsets to decide which tools to register. Only methods
@@ -207,7 +207,7 @@ class ExecutionEnvironment(ABC):
         """
         ...
 
-    def instructions(self, capability: Capability) -> str | None:
+    def instructions(self, capability: EnvCapability) -> str | None:
         """Per-capability instructions for the LLM.
 
         Override to provide environment-specific hints that toolsets include

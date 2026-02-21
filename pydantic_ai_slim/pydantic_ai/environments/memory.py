@@ -24,7 +24,7 @@ from ._base import (
 )
 
 if TYPE_CHECKING:
-    from ._base import Capability
+    from ._base import EnvCapability
 
 
 class MemoryEnvironment(ExecutionEnvironment):
@@ -70,8 +70,8 @@ class MemoryEnvironment(ExecutionEnvironment):
         self._command_handler = command_handler
 
     @property
-    def capabilities(self) -> frozenset[Capability]:
-        caps: set[Capability] = {'ls', 'read_file', 'write_file', 'edit_file:replace_str', 'glob', 'grep'}
+    def capabilities(self) -> frozenset[EnvCapability]:
+        caps: set[EnvCapability] = {'ls', 'read_file', 'write_file', 'edit_file:replace_str', 'glob', 'grep'}
         if self._command_handler is not None:
             caps.add('shell')
         return frozenset(caps)
@@ -234,6 +234,8 @@ class MemoryEnvironment(ExecutionEnvironment):
         normalized = self._normalize(path or '.')
         compiled = re.compile(pattern)
 
+        is_exact_file = normalized != '.' and normalized in self._files
+
         results: list[str] = []
         for file_path in sorted(self._files):
             # Path filtering
@@ -243,8 +245,8 @@ class MemoryEnvironment(ExecutionEnvironment):
                 elif not file_path.startswith(normalized + '/'):
                     continue
 
-            # Glob filtering
-            if glob_pattern and not fnmatch.fnmatch(posixpath.basename(file_path), glob_pattern):
+            # Glob filtering (skip for exact file matches, matching LocalEnvironment behavior)
+            if not is_exact_file and glob_pattern and not fnmatch.fnmatch(posixpath.basename(file_path), glob_pattern):
                 continue
 
             # Skip hidden files

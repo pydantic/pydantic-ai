@@ -150,10 +150,15 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
     def _resolve_edit_tool(
         self, env: ExecutionEnvironment
     ) -> Literal['edit_file:replace_str', 'edit_file:apply_patch'] | None:
-        """Determine which edit strategy to use."""
-        if self._edit_strategy is not None:
-            return self._edit_strategy
+        """Determine which edit strategy to use.
+
+        If ``edit_strategy`` was explicitly set and the environment supports it,
+        that strategy is used. Otherwise falls back to auto-detection
+        (preferring ``replace_str`` over ``apply_patch``).
+        """
         env_caps = env.capabilities
+        if self._edit_strategy is not None and self._edit_strategy in env_caps:
+            return self._edit_strategy
         if 'edit_file:replace_str' in env_caps:
             return 'edit_file:replace_str'
         if 'edit_file:apply_patch' in env_caps:
