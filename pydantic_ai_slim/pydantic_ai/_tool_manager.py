@@ -196,8 +196,8 @@ class ToolManager(Generic[AgentDepsT]):
             The validated arguments as a dictionary.
 
         Raises:
-            ValidationError: If Pydantic schema validation fails.
-            ModelRetry: If custom args_validator_func validation fails.
+            ValidationError: If argument validation fails.
+            ModelRetry: If argument validation fails with a retry request.
         """
         pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
         validator = tool.args_validator
