@@ -176,7 +176,7 @@ from pydantic_ai.environments.memory import MemoryEnvironment
 # Only file tools — no shell or search
 toolset = ExecutionEnvironmentToolset(
     MemoryEnvironment(),
-    include=frozenset({'read_file', 'write_file', 'edit_file'}),
+    include={'read_file', 'write_file', 'edit_file'},
 )
 ```
 
@@ -200,6 +200,9 @@ async def main():
         print(result.output)
     # container cleaned up automatically
 ```
+
+!!! note "Shared environment"
+    When you pass an environment directly, all concurrent `agent.run()` calls share the same environment instance (same container, filesystem, and processes). For isolated concurrent runs, use `environment_factory` — see [Concurrent Runs](#concurrent-runs) below.
 
 ### Environment Overrides
 
@@ -226,6 +229,34 @@ async def main():
         with toolset.use_environment(docker_env):
             await agent.run('echo "running in Docker"')
 ```
+
+### Concurrent Runs
+
+When multiple `agent.run()` calls execute concurrently (e.g. via `asyncio.gather`), a shared environment means they all operate on the same filesystem and processes, which can cause interference. Use `environment_factory` to create a fresh, isolated environment for each run:
+
+```python {title="environments_concurrent.py" test="skip"}
+import asyncio
+
+from pydantic_ai import Agent
+from pydantic_ai.environments import ExecutionEnvironmentToolset
+from pydantic_ai.environments.docker import DockerEnvironment
+
+# Each concurrent run gets its own container
+toolset = ExecutionEnvironmentToolset(
+    environment_factory=lambda: DockerEnvironment(image='python:3.12-slim')
+)
+
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+
+async def main():
+    # Each agent.run() enters its own `async with toolset:`, creating a separate container
+    results = await asyncio.gather(
+        agent.run('task A'),
+        agent.run('task B'),
+    )
+```
+
+The factory is called once per `async with toolset:` entry, and the created environment is automatically cleaned up on exit.
 
 ## Per-Call Environment Variables
 

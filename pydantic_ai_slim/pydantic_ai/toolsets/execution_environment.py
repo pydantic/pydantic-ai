@@ -5,9 +5,9 @@ from __future__ import annotations
 import posixpath
 import re
 from asyncio import Lock
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import AsyncExitStack, contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from typing import Any, Literal
 
 from typing_extensions import Self
@@ -42,7 +42,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
     filtered by `include`/`exclude`.
 
     The environment can be:
-    - Passed directly at construction time (most common)
+    - Passed directly at construction time via `shared_environment` (shared across concurrent runs)
+    - Created per-run via `environment_factory` (isolated concurrent runs)
     - Set/overridden via context var using `use_environment()` (for testing or per-call-site config)
 
     Usage:
@@ -63,10 +64,11 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
 
     def __init__(
         self,
-        environment: ExecutionEnvironment | None = None,
+        shared_environment: ExecutionEnvironment | None = None,
         *,
-        include: frozenset[Capability] | None = None,
-        exclude: frozenset[Capability] | None = None,
+        environment_factory: Callable[[], ExecutionEnvironment] | None = None,
+        include: Sequence[Capability] | None = None,
+        exclude: Sequence[Capability] | None = None,
         edit_strategy: EditStrategy | None = None,
         require_shell_approval: bool = False,
         require_write_approval: bool = False,
@@ -78,8 +80,13 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         """Create a new execution environment toolset.
 
         Args:
-            environment: The execution environment to use for tool execution.
+            shared_environment: A shared execution environment for tool execution.
+                All concurrent runs share this single environment instance.
                 Can also be set later via `use_environment()`.
+            environment_factory: A callable that creates a fresh environment per
+                `async with toolset:` entry. Use this for concurrent runs that need
+                isolation (e.g. separate Docker containers). Mutually exclusive with
+                `shared_environment`.
             include: Capabilities to include. `None` means all capabilities
                 from the environment. Pass an explicit set to restrict to
                 specific capabilities.
@@ -98,13 +105,20 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             max_retries: Maximum retries per tool call.
             id: Optional unique ID for the toolset (required for durable execution).
         """
+        if shared_environment is not None and environment_factory is not None:
+            raise ValueError('Cannot provide both shared_environment and environment_factory.')
+
         super().__init__(max_retries=max_retries, id=id)
-        self._default_environment = environment
+        self._shared_environment = shared_environment
+        self._environment_factory = environment_factory
         self._environment_override: ContextVar[ExecutionEnvironment | None] = ContextVar(
             f'_environment_override_{id or "environment"}', default=None
         )
-        self._include = include
-        self._exclude = exclude or frozenset()
+        self._per_run_state: ContextVar[tuple[AsyncExitStack, Token[ExecutionEnvironment | None]] | None] = ContextVar(
+            f'_per_run_state_{id or "environment"}', default=None
+        )
+        self._include: frozenset[Capability] | None = frozenset(include) if include is not None else None
+        self._exclude: frozenset[Capability] = frozenset(exclude) if exclude else frozenset()
         self._edit_strategy: EditStrategy | None = edit_strategy
         self._image_support = image_support
         self._max_image_bytes = max_image_bytes
@@ -115,9 +129,9 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         self._exit_stack: AsyncExitStack | None = None
 
         # Register tools based on what we know at init time.
-        # If no environment is provided, we register a full set of tools and
-        # let runtime errors catch unsupported capabilities.
-        self._register_tools(environment)
+        # When using environment_factory, no environment is available yet, so we
+        # register a full set of tools and let runtime errors catch unsupported capabilities.
+        self._register_tools(shared_environment)
 
     def _resolve_capabilities(self, env: ExecutionEnvironment | None) -> set[Capability]:
         """Determine which toolset-level capabilities to register as tools."""
@@ -361,12 +375,13 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
     def environment(self) -> ExecutionEnvironment | None:
         """The active execution environment, or None if not configured.
 
-        Checks the context var override first, then falls back to the default.
+        Checks the context var override first (which includes per-run factory
+        environments), then falls back to the shared environment.
         """
         override = self._environment_override.get()
         if override is not None:
             return override
-        return self._default_environment
+        return self._shared_environment
 
     @property
     def required_environment(self) -> ExecutionEnvironment:
@@ -406,21 +421,36 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
     # --- Lifecycle ---
 
     async def __aenter__(self) -> Self:
-        async with self._enter_lock:
-            self._running_count += 1
-            if self._running_count == 1:
-                self._exit_stack = AsyncExitStack()
-                try:
-                    await self._exit_stack.enter_async_context(self.required_environment)
-                except Exception:
-                    self._running_count -= 1
-                    raise
+        if self._environment_factory is not None:
+            env = self._environment_factory()
+            stack = AsyncExitStack()
+            await stack.enter_async_context(env)
+            token = self._environment_override.set(env)
+            self._per_run_state.set((stack, token))
+        else:
+            async with self._enter_lock:
+                self._running_count += 1
+                if self._running_count == 1:
+                    self._exit_stack = AsyncExitStack()
+                    try:
+                        await self._exit_stack.enter_async_context(self.required_environment)
+                    except Exception:
+                        self._running_count -= 1
+                        raise
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        async with self._enter_lock:
-            self._running_count -= 1
-            if self._running_count == 0 and self._exit_stack is not None:
-                await self._exit_stack.aclose()
-                self._exit_stack = None
+        if self._environment_factory is not None:
+            state = self._per_run_state.get()
+            if state is not None:
+                stack, token = state
+                await stack.aclose()
+                self._environment_override.reset(token)
+                self._per_run_state.set(None)
+        else:
+            async with self._enter_lock:
+                self._running_count -= 1
+                if self._running_count == 0 and self._exit_stack is not None:
+                    await self._exit_stack.aclose()
+                    self._exit_stack = None
         return None

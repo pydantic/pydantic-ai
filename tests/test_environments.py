@@ -515,7 +515,7 @@ async def test_toolset_tool_names():
 async def test_toolset_include_flags():
     toolset = ExecutionEnvironmentToolset(
         LocalEnvironment('.'),
-        include=frozenset(),
+        include={},
     )
     assert toolset.tools == {}
 
@@ -523,7 +523,7 @@ async def test_toolset_include_flags():
 async def test_toolset_include_shell_only():
     toolset = ExecutionEnvironmentToolset(
         LocalEnvironment('.'),
-        include=frozenset({'shell'}),
+        include={'shell'},
     )
     assert sorted(toolset.tools.keys()) == ['shell']
 
@@ -1215,7 +1215,7 @@ async def test_memory_read_file_bytes():
 async def test_memory_toolset_integration():
     """MemoryEnvironment works with ExecutionEnvironmentToolset for full agent testing."""
     env = MemoryEnvironment(files={'main.py': 'print("hello")\n'})
-    toolset = ExecutionEnvironmentToolset(env, exclude=frozenset({'shell'}))
+    toolset = ExecutionEnvironmentToolset(env, exclude={'shell'})
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -2927,6 +2927,138 @@ async def test_toolset_ls_empty_directory():
     tools = await toolset.get_tools(ctx)
     result = await toolset.call_tool('ls', {'path': '.'}, ctx, tools['ls'])
     assert str(result) == 'Empty directory.'
+
+
+# --- ExecutionEnvironmentToolset: environment_factory ---
+
+
+async def test_toolset_factory_basic():
+    """Factory creates a fresh environment per __aenter__."""
+    envs_created: list[MemoryEnvironment] = []
+
+    def factory() -> MemoryEnvironment:
+        env = MemoryEnvironment()
+        envs_created.append(env)
+        return env
+
+    toolset = ExecutionEnvironmentToolset(environment_factory=factory)
+
+    async with toolset:
+        assert len(envs_created) == 1
+        assert toolset.environment is envs_created[0]
+
+    # Second entry creates a new environment
+    async with toolset:
+        assert len(envs_created) == 2
+        assert toolset.environment is envs_created[1]
+        assert envs_created[0] is not envs_created[1]
+
+
+async def test_toolset_factory_concurrent():
+    """Concurrent __aenter__ calls get different environments."""
+    import asyncio
+
+    envs_created: list[MemoryEnvironment] = []
+
+    def factory() -> MemoryEnvironment:
+        env = MemoryEnvironment()
+        envs_created.append(env)
+        return env
+
+    toolset = ExecutionEnvironmentToolset(environment_factory=factory)
+
+    async def enter_and_check() -> MemoryEnvironment:
+        async with toolset:
+            env = toolset.environment
+            assert isinstance(env, MemoryEnvironment)
+            return env
+
+    env1, env2 = await asyncio.gather(enter_and_check(), enter_and_check())
+    assert len(envs_created) == 2
+    assert env1 is not env2
+
+
+async def test_toolset_factory_concurrent_isolation():
+    """Two concurrent runs each write a file and don't see each other's files."""
+    import asyncio
+
+    def factory() -> MemoryEnvironment:
+        return MemoryEnvironment()
+
+    toolset = ExecutionEnvironmentToolset(environment_factory=factory)
+    ctx = build_run_context()
+
+    async def write_and_read(filename: str, content: str) -> tuple[str, str]:
+        """Write a file, then try to read a file the other task wrote."""
+        other_file = 'b.txt' if filename == 'a.txt' else 'a.txt'
+        async with toolset:
+            manager = await ToolManager[None](toolset).for_run_step(ctx)
+            await manager.handle_call(ToolCallPart(tool_name='write_file', args={'path': filename, 'content': content}))
+            # Small delay so both tasks have a chance to write
+            await asyncio.sleep(0.01)
+            other_result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': other_file}))
+            return content, str(other_result)
+
+    (content_a, read_b), (content_b, read_a) = await asyncio.gather(
+        write_and_read('a.txt', 'alpha'),
+        write_and_read('b.txt', 'beta'),
+    )
+
+    assert content_a == 'alpha'
+    assert content_b == 'beta'
+    # Each run should NOT see the other's file — they have isolated environments
+    assert 'Error' in read_b
+    assert 'Error' in read_a
+
+
+async def test_toolset_factory_cleanup():
+    """__aexit__ properly cleans up factory-created environments."""
+    entered = 0
+    exited = 0
+
+    class TrackingEnv(MemoryEnvironment):
+        async def __aenter__(self):
+            nonlocal entered
+            entered += 1
+            return await super().__aenter__()
+
+        async def __aexit__(self, *args: Any):
+            nonlocal exited
+            exited += 1
+            return await super().__aexit__(*args)
+
+    toolset = ExecutionEnvironmentToolset(environment_factory=TrackingEnv)
+
+    async with toolset:
+        assert entered == 1
+        assert exited == 0
+
+    assert entered == 1
+    assert exited == 1
+
+
+async def test_toolset_factory_mutual_exclusivity():
+    """Passing both shared_environment and environment_factory raises ValueError."""
+    env = MemoryEnvironment()
+    with pytest.raises(ValueError, match='Cannot provide both'):
+        ExecutionEnvironmentToolset(env, environment_factory=MemoryEnvironment)
+
+
+async def test_toolset_factory_with_use_environment():
+    """use_environment() overrides the factory-created environment within the context."""
+    override_env = MemoryEnvironment()
+
+    toolset = ExecutionEnvironmentToolset(environment_factory=MemoryEnvironment)
+
+    async with toolset:
+        factory_env = toolset.environment
+        assert factory_env is not override_env
+
+        with toolset.use_environment(override_env):
+            assert toolset.environment is override_env
+
+        # After exiting use_environment, factory env is restored
+        assert toolset.environment is factory_env
 
 
 # --- Memory image file stored as string ---
