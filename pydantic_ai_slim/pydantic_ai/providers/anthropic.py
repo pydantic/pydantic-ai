@@ -150,8 +150,8 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
                     '(including Native Output mode, which is used with extended thinking). '
                     "Anthropic's schema transformation will set `additionalProperties` to `false`, "
                     'effectively forcing empty dicts. '
-                    'Consider using a `list` of `TypedDict` or `dataclass` with explicit '
-                    '`key` and `value` fields instead, '
+                    'Consider using a `list` of `tuple[str, str]`, `TypedDict`, or `dataclass` '
+                    'with explicit `key` and `value` fields instead, '
                     'or use `output_type=PromptedOutput(...)` as an alternative.',
                     UserWarning,
                 )
