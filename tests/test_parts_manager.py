@@ -4,7 +4,6 @@ import re
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import (
     BuiltinToolCallPart,
@@ -20,6 +19,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 
+from ._inline_snapshot import snapshot
 from .conftest import IsStr
 
 
