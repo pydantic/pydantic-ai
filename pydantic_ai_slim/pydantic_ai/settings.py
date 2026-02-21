@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from httpx import Timeout
 from typing_extensions import TypedDict
 
@@ -180,6 +182,64 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * Groq
     * Outlines (all providers)
+    """
+
+    thinking: bool
+    """Enable or disable thinking/reasoning.
+
+    - `True`: Enable thinking. Provider picks the best mode automatically
+      (adaptive for Anthropic Opus 4.6, enabled for older Anthropic,
+      default-on for OpenAI o-series, etc.)
+    - `False`: Disable thinking. Silently ignored on models where
+      thinking cannot be disabled (o-series, DeepSeek R1, etc.)
+    - Omitted: Use provider default behavior.
+
+    When `thinking` is `False`, `thinking_effort` is ignored.
+
+    Provider-specific settings (e.g. `anthropic_thinking`, `openai_reasoning_effort`)
+    always take precedence over this unified field.
+
+    Supported by:
+
+    * Anthropic (Claude 3.7+)
+    * Gemini (2.5+)
+    * OpenAI (o-series, GPT-5+)
+    * Bedrock (Claude, DeepSeek R1, and Amazon Nova 2)
+    * OpenRouter
+    * Groq (reasoning models)
+    * Cerebras (GLM, GPT-OSS)
+    * Mistral (Magistral models — always-on)
+    * Cohere (Command A Reasoning)
+    * xAI (Grok 3 Mini, Grok 4)
+    * DeepSeek (R1 models)
+    * Harmony (GPT-OSS models — always-on)
+    * ZAI (GLM models)
+    """
+
+    thinking_effort: Literal['low', 'medium', 'high']
+    """Control the depth of thinking/reasoning.
+
+    - `'low'`: Minimal thinking, faster responses, lower cost
+    - `'medium'`: Balanced thinking depth (typical default)
+    - `'high'`: Deep thinking, most thorough analysis
+
+    Setting `thinking_effort` without `thinking` implicitly enables thinking.
+    Silently ignored on models that don't support effort control.
+
+    Not all providers support all effort levels. xAI only supports `'low'` and
+    `'high'` — `'medium'` is mapped to `'low'`. Cohere and Groq ignore effort
+    entirely (thinking is either on or off). Provider-specific effort levels
+    (OpenAI's `xhigh`/`minimal`, Anthropic's `max`) are available through
+    provider-specific settings.
+
+    Supported by:
+
+    * Anthropic (Opus 4.5+ via `output_config.effort`)
+    * Gemini 3 (via `thinking_level`)
+    * OpenAI (o-series, GPT-5+ via `reasoning_effort`)
+    * OpenRouter (via `reasoning.effort`)
+    * Bedrock (Claude and DeepSeek R1 via `budget_tokens`, Nova 2 via `maxReasoningEffort`)
+    * xAI (Grok 3 Mini only — `'low'` and `'high'` only)
     """
 
 

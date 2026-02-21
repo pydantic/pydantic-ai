@@ -42,6 +42,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
+from ..thinking import _resolve_thinking_config  # pyright: ignore[reportPrivateUsage]
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -157,6 +158,40 @@ class GroqModel(Model):
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        merged_settings = cast(GroqModelSettings, merged_settings or {})
+
+        # Apply unified thinking config if no provider-specific setting
+        if 'groq_reasoning_format' not in merged_settings:
+            reasoning_format = self._resolve_thinking_config(merged_settings)
+            if reasoning_format is not None:
+                merged_settings['groq_reasoning_format'] = reasoning_format
+
+        return merged_settings, customized_parameters
+
+    def _resolve_thinking_config(self, model_settings: GroqModelSettings) -> Literal['hidden', 'raw', 'parsed'] | None:
+        """Resolve unified thinking settings to Groq reasoning format.
+
+        Uses silent-drop semantics: effort is silently ignored (Groq has no effort control).
+        """
+        resolved = _resolve_thinking_config(model_settings, self.profile)
+        if resolved is None:
+            return None
+
+        # Always-on models (DeepSeek R1, QwQ) are handled by _resolve_thinking_config's
+        # thinking_always_enabled guard, which returns None for thinking=False.
+        # So 'hidden' only applies to models where thinking can actually be toggled.
+        if not resolved.enabled:
+            return 'hidden'
+
+        # Effort is silently ignored (Groq SDK lacks reasoning_effort support)
+        return 'parsed'
 
     @property
     def base_url(self) -> str:

@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from botocore.exceptions import ClientError
-from typing_extensions import ParamSpec, assert_never
+from typing_extensions import ParamSpec, assert_never, override
 
 from pydantic_ai import (
     AudioUrl,
@@ -44,9 +44,14 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
+from pydantic_ai.profiles.anthropic import (
+    _DEFAULT_THINKING_BUDGET,  # pyright: ignore[reportPrivateUsage]
+    _EFFORT_TO_BUDGET,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.thinking import _resolve_thinking_config  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -83,6 +88,16 @@ if TYPE_CHECKING:
         ToolUseBlockOutputTypeDef,
         VideoBlockTypeDef,
     )
+
+# DeepSeek R1 on Bedrock uses the same thinking API format as Claude
+# (additionalModelRequestFields.thinking) but with a lower recommended
+# budget ceiling (8192 max — quality degrades above this).
+_DEEPSEEK_EFFORT_TO_BUDGET: dict[str, int] = {
+    'low': 1024,
+    'medium': 4096,
+    'high': 8192,
+}
+_DEEPSEEK_DEFAULT_THINKING_BUDGET = 4096
 
 
 LatestBedrockModelNames = Literal[
@@ -370,6 +385,81 @@ class BedrockConverseModel(Model):
 
         return {'toolSpec': tool_spec}
 
+    @override
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        merged_settings = cast(BedrockModelSettings, merged_settings or {})
+
+        # Inject unified thinking via additionalModelRequestFields.
+        # Each model family uses a different key and format:
+        #   - Claude/DeepSeek R1: 'thinking' → {'type': 'enabled', 'budget_tokens': N}
+        #   - Amazon Nova 2:     'reasoningConfig' → {'type': 'enabled', 'maxReasoningEffort': '...'}
+        additional = dict(merged_settings.get('bedrock_additional_model_requests_fields') or {})
+        thinking_key, thinking_value = self._resolve_bedrock_thinking(merged_settings)
+        if thinking_key and thinking_key not in additional and thinking_value is not None:
+            additional[thinking_key] = thinking_value
+            merged_settings['bedrock_additional_model_requests_fields'] = additional
+
+        return merged_settings, customized_parameters
+
+    def _resolve_bedrock_thinking(
+        self, model_settings: BedrockModelSettings
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """Dispatch thinking resolution to the appropriate model-family handler.
+
+        Returns (key, config) where key is the additionalModelRequestFields key
+        to use, or (None, None) if no thinking should be injected.
+        """
+        if 'anthropic' in self.model_name or 'deepseek' in self.model_name:
+            return 'thinking', self._resolve_thinking_config(model_settings)
+        elif 'amazon' in self.model_name:
+            return 'reasoningConfig', self._resolve_nova_thinking_config(model_settings)
+        return None, None
+
+    def _resolve_thinking_config(self, model_settings: BedrockModelSettings) -> dict[str, Any] | None:
+        """Resolve unified thinking to Claude/DeepSeek format.
+
+        Both use additionalModelRequestFields.thinking with budget_tokens,
+        but DeepSeek R1 has a lower recommended budget ceiling (8192 max).
+        """
+        resolved = _resolve_thinking_config(model_settings, self.profile)
+        if resolved is None:
+            return None
+
+        if not resolved.enabled:
+            return {'type': 'disabled'}
+
+        # Select model-appropriate budget mapping
+        if 'deepseek' in self.model_name:
+            effort_to_budget, default_budget = _DEEPSEEK_EFFORT_TO_BUDGET, _DEEPSEEK_DEFAULT_THINKING_BUDGET
+        else:
+            effort_to_budget, default_budget = _EFFORT_TO_BUDGET, _DEFAULT_THINKING_BUDGET
+
+        budget = effort_to_budget.get(resolved.effort, default_budget) if resolved.effort else default_budget
+        return {'type': 'enabled', 'budget_tokens': budget}
+
+    def _resolve_nova_thinking_config(self, model_settings: BedrockModelSettings) -> dict[str, Any] | None:
+        """Resolve unified thinking to Amazon Nova's reasoningConfig format.
+
+        Nova uses additionalModelRequestFields.reasoningConfig with maxReasoningEffort
+        which maps 1:1 to our unified thinking_effort levels.
+        """
+        resolved = _resolve_thinking_config(model_settings, self.profile)
+        if resolved is None:
+            return None
+
+        if not resolved.enabled:
+            return {'type': 'disabled'}
+
+        result: dict[str, Any] = {'type': 'enabled'}
+        if resolved.effort:
+            result['maxReasoningEffort'] = resolved.effort
+        return result
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -567,23 +657,23 @@ class BedrockConverseModel(Model):
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
 
         # Bedrock supports a set of specific extra parameters
-        if model_settings:
-            if guardrail_config := model_settings.get('bedrock_guardrail_config', None):
-                params['guardrailConfig'] = guardrail_config
-            if performance_configuration := model_settings.get('bedrock_performance_configuration', None):
-                params['performanceConfig'] = performance_configuration
-            if request_metadata := model_settings.get('bedrock_request_metadata', None):
-                params['requestMetadata'] = request_metadata
-            if additional_model_response_fields_paths := model_settings.get(
-                'bedrock_additional_model_response_fields_paths', None
-            ):
-                params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
-            if additional_model_requests_fields := model_settings.get('bedrock_additional_model_requests_fields', None):
-                params['additionalModelRequestFields'] = additional_model_requests_fields
-            if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
-                params['promptVariables'] = prompt_variables
-            if service_tier := model_settings.get('bedrock_service_tier', None):
-                params['serviceTier'] = service_tier
+        if guardrail_config := settings.get('bedrock_guardrail_config', None):
+            params['guardrailConfig'] = guardrail_config
+        if performance_configuration := settings.get('bedrock_performance_configuration', None):
+            params['performanceConfig'] = performance_configuration
+        if request_metadata := settings.get('bedrock_request_metadata', None):
+            params['requestMetadata'] = request_metadata
+        if additional_model_response_fields_paths := settings.get(
+            'bedrock_additional_model_response_fields_paths', None
+        ):
+            params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
+        # Thinking/reasoning config is already resolved in prepare_request()
+        if additional_model_requests_fields := settings.get('bedrock_additional_model_requests_fields', None):
+            params['additionalModelRequestFields'] = additional_model_requests_fields
+        if prompt_variables := settings.get('bedrock_prompt_variables', None):
+            params['promptVariables'] = prompt_variables
+        if service_tier := settings.get('bedrock_service_tier', None):
+            params['serviceTier'] = service_tier
 
         try:
             if stream:

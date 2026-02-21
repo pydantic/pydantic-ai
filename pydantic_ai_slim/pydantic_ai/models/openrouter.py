@@ -13,6 +13,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
 from ..settings import ModelSettings
+from ..thinking import _resolve_thinking_config  # pyright: ignore[reportPrivateUsage]
 from . import ModelRequestParameters, download_item
 
 try:
@@ -560,8 +561,46 @@ class OpenRouterModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        new_settings = _openrouter_settings_to_openai_settings(cast(OpenRouterModelSettings, merged_settings or {}))
+        merged_settings = cast(OpenRouterModelSettings, merged_settings or {})
+
+        # Strip OpenAI reasoning_effort injected by parent — OpenRouter uses its own reasoning config
+        merged_settings.pop('openai_reasoning_effort', None)
+
+        # Apply unified thinking config if no provider-specific setting
+        if 'openrouter_reasoning' not in merged_settings:
+            reasoning_config = self._resolve_openrouter_thinking(merged_settings)
+            if reasoning_config is not None:
+                merged_settings['openrouter_reasoning'] = reasoning_config
+
+        new_settings = _openrouter_settings_to_openai_settings(merged_settings)
         return new_settings, customized_parameters
+
+    def _resolve_openrouter_thinking(self, model_settings: OpenRouterModelSettings) -> OpenRouterReasoning | None:
+        """Resolve unified thinking settings to OpenRouter reasoning config.
+
+        OpenRouter handles per-provider translation, so we pass effort through directly.
+        Uses `_resolve_thinking_config` without a profile intentionally:
+        OpenRouter routes to many models and handles per-model capability detection
+        server-side, so we skip profile-based guards and let OpenRouter decide.
+        """
+        resolved = _resolve_thinking_config(model_settings)
+        if resolved is None:
+            return None
+
+        if not resolved.enabled:
+            return {'enabled': False}
+
+        result: OpenRouterReasoning = {}
+
+        # Map effort directly (OpenRouter uses same values)
+        if resolved.effort:
+            result['effort'] = resolved.effort
+
+        # If no specific settings, just enable
+        if not result:
+            result['enabled'] = True
+
+        return result
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:

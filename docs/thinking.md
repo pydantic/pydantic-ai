@@ -4,7 +4,69 @@ Thinking (or reasoning) is the process by which a model works through a problem 
 providing its final answer.
 
 This capability is typically disabled by default and depends on the specific model being used.
-See the sections below for how to enable thinking for each provider.
+
+## Unified Thinking API
+
+Pydantic AI provides two provider-agnostic settings in [`ModelSettings`][pydantic_ai.settings.ModelSettings] that work across all providers:
+
+- [`thinking`][pydantic_ai.settings.ModelSettings.thinking] — enable or disable thinking (`True`/`False`)
+- [`thinking_effort`][pydantic_ai.settings.ModelSettings.thinking_effort] — control thinking depth (`'low'`, `'medium'`, `'high'`)
+
+These settings are automatically translated into each provider's native API format. For example, `thinking_effort='high'` becomes `budget_tokens=16384` on Anthropic, `reasoning_effort='high'` on OpenAI, and `thinking_level=HIGH` on Gemini 3.
+
+Here is how to enable thinking with high effort on an Anthropic model:
+
+```python {title="unified_thinking.py"}
+from pydantic_ai import Agent
+
+agent = Agent('anthropic:claude-sonnet-4-5')
+result = agent.run_sync(
+    'What is the meaning of life?',
+    model_settings={'thinking': True, 'thinking_effort': 'high'},
+)
+```
+
+The same settings work when switching providers — no code changes needed:
+
+```python {title="unified_thinking_portable.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:o3')
+result = agent.run_sync(
+    'What is the meaning of life?',
+    model_settings={'thinking': True, 'thinking_effort': 'high'},
+)
+```
+
+Settings that a provider doesn't support are silently ignored, so you can write portable code without worrying about provider-specific capabilities.
+
+!!! note
+    Provider-specific settings (e.g., `anthropic_thinking`, `openai_reasoning_effort`) always take precedence over the unified fields when both are set. See the provider sections below for details.
+
+!!! note
+    Not all providers support all effort levels. xAI only supports `'low'` and `'high'` (`'medium'` is mapped to `'low'`). Cohere and Groq ignore effort entirely — thinking is either on or off.
+
+### Provider Support
+
+| Provider | `thinking` | `thinking_effort` | Notes |
+|----------|:----------:|:------------------:|-------|
+| Anthropic | ✅ | ✅ | Claude 3.7+. Effort maps to `budget_tokens` or `output_config.effort`. |
+| OpenAI | ✅ | ✅ | o-series, GPT-5+. Maps to `reasoning_effort`. |
+| Gemini | ✅ | ✅ | 2.5+. Effort maps to `thinking_level` (Gemini 3). |
+| Bedrock | ✅ | ✅ | Claude/DeepSeek R1 (`budget_tokens`), Nova 2 (`maxReasoningEffort`). |
+| OpenRouter | ✅ | ✅ | Passes through to underlying provider. |
+| xAI | ✅ | ✅ | Grok 3 Mini (`'low'`/`'high'` only), Grok 4 (always-on). |
+| Groq | ✅ | -- | DeepSeek R1, QwQ — always-on, no effort control. |
+| Cerebras | ✅ | -- | GLM, GPT-OSS reasoning models. |
+| Mistral | ✅ | -- | Magistral models — always-on. |
+| Cohere | ✅ | -- | Command A Reasoning. |
+| DeepSeek | ✅ | -- | R1 models. |
+| Harmony | ✅ | -- | GPT-OSS models — always-on. |
+| ZAI | ✅ | -- | GLM models. |
+
+## Provider-Specific Settings
+
+The sections below document each provider's native thinking configuration. Use the unified API above for cross-provider code, or the provider-specific settings below when you need fine-grained control.
 
 ## OpenAI
 

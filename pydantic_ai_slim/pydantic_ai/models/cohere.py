@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
-from typing_extensions import assert_never
+from typing_extensions import assert_never, override
 
 from pydantic_ai.exceptions import ModelAPIError
 
@@ -30,6 +30,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
+from ..thinking import _resolve_thinking_config  # pyright: ignore[reportPrivateUsage]
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, check_allow_model_requests
 
@@ -42,6 +43,7 @@ try:
         ChatMessageV2,
         SystemChatMessageV2,
         TextAssistantMessageV2ContentItem,
+        Thinking,
         ThinkingAssistantMessageV2ContentItem,
         ToolCallV2,
         ToolCallV2Function,
@@ -91,7 +93,11 @@ class CohereModelSettings(ModelSettings, total=False):
 
     # ALL FIELDS MUST BE `cohere_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    # This class is a placeholder for any future cohere-specific settings
+    cohere_thinking: Thinking
+    """Thinking configuration for Cohere reasoning models.
+
+    See [the Cohere docs](https://docs.cohere.com/docs/thinking) for more details.
+    """
 
 
 @dataclass(init=False)
@@ -152,6 +158,23 @@ class CohereModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @override
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        merged_settings = cast(CohereModelSettings, merged_settings or {})
+
+        # Apply unified thinking config if no provider-specific setting
+        if 'cohere_thinking' not in merged_settings:
+            thinking_config = self._resolve_thinking_config(merged_settings)
+            if thinking_config is not None:
+                merged_settings['cohere_thinking'] = thinking_config
+
+        return merged_settings, customized_parameters
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -167,6 +190,21 @@ class CohereModel(Model):
         model_response = self._process_response(response)
         return model_response
 
+    def _resolve_thinking_config(self, model_settings: CohereModelSettings) -> Thinking | None:
+        """Resolve unified thinking settings to Cohere Thinking config.
+
+        Uses silent-drop semantics: effort is silently ignored (Cohere has no effort control).
+        """
+        resolved = _resolve_thinking_config(model_settings, self.profile)
+        if resolved is None:
+            return None
+
+        if not resolved.enabled:
+            return Thinking(type='disabled')
+
+        # Effort is silently ignored (Cohere has no effort/level control)
+        return Thinking(type='enabled')
+
     async def _chat(
         self,
         messages: list[ModelMessage],
@@ -181,6 +219,7 @@ class CohereModel(Model):
                 model=self._model_name,
                 messages=cohere_messages,
                 tools=tools or OMIT,
+                thinking=model_settings.get('cohere_thinking', OMIT),
                 max_tokens=model_settings.get('max_tokens', OMIT),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),

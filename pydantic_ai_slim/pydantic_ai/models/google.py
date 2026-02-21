@@ -49,6 +49,7 @@ from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
+from ..thinking import _resolve_thinking_config  # pyright: ignore[reportPrivateUsage]
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -90,6 +91,7 @@ try:
         PartDict,
         SafetySettingDict,
         ThinkingConfigDict,
+        ThinkingLevel,
         ToolCodeExecutionDict,
         ToolConfigDict,
         ToolDict,
@@ -106,6 +108,20 @@ except ImportError as _import_error:
 
 
 _FILE_SEARCH_QUERY_PATTERN = re.compile(r'file_search\.query\(query=(["\'])((?:\\.|(?!\1).)*?)\1\)')
+
+# Effort-to-thinking-level mapping for Gemini 3+ models
+_GOOGLE_EFFORT_TO_LEVEL: dict[str, ThinkingLevel] = {
+    'low': ThinkingLevel.LOW,
+    'medium': ThinkingLevel.MEDIUM,
+    'high': ThinkingLevel.HIGH,
+}
+
+# Effort-to-thinking-budget mapping for Gemini 2.5 models
+_GOOGLE_EFFORT_TO_BUDGET: dict[str, int] = {
+    'low': 1024,
+    'medium': 8192,
+    'high': 32768,
+}
 
 
 LatestGoogleModelNames = Literal[
@@ -256,6 +272,38 @@ class GoogleModel(Model):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
 
+    def _resolve_thinking_config(self, model_settings: GoogleModelSettings) -> ThinkingConfigDict | None:
+        """Resolve unified thinking settings to Google thinking config.
+
+        Uses silent-drop semantics for unsupported settings.
+        """
+        resolved = _resolve_thinking_config(model_settings, self.profile)
+        if resolved is None:
+            return None
+
+        # Gemini 3 uses thinking_level API while 2.5 uses thinking_budget.
+        # This check is intentionally separate from profiles/google.py — the profile
+        # tracks *capability* (supports_thinking), while this tracks *API format*.
+        uses_thinking_level = 'gemini-3' in self.model_name
+
+        if not resolved.enabled:
+            if uses_thinking_level:
+                return {'thinking_level': ThinkingLevel.MINIMAL, 'include_thoughts': False}
+            return {'thinking_budget': 0}
+
+        result: ThinkingConfigDict = {}
+
+        if uses_thinking_level:
+            # Gemini 3+: Map effort to thinking_level
+            if resolved.effort:
+                result['thinking_level'] = _GOOGLE_EFFORT_TO_LEVEL.get(resolved.effort, ThinkingLevel.HIGH)
+            # No else: let the model use its default thinking level when no effort specified
+        elif resolved.effort:
+            # Gemini 2.5: Map effort to thinking_budget
+            result['thinking_budget'] = _GOOGLE_EFFORT_TO_BUDGET[resolved.effort]
+
+        return result if result else None
+
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
@@ -271,7 +319,16 @@ class GoogleModel(Model):
                 raise UserError(
                     f'Google does not support output tools and built-in tools at the same time. Use `output_type={output_mode}(...)` instead.'
                 )
-        return super().prepare_request(model_settings, model_request_parameters)
+        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        merged_settings = cast(GoogleModelSettings, merged_settings or {})
+
+        # Apply unified thinking config if no provider-specific setting
+        if 'google_thinking_config' not in merged_settings:
+            thinking_config = self._resolve_thinking_config(merged_settings)
+            if thinking_config is not None:
+                merged_settings['google_thinking_config'] = thinking_config
+
+        return merged_settings, customized_parameters
 
     async def request(
         self,

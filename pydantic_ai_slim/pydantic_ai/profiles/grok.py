@@ -22,22 +22,32 @@ class GrokModelProfile(ModelProfile):
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""
+    model_lower = model_name.lower()
+
     # Grok-4 models support builtin tools
-    grok_supports_builtin_tools = model_name.startswith('grok-4') or 'code' in model_name
+    grok_supports_builtin_tools = 'grok-4' in model_lower or 'code' in model_lower
 
     # Set supported builtin tools based on model capability
     supported_builtin_tools: frozenset[type[AbstractBuiltinTool]] = (
         SUPPORTED_BUILTIN_TOOLS if grok_supports_builtin_tools else frozenset()
     )
 
+    # Reasoning model detection:
+    # - grok-3-mini: reasoning with effort control (low/high)
+    # - grok-4 reasoning variants: always-on reasoning, no effort control
+    # - non-reasoning variants (e.g., grok-4-fast-non-reasoning): no thinking
+    is_non_reasoning = 'non-reasoning' in model_lower
+    is_grok_3_mini = 'grok-3-mini' in model_lower
+    is_grok_4 = 'grok-4' in model_lower
+    supports_thinking = (is_grok_3_mini or is_grok_4) and not is_non_reasoning
+    thinking_always_enabled = supports_thinking and not is_grok_3_mini
+
     return GrokModelProfile(
-        # xAI supports tool calling
         supports_tools=True,
-        # xAI supports JSON schema output for structured responses
         supports_json_schema_output=True,
-        # xAI supports JSON object output
         supports_json_object_output=True,
-        # Support for builtin tools (web_search, code_execution, mcp)
         grok_supports_builtin_tools=grok_supports_builtin_tools,
         supported_builtin_tools=supported_builtin_tools,
+        supports_thinking=supports_thinking,
+        thinking_always_enabled=thinking_always_enabled,
     )

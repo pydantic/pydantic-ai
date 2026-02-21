@@ -77,6 +77,13 @@ class ModelProfile:
     restrict this based on model capabilities.
     """
 
+    # Thinking/reasoning capabilities
+    supports_thinking: bool = False
+    """Whether the model supports thinking/reasoning capabilities."""
+
+    thinking_always_enabled: bool = False
+    """Whether thinking is always on and cannot be disabled (e.g., o-series, GPT-5, DeepSeek R1)."""
+
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:
         """Build a ModelProfile subclass instance from a ModelProfile instance."""
