@@ -176,7 +176,7 @@ from pydantic_ai.environments.memory import MemoryEnvironment
 # Only file tools — no shell or search
 toolset = ExecutionEnvironmentToolset(
     MemoryEnvironment(),
-    include={'read_file', 'write_file', 'edit_file'},
+    include=['read_file', 'write_file', 'edit_file'],
 )
 ```
 

@@ -515,7 +515,7 @@ async def test_toolset_tool_names():
 async def test_toolset_include_flags():
     toolset = ExecutionEnvironmentToolset(
         LocalEnvironment('.'),
-        include={},
+        include=[],
     )
     assert toolset.tools == {}
 
@@ -523,7 +523,7 @@ async def test_toolset_include_flags():
 async def test_toolset_include_shell_only():
     toolset = ExecutionEnvironmentToolset(
         LocalEnvironment('.'),
-        include={'shell'},
+        include=['shell'],
     )
     assert sorted(toolset.tools.keys()) == ['shell']
 
@@ -1215,7 +1215,7 @@ async def test_memory_read_file_bytes():
 async def test_memory_toolset_integration():
     """MemoryEnvironment works with ExecutionEnvironmentToolset for full agent testing."""
     env = MemoryEnvironment(files={'main.py': 'print("hello")\n'})
-    toolset = ExecutionEnvironmentToolset(env, exclude={'shell'})
+    toolset = ExecutionEnvironmentToolset(env, exclude=['shell'])
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
