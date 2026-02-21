@@ -314,7 +314,7 @@ class LocalEnvironment(ExecutionEnvironment):
         if search_dir.is_file():
             files = [search_dir]
         elif glob_pattern:
-            files = sorted(search_dir.glob(glob_pattern))
+            files = sorted(search_dir.rglob(glob_pattern))
         else:
             files = sorted(search_dir.rglob('*'))
 

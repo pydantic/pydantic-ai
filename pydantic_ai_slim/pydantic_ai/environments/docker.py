@@ -1,6 +1,6 @@
 """Docker container-based environment for isolated code execution.
 
-Requires the `docker` package: `pip install pydantic-ai-slim[docker-sandbox]`
+Requires the `docker` package: `pip install pydantic-ai-slim[docker-environment]`
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'The `docker` package is required for DockerEnvironment. '
-        'Install it with: pip install pydantic-ai-slim[docker-sandbox]'
+        'Install it with: pip install pydantic-ai-slim[docker-environment]'
     ) from _import_error
 
 
@@ -137,7 +137,7 @@ class DockerEnvironmentProcess(ExecutionProcess):
         """Read frames until one for the wanted stream type arrives."""
         while True:
             stream_type, data = await anyio.to_thread.run_sync(self._read_frame)
-            if not data:
+            if not data and self._eof:
                 return b''
             if stream_type == wanted:
                 return data
@@ -296,6 +296,50 @@ class DockerEnvironment(ExecutionEnvironment):
         self._client: docker.DockerClient | None = None
         self._container: Container | None = None
 
+    @classmethod
+    def hardened(
+        cls,
+        *,
+        image: str = 'python:3.12-slim',
+        env_vars: dict[str, str] | None = None,
+        work_dir: str = '/workspace',
+        memory_limit: str = '512m',
+        cpu_limit: float = 1.0,
+        pids_limit: int = 256,
+    ) -> DockerEnvironment:
+        """Create a hardened Docker environment with security best practices.
+
+        This is a convenience constructor that sets sensible security defaults:
+        network disabled, read-only root filesystem, all capabilities dropped,
+        no privilege escalation, runs as `nobody`, and uses an init process.
+
+        The root filesystem is read-only; writable tmpfs mounts are provided at
+        `/tmp` and the working directory.
+
+        Args:
+            image: Docker image to use.
+            env_vars: Baseline environment variables to set in the container.
+            work_dir: Working directory inside the container.
+            memory_limit: Memory limit (e.g. '512m', '1g').
+            cpu_limit: CPU limit (e.g. 1.0 for one CPU).
+            pids_limit: Maximum number of PIDs in the container.
+        """
+        return cls(
+            image=image,
+            env_vars=env_vars,
+            work_dir=work_dir,
+            network_disabled=True,
+            read_only=True,
+            cap_drop=['ALL'],
+            security_opt=['no-new-privileges'],
+            user='nobody',
+            pids_limit=pids_limit,
+            tmpfs={'/tmp': 'noexec,nosuid,size=64m', work_dir: 'size=128m'},
+            init=True,
+            memory_limit=memory_limit,
+            cpu_limit=cpu_limit,
+        )
+
     @property
     def capabilities(self) -> frozenset[Capability]:  # pragma: lax no cover
         return frozenset(
@@ -325,6 +369,8 @@ class DockerEnvironment(ExecutionEnvironment):
 
     def _setup(self) -> None:
         """Start container (sync, runs in executor)."""
+        if self._container is not None:
+            return
         self._client = docker.from_env()
 
         # Create and start container

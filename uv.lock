@@ -27,8 +27,8 @@ name = "accelerate"
 version = "1.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
     { name = "numpy" },
     { name = "packaging" },
     { name = "psutil" },
@@ -314,7 +314,7 @@ name = "apache-tvm-ffi"
 version = "0.1.8.post2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e3/e9/a13952726228fa6282154ecf927092396bc759739e5e045019f6ab92f3ca/apache_tvm_ffi-0.1.8.post2.tar.gz", hash = "sha256:4513e38852894f290172ecfefcbc18d34e817fd29c16a0f1770e130c82b4067e", size = 2441111, upload-time = "2026-01-13T18:11:27.864Z" }
 wheels = [
@@ -1225,10 +1225,10 @@ name = "compressed-tensors"
 version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "loguru" },
-    { name = "pydantic" },
-    { name = "torch" },
-    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" } },
+    { name = "loguru", marker = "python_full_version < '3.12'" },
+    { name = "pydantic", marker = "python_full_version < '3.12'" },
+    { name = "torch", marker = "python_full_version < '3.12'" },
+    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/fc/65/88dd1c58fb9d0ded51b5c86471b937a1525f91fad2211a6f051dc1ea822d/compressed_tensors-0.13.0.tar.gz", hash = "sha256:23893824d3498ea3f1a829f14a8fa85f9a5e76a34c711a038b8d7c619ca9a67c", size = 200995, upload-time = "2025-12-16T16:03:55.397Z" }
 wheels = [
@@ -1426,7 +1426,7 @@ name = "cuda-bindings"
 version = "13.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder" },
+    { name = "cuda-pathfinder", marker = "python_full_version < '3.12'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/60/63/579402b642f5b9b8ceb79e456b39b5771f27e132a8af3b140e54d69790fc/cuda_bindings-13.1.1-cp310-cp310-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:4400370a83f1538e25ed4c18c34a0e9d5fad39741e282e69ce24d1479a11017d", size = 15777291, upload-time = "2025-12-09T22:05:41.109Z" },
@@ -1462,8 +1462,8 @@ name = "cuda-python"
 version = "13.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-bindings" },
-    { name = "cuda-pathfinder" },
+    { name = "cuda-bindings", marker = "python_full_version < '3.12'" },
+    { name = "cuda-pathfinder", marker = "python_full_version < '3.12'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cd/08/b5e3b9822662d72d540d830531e3ab6a7cabbda3dd56175696aabccfeb76/cuda_python-13.1.1-py3-none-any.whl", hash = "sha256:944cc4fe6482673d28dd545797a28840945a1668739328fa2ad1e9be4f7050d9", size = 8038, upload-time = "2025-12-09T22:13:10.719Z" },
@@ -1474,8 +1474,8 @@ name = "cupy-cuda12x"
 version = "13.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "fastrlock" },
-    { name = "numpy" },
+    { name = "fastrlock", marker = "python_full_version < '3.12'" },
+    { name = "numpy", marker = "python_full_version < '3.12'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f7/2e/db22c5148884e4e384f6ebbc7971fa3710f3ba67ca492798890a0fdebc45/cupy_cuda12x-13.6.0-cp310-cp310-manylinux2014_aarch64.whl", hash = "sha256:9e37f60f27ff9625dfdccc4688a09852707ec613e32ea9404f425dd22a386d14", size = 126341714, upload-time = "2025-08-18T08:24:08.335Z" },
@@ -1518,8 +1518,8 @@ dependencies = [
     { name = "filelock" },
     { name = "fsspec", extra = ["http"] },
     { name = "httpx" },
-    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
     { name = "multiprocess" },
     { name = "numpy" },
     { name = "packaging" },
@@ -1597,8 +1597,8 @@ name = "depyf"
 version = "0.20.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "astor" },
-    { name = "dill" },
+    { name = "astor", marker = "python_full_version < '3.12'" },
+    { name = "dill", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/88/35/83fb0178212279aa0af031031905804c6de5618435d229f41ed21bb9ad2c/depyf-0.20.0.tar.gz", hash = "sha256:fb7683bd72c44f67b56029df2c47721e9a02ffa4d7b19095f1c54c4ebf797a98", size = 6168761, upload-time = "2025-10-13T12:33:38.589Z" }
 wheels = [
@@ -1901,14 +1901,14 @@ wheels = [
 
 [package.optional-dependencies]
 standard = [
-    { name = "email-validator" },
-    { name = "fastapi-cli", extra = ["standard"], marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "httpx" },
-    { name = "jinja2" },
-    { name = "pydantic-extra-types" },
-    { name = "pydantic-settings" },
-    { name = "python-multipart" },
-    { name = "uvicorn", extra = ["standard"], marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "email-validator", marker = "python_full_version < '3.12'" },
+    { name = "fastapi-cli", extra = ["standard"], marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "httpx", marker = "python_full_version < '3.12'" },
+    { name = "jinja2", marker = "python_full_version < '3.12'" },
+    { name = "pydantic-extra-types", marker = "python_full_version < '3.12'" },
+    { name = "pydantic-settings", marker = "python_full_version < '3.12'" },
+    { name = "python-multipart", marker = "python_full_version < '3.12'" },
+    { name = "uvicorn", extra = ["standard"], marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 
 [[package]]
@@ -1916,10 +1916,10 @@ name = "fastapi-cli"
 version = "0.0.16"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "rich-toolkit" },
+    { name = "rich-toolkit", marker = "python_full_version < '3.12'" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
-    { name = "typer" },
-    { name = "uvicorn", extra = ["standard"], marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "typer", marker = "python_full_version < '3.12'" },
+    { name = "uvicorn", extra = ["standard"], marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/99/75/9407a6b452be4c988feacec9c9d2f58d8f315162a6c7258d5a649d933ebe/fastapi_cli-0.0.16.tar.gz", hash = "sha256:e8a2a1ecf7a4e062e3b2eec63ae34387d1e142d4849181d936b23c4bdfe29073", size = 19447, upload-time = "2025-11-10T19:01:07.856Z" }
 wheels = [
@@ -1928,8 +1928,8 @@ wheels = [
 
 [package.optional-dependencies]
 standard = [
-    { name = "fastapi-cloud-cli" },
-    { name = "uvicorn", extra = ["standard"], marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "fastapi-cloud-cli", marker = "python_full_version < '3.12'" },
+    { name = "uvicorn", extra = ["standard"], marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 
 [[package]]
@@ -1937,14 +1937,14 @@ name = "fastapi-cloud-cli"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "fastar" },
-    { name = "httpx" },
-    { name = "pydantic", extra = ["email"], marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "rich-toolkit" },
-    { name = "rignore" },
-    { name = "sentry-sdk" },
-    { name = "typer" },
-    { name = "uvicorn", extra = ["standard"], marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "fastar", marker = "python_full_version < '3.12'" },
+    { name = "httpx", marker = "python_full_version < '3.12'" },
+    { name = "pydantic", extra = ["email"], marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "rich-toolkit", marker = "python_full_version < '3.12'" },
+    { name = "rignore", marker = "python_full_version < '3.12'" },
+    { name = "sentry-sdk", marker = "python_full_version < '3.12'" },
+    { name = "typer", marker = "python_full_version < '3.12'" },
+    { name = "uvicorn", extra = ["standard"], marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/cf/0d/3b0d2991f481c122c552b4ae38a8b400a75ab0edbc85536f2a6224f72da2/fastapi_cloud_cli-0.7.0.tar.gz", hash = "sha256:8b025944475c3d53262105886dfe051f46383e4f287787a46892b524922ac0b6", size = 30906, upload-time = "2025-12-16T12:51:49.082Z" }
 wheels = [
@@ -2217,19 +2217,19 @@ name = "flashinfer-python"
 version = "0.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "apache-tvm-ffi" },
-    { name = "click" },
-    { name = "einops" },
-    { name = "ninja" },
-    { name = "numpy" },
-    { name = "nvidia-cudnn-frontend" },
-    { name = "nvidia-cutlass-dsl" },
-    { name = "nvidia-ml-py" },
-    { name = "packaging" },
-    { name = "requests" },
-    { name = "tabulate" },
-    { name = "torch" },
-    { name = "tqdm" },
+    { name = "apache-tvm-ffi", marker = "python_full_version < '3.12'" },
+    { name = "click", marker = "python_full_version < '3.12'" },
+    { name = "einops", marker = "python_full_version < '3.12'" },
+    { name = "ninja", marker = "python_full_version < '3.12'" },
+    { name = "numpy", marker = "python_full_version < '3.12'" },
+    { name = "nvidia-cudnn-frontend", marker = "python_full_version < '3.12'" },
+    { name = "nvidia-cutlass-dsl", marker = "python_full_version < '3.12'" },
+    { name = "nvidia-ml-py", marker = "python_full_version < '3.12'" },
+    { name = "packaging", marker = "python_full_version < '3.12'" },
+    { name = "requests", marker = "python_full_version < '3.12'" },
+    { name = "tabulate", marker = "python_full_version < '3.12'" },
+    { name = "torch", marker = "python_full_version < '3.12'" },
+    { name = "tqdm", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/68/81/5a84e14df7358d2c2903b18c6f2779bd4b4a6739076d01a847d4c18fb102/flashinfer_python-0.6.1.tar.gz", hash = "sha256:8dc2fc5dc187fc70151d5f39ef560fde8a38117a4f6cf40dce0ddb09cbd4f0bf", size = 5141191, upload-time = "2026-01-14T05:40:27.825Z" }
 wheels = [
@@ -2407,9 +2407,9 @@ name = "gguf"
 version = "0.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
-    { name = "pyyaml" },
-    { name = "tqdm" },
+    { name = "numpy", marker = "python_full_version < '3.12'" },
+    { name = "pyyaml", marker = "python_full_version < '3.12'" },
+    { name = "tqdm", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/08/08/7de1ca4b71e7bf33b547f82bb22505e221b5fa42f67d635e200e0ad22ad6/gguf-0.17.1.tar.gz", hash = "sha256:36ad71aad900a3e75fc94ebe96ea6029f03a4e44be7627ef7ad3d03e8c7bcb53", size = 89338, upload-time = "2025-06-19T14:00:33.705Z" }
 wheels = [
@@ -2494,8 +2494,8 @@ dependencies = [
     { name = "gradio-client" },
     { name = "groovy" },
     { name = "httpx" },
-    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
     { name = "jinja2" },
     { name = "markupsafe" },
     { name = "numpy" },
@@ -2527,8 +2527,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fsspec" },
     { name = "httpx" },
-    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
     { name = "packaging" },
     { name = "typing-extensions" },
 ]
@@ -2725,8 +2725,8 @@ name = "grpcio-reflection"
 version = "1.76.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "grpcio" },
-    { name = "protobuf" },
+    { name = "grpcio", marker = "python_full_version < '3.12'" },
+    { name = "protobuf", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/bd/10/767f9c2719c435616141efb3371f6e158f95cdde36a34876ae1d08ba7440/grpcio_reflection-1.76.0.tar.gz", hash = "sha256:e0e7e49921c2ee951e5ddff0bdbacbd1ac1a70888beb61d567f3d01b799decb1", size = 18845, upload-time = "2025-10-21T16:28:57.776Z" }
 wheels = [
@@ -2900,20 +2900,18 @@ name = "huggingface-hub"
 version = "0.36.2"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.13'",
-    "python_full_version == '3.12.*'",
     "python_full_version == '3.11.*'",
     "python_full_version < '3.11'",
 ]
 dependencies = [
-    { name = "filelock", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "fsspec", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "hf-xet", marker = "(platform_machine == 'aarch64' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'amd64' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'arm64' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'x86_64' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
-    { name = "packaging", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "pyyaml", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "requests", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "tqdm", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "typing-extensions", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "filelock", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "fsspec", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "hf-xet", marker = "(python_full_version < '3.12' and platform_machine == 'aarch64' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (python_full_version < '3.12' and platform_machine == 'amd64' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (python_full_version < '3.12' and platform_machine == 'arm64' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (python_full_version < '3.12' and platform_machine == 'x86_64' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine != 'aarch64' and platform_machine != 'amd64' and platform_machine != 'arm64' and platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'aarch64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'amd64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'arm64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "packaging", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "pyyaml", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "requests", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "tqdm", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "typing-extensions", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7c/b7/8cb61d2eece5fb05a83271da168186721c450eb74e3c31f7ef3169fa475b/huggingface_hub-0.36.2.tar.gz", hash = "sha256:1934304d2fb224f8afa3b87007d58501acfda9215b334eed53072dd5e815ff7a", size = 649782, upload-time = "2026-02-06T09:24:13.098Z" }
 wheels = [
@@ -2931,16 +2929,16 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 dependencies = [
-    { name = "filelock", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "fsspec", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "hf-xet", marker = "(platform_machine == 'AMD64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'AMD64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'aarch64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'aarch64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'amd64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'amd64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'arm64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'arm64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'x86_64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
-    { name = "httpx", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "packaging", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "pyyaml", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "shellingham", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "tqdm", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "typer-slim", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "typing-extensions", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "filelock", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "fsspec", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "hf-xet", marker = "(python_full_version >= '3.12' and platform_machine == 'AMD64') or (python_full_version >= '3.12' and platform_machine == 'aarch64') or (python_full_version >= '3.12' and platform_machine == 'amd64') or (python_full_version >= '3.12' and platform_machine == 'arm64') or (python_full_version >= '3.12' and platform_machine == 'x86_64') or (platform_machine != 'AMD64' and platform_machine != 'aarch64' and platform_machine != 'amd64' and platform_machine != 'arm64' and platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'AMD64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'AMD64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'aarch64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'aarch64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'amd64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'amd64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'arm64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'arm64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'x86_64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "httpx", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "packaging", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "pyyaml", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "shellingham", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "tqdm", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "typer-slim", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "typing-extensions", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c4/fc/eb9bc06130e8bbda6a616e1b80a7aa127681c448d6b49806f61db2670b61/huggingface_hub-1.4.1.tar.gz", hash = "sha256:b41131ec35e631e7383ab26d6146b8d8972abc8b6309b963b306fbcca87f5ed5", size = 642156, upload-time = "2026-02-06T09:20:03.013Z" }
 wheels = [
@@ -3590,10 +3588,10 @@ name = "lm-format-enforcer"
 version = "0.11.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "interegular" },
-    { name = "packaging" },
-    { name = "pydantic" },
-    { name = "pyyaml" },
+    { name = "interegular", marker = "python_full_version < '3.12'" },
+    { name = "packaging", marker = "python_full_version < '3.12'" },
+    { name = "pydantic", marker = "python_full_version < '3.12'" },
+    { name = "pyyaml", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/84/d5/41cd417ba7dfdbbcfe46cebf81fb3dfd7c591b89897560ad05bb410a465d/lm_format_enforcer-0.11.3.tar.gz", hash = "sha256:e68081c108719cce284a9bcc889709b26ffb085a1945b5eba3a12cfa96d528da", size = 40258, upload-time = "2025-08-24T19:37:47.527Z" }
 wheels = [
@@ -3647,8 +3645,8 @@ name = "loguru"
 version = "0.7.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-    { name = "win32-setctime", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "python_full_version < '3.12' and sys_platform == 'win32'" },
+    { name = "win32-setctime", marker = "python_full_version < '3.12' and sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3a/05/a1dae3dffd1116099471c643b8924f5aa6524411dc6c63fdae648c4f1aca/loguru-0.7.3.tar.gz", hash = "sha256:19480589e77d47b8d85b2c827ad95d49bf31b0dcde16593892eb51dd18706eb6", size = 63559, upload-time = "2024-12-06T11:20:56.608Z" }
 wheels = [
@@ -4017,14 +4015,14 @@ name = "mistral-common"
 version = "1.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jsonschema" },
-    { name = "numpy" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pydantic-extra-types", extra = ["pycountry"], marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "requests" },
-    { name = "tiktoken" },
-    { name = "typing-extensions" },
+    { name = "jsonschema", marker = "python_full_version < '3.12'" },
+    { name = "numpy", marker = "python_full_version < '3.12'" },
+    { name = "pillow", marker = "python_full_version < '3.12'" },
+    { name = "pydantic", marker = "python_full_version < '3.12'" },
+    { name = "pydantic-extra-types", extra = ["pycountry"], marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "requests", marker = "python_full_version < '3.12'" },
+    { name = "tiktoken", marker = "python_full_version < '3.12'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/db/ce/685b8127a326478e05501cb4c9ca23d1cd9f37e16c465a1e832c75aea709/mistral_common-1.9.1.tar.gz", hash = "sha256:550583d70a395c3586cfb748ffab53bd1d7c3409507f0efc0118bff30ffb26e9", size = 6338922, upload-time = "2026-02-12T10:53:41.639Z" }
 wheels = [
@@ -4033,7 +4031,7 @@ wheels = [
 
 [package.optional-dependencies]
 image = [
-    { name = "opencv-python-headless" },
+    { name = "opencv-python-headless", marker = "python_full_version < '3.12'" },
 ]
 
 [[package]]
@@ -4260,8 +4258,8 @@ dependencies = [
     { name = "protobuf" },
     { name = "pyyaml" },
     { name = "sentencepiece" },
-    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "transformers", version = "5.2.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "transformers", version = "5.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e3/62/f46e1355256a114808517947f8e83ad6be310c7288c551db0fa678f47923/mlx_lm-0.29.1.tar.gz", hash = "sha256:b99180d8f33d33a077b814e550bfb2d8a59ae003d668fd1f4b3fff62a381d34b", size = 232302, upload-time = "2025-12-16T16:58:27.959Z" }
 wheels = [
@@ -4307,13 +4305,13 @@ name = "model-hosting-container-standards"
 version = "0.1.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "jmespath" },
-    { name = "pydantic" },
-    { name = "setuptools" },
-    { name = "starlette" },
-    { name = "supervisor" },
+    { name = "fastapi", marker = "python_full_version < '3.12'" },
+    { name = "httpx", marker = "python_full_version < '3.12'" },
+    { name = "jmespath", marker = "python_full_version < '3.12'" },
+    { name = "pydantic", marker = "python_full_version < '3.12'" },
+    { name = "setuptools", marker = "python_full_version < '3.12'" },
+    { name = "starlette", marker = "python_full_version < '3.12'" },
+    { name = "supervisor", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d7/b7/a6a31b4dfd30d14b1019dc358f09c9d88ca38e555ba7c976e7d3e6b593fe/model_hosting_container_standards-0.1.13.tar.gz", hash = "sha256:27a1333410dde2719286a300a2803e24fdde407baa91894eb845c0f268aa194d", size = 79116, upload-time = "2026-01-09T21:45:20.683Z" }
 wheels = [
@@ -5000,7 +4998,7 @@ name = "nvidia-cutlass-dsl"
 version = "4.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cutlass-dsl-libs-base" },
+    { name = "nvidia-cutlass-dsl-libs-base", marker = "python_full_version < '3.12'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/55/09/42fca58af350265131b6f8665ad5b62526c95e6692788460bd5306d3efe2/nvidia_cutlass_dsl-4.4.0-py3-none-any.whl", hash = "sha256:2d1f34333e4d774002d44b53262d71aaf738700fcf3858290629f9a7b374c61c", size = 10168, upload-time = "2026-02-14T03:38:54.267Z" },
@@ -5011,9 +5009,9 @@ name = "nvidia-cutlass-dsl-libs-base"
 version = "4.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-python" },
-    { name = "numpy" },
-    { name = "typing-extensions" },
+    { name = "cuda-python", marker = "python_full_version < '3.12'" },
+    { name = "numpy", marker = "python_full_version < '3.12'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ad/af/cf64251bae66077769adbcd9a2e96b86aeb3c41490c5ee0a939a1a3b511e/nvidia_cutlass_dsl_libs_base-4.4.0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:703169d0843ad7e310b397aa95128e3fa983571a9a488f826c2968f3e71df2b8", size = 75460001, upload-time = "2026-02-14T03:44:18.705Z" },
@@ -5106,7 +5104,7 @@ name = "openai-harmony"
 version = "0.0.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pydantic" },
+    { name = "pydantic", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3e/92/2d038d096f29179c7c9571b431f9e739f87a487121901725e23fe338dd9d/openai_harmony-0.0.8.tar.gz", hash = "sha256:6e43f98e6c242fa2de6f8ea12eab24af63fa2ed3e89c06341fb9d92632c5cbdf", size = 284777, upload-time = "2025-11-05T19:07:06.727Z" }
 wheels = [
@@ -5141,7 +5139,7 @@ name = "opencv-python-headless"
 version = "4.13.0.92"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
+    { name = "numpy", marker = "python_full_version < '3.12'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/79/42/2310883be3b8826ac58c3f2787b9358a2d46923d61f88fedf930bc59c60c/opencv_python_headless-4.13.0.92-cp37-abi3-macosx_13_0_arm64.whl", hash = "sha256:1a7d040ac656c11b8c38677cc8cccdc149f98535089dbe5b081e80a4e5903209", size = 46247192, upload-time = "2026-02-05T07:01:35.187Z" },
@@ -5469,8 +5467,8 @@ wheels = [
 
 [package.optional-dependencies]
 llamacpp = [
-    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
     { name = "llama-cpp-python" },
     { name = "numba" },
 ]
@@ -5486,8 +5484,8 @@ transformers = [
     { name = "accelerate" },
     { name = "datasets" },
     { name = "setuptools" },
-    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "transformers", version = "5.2.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "transformers", version = "5.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
 ]
 
 [[package]]
@@ -5934,8 +5932,8 @@ name = "prometheus-fastapi-instrumentator"
 version = "7.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "prometheus-client" },
-    { name = "starlette" },
+    { name = "prometheus-client", marker = "python_full_version < '3.12'" },
+    { name = "starlette", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/69/6d/24d53033cf93826aa7857699a4450c1c67e5b9c710e925b1ed2b320c04df/prometheus_fastapi_instrumentator-7.1.0.tar.gz", hash = "sha256:be7cd61eeea4e5912aeccb4261c6631b3f227d8924542d79eaf5af3f439cbe5e", size = 20220, upload-time = "2025-03-19T19:35:05.351Z" }
 wheels = [
@@ -6758,7 +6756,7 @@ cohere = [
 dbos = [
     { name = "dbos" },
 ]
-docker-sandbox = [
+docker-environment = [
     { name = "docker" },
 ]
 duckduckgo = [
@@ -6812,8 +6810,8 @@ outlines-transformers = [
     { name = "outlines", extra = ["transformers"], marker = "(python_full_version < '3.14' and platform_machine != 'x86_64') or (python_full_version < '3.14' and sys_platform != 'darwin') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "pillow", marker = "python_full_version < '3.14' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "torch", marker = "(python_full_version < '3.14' and platform_machine != 'x86_64') or (python_full_version < '3.14' and sys_platform != 'darwin') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
-    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.14' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
-    { name = "transformers", version = "5.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.14' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.14' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "transformers", version = "5.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and python_full_version < '3.14') or (python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (python_full_version < '3.12' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (python_full_version >= '3.14' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 outlines-vllm-offline = [
     { name = "outlines", marker = "python_full_version < '3.14'" },
@@ -6863,7 +6861,7 @@ requires-dist = [
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.18.0" },
     { name = "dbos", marker = "extra == 'dbos'", specifier = ">=2.10.0" },
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
-    { name = "docker", marker = "extra == 'docker-sandbox'", specifier = ">=7.0" },
+    { name = "docker", marker = "extra == 'docker-environment'", specifier = ">=7.0" },
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
@@ -6914,7 +6912,7 @@ requires-dist = [
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.5.0" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "docker-sandbox", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "xai"]
+provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "docker-environment", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "xai"]
 
 [[package]]
 name = "pydantic-core"
@@ -7091,7 +7089,7 @@ wheels = [
 
 [package.optional-dependencies]
 pycountry = [
-    { name = "pycountry" },
+    { name = "pycountry", marker = "python_full_version < '3.12'" },
 ]
 
 [[package]]
@@ -7481,7 +7479,7 @@ name = "pyzmq"
 version = "27.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "implementation_name == 'pypy'" },
+    { name = "cffi", marker = "python_full_version < '3.12' and implementation_name == 'pypy'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/04/0b/3c9baedbdf613ecaa7aa07027780b8867f57b6293b6ee50de316c9f3222b/pyzmq-27.1.0.tar.gz", hash = "sha256:ac0765e3d44455adb6ddbf4417dcce460fc40a05978c08efdf2948072f6db540", size = 281750, upload-time = "2025-09-08T23:10:18.157Z" }
 wheels = [
@@ -7554,14 +7552,14 @@ name = "ray"
 version = "2.53.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "filelock" },
-    { name = "jsonschema" },
-    { name = "msgpack" },
-    { name = "packaging" },
-    { name = "protobuf" },
-    { name = "pyyaml" },
-    { name = "requests" },
+    { name = "click", marker = "python_full_version < '3.12'" },
+    { name = "filelock", marker = "python_full_version < '3.12'" },
+    { name = "jsonschema", marker = "python_full_version < '3.12'" },
+    { name = "msgpack", marker = "python_full_version < '3.12'" },
+    { name = "packaging", marker = "python_full_version < '3.12'" },
+    { name = "protobuf", marker = "python_full_version < '3.12'" },
+    { name = "pyyaml", marker = "python_full_version < '3.12'" },
+    { name = "requests", marker = "python_full_version < '3.12'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2f/99/21986c7f8135dafbf7c49229c52faaa9d2d365db7d86fffe978dde8ee967/ray-2.53.0-cp310-cp310-macosx_12_0_arm64.whl", hash = "sha256:4db914a0a6dd608fa49c066929a1282745a2dbd73caee67d7b80fe684ca65bdd", size = 69473649, upload-time = "2025-12-20T16:05:40.58Z" },
@@ -7583,7 +7581,7 @@ wheels = [
 
 [package.optional-dependencies]
 cgraph = [
-    { name = "cupy-cuda12x", marker = "sys_platform != 'darwin'" },
+    { name = "cupy-cuda12x", marker = "python_full_version < '3.12' and sys_platform != 'darwin'" },
 ]
 
 [[package]]
@@ -7811,9 +7809,9 @@ name = "rich-toolkit"
 version = "0.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "rich" },
-    { name = "typing-extensions" },
+    { name = "click", marker = "python_full_version < '3.12'" },
+    { name = "rich", marker = "python_full_version < '3.12'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/97/09/3f9b8d9daaf235195c626f21e03604c05b987404ee3bcacee0c1f67f2a8e/rich_toolkit-0.17.1.tar.gz", hash = "sha256:5af54df8d1dd9c8530e462e1bdcaed625c9b49f5a55b035aa0ba1c17bdb87c9a", size = 187925, upload-time = "2025-12-17T10:49:22.583Z" }
 wheels = [
@@ -8556,8 +8554,8 @@ name = "sentence-transformers"
 version = "5.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
     { name = "numpy" },
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
@@ -8565,8 +8563,8 @@ dependencies = [
     { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "torch" },
     { name = "tqdm" },
-    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "transformers", version = "5.2.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "transformers", version = "5.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
     { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a6/bc/0bc9c0ec1cf83ab2ec6e6f38667d167349b950fff6dd2086b79bd360eeca/sentence_transformers-5.2.2.tar.gz", hash = "sha256:7033ee0a24bc04c664fd490abf2ef194d387b3a58a97adcc528783ff505159fa", size = 381607, upload-time = "2026-01-27T11:11:02.658Z" }
@@ -8643,8 +8641,8 @@ name = "sentry-sdk"
 version = "2.48.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi" },
-    { name = "urllib3" },
+    { name = "certifi", marker = "python_full_version < '3.12'" },
+    { name = "urllib3", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/40/f0/0e9dc590513d5e742d7799e2038df3a05167cba084c6ca4f3cdd75b55164/sentry_sdk-2.48.0.tar.gz", hash = "sha256:5213190977ff7fdff8a58b722fb807f8d5524a80488626ebeda1b5676c0c1473", size = 384828, upload-time = "2025-12-16T14:55:41.722Z" }
 wheels = [
@@ -9080,8 +9078,8 @@ name = "tokenizers"
 version = "0.22.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/46/fb6854cec3278fbfa4a75b50232c77622bc517ac886156e6afbfa4d8fc6e/tokenizers-0.22.1.tar.gz", hash = "sha256:61de6522785310a309b3407bac22d99c4db5dba349935e99e4d15ea2226af2d9", size = 363123, upload-time = "2025-09-19T09:49:23.424Z" }
 wheels = [
@@ -9234,7 +9232,7 @@ name = "torchaudio"
 version = "2.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "torch" },
+    { name = "torch", marker = "python_full_version < '3.12'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1c/87/7de58c8f4c1946ec4d9070354eae73d1e4f3d2426e5cfa45febbd8451ce5/torchaudio-2.9.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:fd13541197e035338bd43225b2067532056486d357c661e12d49ace4fc37f8bb", size = 805912, upload-time = "2025-11-12T15:25:47.857Z" },
@@ -9272,9 +9270,9 @@ name = "torchvision"
 version = "0.24.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
-    { name = "pillow" },
-    { name = "torch" },
+    { name = "numpy", marker = "python_full_version < '3.12'" },
+    { name = "pillow", marker = "python_full_version < '3.12'" },
+    { name = "torch", marker = "python_full_version < '3.12'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f7/09/d51aadf8591138e08b74c64a6eb783630c7a31ca2634416277115a9c3a2b/torchvision-0.24.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:ded5e625788572e4e1c4d155d1bbc48805c113794100d70e19c76e39e4d53465", size = 1891441, upload-time = "2025-11-12T15:25:01.687Z" },
@@ -9324,22 +9322,20 @@ name = "transformers"
 version = "4.57.6"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.13'",
-    "python_full_version == '3.12.*'",
     "python_full_version == '3.11.*'",
     "python_full_version < '3.11'",
 ]
 dependencies = [
-    { name = "filelock", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "numpy", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "packaging", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "pyyaml", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "regex", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "requests", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "safetensors", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "tokenizers", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "tqdm", marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "filelock", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "numpy", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "packaging", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "pyyaml", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "regex", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "requests", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "safetensors", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "tokenizers", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "tqdm", marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c4/35/67252acc1b929dc88b6602e8c4a982e64f31e733b804c14bc24b47da35e6/transformers-4.57.6.tar.gz", hash = "sha256:55e44126ece9dc0a291521b7e5492b572e6ef2766338a610b9ab5afbb70689d3", size = 10134912, upload-time = "2026-01-16T10:38:39.284Z" }
 wheels = [
@@ -9357,15 +9353,15 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 dependencies = [
-    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "numpy", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "packaging", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "pyyaml", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "regex", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "safetensors", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "tokenizers", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "tqdm", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "typer-slim", marker = "extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "huggingface-hub", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "numpy", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "packaging", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "pyyaml", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "regex", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "safetensors", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "tokenizers", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "tqdm", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "typer-slim", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/bd/7e/8a0c57d562015e5b16c97c1f0b8e0e92ead2c7c20513225dc12c2043ba9f/transformers-5.2.0.tar.gz", hash = "sha256:0088b8b46ccc9eff1a1dca72b5d618a5ee3b1befc3e418c9512b35dea9f9a650", size = 8618176, upload-time = "2026-02-16T18:54:02.867Z" }
 wheels = [
@@ -9574,13 +9570,13 @@ wheels = [
 
 [package.optional-dependencies]
 standard = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-    { name = "httptools" },
-    { name = "python-dotenv" },
-    { name = "pyyaml" },
-    { name = "uvloop", marker = "platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'" },
-    { name = "watchfiles" },
-    { name = "websockets" },
+    { name = "colorama", marker = "python_full_version < '3.12' and sys_platform == 'win32'" },
+    { name = "httptools", marker = "python_full_version < '3.12'" },
+    { name = "python-dotenv", marker = "python_full_version < '3.12'" },
+    { name = "pyyaml", marker = "python_full_version < '3.12'" },
+    { name = "uvloop", marker = "python_full_version < '3.12' and platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'" },
+    { name = "watchfiles", marker = "python_full_version < '3.12'" },
+    { name = "websockets", marker = "python_full_version < '3.12'" },
 ]
 
 [[package]]
@@ -9645,66 +9641,64 @@ name = "vllm"
 version = "0.15.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiohttp" },
-    { name = "anthropic" },
-    { name = "blake3" },
-    { name = "cachetools" },
-    { name = "cbor2" },
-    { name = "cloudpickle" },
-    { name = "compressed-tensors" },
-    { name = "depyf" },
-    { name = "diskcache" },
-    { name = "einops" },
-    { name = "fastapi", extra = ["standard"], marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "filelock" },
-    { name = "flashinfer-python" },
-    { name = "gguf" },
-    { name = "grpcio" },
-    { name = "grpcio-reflection" },
-    { name = "ijson" },
-    { name = "lark" },
-    { name = "llguidance", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'ppc64le' or platform_machine == 's390x' or platform_machine == 'x86_64'" },
-    { name = "lm-format-enforcer" },
-    { name = "mcp" },
-    { name = "mistral-common", extra = ["image"], marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "model-hosting-container-standards" },
-    { name = "msgspec" },
-    { name = "ninja" },
-    { name = "numba" },
-    { name = "numpy" },
-    { name = "openai" },
-    { name = "openai-harmony" },
-    { name = "opencv-python-headless" },
-    { name = "outlines-core" },
-    { name = "partial-json-parser" },
-    { name = "pillow" },
-    { name = "prometheus-client" },
-    { name = "prometheus-fastapi-instrumentator" },
-    { name = "protobuf" },
-    { name = "psutil" },
-    { name = "py-cpuinfo" },
-    { name = "pybase64" },
-    { name = "pydantic" },
-    { name = "python-json-logger" },
-    { name = "pyyaml" },
-    { name = "pyzmq" },
-    { name = "ray", extra = ["cgraph"], marker = "extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
-    { name = "regex" },
-    { name = "requests" },
-    { name = "sentencepiece" },
-    { name = "setproctitle" },
-    { name = "setuptools", marker = "python_full_version >= '3.12'" },
-    { name = "six", marker = "python_full_version >= '3.12'" },
-    { name = "tiktoken" },
-    { name = "tokenizers" },
-    { name = "torch" },
-    { name = "torchaudio" },
-    { name = "torchvision" },
-    { name = "tqdm" },
-    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" } },
-    { name = "typing-extensions" },
-    { name = "watchfiles" },
-    { name = "xgrammar", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'ppc64le' or platform_machine == 's390x' or platform_machine == 'x86_64'" },
+    { name = "aiohttp", marker = "python_full_version < '3.12'" },
+    { name = "anthropic", marker = "python_full_version < '3.12'" },
+    { name = "blake3", marker = "python_full_version < '3.12'" },
+    { name = "cachetools", marker = "python_full_version < '3.12'" },
+    { name = "cbor2", marker = "python_full_version < '3.12'" },
+    { name = "cloudpickle", marker = "python_full_version < '3.12'" },
+    { name = "compressed-tensors", marker = "python_full_version < '3.12'" },
+    { name = "depyf", marker = "python_full_version < '3.12'" },
+    { name = "diskcache", marker = "python_full_version < '3.12'" },
+    { name = "einops", marker = "python_full_version < '3.12'" },
+    { name = "fastapi", extra = ["standard"], marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "filelock", marker = "python_full_version < '3.12'" },
+    { name = "flashinfer-python", marker = "python_full_version < '3.12'" },
+    { name = "gguf", marker = "python_full_version < '3.12'" },
+    { name = "grpcio", marker = "python_full_version < '3.12'" },
+    { name = "grpcio-reflection", marker = "python_full_version < '3.12'" },
+    { name = "ijson", marker = "python_full_version < '3.12'" },
+    { name = "lark", marker = "python_full_version < '3.12'" },
+    { name = "llguidance", marker = "(python_full_version < '3.12' and platform_machine == 'aarch64') or (python_full_version < '3.12' and platform_machine == 'arm64') or (python_full_version < '3.12' and platform_machine == 'ppc64le') or (python_full_version < '3.12' and platform_machine == 's390x') or (python_full_version < '3.12' and platform_machine == 'x86_64')" },
+    { name = "lm-format-enforcer", marker = "python_full_version < '3.12'" },
+    { name = "mcp", marker = "python_full_version < '3.12'" },
+    { name = "mistral-common", extra = ["image"], marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "model-hosting-container-standards", marker = "python_full_version < '3.12'" },
+    { name = "msgspec", marker = "python_full_version < '3.12'" },
+    { name = "ninja", marker = "python_full_version < '3.12'" },
+    { name = "numba", marker = "python_full_version < '3.12'" },
+    { name = "numpy", marker = "python_full_version < '3.12'" },
+    { name = "openai", marker = "python_full_version < '3.12'" },
+    { name = "openai-harmony", marker = "python_full_version < '3.12'" },
+    { name = "opencv-python-headless", marker = "python_full_version < '3.12'" },
+    { name = "outlines-core", marker = "python_full_version < '3.12'" },
+    { name = "partial-json-parser", marker = "python_full_version < '3.12'" },
+    { name = "pillow", marker = "python_full_version < '3.12'" },
+    { name = "prometheus-client", marker = "python_full_version < '3.12'" },
+    { name = "prometheus-fastapi-instrumentator", marker = "python_full_version < '3.12'" },
+    { name = "protobuf", marker = "python_full_version < '3.12'" },
+    { name = "psutil", marker = "python_full_version < '3.12'" },
+    { name = "py-cpuinfo", marker = "python_full_version < '3.12'" },
+    { name = "pybase64", marker = "python_full_version < '3.12'" },
+    { name = "pydantic", marker = "python_full_version < '3.12'" },
+    { name = "python-json-logger", marker = "python_full_version < '3.12'" },
+    { name = "pyyaml", marker = "python_full_version < '3.12'" },
+    { name = "pyzmq", marker = "python_full_version < '3.12'" },
+    { name = "ray", extra = ["cgraph"], marker = "(python_full_version < '3.12' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "regex", marker = "python_full_version < '3.12'" },
+    { name = "requests", marker = "python_full_version < '3.12'" },
+    { name = "sentencepiece", marker = "python_full_version < '3.12'" },
+    { name = "setproctitle", marker = "python_full_version < '3.12'" },
+    { name = "tiktoken", marker = "python_full_version < '3.12'" },
+    { name = "tokenizers", marker = "python_full_version < '3.12'" },
+    { name = "torch", marker = "python_full_version < '3.12'" },
+    { name = "torchaudio", marker = "python_full_version < '3.12'" },
+    { name = "torchvision", marker = "python_full_version < '3.12'" },
+    { name = "tqdm", marker = "python_full_version < '3.12'" },
+    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
+    { name = "watchfiles", marker = "python_full_version < '3.12'" },
+    { name = "xgrammar", marker = "(python_full_version < '3.12' and platform_machine == 'aarch64') or (python_full_version < '3.12' and platform_machine == 'arm64') or (python_full_version < '3.12' and platform_machine == 'ppc64le') or (python_full_version < '3.12' and platform_machine == 's390x') or (python_full_version < '3.12' and platform_machine == 'x86_64')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/62/17dd4b80508b26c1a85db4fd9789d4726d3f36c95856a89419a178dda461/vllm-0.15.1-cp38-abi3-manylinux_2_31_aarch64.whl", hash = "sha256:97bfc79b0c29d242c57b0d395e48d2949a868957587b853deb813a985a41ed6e", size = 461362624, upload-time = "2026-02-05T00:18:12.38Z" },
@@ -10127,13 +10121,13 @@ name = "xgrammar"
 version = "0.1.29"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mlx-lm", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
-    { name = "numpy" },
-    { name = "pydantic" },
-    { name = "torch" },
-    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" } },
-    { name = "triton", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "typing-extensions" },
+    { name = "mlx-lm", marker = "python_full_version < '3.12' and platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "numpy", marker = "python_full_version < '3.12'" },
+    { name = "pydantic", marker = "python_full_version < '3.12'" },
+    { name = "torch", marker = "python_full_version < '3.12'" },
+    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "triton", marker = "python_full_version < '3.12' and platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/02/a3/70dbe3ffd331a1e7e1ad5a95690a4086e6c7cdb8089f5c7eda712219ccec/xgrammar-0.1.29.tar.gz", hash = "sha256:cf195afa81b489eebf35d4c6f37f27136d05420739ab4a6f7f065c938d7e4baa", size = 2321317, upload-time = "2025-12-19T08:23:54.53Z" }
 wheels = [

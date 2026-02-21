@@ -68,7 +68,7 @@ File operations (read, write, edit, ls, glob, grep) are confined to the root dir
 
 [`DockerEnvironment`][pydantic_ai.environments.docker.DockerEnvironment] runs commands inside a Docker container with configurable resource limits, security options, and network access.
 
-Requires the `docker` package: `pip install pydantic-ai-slim[docker-sandbox]`
+Requires the `docker` package: `pip install pydantic-ai-slim[docker-environment]`
 
 ```python {title="environments_docker.py" test="skip"}
 from pydantic_ai.environments.docker import DockerEnvironment
@@ -136,22 +136,21 @@ For running untrusted code, you can harden the container with Linux security opt
 ```python {title="environments_docker_hardened.py" test="skip"}
 from pydantic_ai.environments.docker import DockerEnvironment
 
-env = DockerEnvironment(
-    image='python:3.12-slim',
-    network_disabled=True,
-    read_only=True,
-    cap_drop=['ALL'],
-    security_opt=['no-new-privileges'],
-    user='nobody',
-    pids_limit=256,
-    tmpfs={'/tmp': 'noexec,nosuid,size=64m', '/workspace': 'size=128m'},
-    init=True,
-    memory_limit='512m',
-    cpu_limit=1.0,
-)
+env = DockerEnvironment.hardened(image='python:3.12-slim')
 ```
 
-This drops all Linux capabilities, prevents privilege escalation, runs as an unprivileged user, limits the number of processes, and makes the root filesystem read-only (with writable tmpfs mounts for scratch space and the working directory).
+This uses the [`hardened()`][pydantic_ai.environments.docker.DockerEnvironment.hardened] convenience constructor, which sets sensible security defaults: network disabled, read-only root filesystem, all capabilities dropped, no privilege escalation, runs as `nobody`, uses an init process, and limits PIDs, memory, and CPU. You can customize the resource limits:
+
+```python {title="environments_docker_hardened_custom.py" test="skip"}
+from pydantic_ai.environments.docker import DockerEnvironment
+
+env = DockerEnvironment.hardened(
+    image='my-sandbox:latest',
+    memory_limit='1g',
+    cpu_limit=2.0,
+    pids_limit=512,
+)
+```
 
 ## ExecutionEnvironmentToolset
 
@@ -200,6 +199,9 @@ async def main():
         print(result.output)
     # container cleaned up automatically
 ```
+
+!!! tip "Pre-starting the environment"
+    Using `async with toolset:` starts the environment once and keeps it alive across all agent runs. Without it, the environment is started and stopped on each `agent.run()` call — for Docker, that means creating and destroying a container every time. Pre-start the toolset for better performance when running the agent multiple times.
 
 !!! note "Shared environment"
     When you pass an environment directly, all concurrent `agent.run()` calls share the same environment instance (same container, filesystem, and processes). For isolated concurrent runs, use `environment_factory` — see [Concurrent Runs](#concurrent-runs) below.
@@ -265,12 +267,12 @@ All environments support per-call environment variables via the `env` parameter 
 ```python {title="environments_env_vars.py" test="skip"}
 from pydantic_ai.environments.local import LocalEnvironment
 
-env = LocalEnvironment(env_vars={'BASE_URL': 'https://api.example.com'})
+environment = LocalEnvironment(env_vars={'BASE_URL': 'https://api.example.com'})
 
 async def main():
-    async with env:
+    async with environment:
         # Uses BASE_URL from baseline + API_KEY from per-call
-        result = await env.shell(
+        result = await environment.shell(
             'curl -H "Authorization: Bearer $API_KEY" $BASE_URL/data',
             env={'API_KEY': 'sk-test-123'},
         )

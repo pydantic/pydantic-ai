@@ -6,7 +6,6 @@ This module defines the core types, the `ExecutionEnvironment` ABC, and the
 
 from __future__ import annotations
 
-import fnmatch
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -449,13 +448,10 @@ def collect_grep_matches(
 def glob_match(path: str, pattern: str) -> bool:
     """Match a path against a glob pattern with `**` support.
 
-    `fnmatch` does not support `**` for recursive matching.
-    This helper converts glob patterns to regex so that `**`
-    matches zero or more path segments (including `/`).
+    This helper converts glob patterns to regex where `*` matches
+    within a single path segment and `**` matches zero or more
+    path segments (including `/`).
     """
-    if '**' not in pattern:
-        return fnmatch.fnmatch(path, pattern)
-
     regex = ''
     i = 0
     while i < len(pattern):
@@ -526,7 +522,13 @@ def filter_grep_count_output(text: str) -> str:
 
 def build_glob_cmd(pattern: str, *, path: str = '.') -> str:
     """Build a shell `find` command to match files by pattern."""
-    return f'find {shell_escape(path)} -path {shell_escape(pattern)} -o -name {shell_escape(pattern)} 2>/dev/null | head -100'
+    # For -path, prepend the search path since find outputs full paths relative to the starting point
+    path_pattern = f'{path}/{pattern}' if '/' in pattern else pattern
+    return (
+        f'find {shell_escape(path)}'
+        f' \\( -path {shell_escape(path_pattern)} -o -name {shell_escape(pattern)} \\)'
+        f' 2>/dev/null | head -100'
+    )
 
 
 def parse_glob_output(text: str) -> list[str]:

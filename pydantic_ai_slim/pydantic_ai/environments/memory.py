@@ -71,7 +71,10 @@ class MemoryEnvironment(ExecutionEnvironment):
 
     @property
     def capabilities(self) -> frozenset[Capability]:
-        return frozenset({'ls', 'read_file', 'write_file', 'replace_str', 'glob', 'grep'})
+        caps: set[Capability] = {'ls', 'read_file', 'write_file', 'replace_str', 'glob', 'grep'}
+        if self._command_handler is not None:
+            caps.add('shell')
+        return frozenset(caps)
 
     @staticmethod
     def _normalize(path: str) -> str:
