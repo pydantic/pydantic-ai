@@ -160,7 +160,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         '--model',
         action='append',
         dest='models',
-        help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-5). '
+        help='Model to make available (can be repeated, e.g., -m openai:gpt-5 -m anthropic:claude-sonnet-4-6). '
         'Format: "provider:model_name". First model is preselected in UI; additional models appear as options.',
     )
     model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
@@ -233,7 +233,7 @@ subcommands:
     model_arg = parser.add_argument(
         '-m',
         '--model',
-        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-5". Defaults to "{default_model}".',
+        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-5" or "anthropic:claude-sonnet-4-6". Defaults to "{default_model}".',
     )
     model_arg.completer = argcomplete.ChoicesCompleter(qualified_model_names)  # type: ignore[reportPrivateUsage]
     parser.add_argument(

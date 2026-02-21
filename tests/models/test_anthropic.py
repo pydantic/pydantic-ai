@@ -13,7 +13,6 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
 from pydantic_ai import (
@@ -59,6 +58,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
