@@ -18,6 +18,7 @@ from ..builtin_tools import (
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
+    TextEditorTool,
     WebFetchTool,
     WebSearchTool,
 )
@@ -125,6 +126,7 @@ try:
         BetaToolChoiceParam,
         BetaToolParam,
         BetaToolResultBlockParam,
+        BetaToolTextEditor20250728Param,
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
@@ -296,7 +298,7 @@ class AnthropicModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """The set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
+        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, TextEditorTool, MCPServerTool})
 
     async def request(
         self,
@@ -677,6 +679,20 @@ class AnthropicModel(Model):
                 tools = [tool for tool in tools if tool.get('name') != 'memory']
                 tools.append(BetaMemoryTool20250818Param(name='memory', type='memory_20250818'))
                 beta_features.add('context-management-2025-06-27')
+            elif isinstance(tool, TextEditorTool):  # pragma: no branch
+                tool_name = 'str_replace_based_edit_tool'
+                if tool_name not in model_request_parameters.tool_defs:
+                    raise UserError(
+                        "Built-in `TextEditorTool` requires a 'str_replace_based_edit_tool' tool to be defined."
+                    )
+                tools = [tool_param for tool_param in tools if tool_param.get('name') != tool_name]
+                text_editor_tool = BetaToolTextEditor20250728Param(
+                    name=tool_name,
+                    type='text_editor_20250728',
+                )
+                if tool.max_characters is not None:
+                    text_editor_tool['max_characters'] = tool.max_characters
+                tools.append(text_editor_tool)
             elif isinstance(tool, MCPServerTool) and tool.url:
                 mcp_server_url_definition_param = BetaRequestMCPServerURLDefinitionParam(
                     type='url',

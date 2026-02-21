@@ -175,8 +175,8 @@ clai web -m openai:gpt-5.2 -i 'You are a helpful coding assistant'
 clai web --agent my_module:my_agent -i 'Always respond in Spanish'
 ```
 
-!!! note "Memory Tool"
-    The [`memory`](builtin-tools.md#memory-tool) builtin tool cannot be enabled via `-t memory`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] directly on the agent and provide it via `--agent`.
+!!! note "Memory and Text Editor Tools"
+    The [`memory`](builtin-tools.md#memory-tool) and [`text_editor`](builtin-tools.md#text-editor-tool) builtin tools cannot be enabled via `-t`. If your agent needs memory or text editing, configure the [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] or [`TextEditorTool`][pydantic_ai.builtin_tools.TextEditorTool] directly on the agent and provide it via `--agent`.
 
 ### Web UI Options
 

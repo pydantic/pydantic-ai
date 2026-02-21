@@ -11,6 +11,7 @@ Pydantic AI supports the following built-in tools:
 - **[`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool]**: Enables agents to generate images
 - **[`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool]**: Enables agents to fetch web pages
 - **[`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool]**: Enables agents to use memory
+- **[`TextEditorTool`][pydantic_ai.builtin_tools.TextEditorTool]**: Enables agents to view and edit text files
 - **[`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 - **[`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
 
@@ -551,6 +552,89 @@ Got it! I've recorded that you live in Mexico City. I'll remember this for futur
 result = agent.run_sync('Where do I live?')
 print(result.output)
 #> You live in Mexico City.
+```
+
+_(This example is complete, it can be run "as is")_
+
+## Text Editor Tool
+
+The [`TextEditorTool`][pydantic_ai.builtin_tools.TextEditorTool] enables your agent to view and edit text files.
+
+### Provider Support
+
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| Anthropic | ✅ | Requires a tool named `str_replace_based_edit_tool` to be defined that implements the [text editor tool commands](https://platform.claude.com/docs/en/agents-and-tools/tool-use/text-editor-tool). |
+| Google | ❌ | |
+| OpenAI | ❌ | |
+| Groq | ❌ | |
+| Bedrock | ❌ | |
+| Mistral | ❌ | |
+| Cohere | ❌ | |
+| HuggingFace | ❌ | |
+
+### Usage
+
+The text editor tool is client-side, so you need to implement a handler for the supported commands: `view`, `str_replace`, `create`, and `insert`. The tool uses the `str_replace_based_edit_tool` name.
+
+The following example defines a minimal handler directly in the tool definition and enumerates the command shapes.
+
+```py {title="anthropic_text_editor.py"}
+from typing import Any, Literal
+
+from pydantic import BaseModel, TypeAdapter
+from pydantic_ai import Agent, TextEditorTool
+
+
+class View(BaseModel):
+    command: Literal['view']
+    path: str
+
+
+class StrReplace(BaseModel):
+    command: Literal['str_replace']
+    path: str
+    old_str: str
+    new_str: str
+
+
+class Create(BaseModel):
+    command: Literal['create']
+    path: str
+    file_text: str
+
+
+class Insert(BaseModel):
+    command: Literal['insert']
+    path: str
+    insert_line: int
+    new_str: str
+
+
+TextEditor = View | StrReplace | Create | Insert
+_COMMAND_ADAPTER = TypeAdapter(TextEditor)
+
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-5',
+    builtin_tools=[TextEditorTool(max_characters=10_000)],  # Limits view output length.
+)
+
+
+@agent.tool_plain
+def str_replace_based_edit_tool(**command: Any) -> str:
+    cmd = _COMMAND_ADAPTER.validate_python(command)
+    print(cmd.model_dump())
+
+
+result = agent.run_sync('Use the text editor tool to create hello.py with a single line: print("Hello, world!")')
+print(result.output)
+result = agent.run_sync('Use the text editor tool to change hello.py so it prints: Hello, Pydantic AI!')
+print(result.output)
+result = agent.run_sync('Use the text editor tool to insert a new string in hello.py: # Demo file')
+print(result.output)
+result = agent.run_sync('Use the text editor tool to view hello.py')
+print(result.output)
 ```
 
 _(This example is complete, it can be run "as is")_
