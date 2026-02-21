@@ -336,6 +336,7 @@ class ToolManager(Generic[AgentDepsT]):
         Raises ToolRetryError if validation previously failed or the tool raises ModelRetry.
         Raises UnexpectedModelBehavior if max retries exceeded.
         """
+        # Asserts narrow types for pyright; invariants guaranteed by ValidatedToolCall construction
         if not validated.args_valid:
             assert validated.validation_error is not None
             raise validated.validation_error

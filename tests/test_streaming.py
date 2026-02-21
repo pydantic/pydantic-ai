@@ -3457,13 +3457,42 @@ async def test_args_validator_event_args_valid_field():
     async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
         events.append(event)
 
-    tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
-    assert len(tool_call_events) >= 1
-
-    add_number_events = [e for e in tool_call_events if e.part.tool_name == 'add_numbers']
-    assert add_number_events, 'Should have events for add_numbers'
-    for event in add_number_events:
-        assert event.args_valid is True
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(
+                    tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                ),
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                ),
+                args_valid=True,
+            ),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='add_numbers',
+                    content=0,
+                    tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                    timestamp=IsDatetime(),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"add_nu')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='mbers":0}')),
+            PartEndEvent(index=0, part=TextPart(content='{"add_numbers":0}')),
+            AgentRunResultEvent(result=AgentRunResult(output='{"add_numbers":0}')),
+        ]
+    )
 
 
 async def test_args_validator_event_args_valid_no_custom_validator():
