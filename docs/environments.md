@@ -250,7 +250,7 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 
 async def main():
     # Each agent.run() enters its own `async with toolset:`, creating a separate container
-    results = await asyncio.gather(
+    await asyncio.gather(
         agent.run('task A'),
         agent.run('task B'),
     )
