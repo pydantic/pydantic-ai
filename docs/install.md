@@ -65,8 +65,10 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `a2a` - installs [A2A](a2a.md) dependency `fasta2a` [PyPI ↗](https://pypi.org/project/fasta2a){:target="_blank"}
 * `ui` - installs [UI Event Streams](ui/overview.md) dependency `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 * `ag-ui` - installs [AG-UI Event Stream Protocol](ui/ag-ui.md) dependencies `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
+* `monty` - installs [Code Execution](code-execution.md) runtime dependency `pydantic-monty` [GitHub ↗](https://github.com/pydantic/monty){:target="_blank"}
 * `dbos` - installs [DBOS Durable Execution](durable_execution/dbos.md) dependency `dbos` [PyPI ↗](https://pypi.org/project/dbos){:target="_blank"}
 * `prefect` - installs [Prefect Durable Execution](durable_execution/prefect.md) dependency `prefect` [PyPI ↗](https://pypi.org/project/prefect){:target="_blank"}
+* `docker-sandbox` - installs [Docker Sandbox](environments.md#dockersandbox) dependency `docker` [PyPI ↗](https://pypi.org/project/docker){:target="_blank"}
 
 You can also install dependencies for multiple models and use cases, for example:
 

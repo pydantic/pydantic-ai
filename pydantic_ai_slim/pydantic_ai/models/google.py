@@ -1247,12 +1247,14 @@ def _metadata_as_usage(response: GenerateContentResponse, provider: str, provide
 
 
 def _map_executable_code(executable_code: ExecutableCode, provider_name: str, tool_call_id: str) -> BuiltinToolCallPart:
-    return BuiltinToolCallPart(
+    part = BuiltinToolCallPart(
         provider_name=provider_name,
         tool_name=CodeExecutionTool.kind,
         args=executable_code.model_dump(mode='json'),
         tool_call_id=tool_call_id,
     )
+    part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
+    return part
 
 
 def _map_code_execution_result(

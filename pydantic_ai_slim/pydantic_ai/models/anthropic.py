@@ -1387,12 +1387,14 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             tool_call_id=item.id,
         )
     elif item.name == 'code_execution':
-        return BuiltinToolCallPart(
+        part = BuiltinToolCallPart(
             provider_name=provider_name,
             tool_name=CodeExecutionTool.kind,
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
+        part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
+        return part
     elif item.name == 'web_fetch':
         return BuiltinToolCallPart(
             provider_name=provider_name,

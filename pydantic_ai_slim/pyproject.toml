@@ -67,6 +67,8 @@ dependencies = [
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 # WARNING if you add optional groups, please update docs/install.md
 logfire = ["logfire[httpx]>=4.16.0"]
+# Runtimes
+monty = ["pydantic-monty>=0.0.5"]
 # Models
 openai = ["openai>=2.11.0", "tiktoken>=0.12.0"]
 cohere = ["cohere>=5.18.0; platform_system != 'Emscripten'"]
@@ -129,6 +131,8 @@ temporal = ["temporalio==1.20.0"]
 dbos = ["dbos>=2.10.0"]
 # Prefect
 prefect = ["prefect>=3.4.21"]
+# Sandboxes
+docker-sandbox = ["docker>=7.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 from pydantic_core import SchemaValidator
 from typing_extensions import Self
 
+from .._python_signature import FunctionSignature
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition, ToolsPrepareFunc
 
@@ -57,6 +58,15 @@ class ToolsetTool(Generic[AgentDepsT]):
 
     For example, a [`pydantic.TypeAdapter(...).validator`](https://docs.pydantic.dev/latest/concepts/type_adapter/) or [`pydantic_core.SchemaValidator`](https://docs.pydantic.dev/latest/api/pydantic_core/#pydantic_core.SchemaValidator).
     """
+
+    @property
+    def python_signature(self) -> FunctionSignature:
+        """Generate a Python function signature for this tool.
+
+        Delegates to the cached `python_signature` on the underlying `ToolDefinition`,
+        so that repeated access (e.g. on every agent step) reuses the same result.
+        """
+        return self.tool_def.python_signature
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):

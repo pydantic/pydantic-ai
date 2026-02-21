@@ -2955,16 +2955,19 @@ def _map_code_interpreter_tool_call(
     if logs:
         result['logs'] = logs
 
+    call_part = BuiltinToolCallPart(
+        tool_name=CodeExecutionTool.kind,
+        tool_call_id=item.id,
+        args={
+            'container_id': item.container_id,
+            'code': item.code or '',
+        },
+        provider_name=provider_name,
+    )
+    call_part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
+
     return (
-        BuiltinToolCallPart(
-            tool_name=CodeExecutionTool.kind,
-            tool_call_id=item.id,
-            args={
-                'container_id': item.container_id,
-                'code': item.code or '',
-            },
-            provider_name=provider_name,
-        ),
+        call_part,
         BuiltinToolReturnPart(
             tool_name=CodeExecutionTool.kind,
             tool_call_id=item.id,

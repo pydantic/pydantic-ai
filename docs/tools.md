@@ -338,7 +338,7 @@ print(result.output)
 print(test_model.last_model_request_parameters.function_tools)
 """
 [
-    ToolDefinition(
+    FunctionToolDefinition(
         name='foobar',
         parameters_json_schema={
             'properties': {

@@ -1,0 +1,138 @@
+"""Shared fixtures and test tools for code execution tests."""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from collections.abc import Callable
+from typing import Any
+
+import pytest
+from typing_extensions import TypedDict
+
+from pydantic_ai._python_signature import FunctionSignature, TypeSignature
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.environments._base import ExecutionEnvironment
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import Tool
+from pydantic_ai.toolsets.code_execution import CodeExecutionToolset
+from pydantic_ai.toolsets.code_execution._abstract import FunctionCallback
+from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.usage import RunUsage
+
+
+# Define return type as TypedDict for better type hints in signatures
+class WeatherResult(TypedDict):
+    """Weather data for a city."""
+
+    city: str
+    temperature: float
+    unit: str
+    conditions: str
+
+
+# Simulated weather data for test cities
+_WEATHER_DATA: dict[str, dict[str, Any]] = {
+    'London': {'temperature': 15.0, 'conditions': 'cloudy'},
+    'Paris': {'temperature': 18.0, 'conditions': 'sunny'},
+    'Tokyo': {'temperature': 22.0, 'conditions': 'rainy'},
+    'New York': {'temperature': 12.0, 'conditions': 'windy'},
+    'Sydney': {'temperature': 25.0, 'conditions': 'sunny'},
+}
+
+
+def get_weather(city: str) -> WeatherResult:
+    """Get weather for a city.
+
+    Args:
+        city: Name of the city to get weather for.
+
+    Returns:
+        Weather data including temperature and conditions.
+    """
+    data = _WEATHER_DATA.get(city, {'temperature': 20.0, 'conditions': 'unknown'})
+    return {'city': city, 'temperature': data['temperature'], 'unit': 'celsius', 'conditions': data['conditions']}
+
+
+def build_run_context() -> RunContext[None]:
+    """Build a minimal RunContext for direct call_tool tests."""
+    return RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        prompt=None,
+        messages=[],
+        run_step=0,
+    )
+
+
+async def build_code_execution_toolset(
+    environment: ExecutionEnvironment,
+    *tools: Tool[Any] | tuple[Callable[..., Any], bool],
+) -> tuple[CodeExecutionToolset[None], dict[str, Any]]:
+    """Build and initialize a CodeExecutionToolset, returning it along with its tools dict."""
+    toolset: FunctionToolset[None] = FunctionToolset()
+    for tool in tools:
+        if isinstance(tool, Tool):
+            toolset.add_tool(tool)
+        else:
+            func, takes_ctx = tool
+            toolset.add_function(func, takes_ctx=takes_ctx)
+    code_execution = CodeExecutionToolset(environment, toolset=toolset)
+    ctx = build_run_context()
+    tool_defs = await code_execution.get_tools(ctx)
+    return code_execution, tool_defs
+
+
+async def run_code_with_tools(
+    code: str,
+    environment: ExecutionEnvironment,
+    *tools: Tool[Any] | tuple[Callable[..., Any], bool],
+) -> Any:
+    """Run code through CodeExecutionToolset. Each tool is a Tool object or (function, takes_ctx) tuple."""
+    code_execution, tool_defs = await build_code_execution_toolset(environment, *tools)
+    ctx = build_run_context()
+    return await code_execution.call_tool('run_code', {'code': code}, ctx, tool_defs['run_code'])
+
+
+class StubEnvironment(ExecutionEnvironment):
+    """Minimal ExecutionEnvironment for testing CodeExecutionToolset logic without pydantic-monty."""
+
+    @property
+    def capabilities(self) -> frozenset[Any]:
+        return frozenset({'run_python', 'run_python_with_functions'})
+
+    async def run_python_with_functions(
+        self,
+        code: str,
+        *,
+        function_callback: FunctionCallback,
+        functions: dict[str, FunctionSignature] | None = None,
+        referenced_types: list[TypeSignature] | None = None,
+    ) -> Any:
+        raise NotImplementedError('StubEnvironment does not execute code')
+
+
+def _docker_is_available() -> bool:
+    """Check whether Docker is installed and the daemon is reachable."""
+    if not shutil.which('docker'):  # pragma: lax no cover
+        return False
+    try:  # pragma: lax no cover
+        subprocess.run(['docker', 'info'], check=True, capture_output=True)  # pragma: lax no cover
+    except (subprocess.CalledProcessError, FileNotFoundError):  # pragma: lax no cover
+        return False
+    return True  # pragma: lax no cover
+
+
+@pytest.fixture(params=['monty'])
+def code_environment(request: pytest.FixtureRequest) -> ExecutionEnvironment:
+    """Parameterized fixture providing each ExecutionEnvironment implementation for code execution."""
+    if request.param == 'monty':
+        try:
+            from pydantic_ai.environments.monty import MontyEnvironment
+        except ImportError:
+            pytest.skip('pydantic-monty is not installed')
+
+        return MontyEnvironment()
+
+    pytest.skip(f'Unknown environment: {request.param}')  # pragma: no cover
