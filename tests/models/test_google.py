@@ -5810,8 +5810,7 @@ async def test_google_vertex_logprobs_without_top_logprobs(allow_model_requests:
     settings = GoogleModelSettings(google_logprobs=True)
     result = await agent.run('What is 2+2?', model_settings=settings)
 
-    messages = result.all_messages()
-    response = cast(ModelResponse, messages[-1])
+    response = result.response
 
     assert result.output is not None
     assert response.provider_details is not None
@@ -5820,18 +5819,18 @@ async def test_google_vertex_logprobs_without_top_logprobs(allow_model_requests:
             'finish_reason': 'STOP',
             'timestamp': IsDatetime(),
             'logprobs': {
-                'chosenCandidates': [
-                    {'logProbability': -0.0066939937, 'token': '2', 'tokenId': 236778},
-                    {'logProbability': -0.0026399216, 'token': ' +', 'tokenId': 900},
-                    {'logProbability': -3.5760596e-07, 'token': ' ', 'tokenId': 236743},
-                    {'logProbability': -1.1922384e-07, 'token': '2', 'tokenId': 236778},
-                    {'logProbability': -0.009400622, 'token': ' =', 'tokenId': 578},
-                    {'logProbability': -0.03711015, 'token': ' ', 'tokenId': 236743},
-                    {'logProbability': -4.529893e-06, 'token': '4', 'tokenId': 236812},
+                'chosen_candidates': [
+                    {'log_probability': -0.0066939937, 'token': '2', 'token_id': 236778},
+                    {'log_probability': -0.0026399216, 'token': ' +', 'token_id': 900},
+                    {'log_probability': -3.5760596e-07, 'token': ' ', 'token_id': 236743},
+                    {'log_probability': -1.1922384e-07, 'token': '2', 'token_id': 236778},
+                    {'log_probability': -0.009400622, 'token': ' =', 'token_id': 578},
+                    {'log_probability': -0.03711015, 'token': ' ', 'token_id': 236743},
+                    {'log_probability': -4.529893e-06, 'token': '4', 'token_id': 236812},
                 ],
-                'topCandidates': None,
+                'top_candidates': None,
             },
-            'avgLogprobs': -0.7161864553179059,
+            'avg_logprobs': -0.7161864553179059,
         }
     )
 
@@ -5846,8 +5845,7 @@ async def test_google_vertex_logprobs_structure(
     settings = GoogleModelSettings(google_logprobs=True, google_top_logprobs=2)
     result = await agent.run('Answer only with "Hello"', model_settings=settings)
 
-    messages = result.all_messages()
-    response = cast(ModelResponse, messages[-1])
+    response = result.response
 
     assert result.output == snapshot('Hello')
 
@@ -5857,17 +5855,17 @@ async def test_google_vertex_logprobs_structure(
             'finish_reason': 'STOP',
             'timestamp': IsDatetime(),
             'logprobs': {
-                'chosenCandidates': [{'logProbability': -1.0489701e-05, 'token': 'Hello', 'tokenId': 9259}],
-                'topCandidates': [
+                'chosen_candidates': [{'log_probability': -1.0489701e-05, 'token': 'Hello', 'token_id': 9259}],
+                'top_candidates': [
                     {
                         'candidates': [
-                            {'logProbability': -1.0489701e-05, 'token': 'Hello', 'tokenId': 9259},
-                            {'logProbability': -11.782881, 'token': '"', 'tokenId': 236775},
+                            {'log_probability': -1.0489701e-05, 'token': 'Hello', 'token_id': 9259},
+                            {'log_probability': -11.782881, 'token': '"', 'token_id': 236775},
                         ]
                     }
                 ],
             },
-            'avgLogprobs': -11.512689590454102,
+            'avg_logprobs': -11.512689590454102,
         }
     )
 
