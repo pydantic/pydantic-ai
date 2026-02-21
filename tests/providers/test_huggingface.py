@@ -126,8 +126,8 @@ def test_huggingface_provider_init_without_hf_client(MockAsyncInferenceClient: M
 
 @patch('pydantic_ai.providers.huggingface.AsyncInferenceClient')
 def test_huggingface_provider_init_with_provider_name(MockAsyncInferenceClient: MagicMock):
-    HuggingFaceProvider(api_key='key', provider_name='test-provider')
-    MockAsyncInferenceClient.assert_called_once_with(api_key='key', provider='test-provider', base_url=None)
+    HuggingFaceProvider(api_key='key', provider_name='together')
+    MockAsyncInferenceClient.assert_called_once_with(api_key='key', provider='together', base_url=None)
 
 
 @patch('pydantic_ai.providers.huggingface.AsyncInferenceClient')
@@ -147,6 +147,23 @@ def test_huggingface_provider_base_url():
     mock_client.model = 'test-model'
     provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
     assert provider.base_url == 'test-model'
+
+
+def test_huggingface_provider_base_url_from_provider_name():
+    mock_client = Mock(spec=AsyncInferenceClient)
+    mock_client.model = None
+    mock_client.provider = 'together'
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    assert provider.base_url == 'https://router.huggingface.co/together'
+
+
+def test_huggingface_provider_base_url_fallback():
+    mock_client = Mock(spec=AsyncInferenceClient)
+    mock_client.model = None
+    mock_client.provider = None
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    with pytest.raises(UserError, match='Unable to determine base URL'):
+        provider.base_url
 
 
 def test_huggingface_provider_model_profile(mocker: MockerFixture):

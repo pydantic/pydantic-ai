@@ -20,9 +20,9 @@ import warnings
 from typing import Annotated
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
