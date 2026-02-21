@@ -1,0 +1,81 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "92"
+        content-type:
+          - application/json
+        host:
+          - mock.databricks.com
+      method: POST
+      parsed_body:
+        messages:
+          - content: Hello
+            role: user
+        model: databricks-gpt-5-2
+        stream: false
+      uri: https://mock.databricks.com/serving-endpoints/chat/completions
+    response:
+      headers:
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-length:
+          - "800"
+        content-type:
+          - application/json
+        openai-organization:
+          - databricks-serverless
+        openai-processing-ms:
+          - "394"
+        openai-project:
+          - proj_XWG0smJyU1OZznEnXiHbHa7z
+        openai-version:
+          - "2020-10-01"
+        server-timing:
+          - request_id;dur=0;desc="070d4f93-92a9-45ce-b151-66db983644af", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+        vary:
+          - Accept-Encoding
+      parsed_body:
+        choices:
+          - finish_reason: stop
+            index: 0
+            message:
+              annotations: []
+              content: Hello--how can I help you today?
+              refusal: null
+              role: assistant
+        created: 1768819960
+        id: chatcmpl-CzhA8vZRkFZiZYABE2XcqEVClQLRw
+        model: gpt-5.2-2025-12-11
+        object: chat.completion
+        service_tier: default
+        system_fingerprint: null
+        usage:
+          completion_tokens: 12
+          completion_tokens_details:
+            accepted_prediction_tokens: 0
+            audio_tokens: 0
+            reasoning_tokens: 0
+            rejected_prediction_tokens: 0
+          prompt_tokens: 7
+          prompt_tokens_details:
+            audio_tokens: 0
+            cached_tokens: 0
+          total_tokens: 19
+      status:
+        code: 200
+        message: OK
+version: 1

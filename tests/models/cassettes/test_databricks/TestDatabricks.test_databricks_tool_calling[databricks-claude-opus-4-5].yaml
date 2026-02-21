@@ -1,0 +1,89 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate, br
+        connection:
+          - keep-alive
+        content-length:
+          - "523"
+        content-type:
+          - application/json
+        host:
+          - mock.databricks.com
+      method: POST
+      parsed_body:
+        messages:
+          - content: What is the weather in London?
+            role: user
+        model: databricks-claude-opus-4-5
+        stream: false
+        tool_choice: auto
+        tools:
+          - function:
+              description: Get the current weather.
+              name: get_weather
+              parameters:
+                description: Get the current weather.
+                properties:
+                  location:
+                    title: Location
+                    type: string
+                  unit:
+                    default: celsius
+                    enum:
+                      - celsius
+                      - fahrenheit
+                    title: Unit
+                    type: string
+                required:
+                  - location
+                title: GetWeather
+                type: object
+            type: function
+      uri: https://mock.databricks.com/serving-endpoints/chat/completions
+    response:
+      headers:
+        alt-svc:
+          - h3=":443"; ma=86400, h3-29=":443"; ma=86400
+        content-length:
+          - "526"
+        content-type:
+          - application/json
+        server-timing:
+          - request_id;dur=0;desc="8fefc558-7227-4393-9f68-99f2b224afcd", client_protocol;dur=0;desc="HTTP/1.1"
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+        vary:
+          - Accept-Encoding
+      parsed_body:
+        choices:
+          - finish_reason: tool_calls
+            index: 0
+            message:
+              content: null
+              role: assistant
+              tool_calls:
+                - function:
+                    arguments: '{"location":"London"}'
+                    name: get_weather
+                  id: toolu_bdrk_018kP5sK8XDckst4J9n3wfbH
+                  type: function
+        created: 1768819949
+        id: msg_bdrk_01U2xaUKSPo558fMKySgHDha
+        model: us.anthropic.claude-opus-4-5-20251101-v1:0
+        object: chat.completion
+        usage:
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          completion_tokens: 53
+          prompt_tokens: 617
+          total_tokens: 670
+      status:
+        code: 200
+        message: OK
+version: 1

@@ -157,6 +157,10 @@ KnownModelName = TypeAliasType(
         'cohere:command-r-08-2024',
         'cohere:command-r-plus-08-2024',
         'cohere:command-r7b-12-2024',
+        'databricks:databricks-gpt-5-2',
+        'databricks:databricks-claude-opus-4-5',
+        'databricks:databricks-gpt-oss-120b',
+        'databricks:databricks-qwen3-next-80b-a3b-instruct',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
         'gateway/anthropic:claude-3-5-haiku-20241022',
@@ -574,6 +578,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'alibaba',
         'azure',
         'cerebras',
+        'databricks',
         'deepseek',
         'fireworks',
         'github',
@@ -1174,6 +1179,10 @@ def infer_model(  # noqa: C901
         from .cerebras import CerebrasModel
 
         return CerebrasModel(model_name, provider=provider)
+    elif model_kind == 'databricks':
+        from .databricks import DatabricksModel
+
+        return DatabricksModel(model_name, provider=provider)
     elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
         from .openai import OpenAIChatModel
 
