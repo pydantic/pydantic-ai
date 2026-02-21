@@ -187,12 +187,20 @@ class ToolManager(Generic[AgentDepsT]):
             if tool.tool_def.kind == 'external':
                 raise RuntimeError('External tools cannot be called')
 
+            if tool.tool_def.kind == 'output':
+                # Output tools use the global output retry counter (set on self.ctx by _build_output_run_context)
+                retry = self.ctx.retry
+                max_retries = self.ctx.max_retries
+            else:
+                retry = self.ctx.retries.get(name, 0)
+                max_retries = tool.max_retries
+
             ctx = replace(
                 self.ctx,
                 tool_name=name,
                 tool_call_id=call.tool_call_id,
-                retry=self.ctx.retries.get(name, 0),
-                max_retries=tool.max_retries,
+                retry=retry,
+                max_retries=max_retries,
                 tool_call_approved=approved,
                 tool_call_metadata=metadata,
                 partial_output=allow_partial,

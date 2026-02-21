@@ -3,9 +3,10 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any, Generic, Literal, TypeVar, Union
 
 import pytest
@@ -25,9 +26,9 @@ from pydantic_ai import (
     CombinedToolset,
     DocumentUrl,
     ExternalToolset,
+    FilePart,
     FunctionToolset,
     ImageUrl,
-    IncompleteToolCall,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelProfile,
@@ -65,6 +66,8 @@ from pydantic_ai.builtin_tools import (
     WebSearchUserLocation,
 )
 from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.messages import ModelResponseStreamEvent
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
@@ -2991,7 +2994,7 @@ def test_unknown_tool():
     agent = Agent(FunctionModel(empty))
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
             agent.run_sync('Hello')
     assert messages == snapshot(
         [
@@ -3087,7 +3090,7 @@ def test_unknown_tool_multiple_retries():
     agent = Agent(FunctionModel(empty), retries=num_retries)
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 2"):
             agent.run_sync('Hello')
     assert messages == snapshot(
         [
@@ -3145,7 +3148,9 @@ def test_unknown_tool_multiple_retries():
     )
 
 
-def test_tool_exceeds_token_limit_error():
+def test_tool_exceeds_token_limit_retries():
+    """Truncated function tool calls get retried via validation errors rather than failing immediately."""
+
     def return_incomplete_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar",')])
         resp.finish_reason = 'length'
@@ -3153,15 +3158,13 @@ def test_tool_exceeds_token_limit_error():
 
     agent = Agent(FunctionModel(return_incomplete_tool), output_type=str)
 
-    with pytest.raises(
-        IncompleteToolCall,
-        match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments.',
-    ):
-        agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+    @agent.tool_plain
+    def dummy_tool(foo: str) -> str:
+        return 'tool-ok'  # pragma: no cover
 
     with pytest.raises(
-        IncompleteToolCall,
-        match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments.',
+        UnexpectedModelBehavior,
+        match=r"Tool 'dummy_tool' exceeded max retries count of 1",
     ):
         agent.run_sync('Hello')
 
@@ -7762,3 +7765,213 @@ async def test_central_content_filter_with_partial_content():
     # Should NOT raise ContentFilterError
     result = await agent.run('Trigger filter')
     assert result.output == 'Partially generated content...'
+
+
+async def test_image_output_validators_run():
+    """Test that output validators are called when the model returns an image."""
+    validator_called = False
+
+    def return_image(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'fake-png', media_type='image/png'))])
+
+    image_profile = ModelProfile(supports_image_output=True)
+    agent = Agent(FunctionModel(return_image, profile=image_profile), output_type=BinaryImage)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+        nonlocal validator_called
+        validator_called = True
+        return output
+
+    result = await agent.run('Give me an image')
+    assert isinstance(result.output, BinaryImage)
+    assert validator_called, 'output_validator was not called for image output'
+
+
+async def test_image_output_validators_run_stream():
+    """Test that output validators are called when streaming a model image response."""
+    validator_called = False
+
+    # FunctionModel's stream_function only supports str | DeltaToolCalls | DeltaThinkingCalls,
+    # so we need custom Model/StreamedResponse subclasses to stream a FilePart.
+    class ImageStreamedResponse(StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            self._usage = RequestUsage()
+            yield self._parts_manager.handle_part(
+                vendor_part_id=0,
+                part=FilePart(content=BinaryImage(data=b'fake-png', media_type='image/png')),
+            )
+
+        @property
+        def model_name(self) -> str:
+            return 'image-model'
+
+        @property
+        def provider_name(self) -> str:
+            return 'test'
+
+        @property
+        def provider_url(self) -> str:
+            return 'https://test.example.com'
+
+        @property
+        def timestamp(self) -> datetime:
+            return datetime(2024, 1, 1)
+
+    class ImageStreamModel(Model):
+        @property
+        def system(self) -> str:  # pragma: no cover
+            return 'test'
+
+        @property
+        def model_name(self) -> str:
+            return 'image-model'
+
+        @property
+        def base_url(self) -> str:  # pragma: no cover
+            return 'https://test.example.com'
+
+        async def request(  # pragma: no cover
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'fake-png', media_type='image/png'))])
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext | None = None,
+        ) -> AsyncIterator[StreamedResponse]:
+            yield ImageStreamedResponse(model_request_parameters=model_request_parameters)
+
+    image_profile = ModelProfile(supports_image_output=True)
+    agent = Agent(ImageStreamModel(profile=image_profile), output_type=BinaryImage)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], output: BinaryImage) -> BinaryImage:
+        nonlocal validator_called
+        validator_called = True
+        return output
+
+    async with agent.run_stream('Give me an image') as stream:
+        result = await stream.get_output()
+
+    assert isinstance(result, BinaryImage)
+    assert validator_called, 'output_validator was not called for streamed image output'
+
+
+async def test_unknown_tool_with_valid_tool_does_not_exhaust_retries():
+    """Test that an unknown tool call mixed with a valid tool doesn't prematurely exhaust retries.
+
+    When a model returns both an unknown tool and a valid tool on consecutive calls,
+    the valid tool should still execute even on the second call.
+    With the old code, the global retry counter was prematurely incremented for unknown
+    tools BEFORE valid tools could execute, causing the run to fail with
+    'Exceeded maximum retries' when the model returned unknown tools repeatedly.
+    """
+    call_count = 0
+
+    def return_mixed_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if call_count < 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('unknown_tool', '{}'),
+                    ToolCallPart('valid_tool', '{"x": 1}'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(return_mixed_tools), retries=2)
+
+    @agent.tool_plain
+    def valid_tool(x: int) -> str:
+        nonlocal call_count
+        call_count += 1
+        return f'result: {x}'
+
+    result = await agent.run('test mixed tools')
+    assert result.output == 'done'
+    assert call_count == 2, f'valid_tool should have been called twice, was called {call_count} times'
+
+
+async def test_parallel_tool_tasks_cancelled_on_exception():
+    """Test that parallel tool tasks are cancelled when a sibling task raises a non-CancelledError.
+
+    Uses a short sleep so the orphaned task would complete if not properly cancelled.
+    """
+    slow_tool_completed = False
+
+    def return_parallel_tools(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('failing_tool', '{}'),
+                ToolCallPart('slow_tool', '{}'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(return_parallel_tools))
+
+    @agent.tool_plain
+    def failing_tool() -> str:
+        raise RuntimeError('tool exploded')
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        nonlocal slow_tool_completed
+        await asyncio.sleep(0.05)
+        slow_tool_completed = True  # pragma: no cover
+        return 'done'  # pragma: no cover
+
+    with pytest.raises(RuntimeError, match='tool exploded'):
+        await agent.run('run parallel tools')
+
+    # Wait long enough for the orphaned task to complete if it wasn't cancelled
+    await asyncio.sleep(0.2)
+    assert not slow_tool_completed, 'slow_tool task was not cancelled and completed as an orphan'
+
+
+def test_output_validator_retry_with_function_tool():
+    """Test that output validators on the tool path see global retry/max_retries, not per-tool values.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4385.
+    """
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+    target_retries = 2
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools
+        # Always return both a function tool call and an output tool call
+        return ModelResponse(
+            parts=[
+                ToolCallPart('my_tool', '{}'),
+                ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(return_model), output_type=Foo, output_retries=target_retries)
+
+    @agent.tool_plain
+    def my_tool() -> str:
+        return 'tool-ok'
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        if ctx.retry == target_retries:
+            return o
+        raise ModelRetry(f'Retry {ctx.retry}')
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+    assert retries_log == [0, 1, 2]
+    assert max_retries_log == [target_retries] * (target_retries + 1)

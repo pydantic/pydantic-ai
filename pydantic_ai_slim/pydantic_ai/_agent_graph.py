@@ -101,20 +101,7 @@ class GraphAgentState:
     ) -> None:
         self.retries += 1
         if self.retries > max_result_retries:
-            if (
-                self.message_history
-                and isinstance(model_response := self.message_history[-1], _messages.ModelResponse)
-                and model_response.finish_reason == 'length'
-                and model_response.parts
-                and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
-            ):
-                try:
-                    tool_call.args_as_dict()
-                except Exception:
-                    max_tokens = model_settings.get('max_tokens') if model_settings else None
-                    raise exceptions.IncompleteToolCall(
-                        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
-                    )
+            _check_incomplete_tool_calls(self.message_history, model_settings)
             message = f'Exceeded maximum retries ({max_result_retries}) for output validation'
             if error:
                 if isinstance(error, exceptions.UnexpectedModelBehavior) and error.__cause__ is not None:
@@ -762,6 +749,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
+        # Set global output retry info so output validators see the correct retry counter
+        assert ctx.deps.tool_manager.ctx is not None
+        ctx.deps.tool_manager.ctx = replace(
+            ctx.deps.tool_manager.ctx,
+            retry=ctx.state.retries,
+            max_retries=ctx.deps.max_result_retries,
+        )
+
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
@@ -796,17 +791,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         text: str,
         text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
-        run_context = build_run_context(ctx)
-        run_context = replace(
-            run_context,
-            retry=ctx.state.retries,
-            max_retries=ctx.deps.max_result_retries,
-        )
-
+        run_context = _build_output_run_context(ctx)
         result_data = await text_processor.process(text, run_context=run_context)
-
-        for validator in ctx.deps.output_validators:
-            result_data = await validator.validate(result_data, run_context)
+        result_data = await _run_output_validators(ctx, result_data, run_context)
         return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     async def _handle_image_response(
@@ -814,7 +801,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         image: _messages.BinaryImage,
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
-        result_data = cast(NodeRunEndT, image)
+        run_context = _build_output_run_context(ctx)
+        result_data = await _run_output_validators(ctx, cast(NodeRunEndT, image), run_context)
         return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
     def _handle_final_result(
@@ -881,6 +869,29 @@ def build_validation_context(
         return fn(run_context)
     else:
         return validation_ctx
+
+
+def _build_output_run_context(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+) -> RunContext[DepsT]:
+    """Build a RunContext with global output retry info for output validation."""
+    run_context = build_run_context(ctx)
+    return replace(
+        run_context,
+        retry=ctx.state.retries,
+        max_retries=ctx.deps.max_result_retries,
+    )
+
+
+async def _run_output_validators(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    result_data: NodeRunEndT,
+    run_context: RunContext[DepsT],
+) -> NodeRunEndT:
+    """Run all output validators on the result data."""
+    for validator in ctx.deps.output_validators:
+        result_data = await validator.validate(result_data, run_context)
+    return result_data
 
 
 async def process_tool_calls(  # noqa: C901
@@ -989,9 +1000,8 @@ async def process_tool_calls(  # noqa: C901
     else:
         calls_to_run.extend(tool_calls_by_kind['function'])
 
-    # Then, we handle unknown tool calls
+    # Then, we handle unknown tool calls (per-tool retry is handled in _call_tool)
     if tool_calls_by_kind['unknown']:
-        ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
         calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     calls_to_run_results: dict[str, DeferredToolResult] = {}
@@ -1171,8 +1181,11 @@ async def _call_tools(  # noqa: C901
 
             except asyncio.CancelledError as e:
                 for task in tasks:
-                    task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
-
+                    task.cancel(msg=e.args[0] if e.args else None)
+                raise
+            except Exception:
+                for task in tasks:
+                    task.cancel()
                 raise
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
@@ -1183,6 +1196,27 @@ async def _call_tools(  # noqa: C901
     _populate_deferred_calls(
         tool_calls, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
     )
+
+
+def _check_incomplete_tool_calls(
+    message_history: list[_messages.ModelMessage],
+    model_settings: ModelSettings | None,
+) -> None:
+    """Raise `IncompleteToolCall` if the last response was truncated with malformed tool call args."""
+    if (
+        message_history
+        and isinstance(model_response := message_history[-1], _messages.ModelResponse)
+        and model_response.finish_reason == 'length'
+        and model_response.parts
+        and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
+    ):
+        try:
+            tool_call.args_as_dict()
+        except Exception:
+            max_tokens = model_settings.get('max_tokens') if model_settings else None
+            raise exceptions.IncompleteToolCall(
+                f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
+            )
 
 
 def _populate_deferred_calls(
