@@ -514,7 +514,8 @@ def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
         raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
 
-_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*\})', flags=re.DOTALL)
+_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(.*?)(?:\n```|$)', flags=re.DOTALL)
+_JSON_OBJECT_PATTERN = re.compile(r'(\{.*\})', flags=re.DOTALL)
 
 
 def strip_markdown_fences(text: str) -> str:
@@ -523,7 +524,12 @@ def strip_markdown_fences(text: str) -> str:
 
     match = re.search(_MARKDOWN_FENCES_PATTERN, text)
     if match:
-        return match.group(1)
+        fence_content = match.group(1)
+        # Find the JSON object within the fence content
+        json_match = re.search(_JSON_OBJECT_PATTERN, fence_content)
+        if json_match:
+            return json_match.group(1)
+        return fence_content
 
     return text
 
