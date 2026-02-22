@@ -220,3 +220,93 @@ agent = Agent(
 result = agent.run_sync('Find recent AI research papers and summarize the key findings.')
 print(result.output)
 ```
+
+## Camb.ai Voice & Translation Tools
+
+!!! info
+    Camb.ai is a paid service with free credits to explore their product.
+
+    You need to [sign up for an account](https://studio.camb.ai) and get an API key to use the Camb.ai tools.
+
+Camb.ai provides multilingual voice AI services including text-to-speech, translation, transcription,
+voice cloning, text-to-sound generation, and audio separation across 140+ languages.
+
+### Installation
+
+To use Camb.ai tools, you need to install [`pydantic-ai-slim`](install.md#slim-install) with the `camb` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[camb]"
+```
+
+### Usage
+
+You can use Camb.ai tools individually or as a toolset. The following tools are available:
+
+- [`camb_tts_tool`][pydantic_ai.common_tools.camb.camb_tts_tool]: Text-to-speech synthesis
+- [`camb_list_voices_tool`][pydantic_ai.common_tools.camb.camb_list_voices_tool]: List available voices
+- [`camb_translate_tool`][pydantic_ai.common_tools.camb.camb_translate_tool]: Text translation
+- [`camb_transcribe_tool`][pydantic_ai.common_tools.camb.camb_transcribe_tool]: Audio transcription
+- [`camb_translated_tts_tool`][pydantic_ai.common_tools.camb.camb_translated_tts_tool]: Translate text and synthesize speech
+- [`camb_clone_voice_tool`][pydantic_ai.common_tools.camb.camb_clone_voice_tool]: Clone a voice from audio
+- [`camb_voice_from_description_tool`][pydantic_ai.common_tools.camb.camb_voice_from_description_tool]: Generate a voice from a description
+- [`camb_text_to_sound_tool`][pydantic_ai.common_tools.camb.camb_text_to_sound_tool]: Generate sound effects from text
+- [`camb_separate_audio_tool`][pydantic_ai.common_tools.camb.camb_separate_audio_tool]: Separate vocals and background audio
+
+#### Using Individual Tools
+
+```py {title="camb_tts.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.camb import camb_tts_tool
+
+api_key = os.getenv('CAMB_API_KEY')
+assert api_key is not None
+
+agent = Agent(
+    'openai:gpt-5.2',
+    tools=[camb_tts_tool(api_key, voice_id=147320, language='en-us')],
+    instructions='Use the TTS tool to synthesize speech from text.',
+)
+
+result = agent.run_sync('Say "Hello, welcome to Pydantic AI" in English')
+print(result.output)
+```
+
+#### Using CambToolset
+
+For better efficiency when using multiple Camb.ai tools, use [`CambToolset`][pydantic_ai.common_tools.camb.CambToolset]
+which shares a single API client across all tools. You can configure which tools to include:
+
+```py {title="camb_toolset.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.camb import CambToolset
+
+api_key = os.getenv('CAMB_API_KEY')
+assert api_key is not None
+
+toolset = CambToolset(
+    api_key,
+    voice_id=147320,
+    language='en-us',
+    model='mars-flash',
+    include_tts=True,
+    include_translate=True,
+    include_list_voices=True,
+    include_transcribe=False,  # Exclude transcription
+    include_clone_voice=False,  # Exclude voice cloning
+    include_separate_audio=False,  # Exclude audio separation
+)
+
+agent = Agent(
+    'openai:gpt-5.2',
+    toolsets=[toolset],
+    instructions='You have access to Camb.ai voice and translation tools.',
+)
+
+result = agent.run_sync('Translate "Hello world" from English to Spanish')
+print(result.output)
+```
