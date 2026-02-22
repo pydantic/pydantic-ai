@@ -11,13 +11,13 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Annotated, Any, overload
+from typing import Annotated, Any, Literal, overload
 
 import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
+from pydantic import AnyUrl, BaseModel, Discriminator, Field, Tag
 from pydantic_core import CoreSchema, core_schema
 from typing_extensions import Self, assert_never, deprecated
 
@@ -59,6 +59,8 @@ __all__ = (
     'ServerCapabilities',
     'Prompt',
     'PromptArgument',
+    'PromptMessage',
+    'PromptResult',
     'Icon',
 )
 
@@ -216,7 +218,8 @@ class ResourceTemplate(BaseResource):
         )
 
 
-class PromptArgument(BaseModel):
+@dataclass(repr=False, kw_only=True)
+class PromptArgument:
     """An argument for a prompt template."""
 
     name: str
@@ -225,10 +228,11 @@ class PromptArgument(BaseModel):
     """A human-readable description of the argument."""
     required: bool | None = None
 
-    model_config = ConfigDict(extra='allow')
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-class Icon(BaseModel):
+@dataclass(repr=False, kw_only=True)
+class Icon:
     """An icon for display in user interfaces."""
 
     src: str
@@ -240,10 +244,11 @@ class Icon(BaseModel):
     sizes: list[str] | None = None
     """Optional list of strings specifying icon dimensions (e.g., ["48x48", "96x96"])."""
 
-    model_config = ConfigDict(extra='allow')
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-class Prompt(BaseModel):
+@dataclass(repr=False, kw_only=True)
+class Prompt:
     """A prompt or prompt template that the server offers."""
 
     name: str
@@ -266,6 +271,8 @@ class Prompt(BaseModel):
     See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
     for notes on _meta usage.
     """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
     @classmethod
     def from_mcp_sdk(cls, mcp_prompt: mcp_types.Prompt) -> Prompt:
@@ -301,7 +308,120 @@ class Prompt(BaseModel):
             meta=mcp_prompt.meta,
         )
 
-    model_config = ConfigDict(extra='allow')
+
+Role = Literal['user', 'assistant']
+
+
+@dataclass(repr=False, kw_only=True)
+class PromptAnnotations:
+    """Additional properties describing MCP entities.
+
+    See the [resource annotations in the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#annotations).
+    """
+
+    audience: list[mcp_types.Role] | None = None
+    """Intended audience for this entity."""
+
+    priority: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+    """Priority level for this entity, ranging from 0.0 to 1.0."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+    @classmethod
+    def from_mcp_sdk(cls, mcp_annotations: mcp_types.Annotations) -> PromptAnnotations:
+        """Convert from MCP SDK Annotations to PromptAnnotations.
+
+        Args:
+            mcp_annotations: The MCP SDK annotations object.
+        """
+        return cls(audience=mcp_annotations.audience, priority=mcp_annotations.priority)
+
+
+@dataclass(repr=False, kw_only=True)
+class TextContent:
+    """Text content for a message."""
+
+    type: Literal['text']
+    text: str
+    """The text content of the message."""
+    annotations: PromptAnnotations | None = None
+    meta: dict[str, Any] | None = Field(alias='_meta', default=None)
+    """
+    See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
+    for notes on _meta usage.
+    """
+
+
+@dataclass(repr=False, kw_only=True)
+class ImageContent:
+    """Image content for a message."""
+
+    type: Literal['image']
+    data: str
+    """The base64-encoded image data."""
+    mimeType: str
+    """
+    The MIME type of the image. Different providers may support different
+    image types.
+    """
+    annotations: PromptAnnotations | None = None
+    meta: dict[str, Any] | None = Field(alias='_meta', default=None)
+    """
+    See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
+    for notes on _meta usage.
+    """
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class AudioContent:
+    """Audio content for a message."""
+
+    type: Literal['audio']
+    data: str
+    """The base64-encoded audio data."""
+    mimeType: str
+    """
+    The MIME type of the audio. Different providers may support different
+    audio types.
+    """
+    annotations: PromptAnnotations | None = None
+    meta: dict[str, Any] | None = Field(alias='_meta', default=None)
+    """
+    See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
+    for notes on _meta usage.
+    """
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+ContentBlock = TextContent | ImageContent | AudioContent
+"""A content block that can be used in prompts and tool results."""
+
+
+@dataclass(repr=False, kw_only=True)
+class PromptMessage:
+    """A message returned as part of a prompt result."""
+
+    role: Role
+    """The role of the message sender."""
+
+    content: ContentBlock
+    """The content of the message."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class PromptResult:
+    """The result of a [`get_prompt`][pydantic_ai.mcp.MCPServer.get_prompt] request."""
+
+    messages: list[PromptMessage]
+    """The prompt messages."""
+
+    description: str | None = None
+    """An optional description for the prompt."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass(repr=False, kw_only=True)
@@ -606,7 +726,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
 
-    async def get_prompt(self, name: str, arguments: dict[str, str] | None = None) -> mcp_types.GetPromptResult:
+    async def get_prompt(self, name: str, arguments: dict[str, str] | None = None) -> PromptResult:
         """Retrieve a specific prompt by name.
 
         Args:
@@ -614,7 +734,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             arguments: Arguments to parameterize the prompt, if applicable.
 
         Returns:
-            The prompt with the specified name.
+            The prompt result with description and messages.
         """
         async with self:
             try:
@@ -622,7 +742,13 @@ class MCPServer(AbstractToolset[Any], ABC):
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
 
-        return result
+        return PromptResult(
+            description=result.description,
+            messages=[
+                PromptMessage(role=msg.role, content=await self._map_prompt_content(msg.content))
+                for msg in result.messages
+            ],
+        )
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
@@ -916,6 +1042,45 @@ class MCPServer(AbstractToolset[Any], ABC):
                 self._cached_resources = None
             elif isinstance(message.root, mcp_types.PromptListChangedNotification):
                 self._cached_prompts = None
+
+    async def _map_prompt_content(self, part: mcp_types.ContentBlock) -> ContentBlock:
+        if isinstance(part, mcp_types.TextContent):
+            return TextContent(
+                type='text',
+                text=part.text,
+                annotations=PromptAnnotations.from_mcp_sdk(part.annotations) if part.annotations else None,
+                meta=part.meta,
+            )
+        elif isinstance(part, mcp_types.ImageContent):
+            return ImageContent(
+                type='image',
+                data=part.data,
+                mimeType=part.mimeType,
+                annotations=PromptAnnotations.from_mcp_sdk(part.annotations) if part.annotations else None,
+                meta=part.meta,
+            )
+        elif isinstance(part, mcp_types.AudioContent):  # pragma: no cover
+            return AudioContent(
+                type='audio',
+                data=part.data,
+                mimeType=part.mimeType,
+                annotations=PromptAnnotations.from_mcp_sdk(part.annotations) if part.annotations else None,
+                meta=part.meta,
+            )
+        elif isinstance(part, mcp_types.EmbeddedResource):
+            resource_content = self._get_content(part.resource)
+            if isinstance(resource_content, str):
+                return TextContent(type='text', text=resource_content)
+            else:
+                return TextContent(type='text', text=str(resource_content))
+        elif isinstance(part, mcp_types.ResourceLink):
+            resource_content = await self.read_resource(str(part.uri))
+            if isinstance(resource_content, str):
+                return TextContent(type='text', text=resource_content)
+            else:
+                return TextContent(type='text', text=str(resource_content))
+        else:
+            assert_never(part)
 
     async def _map_tool_result_part(
         self, part: mcp_types.ContentBlock

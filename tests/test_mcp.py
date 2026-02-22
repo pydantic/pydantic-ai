@@ -2449,7 +2449,9 @@ async def test_get_prompt() -> None:
         assert len(result.messages) > 0
 
         parameterized_prompt = result.messages[0]
-        assert isinstance(parameterized_prompt.content, TextContent)
+        from pydantic_ai.mcp import TextContent as PydanticAITextContent
+
+        assert isinstance(parameterized_prompt.content, PydanticAITextContent)
         assert parameterized_prompt.content.text == "Hello Alice, let's talk about AI!"
 
         # Test error handling for nonexistent prompt
@@ -2492,3 +2494,41 @@ async def test_prompts_cache_invalidation_on_notification() -> None:
 
         # Cache should be invalidated
         assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_map_prompt_content_image_with_annotations() -> None:
+    """Test _map_prompt_content with ImageContent including annotations."""
+    from mcp.types import Annotations, GetPromptResult, PromptMessage as McpPromptMessage
+
+    from pydantic_ai.mcp import ImageContent as PydanticAIImageContent, PromptAnnotations
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        image_data = base64.b64encode(b'fake_image_data').decode('utf-8')
+        mock_result = GetPromptResult(
+            messages=[
+                McpPromptMessage(
+                    role='user',
+                    content=ImageContent(
+                        type='image',
+                        data=image_data,
+                        mimeType='image/png',
+                        annotations=Annotations(audience=['user'], priority=0.8),
+                    ),
+                )
+            ]
+        )
+        mock_client = AsyncMock()
+        mock_client.get_prompt.return_value = mock_result
+        with patch.object(server, '_client', mock_client):
+            result = await server.get_prompt('image_prompt')
+
+    assert len(result.messages) == 1
+    content = result.messages[0].content
+    assert isinstance(content, PydanticAIImageContent)
+    assert content.data == image_data
+    assert content.mimeType == 'image/png'
+    assert content.annotations is not None
+    assert isinstance(content.annotations, PromptAnnotations)
+    assert content.annotations.audience == ['user']
+    assert content.annotations.priority == 0.8
