@@ -527,6 +527,13 @@ def test_strip_markdown_fences():
         == '{"foo": "bar"}'
     )
     assert strip_markdown_fences('No JSON to be found') == 'No JSON to be found'
+    # Greedy regex bug: trailing braces after closing fence should not be captured
+    assert (
+        strip_markdown_fences('```json\n{"result": "pass"}\n```\nThis conforms to the schema {"type": "object"}')
+        == '{"result": "pass"}'
+    )
+    # Nested braces inside fenced block should still be captured fully
+    assert strip_markdown_fences('```json\n{"a": {"b": 1}}\n```') == '{"a": {"b": 1}}'
 
 
 def test_validate_empty_kwargs_empty():
