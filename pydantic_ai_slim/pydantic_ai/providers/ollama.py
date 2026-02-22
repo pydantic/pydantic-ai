@@ -3,8 +3,6 @@ from __future__ import annotations as _annotations
 import os
 
 import httpx
-from openai import AsyncOpenAI
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
@@ -67,7 +65,6 @@ class OllamaProvider(Provider[AsyncOpenAI]):
         base = OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_thinking_field='reasoning',
-            openai_chat_send_back_thinking_parts='tags',
             openai_supports_strict_tool_definition=False,
             supports_json_schema_output=True,
             supports_json_object_output=True,
