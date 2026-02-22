@@ -187,10 +187,63 @@ async def test_process_tool_call(run_context: RunContext[int]) -> int:
         assert called, 'process_tool_call should have been called'
 
 
+async def test_server_instructions_disabled_by_default(run_context: RunContext[int]):
+    """Test that server instructions are not returned by default."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        instructions = await server.get_instructions(run_context)
+        assert instructions is None
+
+
+async def test_server_instructions_enabled(run_context: RunContext[int]):
+    """Test that server instructions are returned when include_instructions=True."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
+    async with server:
+        instructions = await server.get_instructions(run_context)
+        assert instructions == 'Be a helpful assistant.'
+
+
+async def test_server_instructions_not_initialized():
+    """Test that AttributeError is raised when include_instructions=True but server not initialized."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
+
+    # Don't enter the context manager to avoid initialization
+    ctx = build_run_context(0)
+
+    with pytest.raises(
+        AttributeError, match='The `MCPServerStdio.get_instructions` is only instantiated after initialization.'
+    ):
+        await server.get_instructions(ctx)
+
+
+def build_run_context(deps: int) -> RunContext[int]:
+    """Helper function to build a run context for MCP tests."""
+    return RunContext(
+        deps=deps,
+        model=TestModel(),
+        usage=RunUsage(),
+        prompt=None,
+        messages=[],
+        run_step=0,
+    )
+
+
 def test_sse_server():
     sse_server = MCPServerSSE(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
     assert sse_server.log_level is None
+
+
+def test_sse_server_with_include_instructions():
+    """Test that SSE server can be configured with include_instructions=True."""
+    sse_server = MCPServerSSE(url='http://localhost:8000/sse', include_instructions=True)
+    assert sse_server.include_instructions is True
+
+
+def test_streamable_http_server_with_include_instructions():
+    """Test that StreamableHTTP server can be configured with include_instructions=True."""
+    http_server = MCPServerStreamableHTTP(url='http://localhost:8000/mcp', include_instructions=True)
+    assert http_server.include_instructions is True
 
 
 def test_sse_server_with_header_and_timeout():
@@ -2187,15 +2240,6 @@ async def test_resource_methods_without_capability(mcp_server: MCPServerStdio) -
             # list_resource_templates should return empty list
             result = await mcp_server.list_resource_templates()
             assert result == []
-
-
-async def test_instructions(mcp_server: MCPServerStdio) -> None:
-    with pytest.raises(
-        AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
-    ):
-        mcp_server.instructions
-    async with mcp_server:
-        assert mcp_server.instructions == 'Be a helpful assistant.'
 
 
 async def test_client_info_passed_to_session() -> None:

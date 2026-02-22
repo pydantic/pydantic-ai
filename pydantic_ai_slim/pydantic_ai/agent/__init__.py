@@ -653,15 +653,30 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions_literal, instructions_functions = self._get_instructions(additional_instructions=instructions)
 
         async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            parts = [
+            parts: list[str | None] = [
                 instructions_literal,
                 *[await func.run(run_context) for func in instructions_functions],
             ]
 
-            parts = [p for p in parts if p]
-            if not parts:
+            # Collect instructions from toolsets
+            toolset_instructions: list[str | None] = []
+
+            async def collect_toolset_instructions(ts: AbstractToolset[AgentDepsT]) -> None:
+                instruction = await ts.get_instructions(run_context)
+                if instruction:
+                    toolset_instructions.append(instruction)
+
+            toolsets_to_visit: list[AbstractToolset[AgentDepsT]] = []
+            toolset.apply(toolsets_to_visit.append)
+            for ts in toolsets_to_visit:
+                await collect_toolset_instructions(ts)
+
+            parts.extend(toolset_instructions)
+
+            filtered_parts: list[str] = [p for p in parts if p]
+            if not filtered_parts:
                 return None
-            return '\n\n'.join(parts).strip()
+            return '\n\n'.join(filtered_parts).strip()
 
         if isinstance(model_used, InstrumentedModel):
             instrumentation_settings = model_used.instrumentation_settings
@@ -686,7 +701,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             builtin_tools=[*self._builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,
-            get_instructions=get_instructions,
+            instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
         )
 
@@ -1493,6 +1508,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         additional_instructions: Instructions[AgentDepsT] = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
+        """Prepare instructions from agent configuration.
+
+        This method extracts and organizes instructions from the agent's configuration.
+        Note that this only handles agent-level instructions; toolset instructions are
+        collected separately during run execution and combined with these instructions.
+
+        See the `get_instructions` function in `Agent.iter()` for how toolset instructions
+        are collected from all leaf toolsets and combined into the final system prompt.
+
+        Args:
+            additional_instructions: Additional instructions to include for this run.
+
+        Returns:
+            A tuple of (literal_instructions, instruction_functions) where:
+            - literal_instructions: Combined literal string instructions or None
+            - instruction_functions: List of instruction functions that need to be evaluated at runtime
+        """
         override_instructions = self._override_instructions.get()
         if override_instructions:
             instructions = override_instructions.value
