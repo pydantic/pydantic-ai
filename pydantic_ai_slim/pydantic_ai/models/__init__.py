@@ -45,7 +45,7 @@ from ..messages import (
     ToolCallPart,
     VideoUrl,
 )
-from ..output import OutputMode
+from ..output import OutputMode, StructuredOutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, merge_model_settings
@@ -630,6 +630,14 @@ class ModelRequestParameters:
             return StructuredTextOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
         return None
 
+    def resolve_auto_output_mode(self, output_mode: StructuredOutputMode) -> ModelRequestParameters:
+        """Resolve 'auto' output mode, atomically setting both output_mode and allow_text_output.
+
+        This ensures the two fields stay in sync — output_mode='tool' implies allow_text_output=False,
+        while 'native' and 'prompted' imply allow_text_output=True.
+        """
+        return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -743,12 +751,7 @@ class Model(ABC):
             )
 
         if params.output_mode == 'auto':
-            output_mode = self.profile.default_structured_output_mode
-            params = replace(
-                params,
-                output_mode=output_mode,
-                allow_text_output=output_mode in ('native', 'prompted'),
-            )
+            params = params.resolve_auto_output_mode(self.profile.default_structured_output_mode)
 
         # Reset irrelevant fields
         if params.output_tools and params.output_mode != 'tool':
