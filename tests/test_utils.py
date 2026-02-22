@@ -528,6 +528,17 @@ def test_strip_markdown_fences():
     )
     assert strip_markdown_fences('No JSON to be found') == 'No JSON to be found'
 
+    # Regression test: greedy .* should not cross the closing fence (#4397)
+    assert (
+        strip_markdown_fences('```json\n{"result": "pass"}\n```\nThis matches schema {"type": "object"}')
+        == '{"result": "pass"}'
+    )
+    # Nested JSON within fences should still work
+    assert (
+        strip_markdown_fences('```json\n{"nested": {"k": "v"}}\n```')
+        == '{"nested": {"k": "v"}}'
+    )
+
 
 def test_validate_empty_kwargs_empty():
     """Test that empty dict passes validation."""
