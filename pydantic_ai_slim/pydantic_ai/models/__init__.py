@@ -13,17 +13,17 @@ from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from functools import cache, cached_property
-from typing import Any, Generic, Literal, TypeVar, get_args, overload
+from functools import cache, cached_property, wraps
+from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
 from typing_extensions import TypeAliasType, TypedDict
 
-from .. import _utils
 from .._json_schema import JsonSchemaTransformer
-from .._output import OutputObjectDefinition, StructuredTextOutputSchema
+from .._model_request_parameters import ModelRequestParameters
+from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
-from .._run_context import RunContext
+from .._run_context import RunContext, get_current_run_context
 from ..builtin_tools import AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import (
@@ -45,7 +45,6 @@ from ..messages import (
     ToolCallPart,
     VideoUrl,
 )
-from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, merge_model_settings
@@ -606,38 +605,37 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
 )
 
 
-@dataclass(repr=False, kw_only=True)
-class ModelRequestParameters:
-    """Configuration for an agent's request to a model, specifically related to tools and output handling."""
-
-    function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
-    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list[AbstractBuiltinTool])
-
-    output_mode: OutputMode = 'text'
-    output_object: OutputObjectDefinition | None = None
-    output_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
-    prompted_output_template: str | None = None
-    allow_text_output: bool = True
-    allow_image_output: bool = False
-
-    @cached_property
-    def tool_defs(self) -> dict[str, ToolDefinition]:
-        return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
-
-    @cached_property
-    def prompted_output_instructions(self) -> str | None:
-        if self.prompted_output_template and self.output_object:
-            return StructuredTextOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
-        return None
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
-
 class Model(ABC):
     """Abstract class for a model."""
 
     _profile: ModelProfileSpec | None = None
     _settings: ModelSettings | None = None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+
+        prepare_request = cast(
+            Callable[
+                [Model, ModelSettings | None, ModelRequestParameters],
+                tuple[ModelSettings | None, ModelRequestParameters],
+            ],
+            cls.prepare_request,
+        )
+        if getattr(prepare_request, '__pydantic_ai_records_prepared_request__', False):
+            return
+
+        @wraps(prepare_request)
+        def wrapped_prepare_request(
+            self: Model,
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+            prepared_settings, prepared_parameters = prepare_request(self, model_settings, model_request_parameters)
+            _record_prepared_request(prepared_settings, prepared_parameters)
+            return prepared_settings, prepared_parameters
+
+        setattr(wrapped_prepare_request, '__pydantic_ai_records_prepared_request__', True)
+        setattr(cls, 'prepare_request', wrapped_prepare_request)
 
     def __init__(
         self,
@@ -1355,6 +1353,21 @@ def get_user_agent() -> str:
     from .. import __version__
 
     return f'pydantic-ai/{__version__}'
+
+
+def _record_prepared_request(
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+) -> None:
+    """Attach prepared request metadata to the current model request, if available."""
+    run_context = get_current_run_context()
+    if run_context is None or not run_context.messages:
+        return
+
+    last_message = run_context.messages[-1]
+    if isinstance(last_message, ModelRequest):
+        last_message.model_settings = model_settings
+        last_message.model_request_parameters = model_request_parameters
 
 
 def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition):

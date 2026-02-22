@@ -27,6 +27,9 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.builtin_tools import ImageGenerationTool
+from pydantic_ai.models import ModelRequestParameters, ToolDefinition
+from pydantic_ai.settings import ModelSettings
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
@@ -894,3 +897,45 @@ def test_tool_return_content_nested_multimodal():
     assert isinstance(reloaded_content['images'][0], ImageUrl)
     assert isinstance(reloaded_content['documents'][0], DocumentUrl)
     assert reloaded_content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
+
+
+def test_model_request_tool_tracking_excluded_from_serialization():
+    """Test that request metadata is accessible but not serialized."""
+    tool_def = ToolDefinition(
+        name='test_tool',
+        description='A test tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    output_tool_def = ToolDefinition(
+        name='request_output',
+        description='An output tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[tool_def],
+        builtin_tools=[ImageGenerationTool()],
+        output_tools=[output_tool_def],
+    )
+    model_settings = ModelSettings(max_tokens=256)
+
+    request = ModelRequest(
+        parts=[UserPromptPart('test prompt')],
+        instructions='test instructions',
+        model_request_parameters=model_request_parameters,
+        model_settings=model_settings,
+    )
+
+    # Verify the metadata is accessible
+    assert request.model_request_parameters is model_request_parameters
+    assert request.model_settings == model_settings
+    params = request.model_request_parameters
+    assert params is not None
+    assert params.function_tools == [tool_def]
+    assert params.builtin_tools == [ImageGenerationTool()]
+    assert params.output_tools == [output_tool_def]
+
+    # Serialize - fields ARE excluded
+    serialized = ModelMessagesTypeAdapter.dump_python([request], mode='json')
+    assert 'model_request_parameters' not in serialized[0]
+    assert 'model_settings' not in serialized[0]
