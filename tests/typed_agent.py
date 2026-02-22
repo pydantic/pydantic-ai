@@ -80,6 +80,66 @@ def wrong_tool_prepare(ctx: RunContext[MyDeps], x: int, y: str) -> str:
     return f'{ctx.deps.foo} {x} {y}'
 
 
+# args_validator: matching params
+def args_validator_ok(ctx: RunContext[MyDeps], x: int, y: str) -> None:
+    pass
+
+
+@typed_agent.tool(args_validator=args_validator_ok)
+def ok_tool_args_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
+# args_validator: wrong params
+def args_validator_wrong_params(ctx: RunContext[MyDeps], a: float) -> None:
+    pass
+
+
+@typed_agent.tool(args_validator=args_validator_wrong_params)  # type: ignore[arg-type]
+def wrong_tool_args_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
+# args_validator: wrong deps type
+def args_validator_wrong_deps(ctx: RunContext[int], x: int, y: str) -> None:
+    pass
+
+
+@typed_agent.tool(args_validator=args_validator_wrong_deps)  # type: ignore[arg-type]
+def wrong_deps_tool_args_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
+# args_validator on tool_plain: matching params
+def plain_args_validator_ok(ctx: RunContext[MyDeps], x: str) -> None:
+    pass
+
+
+@typed_agent.tool_plain(args_validator=plain_args_validator_ok)
+def ok_tool_plain_args_validator(x: str) -> str:
+    return x
+
+
+# args_validator on tool_plain: wrong params
+def plain_args_validator_wrong(ctx: RunContext[MyDeps], a: float) -> None:
+    pass
+
+
+@typed_agent.tool_plain(args_validator=plain_args_validator_wrong)  # type: ignore[arg-type]
+def wrong_tool_plain_args_validator(x: str) -> str:
+    return x
+
+
+# args_validator on tool_plain: wrong deps
+def plain_args_validator_wrong_deps(ctx: RunContext[int], x: str) -> None:
+    pass
+
+
+@typed_agent.tool_plain(args_validator=plain_args_validator_wrong_deps)  # type: ignore[arg-type]
+def wrong_deps_tool_plain_args_validator(x: str) -> str:
+    return x
+
+
 @typed_agent.tool_plain
 def ok_tool_plain(x: str) -> dict[str, str]:
     return {'x': x}
@@ -268,6 +328,30 @@ Tool(foobar_ctx)
 Tool(foobar_plain, takes_ctx=False)
 assert_type(Tool(foobar_plain), Tool[object])
 assert_type(Tool(foobar_plain), Tool)
+
+
+# Tool constructor with args_validator: matching params
+def tool_init_validator_ok(ctx: RunContext[int], x: str, y: int) -> None:
+    pass
+
+
+Tool(foobar_ctx, args_validator=tool_init_validator_ok)
+
+
+# Tool constructor with args_validator: wrong params
+def tool_init_validator_wrong(ctx: RunContext[int], a: float) -> None:
+    pass
+
+
+Tool(foobar_ctx, args_validator=tool_init_validator_wrong)  # type: ignore[arg-type]
+
+
+# Tool constructor with args_validator: wrong deps
+def tool_init_validator_wrong_deps(ctx: RunContext[str], x: str, y: int) -> None:
+    pass
+
+
+Tool(foobar_ctx, args_validator=tool_init_validator_wrong_deps)  # type: ignore[arg-type]
 
 # unfortunately we can't type check these cases, since from a typing perspect `foobar_ctx` is valid as a plain tool
 Tool(foobar_ctx, takes_ctx=False)
