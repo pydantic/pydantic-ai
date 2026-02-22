@@ -69,7 +69,7 @@ dependencies = [
 logfire = ["logfire[httpx]>=4.16.0"]
 # Models
 openai = ["openai>=2.11.0", "tiktoken>=0.12.0"]
-cohere = ["cohere>=5.18.0; platform_system != 'Emscripten'"]
+cohere = ["cohere>=5.20.6; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
 google = ["google-genai>=1.56.0"]
 anthropic = ["anthropic>=0.80.0"]
