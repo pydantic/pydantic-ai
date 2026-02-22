@@ -220,3 +220,94 @@ agent = Agent(
 result = agent.run_sync('Find recent AI research papers and summarize the key findings.')
 print(result.output)
 ```
+
+## You.com Search Tool
+
+!!! info
+    You.com is a paid service, but they have free credits to explore their APIs.
+
+    Sign in or create an account on their platform [here](https://you.com/platform).
+
+The You.com search tool allows you to search the web for information. It returns structured results, including news, based on your natural language query. It is built on top of the [You.com API](https://you.com/apis). Read their [API documentation](https://docs.you.com/) for more information.
+
+### Installation
+
+To use [`you_search_tool`][pydantic_ai.common_tools.you.you_search_tool], install [`pydantic-ai-slim`](install.md#slim-install):
+
+```bash
+pip/uv-add pydantic-ai-slim
+```
+
+### Parameters
+
+The You.com search tool supports several parameters that can be configured when creating the tool:
+
+| Parameter | Description | LLM Control |
+|-----------|-------------|-------------|
+| `count` | Maximum number of results per section (web/news). Range: 1-100, default: 10. | Only if not configured |
+| `offset` | Pagination offset (0-9) for retrieving additional results. | Never (human-only) |
+| `freshness` | Time-based filtering: `'day'`, `'week'`, `'month'`, `'year'`, or date range `'YYYY-MM-DDtoYYYY-MM-DD'`. | Only if not configured |
+| `country` | Geographic focus using country codes: `'US'`, `'GB'`, `'FR'`, etc. | Only if not configured |
+| `language` | Language of results in BCP 47 format: `'EN'`, `'ES'`, `'FR'`, etc. | Only if not configured |
+| `safesearch` | Content moderation: `'off'`, `'moderate'`, or `'strict'`. Defaults to `'moderate'`. | Only if not configured |
+| `livecrawl` | Enable full page content retrieval: `'web'`, `'news'`, or `'all'`. | Only if not configured |
+| `livecrawl_formats` | Format for livecrawled content: `'html'` or `'markdown'`. | Only if not configured |
+
+#### Parameter control behavior
+
+- **Configured parameters**: When you set a parameter at tool creation time, that value is locked and the LLM cannot override it.
+- **Unconfigured parameters**: When you don't set a parameter, the LLM can dynamically choose appropriate values based on the user's query.
+- **`offset` exception**: The `offset` parameter is never exposed to the LLM—it's always human-controlled for pagination use cases.
+
+This design gives you full control over search behavior when needed, while still allowing the LLM flexibility for parameters you don't care about.
+
+### Usage
+
+Here's an example of how you can use the You.com search tool with an agent:
+
+```py {title="you_search.py" test="skip"}
+import asyncio
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.you import you_search_tool
+
+api_key = os.getenv('YOU_API_KEY')
+assert api_key is not None
+
+# You'll need an Anthropic API key
+# export ANTHROPIC_API_KEY="your-api-key"
+
+# All parameters are locked to the values set at tool creation time
+# In this example, the LLM can determine safesearch, livecrawl, and livecrawl_formats
+agent = Agent(
+    'anthropic:claude-sonnet-4-5',
+    tools=[you_search_tool(
+        api_key=api_key,
+        count=5,            # Always return 5 results per section
+        freshness='day',    # Always search recent content
+        country='US',       # Always focus on US results
+        language='EN',      # Always return English results
+    )],
+    system_prompt=(
+        'Use the you_search tool to search for live information from the web. Use this information as needed to synthesize an answer to the query.'
+    ),
+)
+
+
+async def main():
+    result = await agent.run('Tell me 1 thing that happened in the world today')
+    print(result.output)
+
+
+asyncio.run(main())
+"""
+Based on today's news, one significant event is that the U.S. Supreme Court has allowed
+the enforcement of a law requiring TikTok's parent company, ByteDance, to divest its
+U.S. operations or face a ban. This decision marks a major development in the ongoing
+debate over national security concerns related to foreign-owned social media platforms.
+"""
+```
+
+!!! note
+    The `count` parameter specifies results **per section** (web and news), so `count=5` may return up to 10 total results (5 web + 5 news).
