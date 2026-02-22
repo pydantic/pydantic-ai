@@ -184,9 +184,12 @@ class XaiModel(Model):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile(model_name))
+
+    @property
+    def client(self) -> 'AsyncClient':
+        return self._provider.client
 
     @property
     def model_name(self) -> str:
@@ -644,7 +647,7 @@ class XaiModel(Model):
         if outputs:
             last_reason = outputs[-1].finish_reason
             finish_reason = _FINISH_REASON_PROTO_MAP.get(last_reason, 'stop')
-        else:  # pragma: no cover
+        else:
             finish_reason = _FINISH_REASON_MAP.get(response.finish_reason, 'stop')
 
         return ModelResponse(
@@ -965,7 +968,7 @@ def _get_builtin_tools(model_request_parameters: ModelRequestParameters) -> list
                     extra_headers=builtin_tool.headers,
                 )
             )
-        else:  # pragma: no cover
+        else:
             # Defensive fallback - validation in models/__init__.py catches unsupported tools earlier
             raise UserError(
                 f'`{builtin_tool.__class__.__name__}` is not supported by `XaiModel`. '

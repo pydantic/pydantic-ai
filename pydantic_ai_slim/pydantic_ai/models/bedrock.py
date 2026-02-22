@@ -305,8 +305,6 @@ class BedrockModelSettings(ModelSettings, total=False):
 class BedrockConverseModel(Model):
     """A model that uses the Bedrock Converse API."""
 
-    client: BedrockRuntimeClient
-
     _model_name: BedrockModelName = field(repr=False)
     _provider: Provider[BaseClient] = field(repr=False)
 
@@ -335,9 +333,12 @@ class BedrockConverseModel(Model):
         if isinstance(provider, str):
             provider = infer_provider('gateway/bedrock' if provider == 'gateway' else provider)
         self._provider = provider
-        self.client = cast('BedrockRuntimeClient', provider.client)
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def client(self) -> BedrockRuntimeClient:
+        return cast('BedrockRuntimeClient', self._provider.client)
 
     @property
     def base_url(self) -> str:

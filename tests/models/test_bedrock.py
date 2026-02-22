@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from typing_extensions import TypedDict
@@ -112,6 +112,19 @@ class _StubBedrockProvider(Provider[Any]):
 
     def model_profile(self, model_name: str):
         return DEFAULT_PROFILE
+
+
+def test_bedrock_client_property_reflects_provider_changes():
+    error = ClientError({'Error': {'Code': 'Test', 'Message': 'test'}}, 'TestOperation')
+    client_a = _StubBedrockClient(error)
+    provider = _StubBedrockProvider(client_a)
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=provider)
+
+    assert model.client is client_a
+
+    client_b = _StubBedrockClient(error)
+    cast(Any, provider)._client = client_b
+    assert model.client is client_b
 
 
 def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:

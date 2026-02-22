@@ -19,9 +19,10 @@ from __future__ import annotations as _annotations
 import json
 from datetime import timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
@@ -57,7 +58,7 @@ from pydantic_ai import (
     VideoUrl,
     WebSearchTool,
 )
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
@@ -69,7 +70,6 @@ from pydantic_ai.profiles.grok import GrokModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from .mock_xai import (
     MockXai,
@@ -96,7 +96,10 @@ with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     from xai_sdk.proto import chat_pb2, usage_pb2
 
-    from pydantic_ai.models.xai import XaiModel, XaiModelSettings
+    from pydantic_ai.models.xai import (
+        XaiModel,
+        XaiModelSettings,
+    )
     from pydantic_ai.providers.xai import XaiProvider
 
 
@@ -125,6 +128,18 @@ def test_xai_init():
     assert m.system == 'xai'
 
 
+def test_xai_client_property_reflects_provider_changes():
+    client_a = cast(Any, MockXai())
+    provider = XaiProvider(xai_client=client_a)
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=provider)
+
+    assert m.client is client_a
+
+    client_b = cast(Any, MockXai())
+    cast(Any, provider)._client = client_b
+    assert m.client is client_b
+
+
 def test_xai_init_with_fixture_api_key(xai_api_key: str):
     """Test that xai_api_key fixture is properly used."""
     provider = XaiProvider(api_key=xai_api_key)
@@ -132,6 +147,33 @@ def test_xai_init_with_fixture_api_key(xai_api_key: str):
 
     assert m.model_name == XAI_NON_REASONING_MODEL
     assert m.system == 'xai'
+
+
+async def test_xai_request_uses_response_finish_reason_when_outputs_empty(allow_model_requests: None):
+    """Covers fallback finish-reason mapping when response.outputs is empty."""
+    response = create_response(content='done', finish_reason='length')
+    response.proto.outputs.clear()
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    model_response = await m.request(
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    assert model_response.finish_reason == 'stop'
+
+
+def test_xai_get_builtin_tools_rejects_unsupported_builtin_tool():
+    class _UnsupportedBuiltinTool:
+        kind = 'unsupported_builtin_tool'
+
+    import pydantic_ai.models.xai as xai_module
+
+    params = ModelRequestParameters(builtin_tools=cast(Any, [_UnsupportedBuiltinTool()]))
+
+    with pytest.raises(UserError, match='is not supported by `XaiModel`'):
+        cast(Any, xai_module)._get_builtin_tools(params)
 
 
 async def test_xai_request_simple_success(allow_model_requests: None):
