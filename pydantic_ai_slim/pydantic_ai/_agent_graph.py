@@ -132,6 +132,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     prompt: str | Sequence[_messages.UserContent] | None
     new_message_index: int
+    resumed_request: _messages.ModelRequest | None
 
     model: models.Model
     model_settings: ModelSettings | None
@@ -223,6 +224,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
 
         next_message: _messages.ModelRequest | None = None
+        is_resuming_without_prompt = False
 
         run_context: RunContext[DepsT] | None = None
         instructions: str | None = None
@@ -231,7 +233,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
                 messages.pop()
-                next_message = _messages.ModelRequest(parts=last_message.parts)
+                next_message = _messages.ModelRequest(
+                    parts=last_message.parts,
+                    run_id=last_message.run_id,
+                    metadata=last_message.metadata,
+                )
+                is_resuming_without_prompt = True
 
                 # Extract `UserPromptPart` content from the popped message and add to `ctx.deps.prompt`
                 user_prompt_parts = [part for part in last_message.parts if isinstance(part, _messages.UserPromptPart)]
@@ -282,7 +289,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if not messages and not next_message.parts and not next_message.instructions:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
-        return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
+        return ModelRequestNode[DepsT, NodeRunEndT](
+            request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
+        )
 
     async def _handle_deferred_tool_results(  # noqa: C901
         self,
@@ -438,6 +447,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
 
     request: _messages.ModelRequest
+    is_resuming_without_prompt: bool = False
 
     _result: CallToolsNode[DepsT, NodeRunEndT] | None = field(repr=False, init=False, default=None)
     _did_stream: bool = field(repr=False, init=False, default=False)
@@ -507,7 +517,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
         self.request.timestamp = now_utc()
-        self.request.run_id = self.request.run_id or ctx.state.run_id
+        if not self.is_resuming_without_prompt:
+            self.request.run_id = self.request.run_id or ctx.state.run_id
         ctx.state.message_history.append(self.request)
 
         ctx.state.run_step += 1
@@ -517,12 +528,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        original_history = ctx.state.message_history[:]
-        message_history = await _process_message_history(original_history, ctx.deps.history_processors, run_context)
+        message_history = await _process_message_history(
+            ctx.state.message_history[:], ctx.deps.history_processors, run_context
+        )
+        if message_history and message_history[-1].run_id is None:
+            is_resumed_tail = self.is_resuming_without_prompt and _is_same_request(message_history[-1], self.request)
+            if not is_resumed_tail:
+                message_history[-1].run_id = ctx.state.run_id
+
+        if self.is_resuming_without_prompt:
+            ctx.deps.resumed_request = self.request
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = message_history
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
-        ctx.deps.new_message_index -= len(original_history) - len(message_history)
+        ctx.deps.new_message_index = _first_new_message_index(
+            message_history, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
+        )
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
@@ -1408,6 +1429,47 @@ async def _process_message_history(
         messages[-1].timestamp = now_utc()
 
     return messages
+
+
+def _first_run_id_index(messages: list[_messages.ModelMessage], run_id: str) -> int:
+    """Return the index of the first message for the current run, or len(messages) if none are found."""
+    for index, message in enumerate(messages):
+        if message.run_id == run_id:
+            return index
+    return len(messages)
+
+
+def _first_new_message_index(
+    messages: list[_messages.ModelMessage],
+    run_id: str,
+    *,
+    resumed_request: _messages.ModelRequest | None,
+) -> int:
+    """Return the first index that should be included in `new_messages()`."""
+    if resumed_request is not None:
+        for index, message in enumerate(messages):
+            if message is resumed_request:
+                return index + 1
+
+        for index in range(len(messages) - 1, -1, -1):
+            if _is_same_request(messages[index], resumed_request):
+                return index + 1
+    return _first_run_id_index(messages, run_id)
+
+
+def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRequest) -> bool:
+    if not isinstance(message, _messages.ModelRequest):
+        return False
+    if message is request:
+        return True
+    # Intentionally excludes run_id: the resumed request may not have
+    # run_id set yet when this comparison is performed.
+    return (
+        message.parts == request.parts
+        and message.timestamp == request.timestamp
+        and message.instructions == request.instructions
+        and message.metadata == request.metadata
+    )
 
 
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:

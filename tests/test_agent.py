@@ -2591,7 +2591,6 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='New instructions',
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -7598,7 +7597,6 @@ async def test_message_history():
                         )
                     ],
                     timestamp=IsNow(tz=timezone.utc),
-                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='ok here is text')],

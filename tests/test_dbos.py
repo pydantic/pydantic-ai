@@ -1156,7 +1156,6 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1297,7 +1296,6 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='Just call tools without asking for confirmation.',
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[

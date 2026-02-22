@@ -347,6 +347,20 @@ the message history before each model request.
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
     This means that if you want to keep the original message history, you need to make a copy of it.
 
+!!! warning "History processors can affect `new_messages()` results"
+    [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] determines which messages belong to the
+    current run after all history processors have been applied. If your processor reorders, inserts, or
+    removes messages, the set of messages returned by `new_messages()` may differ from what you expect.
+
+    To avoid surprises:
+
+    - Preserve `run_id` on existing messages.
+    - When creating new messages in a processor that should be part of the current run, use a
+      [context-aware processor](#runcontext-parameter) and set `run_id=ctx.run_id` on the new message.
+    - Reordering or removing messages may shift the boundary between "old" and "new" messages, test
+      with [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] to verify the behavior
+      matches your expectations.
+
 ### Usage
 
 The `history_processors` is a list of callables that take a list of
