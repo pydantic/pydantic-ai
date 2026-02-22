@@ -5691,3 +5691,91 @@ class TestSdkVersion:
             e for e in events_v6 if isinstance(e, dict) and e.get('type') == 'tool-input-start'
         )
         assert 'providerMetadata' in tool_input_start_v6
+
+
+@pytest.mark.parametrize(
+    ('reason', 'expected_content'),
+    [
+        pytest.param('Too dangerous', 'Too dangerous', id='explicit-reason'),
+        pytest.param(None, 'Tool call was denied.', id='default-reason'),
+    ],
+)
+async def test_adapter_load_messages_output_denied(reason: str | None, expected_content: str):
+    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolOutputDeniedPart
+
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                DynamicToolOutputDeniedPart(
+                    tool_name='delete_file',
+                    tool_call_id='tc_denied',
+                    input={'path': 'important.txt'},
+                    approval=ToolApprovalResponded(id='deny-1', approved=False, reason=reason),
+                ),
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='delete_file', args={'path': 'important.txt'}, tool_call_id='tc_denied')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='delete_file',
+                        content=expected_content,
+                        tool_call_id='tc_denied',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+
+async def test_adapter_load_messages_output_denied_builtin_tool():
+    from pydantic_ai.ui.vercel_ai.request_types import ToolOutputDeniedPart
+
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ToolOutputDeniedPart(
+                    type='tool-web_search',
+                    tool_call_id='tc_builtin_denied',
+                    input={'query': 'secret data'},
+                    provider_executed=True,
+                    approval=ToolApprovalResponded(id='deny-2', approved=False, reason='Blocked by policy'),
+                ),
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'secret data'},
+                        tool_call_id='tc_builtin_denied',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content='Blocked by policy',
+                        tool_call_id='tc_builtin_denied',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
