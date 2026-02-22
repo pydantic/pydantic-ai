@@ -3,7 +3,7 @@
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-from pydantic_ai.messages import ProviderDetailsDelta, ToolReturnPart
+from pydantic_ai.messages import BaseToolReturnPart, ProviderDetailsDelta, ToolReturnPart
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolInputAvailablePart,
     DynamicToolInputStreamingPart,
@@ -27,6 +27,16 @@ from pydantic_ai.ui.vercel_ai.response_types import (
 __all__ = []
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
+
+
+def tool_return_output(part: BaseToolReturnPart) -> Any:
+    """Extract the return value from a tool return part.
+
+    If the model response object contains a 'return_value' key, return its value,
+    otherwise return the entire output dict. This matches the streaming output format.
+    """
+    output = part.model_response_object()
+    return output.get('return_value', output)
 
 
 def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[str, Any]:

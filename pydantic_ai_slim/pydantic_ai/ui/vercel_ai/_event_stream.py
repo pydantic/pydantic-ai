@@ -11,7 +11,6 @@ from uuid import uuid4
 from pydantic_core import to_json
 
 from ...messages import (
-    BaseToolReturnPart,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FilePart,
@@ -30,7 +29,7 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from ._utils import dump_provider_metadata, iter_metadata_chunks, iter_tool_approval_responses
+from ._utils import dump_provider_metadata, iter_metadata_chunks, iter_tool_approval_responses, tool_return_output
 from .request_types import RequestData
 from .response_types import (
     BaseChunk,
@@ -260,7 +259,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseChunk]:
         yield ToolOutputAvailableChunk(
             tool_call_id=part.tool_call_id,
-            output=self._tool_return_output(part),
+            output=tool_return_output(part),
             provider_executed=True,
         )
 
@@ -278,7 +277,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         elif isinstance(part, RetryPromptPart):
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
         else:
-            yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=self._tool_return_output(part))
+            yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=tool_return_output(part))
 
         # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
         # (e.g. text, images) that Vercel AI does not currently have chunk types for.
@@ -289,8 +288,3 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if isinstance(part, ToolReturnPart):
             for chunk in iter_metadata_chunks(part):
                 yield chunk
-
-    def _tool_return_output(self, part: BaseToolReturnPart) -> Any:
-        output = part.model_response_object()
-        # Unwrap the return value from the output dictionary if it exists
-        return output.get('return_value', output)
