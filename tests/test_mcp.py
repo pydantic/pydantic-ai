@@ -2403,3 +2403,95 @@ async def test_server_capabilities_list_changed_fields() -> None:
         assert isinstance(caps.prompts_list_changed, bool)
         assert isinstance(caps.tools_list_changed, bool)
         assert isinstance(caps.resources_list_changed, bool)
+
+
+async def test_list_prompts() -> None:
+    """Test list_prompts() functionality including basic usage, capability checks, and caching."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        # Test basic functionality and available prompts
+        assert server.capabilities.prompts
+
+        prompts = await server.list_prompts()
+        assert len(prompts) == 2
+
+        # Test caching behavior
+        assert server._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
+        prompts2 = await server.list_prompts()
+        assert prompts2 == prompts
+
+        # Test without capability - mock the capabilities to not support prompts
+        mock_capabilities = ServerCapabilities(prompts=False)
+        with patch.object(server, '_server_capabilities', mock_capabilities):
+            result = await server.list_prompts()
+            assert result == []
+
+        # Test error handling when list_prompts raises an McpError
+        # Clear cache first to ensure the client is actually called
+        server._cached_prompts = None  # pyright: ignore[reportPrivateUsage]
+        mock_client = AsyncMock()
+        mock_client.list_prompts.side_effect = McpError(ErrorData(code=-1, message='Test error message'))
+        with patch.object(server, '_client', mock_client):
+            with pytest.raises(MCPError) as exc_info:
+                await server.list_prompts()
+            assert 'test error message' in str(exc_info.value).lower()
+
+
+async def test_get_prompt() -> None:
+    """Test get_prompt() retrieves specific prompts and handles errors."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        # Test simple prompt (no parameters) - using None
+        result = await server.get_prompt('simple_prompt')
+        assert result.messages is not None
+        assert len(result.messages) > 0
+
+        # Test parameterized prompt with arguments
+        result = await server.get_prompt('parameterized_prompt', {'name': 'Alice', 'topic': 'AI'})
+        assert result.messages is not None
+        assert len(result.messages) > 0
+
+        parameterized_prompt = result.messages[0]
+        assert isinstance(parameterized_prompt.content, TextContent)
+        assert parameterized_prompt.content.text == "Hello Alice, let's talk about AI!"
+
+        # Test error handling for nonexistent prompt
+        with pytest.raises(MCPError) as exc_info:
+            await server.get_prompt('nonexistent_prompt')
+        assert 'unknown' in str(exc_info.value).lower()
+
+
+async def test_prompts_no_caching_when_disabled() -> None:
+    """Test that list_prompts() does not cache when cache_prompts=False."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], cache_prompts=False)
+    async with server:
+        assert server.capabilities.prompts
+
+        # First call - should not populate cache
+        prompts1 = await server.list_prompts()
+        assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+        # Second call - cache should still be None
+        prompts2 = await server.list_prompts()
+        assert prompts2 == prompts1
+        assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_prompts_cache_invalidation_on_notification() -> None:
+    """Test that prompts cache is invalidated when PromptListChangedNotification is received."""
+    from mcp.types import PromptListChangedNotification, ServerNotification
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        assert server.capabilities.prompts
+
+        # Populate cache
+        await server.list_prompts()
+        assert server._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
+
+        # Simulate receiving a prompt list changed notification
+        notification = ServerNotification(PromptListChangedNotification())
+        await server._handle_notification(notification)  # pyright: ignore[reportPrivateUsage]
+
+        # Cache should be invalidated
+        assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
