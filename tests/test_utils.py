@@ -527,6 +527,11 @@ def test_strip_markdown_fences():
         == '{"foo": "bar"}'
     )
     assert strip_markdown_fences('No JSON to be found') == 'No JSON to be found'
+    # Regression test for #4397: greedy regex crossing fence boundaries
+    assert (
+        strip_markdown_fences('```json\n{"result": "pass"}\n```\nThis conforms to the schema {"type": "object"}')
+        == '{"result": "pass"}'
+    )
 
 
 def test_validate_empty_kwargs_empty():
