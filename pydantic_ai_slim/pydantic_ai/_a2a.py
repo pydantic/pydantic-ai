@@ -75,6 +75,7 @@ async def worker_lifespan(
 def agent_to_a2a(
     agent: AbstractAgent[AgentDepsT, OutputDataT],
     *,
+    deps: AgentDepsT = None,
     storage: Storage | None = None,
     broker: Broker | None = None,
     # Agent card
@@ -94,7 +95,7 @@ def agent_to_a2a(
     """Create a FastA2A server from an agent."""
     storage = storage or InMemoryStorage()
     broker = broker or InMemoryBroker()
-    worker = AgentWorker(agent=agent, broker=broker, storage=storage)
+    worker = AgentWorker(agent=agent, broker=broker, storage=storage, deps=deps)
 
     lifespan = lifespan or partial(worker_lifespan, worker=worker, agent=agent)
 
@@ -120,6 +121,7 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
     """A worker that uses an agent to execute tasks."""
 
     agent: AbstractAgent[AgentDepsT, WorkerOutputT]
+    deps: AgentDepsT | None = None
 
     async def run_task(self, params: TaskSendParams) -> None:
         task = await self.storage.load_task(params['id'])
@@ -140,7 +142,7 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
         message_history.extend(self.build_message_history(task.get('history', [])))
 
         try:
-            result = await self.agent.run(message_history=message_history)  # type: ignore
+            result = await self.agent.run(message_history=message_history, deps=self.deps)  # type: ignore
 
             await self.storage.update_context(task['context_id'], result.all_messages())
 
