@@ -9,7 +9,7 @@ on:
   pull_request: {}
 
 env:
-  COLUMNS: 150
+  COLUMNS: 300
   UV_PYTHON: 3.12
   UV_FROZEN: "1"
 
@@ -138,7 +138,7 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
-      - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
+      - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 --tb=short -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 

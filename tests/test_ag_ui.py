@@ -12,7 +12,6 @@ from typing import Any
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
-from dirty_equals import IsStr
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -57,7 +56,7 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsSameStr, try_import
+from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import (
@@ -2397,5 +2396,56 @@ async def test_handle_ag_ui_request():
                 'more_body': True,
             },
             {'type': 'http.response.body', 'body': b'', 'more_body': False},
+        ]
+    )
+
+
+async def test_tool_return_with_files():
+    """Test that tool returns with files include file descriptions in the output."""
+
+    async def event_generator():
+        # Content with text and file - files property extracts BinaryContent from the list
+        yield FunctionToolResultEvent(
+            result=ToolReturnPart(
+                tool_name='get_image',
+                content=['Image analysis result', BinaryContent(data=b'img', media_type='image/png')],
+                tool_call_id='call_1',
+            )
+        )
+        # Content with only a FileUrl - files property returns [ImageUrl]
+        yield FunctionToolResultEvent(
+            result=ToolReturnPart(
+                tool_name='get_url',
+                content=ImageUrl(url='https://example.com/image.jpg'),
+                tool_call_id='call_2',
+            )
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Analyze images'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    tool_results = [e for e in events if e.get('type') == 'TOOL_CALL_RESULT']
+    assert tool_results == snapshot(
+        [
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': 'call_1',
+                'content': 'Image analysis result\n[File: image/png]',
+                'role': 'tool',
+            },
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': 'call_2',
+                'content': '[File: https://example.com/image.jpg]',
+                'role': 'tool',
+            },
         ]
     )

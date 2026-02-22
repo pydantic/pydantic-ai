@@ -70,7 +70,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, try_import
 from .mock_xai import (
     MockXai,
     create_code_execution_response,
@@ -1234,58 +1234,10 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file bd38f5',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'This is file bd38f5:',
-                            ImageUrl(
-                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
-                            ),
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='The image shows a single raw potato.')],
-                usage=RequestUsage(input_tokens=657, output_tokens=8, details={'cache_read_tokens': 371}),
-                model_name=XAI_NON_REASONING_MODEL,
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_url='https://api.x.ai/v1',
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
-    )
-
-
-async def test_xai_image_as_binary_content_tool_response(
-    allow_model_requests: None, image_content: BinaryContent, xai_provider: XaiProvider
-):
-    """Test xAI with binary image content from tool response."""
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
-    agent = Agent(m)
-
-    @agent.tool_plain
-    async def get_image() -> BinaryContent:
-        return image_content
-
-    result = await agent.run(['What fruit is in the image you can get from the get_image tool?'])
-
-    # Verify the complete message history with snapshot
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content=['What fruit is in the image you can get from the get_image tool?'],
+                        content=ImageUrl(
+                            url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                        ),
+                        tool_call_id='call_37730393',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1293,38 +1245,8 @@ async def test_xai_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=356, output_tokens=15, details={'cache_read_tokens': 314}),
-                model_name=XAI_NON_REASONING_MODEL,
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_url='https://api.x.ai/v1',
-                provider_response_id=IsStr(),
-                finish_reason='tool_call',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_image',
-                        content='See file 241a70',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'This is file 241a70:',
-                            IsInstance(BinaryContent),
-                        ],
-                        timestamp=IsDatetime(),
-                    ),
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='Kiwi')],
-                usage=RequestUsage(input_tokens=657, output_tokens=2, details={'cache_read_tokens': 371}),
+                parts=[TextPart(content='The image shows a single raw potato.')],
+                usage=RequestUsage(input_tokens=657, output_tokens=8, details={'cache_read_tokens': 371}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1553,7 +1475,7 @@ async def test_xai_audio_url_not_supported(allow_model_requests: None):
 
     audio_url = AudioUrl(url='https://example.com/audio.mp3')
 
-    with pytest.raises(NotImplementedError, match='AudioUrl is not supported by xAI SDK'):
+    with pytest.raises(NotImplementedError, match='AudioUrl is not supported in xAI user prompts'):
         await agent.run(['What is in this audio?', audio_url])
 
 
@@ -1566,7 +1488,7 @@ async def test_xai_video_url_not_supported(allow_model_requests: None):
 
     video_url = VideoUrl(url='https://example.com/video.mp4')
 
-    with pytest.raises(NotImplementedError, match='VideoUrl is not supported by xAI SDK'):
+    with pytest.raises(NotImplementedError, match='VideoUrl is not supported in xAI user prompts'):
         await agent.run(['What is in this video?', video_url])
 
 
@@ -1582,7 +1504,7 @@ async def test_xai_binary_content_audio_not_supported(allow_model_requests: None
         media_type='audio/mpeg',
     )
 
-    with pytest.raises(NotImplementedError, match='AudioUrl/BinaryContent with audio is not supported by xAI SDK'):
+    with pytest.raises(NotImplementedError, match='BinaryContent with audio is not supported in xAI user prompts'):
         await agent.run(['What is in this audio?', audio_content])
 
 
@@ -1593,9 +1515,9 @@ async def test_xai_binary_content_unknown_media_type_raises(allow_model_requests
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
-    # Neither image/*, audio/*, nor a known document type => should fail during prompt mapping.
+    # Video binary content is not supported by xAI SDK
     bc = BinaryContent(b'123', media_type='video/mp4')
-    with pytest.raises(RuntimeError, match='Unsupported binary content type: video/mp4'):
+    with pytest.raises(NotImplementedError, match='BinaryContent with video is not supported in xAI user prompts'):
         await agent.run(['hello', bc])
 
 

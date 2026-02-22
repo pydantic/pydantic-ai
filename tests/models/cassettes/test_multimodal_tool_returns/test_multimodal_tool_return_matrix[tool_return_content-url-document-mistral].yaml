@@ -1,0 +1,363 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '379'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Use the get_file tool now to retrieve a document file, then describe what you received.
+        role: user
+      model: mistral-medium-latest
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '438'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019c486d-038d-7973-aaa2-5b9733ed22d5
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_file
+            id: 5mwsDGMph
+            index: 0
+      created: 1770741629
+      id: 418e24d4db614bcdb5c10e14bec2e32d
+      model: mistral-medium-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 6
+        num_cached_tokens: 32
+        prompt_tokens: 64
+        total_tokens: 70
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '829'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=tAHYL6pFYlGOdrNfRpIsW_PqYK4yOMWk4zXWzrFZ6q0-1770741630-1.0.1.1-DfeklgcLfimzWKLjn9oec01cgapJ27tOgfcMrv60xA3cQ1SaA8SoDZur1Z3HuhmCWg4RvfM2.P7iX2W2uavdmtq8RD2GOquOcqZQCq.6EvI;
+        _cfuvid=aQo5Fbkp70g.AxL3rMzxaR4K5YraTThXEfdpzTc96ng-1770741630091-0.0.1.1-604800000
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Use the get_file tool now to retrieve a document file, then describe what you received.
+        role: user
+      - content: []
+        prefix: false
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_file
+          id: 5mwsDGMph
+          index: 0
+          type: function
+      - content: File attached
+        role: tool
+        tool_call_id: 5mwsDGMph
+      - content:
+        - text: OK
+          type: text
+        prefix: false
+        role: assistant
+      - content:
+        - document_url: https://pdfobject.com/pdf/sample.pdf
+          type: document_url
+        role: user
+      model: mistral-medium-latest
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1070'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019c486d-0550-7b1a-98a3-4bb5283f2693
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: |-
+            The retrieved document is a **sample PDF file** containing placeholder text. Here's a breakdown of its contents:
+
+            1. **Title**: The document starts with the heading **"Sample PDF"**.
+            2. **Introductory Line**: It includes a simple line: *"This is a simple PDF file. Fun fun fun."*
+            3. **Placeholder Text**: The majority of the document consists of **Lorem Ipsum** text, which is commonly used as a placeholder in design and publishing. The text is in Latin and doesn't convey any meaningful information. It is used to demonstrate the layout and formatting of a document.
+            4. **Structure**: The document is a single continuous block of text without any subheadings, bullet points, or other formatting elements.
+          role: assistant
+          tool_calls: null
+      created: 1770741630
+      id: cfb2697218434a86a7ac955676a0ea2f
+      model: mistral-medium-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 152
+        num_cached_tokens: 32
+        prompt_tokens: 979
+        total_tokens: 1131
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '379'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Use the get_file tool now to retrieve a document file, then describe what you received.
+        role: user
+      model: mistral-medium-latest
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '438'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019c48b1-a914-708b-8920-7dd496e71ec6
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          content: ''
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_file
+            id: h2qr1Ij4W
+            index: 0
+      created: 1770746128
+      id: 4beed6ae753748a68a7dd8abbc4b287c
+      model: mistral-medium-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 6
+        num_cached_tokens: 32
+        prompt_tokens: 64
+        total_tokens: 70
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '829'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=ur3MkfOo4D.tCTbD26saxv3_R2rpm1xIcmq1lMw4e8c-1770746128-1.0.1.1-V9.1tpkWJf7knMFzXrV4Vabd6bJvzN58ufTRXezoAtiLTybYjRrlqROEKbC6zcxSJerLeBuRu3QLuhPcyibjD3.X_N1z.mD.jcVJh.MpO6Y;
+        _cfuvid=LHTk3feWqLoqbbAhrCskTwSYakpIN6ouu3.wrTsTDGk-1770746128932-0.0.1.1-604800000
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Use the get_file tool now to retrieve a document file, then describe what you received.
+        role: user
+      - content: []
+        prefix: false
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_file
+          id: h2qr1Ij4W
+          index: 0
+          type: function
+      - content: File attached
+        role: tool
+        tool_call_id: h2qr1Ij4W
+      - content:
+        - text: OK
+          type: text
+        prefix: false
+        role: assistant
+      - content:
+        - document_url: https://pdfobject.com/pdf/sample.pdf
+          type: document_url
+        role: user
+      model: mistral-medium-latest
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_file
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1184'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019c48b1-ab2f-79c4-a456-917d7cd21d10
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: |-
+            The retrieved document is a **sample PDF** containing placeholder text. Here's a summary of its contents:
+
+            1. **Title**: The document is titled **"Sample PDF"**.
+            2. **Content**:
+               - The first line reads: *"This is a simple PDF file. Fun fun fun."*
+               - The rest of the document consists of **Lorem Ipsum** text, which is commonly used as placeholder text in design and publishing. It includes multiple paragraphs of Latin-like text, which does not convey meaningful information but is used to demonstrate formatting and layout.
+            3. **Structure**:
+               - The document is well-formatted with clear paragraphs.
+               - It starts with a heading and follows with continuous placeholder text.
+
+            This type of document is typically used for testing purposes, such as checking how a PDF file renders or how text flows in a layout.
+          role: assistant
+          tool_calls: null
+      created: 1770746129
+      id: be872fd9370b4178be0b6797976da5ba
+      model: mistral-medium-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 171
+        num_cached_tokens: 48
+        prompt_tokens: 979
+        total_tokens: 1150
+    status:
+      code: 200
+      message: OK
+version: 1

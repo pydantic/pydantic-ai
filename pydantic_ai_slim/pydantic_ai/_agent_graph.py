@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
-from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
+from pydantic_ai._function_schema import _takes_ctx  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
@@ -1240,48 +1240,18 @@ async def _call_tool(
 
     if isinstance(tool_result, _messages.ToolReturn):
         tool_return = tool_result
-    else:
-        result_is_list = isinstance(tool_result, list)
-        contents = cast(list[Any], tool_result) if result_is_list else [tool_result]
-
-        return_values: list[Any] = []
-        user_contents: list[str | _messages.UserContent] = []
-        for content in contents:
-            if isinstance(content, _messages.ToolReturn):
-                raise exceptions.UserError(
-                    f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
-                    f'`ToolReturn` should be used directly.'
-                )
-            elif isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES):
-                identifier = content.identifier
-
-                return_values.append(f'See file {identifier}')
-                user_contents.extend([f'This is file {identifier}:', content])
-            else:
-                return_values.append(content)
-
-        tool_return = _messages.ToolReturn(
-            return_value=return_values[0] if len(return_values) == 1 and not result_is_list else return_values,
-            content=user_contents,
-        )
-
-    if (
-        isinstance(tool_return.return_value, _messages.MULTI_MODAL_CONTENT_TYPES)
-        or isinstance(tool_return.return_value, list)
-        and any(
-            isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES)
-            for content in tool_return.return_value  # type: ignore
-        )
-    ):
+    elif isinstance(tool_result, list) and any(isinstance(i, _messages.ToolReturn) for i in tool_result):  # pyright: ignore[reportUnknownVariableType]
         raise exceptions.UserError(
-            f'The `return_value` of tool {tool_call.tool_name!r} contains invalid nested `MultiModalContent` objects. '
-            f'Please use `content` instead.'
+            f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
+            f'`ToolReturn` should be used directly.'
         )
+    else:
+        tool_return = _messages.ToolReturn(return_value=tool_result)  # pyright: ignore[reportUnknownArgumentType]
 
     return_part = _messages.ToolReturnPart(
         tool_name=tool_call.tool_name,
         tool_call_id=tool_call.tool_call_id,
-        content=tool_return.return_value,  # type: ignore
+        content=tool_return.return_value,
         metadata=tool_return.metadata,
     )
 
@@ -1382,7 +1352,7 @@ async def _process_message_history(
 ) -> list[_messages.ModelMessage]:
     """Process message history through a sequence of processors."""
     for processor in processors:
-        takes_ctx = is_takes_ctx(processor)
+        takes_ctx = _takes_ctx(processor)
 
         if is_async_callable(processor):
             if takes_ctx:

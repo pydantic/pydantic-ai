@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import pytest
-from dirty_equals import IsInt, IsJson, IsList
+from dirty_equals import IsJson, IsList
 from pydantic import BaseModel
 from typing_extensions import NotRequired, Self, TypedDict
 
@@ -23,7 +23,7 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsInt, IsStr
 
 try:
     import logfire

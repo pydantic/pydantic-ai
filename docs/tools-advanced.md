@@ -68,61 +68,45 @@ Some models (e.g. Gemini) natively support semi-structured return values, while 
 
 For scenarios where you need more control over both the tool's return value and the content sent to the model, you can use [`ToolReturn`][pydantic_ai.messages.ToolReturn]. This is particularly useful when you want to:
 
-- Provide rich multi-modal content (images, documents, etc.) to the model as context
-- Separate the programmatic return value from the model's context
+- Separate the structured return value from additional content sent to the model
+- Explicitly send content as a separate user message (rather than in the tool result)
 - Include additional metadata that shouldn't be sent to the LLM
 
 Here's an example of a computer automation tool that captures screenshots and provides visual feedback:
 
-```python {title="advanced_tool_return.py" test="skip" lint="skip"}
-import time
-from pydantic_ai import Agent
-from pydantic_ai import ToolReturn, BinaryContent
+```python {title="advanced_tool_return.py"}
+from pydantic_ai import Agent, BinaryContent, ToolReturn
+from pydantic_ai.models.test import TestModel
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent(TestModel())
 
 @agent.tool_plain
 def click_and_capture(x: int, y: int) -> ToolReturn:
     """Click at coordinates and show before/after screenshots."""
-    # Take screenshot before action
-    before_screenshot = capture_screen()
-
-    # Perform click operation
-    perform_click(x, y)
-    time.sleep(0.5)  # Wait for UI to update
-
-    # Take screenshot after action
-    after_screenshot = capture_screen()
-
     return ToolReturn(
         return_value=f'Successfully clicked at ({x}, {y})',
         content=[
-            f'Clicked at coordinates ({x}, {y}). Here\'s the comparison:',
             'Before:',
-            BinaryContent(data=before_screenshot, media_type='image/png'),
+            BinaryContent(data=b'\x89PNG', media_type='image/png'),
             'After:',
-            BinaryContent(data=after_screenshot, media_type='image/png'),
-            'Please analyze the changes and suggest next steps.'
+            BinaryContent(data=b'\x89PNG', media_type='image/png'),
         ],
         metadata={
             'coordinates': {'x': x, 'y': y},
             'action_type': 'click_and_capture',
-            'timestamp': time.time()
-        }
+        },
     )
 
-# The model receives the rich visual content for analysis
-# while your application can access the structured return_value and metadata
 result = agent.run_sync('Click on the submit button and tell me what happened')
 print(result.output)
-# The model can analyze the screenshots and provide detailed feedback
+#> {"click_and_capture":"Successfully clicked at (0, 0)"}
 ```
 
-- **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result.
-- **`content`**: A sequence of content (text, images, documents, etc.) that provides additional context to the model. This appears as a separate user message.
-- **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature "artifacts".
+- **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result. Can include multimodal content directly (see [Tool Output](#function-tool-output) above).
+- **`content`**: Content sent as a **separate user message** after the tool result. Use this when you explicitly want content to appear outside the tool result, or when combining structured return values with rich content.
+- **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature 'artifacts'.
 
-This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic.
+This gives you explicit control over what appears in the tool result vs as a separate user message. For multimodal content that should be sent natively in the tool result (when supported by the model), return it directly from the tool function or include it in `return_value` (see [Tool Output](#function-tool-output) above).
 
 ## Custom Tool Schema
 

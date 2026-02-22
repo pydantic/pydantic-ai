@@ -29,6 +29,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
+from .._event_stream import describe_file
 
 try:
     from ag_ui.core import (
@@ -223,12 +224,15 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             type=EventType.TOOL_CALL_RESULT,
             role='tool',
             tool_call_id=tool_call_id,
-            content=part.model_response_str(),
+            content=_tool_return_content(part),
         )
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
         result = event.result
-        output = result.model_response() if isinstance(result, RetryPromptPart) else result.model_response_str()
+        if isinstance(result, RetryPromptPart):
+            output = result.model_response()
+        else:
+            output = _tool_return_content(result)
 
         yield ToolCallResultEvent(
             message_id=self.new_message_id(),
@@ -252,3 +256,15 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 for item in possible_event:  # type: ignore[reportUnknownMemberType]
                     if isinstance(item, BaseEvent):  # pragma: no branch
                         yield item
+
+
+def _tool_return_content(part: BuiltinToolReturnPart | ToolReturnPart) -> str:
+    """Return tool output string with file descriptions if present."""
+    output = part.model_response_str()
+    if file_descriptions := [describe_file(f) for f in part.files]:
+        if output:
+            return output + '\n' + '\n'.join(file_descriptions)
+        else:
+            return '\n'.join(file_descriptions)
+    else:
+        return output

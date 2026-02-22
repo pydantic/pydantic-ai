@@ -23,6 +23,7 @@ from ..builtin_tools import (
 )
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
+    AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -43,6 +44,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -124,7 +126,6 @@ try:
         BetaThinkingDelta,
         BetaToolChoiceParam,
         BetaToolParam,
-        BetaToolResultBlockParam,
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
@@ -136,6 +137,7 @@ try:
         BetaWebSearchToolResultBlockContent,
         BetaWebSearchToolResultBlockParam,
         BetaWebSearchToolResultBlockParamContentParam,
+        beta_tool_result_block_param,
     )
     from anthropic.types.beta.beta_user_location_param import BetaUserLocationParam
     from anthropic.types.beta.beta_web_fetch_tool_result_block_param import (
@@ -741,10 +743,32 @@ class AnthropicModel(Model):
                             else:
                                 user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
-                        tool_result_block_param = BetaToolResultBlockParam(
+                        tool_result_content: list[beta_tool_result_block_param.Content] = []
+
+                        for item in request_part.content_items(mode='str'):
+                            if isinstance(item, BinaryContent):
+                                if item.is_image or item.is_document:
+                                    tool_result_content.append(self._map_binary_data(item.data, item.media_type))
+                                else:
+                                    raise NotImplementedError(
+                                        f'Unsupported binary content type in Anthropic tool returns: {item.media_type}'
+                                    )
+                            elif isinstance(item, ImageUrl):
+                                tool_result_content.append(await self._map_image_url(item))
+                            elif isinstance(item, DocumentUrl):
+                                tool_result_content.append(await self._map_document_url(item))
+                            elif isinstance(item, AudioUrl):
+                                raise NotImplementedError('AudioUrl is not supported in Anthropic tool returns')
+                            elif isinstance(item, VideoUrl):
+                                raise NotImplementedError('VideoUrl is not supported in Anthropic tool returns')
+                            else:
+                                assert isinstance(item, str)
+                                tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
+
+                        tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
                             tool_use_id=_guard_tool_call_id(t=request_part),
                             type='tool_result',
-                            content=request_part.model_response_str(),
+                            content=tool_result_content or '',
                             is_error=False,
                         )
                         user_content_params.append(tool_result_block_param)
@@ -753,7 +777,7 @@ class AnthropicModel(Model):
                             text = request_part.model_response()  # pragma: no cover
                             retry_param = BetaTextBlockParam(type='text', text=text)  # pragma: no cover
                         else:
-                            retry_param = BetaToolResultBlockParam(
+                            retry_param = beta_tool_result_block_param.BetaToolResultBlockParam(
                                 tool_use_id=_guard_tool_call_id(t=request_part),
                                 type='tool_result',
                                 content=request_part.model_response(),
@@ -1070,11 +1094,10 @@ class AnthropicModel(Model):
         last_param['cache_control'] = self._build_cache_control(ttl)
 
     @staticmethod
-    def _map_binary_data(data: bytes, media_type: str) -> BetaContentBlockParam:
-        # Anthropic SDK accepts file-like objects (IO[bytes]) and handles base64 encoding internally
+    def _map_binary_data(data: bytes, media_type: str) -> BetaImageBlockParam | BetaRequestDocumentBlockParam:
         if media_type.startswith('image/'):
             return BetaImageBlockParam(
-                source={'data': io.BytesIO(data), 'media_type': media_type, 'type': 'base64'},  # type: ignore
+                source={'data': io.BytesIO(data), 'media_type': media_type, 'type': 'base64'},  # pyright: ignore[reportArgumentType]
                 type='image',
             )
         elif media_type == 'application/pdf':
@@ -1091,8 +1114,31 @@ class AnthropicModel(Model):
                 source=BetaPlainTextSourceParam(data=data.decode('utf-8'), media_type=media_type, type='text'),
                 type='document',
             )
-        else:
+        else:  # pragma: no cover
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
+
+    @staticmethod
+    async def _map_image_url(item: ImageUrl) -> BetaImageBlockParam:
+        if item.force_download:
+            downloaded = await download_item(item, data_format='bytes')
+            return AnthropicModel._map_binary_data(downloaded['data'], item.media_type)  # pyright: ignore[reportReturnType]
+        return BetaImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
+
+    @staticmethod
+    async def _map_document_url(item: DocumentUrl) -> BetaRequestDocumentBlockParam:
+        if item.media_type == 'application/pdf':
+            if item.force_download:
+                downloaded = await download_item(item, data_format='bytes')
+                return AnthropicModel._map_binary_data(downloaded['data'], item.media_type)  # pyright: ignore[reportReturnType]
+            return BetaRequestDocumentBlockParam(source={'url': item.url, 'type': 'url'}, type='document')
+        elif item.media_type == 'text/plain':
+            downloaded_item = await download_item(item, data_format='text')
+            return BetaRequestDocumentBlockParam(
+                source=BetaPlainTextSourceParam(data=downloaded_item['data'], media_type=item.media_type, type='text'),
+                type='document',
+            )
+        else:  # pragma: no cover
+            raise RuntimeError(f'Unsupported document media type: {item.media_type}')
 
     @staticmethod
     async def _map_user_prompt(
@@ -1109,32 +1155,20 @@ class AnthropicModel(Model):
                 elif isinstance(item, CachePoint):
                     yield item
                 elif isinstance(item, BinaryContent):
-                    yield AnthropicModel._map_binary_data(item.data, item.media_type)
-                elif isinstance(item, ImageUrl):
-                    if item.force_download:
-                        downloaded = await download_item(item, data_format='bytes')
-                        yield AnthropicModel._map_binary_data(downloaded['data'], item.media_type)
+                    if item.is_image or item.is_document:
+                        yield AnthropicModel._map_binary_data(item.data, item.media_type)
                     else:
-                        yield BetaImageBlockParam(source={'type': 'url', 'url': item.url}, type='image')
-                elif isinstance(item, DocumentUrl):
-                    if item.media_type == 'application/pdf':
-                        if item.force_download:
-                            downloaded = await download_item(item, data_format='bytes')
-                            yield AnthropicModel._map_binary_data(downloaded['data'], item.media_type)
-                        else:
-                            yield BetaRequestDocumentBlockParam(
-                                source={'url': item.url, 'type': 'url'}, type='document'
-                            )
-                    elif item.media_type == 'text/plain':
-                        downloaded_item = await download_item(item, data_format='text')
-                        yield BetaRequestDocumentBlockParam(
-                            source=BetaPlainTextSourceParam(
-                                data=downloaded_item['data'], media_type=item.media_type, type='text'
-                            ),
-                            type='document',
+                        raise NotImplementedError(
+                            f'Unsupported binary content type in Anthropic user prompts: {item.media_type}'
                         )
-                    else:  # pragma: no cover
-                        raise RuntimeError(f'Unsupported media type: {item.media_type}')
+                elif isinstance(item, ImageUrl):
+                    yield await AnthropicModel._map_image_url(item)
+                elif isinstance(item, DocumentUrl):
+                    yield await AnthropicModel._map_document_url(item)
+                elif isinstance(item, AudioUrl):
+                    raise NotImplementedError('AudioUrl is not supported in Anthropic user prompts')
+                elif isinstance(item, VideoUrl):
+                    raise NotImplementedError('VideoUrl is not supported in Anthropic user prompts')
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
@@ -1379,25 +1413,27 @@ class AnthropicStreamedResponse(StreamedResponse):
 
 
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
+    tool_args = cast(dict[str, Any], item.input) or None
+
     if item.name == 'web_search':
         return BuiltinToolCallPart(
             provider_name=provider_name,
             tool_name=WebSearchTool.kind,
-            args=cast(dict[str, Any], item.input) or None,
+            args=tool_args,
             tool_call_id=item.id,
         )
     elif item.name == 'code_execution':
         return BuiltinToolCallPart(
             provider_name=provider_name,
             tool_name=CodeExecutionTool.kind,
-            args=cast(dict[str, Any], item.input) or None,
+            args=tool_args,
             tool_call_id=item.id,
         )
     elif item.name == 'web_fetch':
         return BuiltinToolCallPart(
             provider_name=provider_name,
             tool_name=WebFetchTool.kind,
-            args=cast(dict[str, Any], item.input) or None,
+            args=tool_args,
             tool_call_id=item.id,
         )
     elif item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover

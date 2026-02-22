@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
@@ -30,6 +31,7 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
+from .._event_stream import describe_file
 from ._utils import dump_provider_metadata, iter_metadata_chunks, iter_tool_approval_responses
 from .request_types import RequestData
 from .response_types import (
@@ -291,6 +293,14 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                 yield chunk
 
     def _tool_return_output(self, part: BaseToolReturnPart) -> Any:
-        output = part.model_response_object()
-        # Unwrap the return value from the output dictionary if it exists
-        return output.get('return_value', output)
+        output = part.model_response_str()
+        if file_descriptions := [describe_file(f) for f in part.files]:
+            if output:
+                return output + '\n' + '\n'.join(file_descriptions)
+            return '\n'.join(file_descriptions)
+        if not output:
+            return output
+        try:
+            return json.loads(output)
+        except (json.JSONDecodeError, ValueError):
+            return output

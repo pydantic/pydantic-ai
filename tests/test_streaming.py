@@ -3163,24 +3163,33 @@ async def test_stream_tool_returning_user_content():
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='get_image',
-                    content='See file bd38f5',
+                    content=ImageUrl(
+                        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                    ),
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
-                ),
-                content=[
-                    'This is file bd38f5:',
-                    ImageUrl(
-                        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
-                        identifier='bd38f5',
-                    ),
-                ],
+                )
             ),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"get_image":"See ')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='file ')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='bd38f5"}')),
-            PartEndEvent(index=0, part=TextPart(content='{"get_image":"See file bd38f5"}')),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta='force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"bd38f5"}}'
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=TextPart(
+                    content='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"bd38f5"}}'
+                ),
+            ),
         ]
     )
 

@@ -5,7 +5,6 @@ from io import StringIO
 from typing import Any
 
 import pytest
-from dirty_equals import IsInstance, IsStr
 from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
@@ -16,7 +15,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
 from ._inline_snapshot import snapshot
-from .conftest import TestEnv, try_import
+from .conftest import IsInstance, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
     from openai import OpenAIError

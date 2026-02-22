@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, MutableMapping
 from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     AudioUrl,
@@ -28,6 +30,7 @@ from pydantic_ai.messages import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -1884,6 +1887,167 @@ async def test_event_stream_file():
             {'type': 'finish'},
             '[DONE]',
         ]
+    )
+
+
+async def test_run_stream_tool_return_with_files():
+    """Test that tool returns with files include file descriptions in the output."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {
+                0: DeltaToolCall(
+                    name='get_image',
+                    json_args='{}',
+                    tool_call_id='img_1',
+                )
+            }
+        else:
+            yield 'I see an image'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def get_image() -> list[Any]:
+        return ['Image description', BinaryImage(data=b'fake_png', media_type='image/png')]
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Get an image')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'img_1', 'toolName': 'get_image'},
+            {'type': 'tool-input-delta', 'toolCallId': 'img_1', 'inputTextDelta': '{}'},
+            {'type': 'tool-input-available', 'toolCallId': 'img_1', 'toolName': 'get_image', 'input': {}},
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'img_1',
+                'output': 'Image description\n[File: image/png]',
+            },
+            {'type': 'finish-step'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'I see an image', 'id': IsStr()},
+            {'type': 'text-end', 'id': IsStr()},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_tool_return_files_only():
+    """Test that tool returns with only files return file descriptions."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {
+                0: DeltaToolCall(
+                    name='get_file',
+                    json_args='{}',
+                    tool_call_id='file_1',
+                )
+            }
+        else:
+            yield 'Got file'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def get_file() -> BinaryContent:
+        return BinaryContent(data=b'audio', media_type='audio/wav')
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Get file')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    tool_output = next(e for e in events if is_str_dict(e) and e.get('type') == 'tool-output-available')
+    assert tool_output == snapshot(
+        {
+            'type': 'tool-output-available',
+            'toolCallId': 'file_1',
+            'output': '[File: audio/wav]',
+        }
+    )
+
+
+async def test_run_stream_tool_return_with_file_url():
+    """Test that tool returns with FileUrl (ImageUrl) include URL in description."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {
+                0: DeltaToolCall(
+                    name='get_image_url',
+                    json_args='{}',
+                    tool_call_id='url_1',
+                )
+            }
+        else:
+            yield 'Got image URL'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def get_image_url() -> ImageUrl:
+        return ImageUrl(url='https://example.com/image.png')
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Get image URL')],
+            ),
+        ],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    tool_output = next(e for e in events if is_str_dict(e) and e.get('type') == 'tool-output-available')
+    assert tool_output == snapshot(
+        {
+            'type': 'tool-output-available',
+            'toolCallId': 'url_1',
+            'output': '[File: https://example.com/image.png]',
+        }
     )
 
 
@@ -4114,15 +4278,7 @@ async def test_adapter_dump_load_roundtrip_without_timestamps():
     ui_messages = VercelAIAdapter.dump_messages(original_messages)
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
 
-    def sync_timestamps(original: list[ModelRequest | ModelResponse], new: list[ModelRequest | ModelResponse]) -> None:
-        for orig_msg, new_msg in zip(original, new):
-            for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
-                if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
-                    new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-            if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
-                new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
-
-    sync_timestamps(original_messages, reloaded_messages)
+    _sync_timestamps(original_messages, reloaded_messages)
 
     for msg in reloaded_messages:
         if hasattr(msg, 'timestamp'):  # pragma: no branch
@@ -5471,7 +5627,6 @@ async def test_event_stream_builtin_tool_call_end_with_provider_metadata_v6():
 
 async def test_event_stream_thinking_delta_with_provider_metadata():
     """Test that thinking delta events include provider_metadata."""
-    from pydantic_ai.messages import ThinkingPartDelta
 
     async def event_generator():
         part = ThinkingPart(
@@ -5565,7 +5720,7 @@ def _sync_timestamps(original: list[ModelMessage], new: list[ModelMessage]) -> N
         for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
             if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
                 new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-        if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):  # pragma: no branch
+        if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
             new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
 
 
@@ -5691,3 +5846,47 @@ class TestSdkVersion:
             e for e in events_v6 if isinstance(e, dict) and e.get('type') == 'tool-input-start'
         )
         assert 'providerMetadata' in tool_input_start_v6
+
+
+@pytest.mark.parametrize(
+    'model_response_str,files,expected',
+    [
+        pytest.param(
+            'hello',
+            [BinaryContent(data=b'x', media_type='image/png')],
+            snapshot('hello\n[File: image/png]'),
+            id='string_with_files',
+        ),
+        pytest.param(
+            '',
+            [BinaryContent(data=b'x', media_type='audio/wav')],
+            snapshot('[File: audio/wav]'),
+            id='empty_with_files',
+        ),
+        pytest.param(
+            '[1, 2]',
+            [BinaryContent(data=b'x', media_type='image/png')],
+            snapshot('[1, 2]\n[File: image/png]'),
+            id='list_str_with_files',
+        ),
+        pytest.param(
+            '',
+            [],
+            snapshot(''),
+            id='empty_no_files',
+        ),
+    ],
+)
+def test_tool_return_output_edge_cases(model_response_str: str, files: list[BinaryContent], expected: str):
+    """Test `_tool_return_output` with files and various `model_response_str` values."""
+    request = SubmitMessage(
+        id='test',
+        messages=[UIMessage(id='test', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    stream = VercelAIEventStream(run_input=request)
+    mock_part = Mock()
+    mock_part.model_response_str.return_value = model_response_str
+    mock_part.files = files
+
+    result = stream._tool_return_output(mock_part)  # pyright: ignore[reportPrivateUsage]
+    assert result == expected

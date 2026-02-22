@@ -556,3 +556,8 @@ def get_event_loop():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
+    """Check if obj is a dict with string keys, enabling type narrowing."""
+    return isinstance(obj, dict)

@@ -1,0 +1,180 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '396'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '627'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll retrieve the file for you and describe what I receive.
+        type: text
+      - id: toolu_01YahAUKrWFRUmEJzzQKC8o8
+        input: {}
+        name: get_file
+        type: tool_use
+      id: msg_013N1bRem6JRCztjUsg8nVqd
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 558
+        output_tokens: 50
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '896'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
+          type: text
+        role: user
+      - content:
+        - text: I'll retrieve the file for you and describe what I receive.
+          type: text
+        - id: toolu_01YahAUKrWFRUmEJzzQKC8o8
+          input: {}
+          name: get_file
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: File attached
+            type: text
+          is_error: false
+          tool_use_id: toolu_01YahAUKrWFRUmEJzzQKC8o8
+          type: tool_result
+        - source:
+            type: url
+            url: https://www.gstatic.com/webp/gallery3/1.png
+          type: image
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1517'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          I received a beautiful image of an orange-yellow rose. Here's what I can describe:
+
+          **Main Subject:** A single rose bloom in warm, peachy-orange tones with hints of yellow, particularly towards the center and lower petals.
+
+          **Details:**
+          - The rose petals have a soft, delicate texture with visible water droplets on them, giving it a fresh, dewy appearance
+          - The petals show natural color variation, transitioning from deeper orange on the outer petals to lighter yellow-peach tones
+          - There's a stem with what appears to be a small bud or rosehip at the top - it has a reddish-pink color with a textured surface
+          - A few green leaves are visible along the brown stem
+          - The background is clean white, making the rose stand out prominently
+
+          **Overall Impression:** This is a lovely, close-up photograph of a rose that appears freshly cut or photographed after rain/dew, with excellent detail showing the layered structure of the petals and the natural moisture on the flower. The warm color palette gives it a gentle, romantic quality.
+        type: text
+      id: msg_01GoLkVsUQZvTFhNmwBYS2ip
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 795
+        output_tokens: 243
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

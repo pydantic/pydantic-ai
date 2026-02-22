@@ -43,6 +43,7 @@ class BedrockModelProfile(ModelProfile):
     bedrock_send_back_thinking_parts: bool = False
     bedrock_supports_prompt_caching: bool = False
     bedrock_supports_tool_caching: bool = False
+    bedrock_supported_media_kinds_in_tool_returns: frozenset[str] = frozenset({'image'})
 
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
@@ -114,6 +115,7 @@ class BedrockProvider(Provider[BaseClient]):
                 bedrock_send_back_thinking_parts=True,
                 bedrock_supports_prompt_caching=True,
                 bedrock_supports_tool_caching=True,
+                bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
             ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
             'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
                 _without_builtin_tools(mistral_model_profile(model_name))
