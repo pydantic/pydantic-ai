@@ -514,16 +514,23 @@ def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
         raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
 
-_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*\})', flags=re.DOTALL)
+_MARKDOWN_FENCED_BLOCK_RE = re.compile(r'```(?:\w+)?\n(.*?)(?:\n```|$)', flags=re.DOTALL)
+_MARKDOWN_UNFENCED_JSON_RE = re.compile(r'(\{.*\})', flags=re.DOTALL)
 
 
 def strip_markdown_fences(text: str) -> str:
     if text.startswith('{'):
         return text
 
-    match = re.search(_MARKDOWN_FENCES_PATTERN, text)
-    if match:
-        return match.group(1)
+    # First, try to extract content from within markdown fences
+    fence_match = re.search(_MARKDOWN_FENCED_BLOCK_RE, text)
+    if fence_match:
+        fenced_content = fence_match.group(1).strip()
+        # Find the JSON object within the fenced content only
+        json_match = re.search(_MARKDOWN_UNFENCED_JSON_RE, fenced_content)
+        if json_match:
+            return json_match.group(1)
+        return fenced_content
 
     return text
 
