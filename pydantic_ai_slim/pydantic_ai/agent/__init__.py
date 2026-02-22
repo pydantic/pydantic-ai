@@ -77,6 +77,7 @@ if TYPE_CHECKING:
 
     from ..builtin_tools import AbstractBuiltinTool
     from ..mcp import MCPServer
+    from ..realtime import RealtimeModel, RealtimeSession
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -99,6 +100,25 @@ __all__ = (
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
+
+
+class _RealtimeModelStub(models.Model):
+    """Minimal Model stub used as RunContext.model when no text model is configured.
+
+    Realtime sessions don't use the text Model for requests, but RunContext requires one.
+    Tool functions that access ctx.model will get this stub.
+    """
+
+    @property
+    def model_name(self) -> str:
+        return 'realtime-session-stub'
+
+    @property
+    def system(self) -> str:
+        return 'realtime'
+
+    async def request(self, messages: Any, model_settings: Any, model_request_parameters: Any) -> Any:
+        raise NotImplementedError('Text model requests are not available in realtime sessions')
 
 
 @dataclasses.dataclass(init=False)
@@ -1594,6 +1614,86 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema = self._output_schema
 
         return schema
+
+    @asynccontextmanager
+    async def realtime_session(
+        self,
+        model: RealtimeModel,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        instructions: str | None = None,
+    ) -> AsyncIterator[RealtimeSession]:
+        """Open a realtime session using the agent's tools.
+
+        The session connects to a realtime model and automatically
+        executes tool calls using the agent's registered tools.
+
+        Example:
+        ```python {test="skip"}
+        from pydantic_ai import Agent
+        from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+        agent = Agent()
+
+        @agent.tool_plain
+        def get_weather(city: str) -> str:
+            return f'Sunny in {city}'
+
+        async def main():
+            rt = OpenAIRealtimeModel('gpt-4o-realtime-preview')
+            async with agent.realtime_session(model=rt) as session:
+                await session.send_audio(b'...')
+                async for event in session:
+                    print(event)
+        ```
+
+        Args:
+            model: The realtime model to connect to.
+            deps: Dependencies to pass to tool functions.
+            model_settings: Optional settings for the realtime model.
+            instructions: Override the agent's instructions. If not provided, the
+                agent's literal instructions are used. Note that dynamic instructions
+                (functions registered via ``@agent.instructions``) are not supported
+                in realtime sessions - only static string instructions are used.
+        """
+        from ..realtime import RealtimeSession
+
+        # Resolve instructions from the agent if not explicitly provided
+        if instructions is None:
+            literal, _funcs = self._get_instructions()
+            instructions = literal or ''
+
+        # Get tool definitions from the agent's toolset
+        deps = self._get_deps(deps)
+        toolset = self._get_toolset(output_toolset=None)
+        async with toolset:
+            # Build a minimal RunContext for tool execution
+            run_context = RunContext[AgentDepsT](
+                deps=deps,
+                model=self._get_model(None) if self._model else _RealtimeModelStub(),
+                usage=_usage.RunUsage(),
+            )
+            tools_map = await toolset.get_tools(run_context)
+            tool_defs = [t.tool_def for t in tools_map.values()]
+
+            async def tool_runner(name: str, args: dict[str, Any]) -> str:
+                tool = tools_map.get(name)
+                if tool is None:
+                    return f'Error: unknown tool {name!r}'
+                ctx = dataclasses.replace(run_context, tool_name=name)
+                try:
+                    result = await toolset.call_tool(name, args, ctx, tool)
+                    return str(result)
+                except Exception as e:
+                    return f'Error: {e}'
+
+            async with model.connect(
+                instructions=instructions,
+                tools=tool_defs,
+                model_settings=model_settings,
+            ) as connection:
+                yield RealtimeSession(connection, tool_runner)
 
     async def __aenter__(self) -> Self:
         """Enter the agent context.

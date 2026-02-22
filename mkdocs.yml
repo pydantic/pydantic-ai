@@ -56,6 +56,7 @@ nav:
           - mcp/fastmcp-client.md
           - mcp/server.md
       - Multi-Agent Patterns: multi-agent-applications.md
+      - Realtime Sessions: realtime.md
       - Web Chat UI: web.md
       - Embeddings: embeddings.md
       - Testing: testing.md
