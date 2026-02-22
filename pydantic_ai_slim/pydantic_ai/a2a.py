@@ -4,6 +4,7 @@ import base64
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Generic, TypeVar
@@ -57,6 +58,12 @@ except ImportError as _import_error:
         'Please install the `fasta2a` package to use `Agent.to_a2a()` method, '
         'you can use the `a2a` optional group — `pip install "pydantic-ai-slim[a2a]"`'
     ) from _import_error
+
+# Context variables to hold the current A2A execution context
+a2a_task_id: ContextVar[str] = ContextVar('a2a_task_id')
+a2a_task: ContextVar[Any] = ContextVar('a2a_task')
+a2a_storage: ContextVar[Storage] = ContextVar('a2a_storage')
+a2a_broker: ContextVar[Broker] = ContextVar('a2a_broker')
 
 
 @asynccontextmanager
@@ -139,6 +146,12 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
         message_history = await self.storage.load_context(task['context_id']) or []
         message_history.extend(self.build_message_history(task.get('history', [])))
 
+        # Expose the A2A context to the agent execution
+        task_id_token = a2a_task_id.set(task['id'])
+        task_token = a2a_task.set(task)
+        storage_token = a2a_storage.set(self.storage)
+        broker_token = a2a_broker.set(self.broker)
+
         try:
             result = await self.agent.run(message_history=message_history)  # type: ignore
 
@@ -167,6 +180,11 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
             await self.storage.update_task(
                 task['id'], state='completed', new_artifacts=artifacts, new_messages=a2a_messages
             )
+        finally:
+            a2a_task_id.reset(task_id_token)
+            a2a_task.reset(task_token)
+            a2a_storage.reset(storage_token)
+            a2a_broker.reset(broker_token)
 
     async def cancel_task(self, params: TaskIdParams) -> None:
         pass

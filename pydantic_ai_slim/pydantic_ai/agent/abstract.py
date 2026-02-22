@@ -1388,7 +1388,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         uvicorn app:app --host 0.0.0.0 --port 8000
         ```
         """
-        from .._a2a import agent_to_a2a
+        from ..a2a import agent_to_a2a
 
         return agent_to_a2a(
             self,

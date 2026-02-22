@@ -31,6 +31,7 @@ with try_import() as imports_successful:
     from fasta2a.schema import DataPart, FilePart, Message, TextPart
     from fasta2a.storage import InMemoryStorage
 
+    from pydantic_ai.a2a import a2a_broker, a2a_storage, a2a_task, a2a_task_id
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fasta2a not installed'),
@@ -1031,3 +1032,64 @@ async def test_a2a_multiple_send_task_messages():
                     ],
                 }
             )
+
+
+async def test_a2a_context_vars():
+    """Test that all a2a ContextVars are correctly exposed during execution."""
+
+    async def get_task_context(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        task_id = a2a_task_id.get()
+        task = a2a_task.get()
+        storage = a2a_storage.get()
+        broker = a2a_broker.get()
+
+        # Verify the exposed metadata and instances
+        assert task['id'] == task_id
+        assert task['status']['state'] == 'working'
+        assert storage is not None
+        assert broker is not None
+
+        # Test modifying the task via the exposed storage instance
+        await storage.update_task(task_id, state='working')
+
+        context_id = task.get('context_id')
+        args_json = f'{{"response": ["{task_id}", "{context_id}"]}}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    model_task_context = FunctionModel(get_task_context)
+    agent = Agent(model=model_task_context, output_type=tuple[str, str])
+    app = agent.to_a2a()
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            message = Message(
+                role='user',
+                parts=[TextPart(text='What is my task ID and context ID?', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+            )
+            response = await a2a_client.send_message(message=message)
+            assert 'result' in response
+            task_result = response['result']
+            assert task_result['kind'] == 'task'
+
+            task_id = task_result['id']
+            assert 'context_id' in task_result
+            context_id = task_result['context_id']
+
+            while task_resp := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task_resp and task_resp['result']['status']['state'] == 'completed':
+                    break
+                await anyio.sleep(0.1)
+
+            assert 'result' in task_resp
+            final_result = task_resp['result']
+            assert 'artifacts' in final_result
+
+            parts = final_result['artifacts'][0]['parts']
+            assert parts[0]['kind'] == 'data'
+            assert parts[0]['data']['result'] == [task_id, context_id]
