@@ -66,6 +66,8 @@ with try_import() as imports_successful:
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
+        BetaBashCodeExecutionResultBlock,
+        BetaBashCodeExecutionToolResultBlock,
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
         BetaContentBlock,
@@ -90,6 +92,8 @@ with try_import() as imports_successful:
         BetaServerToolUseBlock,
         BetaTextBlock,
         BetaTextDelta,
+        BetaTextEditorCodeExecutionToolResultBlock,
+        BetaTextEditorCodeExecutionViewResultBlock,
         BetaToolUseBlock,
         BetaUsage,
         BetaWebSearchResultBlock,
@@ -5302,6 +5306,120 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
     assert web_fetch_tool_param.get('allowed_domains') is None
 
 
+async def test_anthropic_code_execution_tool_with_file_ids():
+    """Test that CodeExecutionTool with file_ids adds container_upload blocks and files-api beta."""
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    # Create a model instance
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
+
+    # Create CodeExecutionTool with file_ids
+    code_exec_tool = CodeExecutionTool(file_ids=['file_123', 'file_456'])
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[code_exec_tool],
+        output_tools=[],
+    )
+
+    # Get tools from model
+    tools, _, betas = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+
+    # Verify code_execution tool is present
+    code_exec_tool_param = next((t for t in tools if t.get('name') == 'code_execution'), None)
+    assert code_exec_tool_param is not None
+    assert code_exec_tool_param.get('type') == 'code_execution_20250825'
+
+    # Verify betas include both code execution and files API
+    assert 'code-execution-2025-08-25' in betas
+    assert 'files-api-2025-04-14' in betas
+
+
+async def test_anthropic_code_execution_tool_without_file_ids():
+    """Test that CodeExecutionTool without file_ids doesn't add files-api beta."""
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    # Create a model instance
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
+
+    # Create CodeExecutionTool without file_ids
+    code_exec_tool = CodeExecutionTool()
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[code_exec_tool],
+        output_tools=[],
+    )
+
+    # Get tools from model
+    tools, _, betas = m._add_builtin_tools([], model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+
+    # Verify code_execution tool is present
+    code_exec_tool_param = next((t for t in tools if t.get('name') == 'code_execution'), None)
+    assert code_exec_tool_param is not None
+
+    # Verify only code execution beta is present, not files API
+    assert 'code-execution-2025-08-25' in betas
+    assert 'files-api-2025-04-14' not in betas
+
+
+async def test_anthropic_container_upload_blocks_in_messages():
+    """Test that container_upload blocks are added to the first user message."""
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    # Create a model instance
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
+
+    # Create CodeExecutionTool with file_ids so that _map_message can extract them
+    code_exec_tool = CodeExecutionTool(file_ids=['file_abc', 'file_xyz'])
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[code_exec_tool],
+        output_tools=[],
+    )
+
+    model_settings = AnthropicModelSettings()
+
+    # Create test messages
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Test message')])]
+
+    # Call _map_message which will extract file_ids from builtin_tools
+    _, anthropic_messages = await m._map_message(  # pyright: ignore[reportPrivateUsage]
+        messages, model_request_parameters, model_settings
+    )
+
+    # Verify container_upload blocks are in the user message content
+    assert len(anthropic_messages) == 1
+    user_message = anthropic_messages[0]
+    assert user_message['role'] == 'user'
+
+    content = user_message['content']
+    assert isinstance(content, list)
+
+    # Should have: 2 container_upload blocks + text block
+    assert len(content) == 3
+
+    # First two should be container_upload blocks (prepended before user content)
+    upload_block_1 = content[0]
+    assert isinstance(upload_block_1, dict)
+    assert upload_block_1['type'] == 'container_upload'
+    assert upload_block_1['file_id'] == 'file_abc'
+    upload_block_2 = content[1]
+    assert isinstance(upload_block_2, dict)
+    assert upload_block_2['type'] == 'container_upload'
+    assert upload_block_2['file_id'] == 'file_xyz'
+
+    # Last should be the text
+    text_block = content[2]
+    assert isinstance(text_block, dict)
+    assert text_block['type'] == 'text'
+    assert text_block['text'] == 'Test message'
+
+
 @pytest.mark.vcr()
 async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
@@ -7183,6 +7301,241 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     agent2 = Agent(m)
     result2 = await agent2.run('What was the code execution result?', message_history=result.all_messages())
     assert result2.output == 'The code execution returned the result: 4'
+
+
+async def test_anthropic_bash_code_execution_tool_result(env: TestEnv, allow_model_requests: None):
+    """Test handling of bash_code_execution tool result blocks."""
+    # Create the mock response with bash_code_execution server tool blocks
+    content: list[BetaContentBlock] = []
+    content.append(BetaTextBlock(text='Let me run a bash command.', type='text'))
+    content.append(
+        BetaServerToolUseBlock(
+            id='server_tool_789',
+            name='bash_code_execution',
+            input={'command': 'echo hello'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        )
+    )
+    content.append(
+        BetaBashCodeExecutionToolResultBlock(
+            tool_use_id='server_tool_789',
+            type='bash_code_execution_tool_result',
+            content=BetaBashCodeExecutionResultBlock(
+                content=[],
+                return_code=0,
+                stderr='',
+                stdout='hello\n',
+                type='bash_code_execution_result',
+            ),
+        ),
+    )
+    content.append(BetaTextBlock(text='The bash command printed hello.', type='text'))
+    first_response = completion_message(
+        content,
+        BetaUsage(input_tokens=10, output_tokens=20),
+    )
+
+    mock_client = MockAnthropic.create_mock([first_response])
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('Run echo hello')
+
+    # Verify we have the correct tool parts in the history
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    assert len(server_tool_calls) == 1
+    assert len(server_tool_returns) == 1
+    # bash_code_execution preserves its original tool_name for message history round-trip
+    assert server_tool_calls[0].tool_name == 'bash_code_execution'
+    assert server_tool_returns[0].tool_name == 'bash_code_execution'
+    assert server_tool_returns[0].content == {
+        'content': [],
+        'return_code': 0,
+        'stderr': '',
+        'stdout': 'hello\n',
+        'type': 'bash_code_execution_result',
+    }
+
+
+async def test_anthropic_text_editor_code_execution_tool_result(env: TestEnv, allow_model_requests: None):
+    """Test handling of text_editor_code_execution tool result blocks."""
+    # Create the mock response with text_editor_code_execution server tool blocks
+    content: list[BetaContentBlock] = []
+    content.append(BetaTextBlock(text='Let me view a file.', type='text'))
+    content.append(
+        BetaServerToolUseBlock(
+            id='server_tool_abc',
+            name='text_editor_code_execution',
+            input={'command': 'view', 'path': '/tmp/test.txt'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        )
+    )
+    content.append(
+        BetaTextEditorCodeExecutionToolResultBlock(
+            tool_use_id='server_tool_abc',
+            type='text_editor_code_execution_tool_result',
+            content=BetaTextEditorCodeExecutionViewResultBlock(
+                content='Hello, World!',
+                file_type='text',
+                num_lines=1,
+                start_line=1,
+                total_lines=1,
+                type='text_editor_code_execution_view_result',
+            ),
+        ),
+    )
+    content.append(BetaTextBlock(text='The file contains "Hello, World!".', type='text'))
+    first_response = completion_message(
+        content,
+        BetaUsage(input_tokens=10, output_tokens=20),
+    )
+
+    mock_client = MockAnthropic.create_mock([first_response])
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('View the file /tmp/test.txt')
+
+    # Verify we have the correct tool parts in the history
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    assert len(server_tool_calls) == 1
+    assert len(server_tool_returns) == 1
+    # text_editor_code_execution preserves its original tool_name for message history round-trip
+    assert server_tool_calls[0].tool_name == 'text_editor_code_execution'
+    assert server_tool_returns[0].tool_name == 'text_editor_code_execution'
+    assert server_tool_returns[0].content == {
+        'content': 'Hello, World!',
+        'file_type': 'text',
+        'num_lines': 1,
+        'start_line': 1,
+        'total_lines': 1,
+        'type': 'text_editor_code_execution_view_result',
+    }
+
+
+async def test_anthropic_bash_code_execution_pass_history_back(env: TestEnv, allow_model_requests: None):
+    """Test passing bash_code_execution tool history back to Anthropic for round-trip replay."""
+    # Create the first mock response with bash_code_execution server tool blocks
+    content: list[BetaContentBlock] = []
+    content.append(BetaTextBlock(text='Let me run a bash command.', type='text'))
+    content.append(
+        BetaServerToolUseBlock(
+            id='server_tool_bash',
+            name='bash_code_execution',
+            input={'command': 'echo hello'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        )
+    )
+    content.append(
+        BetaBashCodeExecutionToolResultBlock(
+            tool_use_id='server_tool_bash',
+            type='bash_code_execution_tool_result',
+            content=BetaBashCodeExecutionResultBlock(
+                content=[],
+                return_code=0,
+                stderr='',
+                stdout='hello\n',
+                type='bash_code_execution_result',
+            ),
+        ),
+    )
+    content.append(BetaTextBlock(text='The bash command printed hello.', type='text'))
+    first_response = completion_message(
+        content,
+        BetaUsage(input_tokens=10, output_tokens=20),
+    )
+
+    # Create the second mock response that references the history
+    second_response = completion_message(
+        [BetaTextBlock(text='The bash command output was: hello', type='text')],
+        BetaUsage(input_tokens=50, output_tokens=30),
+    )
+
+    mock_client = MockAnthropic.create_mock([first_response, second_response])
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    # First run to get server tool history
+    result = await agent.run('Run echo hello')
+
+    # Verify we have server tool parts in the history
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    assert len(server_tool_calls) == 1
+    assert len(server_tool_returns) == 1
+    assert server_tool_calls[0].tool_name == 'bash_code_execution'
+    assert server_tool_returns[0].tool_name == 'bash_code_execution'
+
+    # Pass the history back to another Anthropic agent run - this validates the round-trip replay
+    agent2 = Agent(m)
+    result2 = await agent2.run('What was the bash output?', message_history=result.all_messages())
+    assert result2.output == 'The bash command output was: hello'
+
+
+async def test_anthropic_text_editor_code_execution_pass_history_back(env: TestEnv, allow_model_requests: None):
+    """Test passing text_editor_code_execution tool history back to Anthropic for round-trip replay."""
+    # Create the first mock response with text_editor_code_execution server tool blocks
+    content: list[BetaContentBlock] = []
+    content.append(BetaTextBlock(text='Let me view a file.', type='text'))
+    content.append(
+        BetaServerToolUseBlock(
+            id='server_tool_editor',
+            name='text_editor_code_execution',
+            input={'command': 'view', 'path': '/tmp/test.txt'},
+            type='server_tool_use',
+            caller=BetaDirectCaller(type='direct'),
+        )
+    )
+    content.append(
+        BetaTextEditorCodeExecutionToolResultBlock(
+            tool_use_id='server_tool_editor',
+            type='text_editor_code_execution_tool_result',
+            content=BetaTextEditorCodeExecutionViewResultBlock(
+                content='Hello, World!',
+                file_type='text',
+                num_lines=1,
+                start_line=1,
+                total_lines=1,
+                type='text_editor_code_execution_view_result',
+            ),
+        ),
+    )
+    content.append(BetaTextBlock(text='The file contains "Hello, World!".', type='text'))
+    first_response = completion_message(
+        content,
+        BetaUsage(input_tokens=10, output_tokens=20),
+    )
+
+    # Create the second mock response that references the history
+    second_response = completion_message(
+        [BetaTextBlock(text='The file content was: Hello, World!', type='text')],
+        BetaUsage(input_tokens=50, output_tokens=30),
+    )
+
+    mock_client = MockAnthropic.create_mock([first_response, second_response])
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    # First run to get server tool history
+    result = await agent.run('View the file /tmp/test.txt')
+
+    # Verify we have server tool parts in the history
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
+    assert len(server_tool_calls) == 1
+    assert len(server_tool_returns) == 1
+    assert server_tool_calls[0].tool_name == 'text_editor_code_execution'
+    assert server_tool_returns[0].tool_name == 'text_editor_code_execution'
+
+    # Pass the history back to another Anthropic agent run - this validates the round-trip replay
+    agent2 = Agent(m)
+    result2 = await agent2.run('What was the file content?', message_history=result.all_messages())
+    assert result2.output == 'The file content was: Hello, World!'
 
 
 async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anthropic_api_key: str):

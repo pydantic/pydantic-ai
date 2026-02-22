@@ -237,6 +237,80 @@ assert isinstance(result.output, BinaryImage)
 
 _(This example is complete, it can be run "as is")_
 
+### File Uploads
+
+You can upload files via the provider's Files API and make them available to the code execution container. This allows the agent to process data files, analyze CSVs, work with images, and more.
+
+#### Anthropic
+
+```py {title="code_execution_with_files_anthropic.py" test="skip"}
+import asyncio
+
+import anthropic
+
+from pydantic_ai import Agent, CodeExecutionTool
+
+
+async def main():
+    # Upload a file via the Anthropic Files API
+    client = anthropic.AsyncAnthropic()
+    with open('data.csv', 'rb') as f:
+        file = await client.beta.files.upload(file=('data.csv', f.read(), 'text/csv'))
+
+    # Create an agent with CodeExecutionTool that has access to the uploaded file
+    agent = Agent(
+        'anthropic:claude-sonnet-4-5',
+        builtin_tools=[CodeExecutionTool(file_ids=[file.id])],
+    )
+
+    result = await agent.run('Analyze the data.csv file and summarize the key statistics.')
+    print(result.output)
+    #> The CSV file contains 1000 rows with columns: name, age, salary...
+
+
+asyncio.run(main())
+```
+
+For details on file management, persistence, and container behavior, see the [Anthropic Files API documentation](https://docs.anthropic.com/en/api/files).
+
+#### OpenAI
+
+```py {title="code_execution_with_files_openai.py" test="skip"}
+import asyncio
+
+from openai import AsyncOpenAI
+
+from pydantic_ai import Agent, CodeExecutionTool
+
+
+async def main():
+    # Upload a file via the OpenAI Files API
+    client = AsyncOpenAI()
+    with open('data.csv', 'rb') as f:
+        file = await client.files.create(file=f, purpose='assistants')
+
+    # Create an agent with CodeExecutionTool that has access to the uploaded file
+    agent = Agent(
+        'openai-responses:gpt-5.2',
+        builtin_tools=[CodeExecutionTool(file_ids=[file.id])],
+    )
+
+    result = await agent.run('Analyze the data.csv file and summarize the key statistics.')
+    print(result.output)
+    #> The CSV file contains 1000 rows with columns: name, age, salary...
+
+
+asyncio.run(main())
+```
+
+For details on file management, container lifecycle, and persistence behavior, see the [OpenAI Responses API documentation](https://platform.openai.com/docs/api-reference/responses).
+
+#### Provider Support
+
+| Parameter | Anthropic | OpenAI | Google | xAI |
+|-----------|-----------|--------|--------|-----|
+| `file_ids` | ✅ | ✅ | ❌ | ❌ |
+
 ## Image Generation Tool
 
 The [`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool] enables your agent to generate images.
