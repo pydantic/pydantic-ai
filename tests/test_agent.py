@@ -2581,7 +2581,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                         dynamic_ref=IsStr(),
                     ),
                     UserPromptPart(
-                        content=['Hello', ImageUrl(url='https://example.com/image.jpg', identifier='39cfc4')],
+                        content=['Hello', ImageUrl(url='https://example.com/image.jpg')],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(

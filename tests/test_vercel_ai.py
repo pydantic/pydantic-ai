@@ -7,6 +7,8 @@ from typing import Any, cast
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai._agent_graph import capture_run_messages
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     AudioUrl,
@@ -23,6 +25,7 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -46,7 +49,6 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
-from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr, try_import
@@ -5630,6 +5632,352 @@ class TestLoadProviderMetadata:
         provider_metadata = {'test': {'id': 'test_id'}}
         result = load_provider_metadata(provider_metadata)
         assert result == {}
+
+
+async def test_system_prompt_with_vercel_adapter():
+    """Test that system prompts are included when using VercelAIAdapter on first message."""
+    system_prompt = 'You are a helpful assistant'
+    agent = Agent(model=TestModel(), system_prompt=system_prompt)
+
+    request = SubmitMessage(
+        id='test-request',
+        messages=[
+            UIMessage(
+                id='msg-1',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+
+    with capture_run_messages() as messages:
+        events: list[dict[str, Any]] = []
+        async for event in adapter.encode_stream(adapter.run_stream()):
+            if '[DONE]' not in event:
+                events.append(json.loads(event.removeprefix('data: ')))
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=56, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_dynamic_system_prompt_with_vercel_adapter():
+    """Test that dynamic system prompts work with VercelAIAdapter."""
+    agent = Agent(model=TestModel())
+
+    @agent.system_prompt
+    def dynamic_prompt(ctx: RunContext[None]) -> str:
+        return 'Dynamic system prompt from Vercel'
+
+    request = SubmitMessage(
+        id='test-request-2',
+        messages=[
+            UIMessage(
+                id='msg-2',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+
+    with capture_run_messages() as messages:
+        events: list[dict[str, Any]] = []
+        async for event in adapter.encode_stream(adapter.run_stream()):
+            if '[DONE]' not in event:
+                events.append(json.loads(event.removeprefix('data: ')))
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Dynamic system prompt from Vercel', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=56, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_system_prompt_reinjected_with_vercel_history():
+    """Test that system prompts ARE reinjected on followup messages via UI adapters."""
+    system_prompt = 'You are a helpful assistant'
+    agent = Agent(model=TestModel(), system_prompt=system_prompt)
+
+    request = SubmitMessage(
+        id='test-request-3',
+        messages=[
+            UIMessage(
+                id='msg-3',
+                role='user',
+                parts=[TextUIPart(text='First message')],
+            ),
+            UIMessage(
+                id='msg-4',
+                role='assistant',
+                parts=[TextUIPart(text='First response')],
+            ),
+            UIMessage(
+                id='msg-5',
+                role='user',
+                parts=[TextUIPart(text='Second message')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+
+    with capture_run_messages() as messages:
+        events: list[dict[str, Any]] = []
+        async for event in adapter.encode_stream(adapter.run_stream()):
+            if '[DONE]' not in event:
+                events.append(json.loads(event.removeprefix('data: ')))
+
+    assert messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='First message', timestamp=IsDatetime())]),
+            ModelResponse(parts=[TextPart(content='First response')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful assistant', timestamp=IsDatetime()),
+                    UserPromptPart(content='Second message', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=59, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_stripped_by_default():
+    """Test that frontend system prompts are stripped and a warning emitted when accept_frontend_system_prompt=False."""
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    request = SubmitMessage(
+        id='test-request',
+        messages=[
+            UIMessage(
+                id='msg-sys',
+                role='system',
+                parts=[TextUIPart(text='Frontend system prompt')],
+            ),
+            UIMessage(
+                id='msg-1',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+
+    with capture_run_messages() as messages:
+        with pytest.warns(UserWarning, match='accept_frontend_system_prompt'):
+            async for _ in adapter.encode_stream(adapter.run_stream()):
+                pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Agent system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_stripped_no_agent_prompt():
+    """Test that frontend system prompts are stripped even when there's no agent system prompt."""
+    agent = Agent(model=TestModel())
+
+    request = SubmitMessage(
+        id='test-request',
+        messages=[
+            UIMessage(
+                id='msg-sys',
+                role='system',
+                parts=[TextUIPart(text='Frontend system prompt')],
+            ),
+            UIMessage(
+                id='msg-1',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+
+    with capture_run_messages() as messages:
+        with pytest.warns(UserWarning, match='accept_frontend_system_prompt'):
+            async for _ in adapter.encode_stream(adapter.run_stream()):
+                pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_accepted_when_opted_in():
+    """Test that frontend system prompts are kept and agent prompt skipped when accept_frontend_system_prompt=True."""
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    request = SubmitMessage(
+        id='test-request',
+        messages=[
+            UIMessage(
+                id='msg-sys',
+                role='system',
+                parts=[TextUIPart(text='Frontend system prompt')],
+            ),
+            UIMessage(
+                id='msg-1',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request, accept_frontend_system_prompt=True)
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Frontend system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_accepted_no_agent_prompt():
+    """Test that frontend system prompts are used when accept_frontend_system_prompt=True and agent has no system_prompt."""
+    agent = Agent(model=TestModel())
+
+    request = SubmitMessage(
+        id='test-request',
+        messages=[
+            UIMessage(
+                id='msg-sys',
+                role='system',
+                parts=[TextUIPart(text='Frontend system prompt')],
+            ),
+            UIMessage(
+                id='msg-1',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request, accept_frontend_system_prompt=True)
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Frontend system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 class TestSdkVersion:
