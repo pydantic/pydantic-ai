@@ -22,7 +22,7 @@ from ..builtin_tools import (
     WebFetchTool,
     WebSearchTool,
 )
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import ContextWindowExceeded, ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -193,6 +193,25 @@ class GoogleModelSettings(ModelSettings, total=False):
 
     See <https://ai.google.dev/gemini-api/docs/caching> for more information.
     """
+
+
+_CONTEXT_WINDOW_ERROR_PATTERNS = (
+    'request is too large',
+    'exceeds the maximum',
+    'token limit',
+)
+
+
+def _check_context_window_exceeded(e: errors.APIError, model_name: str) -> ContextWindowExceeded | None:
+    """Check if the error is a context window exceeded error and return the appropriate exception."""
+    message = str(e).lower()
+    if e.code == 400 and any(p in message for p in _CONTEXT_WINDOW_ERROR_PATTERNS):
+        return ContextWindowExceeded(
+            status_code=e.code,
+            model_name=model_name,
+            body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+        )
+    return None
 
 
 @dataclass(init=False)
@@ -483,6 +502,8 @@ class GoogleModel(Model):
         try:
             return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
         except errors.APIError as e:
+            if ctx_exc := _check_context_window_exceeded(e, self._model_name):
+                raise ctx_exc from e
             if (status_code := e.code) >= 400:
                 raise ModelHTTPError(
                     status_code=status_code,
