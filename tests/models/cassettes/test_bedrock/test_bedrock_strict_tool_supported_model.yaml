@@ -1,0 +1,106 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What''s the weather in Paris?"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false,
+      "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}}, "strict": true}}], "toolChoice":
+      {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YjVlODgyY2UtYjIzZS00ZGZkLWE4NzItNzQwOTg0ZDMyODk5
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '376'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '463'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 23788
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Paris
+              name: get_weather
+              toolUseId: tooluse_Ai4RrFg5DoPUXwVPPENClD
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 560
+        outputTokens: 53
+        serverToolUsage: {}
+        totalTokens: 613
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What''s the weather in Paris?"}]}, {"role": "assistant", "content":
+      [{"toolUse": {"toolUseId": "tooluse_Ai4RrFg5DoPUXwVPPENClD", "name": "get_weather", "input": {"city": "Paris"}}}]},
+      {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_Ai4RrFg5DoPUXwVPPENClD", "content": [{"text": "Weather
+      in Paris: Sunny, 22\u00b0C"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools":
+      [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city":
+      {"type": "string"}}, "required": ["city"], "type": "object"}}, "strict": true}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NTM2MTBlMjctODA2Zi00YWQxLThiZWUtMjIyZTBkYTU4NjE1
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '703'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '461'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1854
+      output:
+        message:
+          content:
+          - text: The current weather in Paris is sunny with a temperature of 22°C (approximately 72°F). It's a beautiful
+              day!
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 637
+        outputTokens: 31
+        serverToolUsage: {}
+        totalTokens: 668
+    status:
+      code: 200
+      message: OK
+version: 1

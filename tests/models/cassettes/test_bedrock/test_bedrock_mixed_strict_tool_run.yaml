@@ -1,0 +1,171 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Use the registered tools and respond exactly as `Capital:
+      <city>`."}]}], "system": [{"text": "Always call `country_source` first, then call `capital_lookup` with that result
+      before replying."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "country_source", "inputSchema":
+      {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}, "strict": true}}, {"toolSpec": {"name":
+      "capital_lookup", "inputSchema": {"json": {"additionalProperties": false, "properties": {"country": {"type": "string"}},
+      "required": ["country"], "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZmJlN2RiZTktOTM0NS00ODkyLWIzOGMtMGYyZTkzYTRhZWJk
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '667'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '546'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2207
+      output:
+        message:
+          content:
+          - text: I'll help you find the capital city. Let me use the tools to get this information.
+          - toolUse:
+              input: {}
+              name: country_source
+              toolUseId: tooluse_Ou7eD0LChHfdSVDLplymSE
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 628
+        outputTokens: 56
+        serverToolUsage: {}
+        totalTokens: 684
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Use the registered tools and respond exactly as `Capital:
+      <city>`."}]}, {"role": "assistant", "content": [{"text": "I''ll help you find the capital city. Let me use the tools
+      to get this information."}, {"toolUse": {"toolUseId": "tooluse_Ou7eD0LChHfdSVDLplymSE", "name": "country_source", "input":
+      {}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_Ou7eD0LChHfdSVDLplymSE", "content": [{"text":
+      "Japan"}], "status": "success"}}]}], "system": [{"text": "Always call `country_source` first, then call `capital_lookup`
+      with that result before replying."}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "country_source",
+      "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}, "strict": true}}, {"toolSpec":
+      {"name": "capital_lookup", "inputSchema": {"json": {"additionalProperties": false, "properties": {"country": {"type":
+      "string"}}, "required": ["country"], "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZDMzNzU4ZDktNDQwYy00ZTA1LTkzNWMtMTFkNWEwZWM0OTVk
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1049'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '469'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 32384
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                country: Japan
+              name: capital_lookup
+              toolUseId: tooluse_T0T7Cteu2CCU2hgbIP1Uq2
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 697
+        outputTokens: 53
+        serverToolUsage: {}
+        totalTokens: 750
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Use the registered tools and respond exactly as `Capital:
+      <city>`."}]}, {"role": "assistant", "content": [{"text": "I''ll help you find the capital city. Let me use the tools
+      to get this information."}, {"toolUse": {"toolUseId": "tooluse_Ou7eD0LChHfdSVDLplymSE", "name": "country_source", "input":
+      {}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_Ou7eD0LChHfdSVDLplymSE", "content": [{"text":
+      "Japan"}], "status": "success"}}]}, {"role": "assistant", "content": [{"toolUse": {"toolUseId": "tooluse_T0T7Cteu2CCU2hgbIP1Uq2",
+      "name": "capital_lookup", "input": {"country": "Japan"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId":
+      "tooluse_T0T7Cteu2CCU2hgbIP1Uq2", "content": [{"text": "Tokyo"}], "status": "success"}}]}], "system": [{"text": "Always
+      call `country_source` first, then call `capital_lookup` with that result before replying."}], "inferenceConfig": {},
+      "toolConfig": {"tools": [{"toolSpec": {"name": "country_source", "inputSchema": {"json": {"additionalProperties": false,
+      "properties": {}, "type": "object"}}, "strict": true}}, {"toolSpec": {"name": "capital_lookup", "inputSchema": {"json":
+      {"additionalProperties": false, "properties": {"country": {"type": "string"}}, "required": ["country"], "type": "object"}}}}],
+      "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YzFiOTI0ODQtZDFiMC00ZGQwLWIwNmUtNDQ5MGYzMjE2Mzc2
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1353'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '356'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1646
+      output:
+        message:
+          content:
+          - text: 'Capital: Tokyo'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 763
+        outputTokens: 6
+        serverToolUsage: {}
+        totalTokens: 769
+    status:
+      code: 200
+      message: OK
+version: 1

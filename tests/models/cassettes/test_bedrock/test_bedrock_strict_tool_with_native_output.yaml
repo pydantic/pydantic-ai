@@ -1,0 +1,112 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Give me details about Paris including its population"}]}],
+      "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "lookup_population", "inputSchema":
+      {"json": {"additionalProperties": false, "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}},
+      "strict": true}}], "toolChoice": {"auto": {}}}, "outputConfig": {"textFormat": {"type": "json_schema", "structure":
+      {"jsonSchema": {"schema": "{\"additionalProperties\": false, \"properties\": {\"city\": {\"type\": \"string\"}, \"country\":
+      {\"type\": \"string\"}, \"population\": {\"type\": \"integer\"}}, \"required\": [\"city\", \"country\", \"population\"],
+      \"type\": \"object\"}", "name": "CityInfo", "description": "Information about a city."}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        OWQ1N2JkZGItNmVhNC00OGZmLWJhNWEtYTVmNzRlOTI2ZTk2
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '812'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '469'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 12164
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Paris
+              name: lookup_population
+              toolUseId: tooluse_dmvLDxZHRJV7wpdkAptBz3
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 747
+        outputTokens: 53
+        serverToolUsage: {}
+        totalTokens: 800
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Give me details about Paris including its population"}]},
+      {"role": "assistant", "content": [{"toolUse": {"toolUseId": "tooluse_dmvLDxZHRJV7wpdkAptBz3", "name": "lookup_population",
+      "input": {"city": "Paris"}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_dmvLDxZHRJV7wpdkAptBz3",
+      "content": [{"text": "2161000"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools":
+      [{"toolSpec": {"name": "lookup_population", "inputSchema": {"json": {"additionalProperties": false, "properties": {"city":
+      {"type": "string"}}, "required": ["city"], "type": "object"}}, "strict": true}}], "toolChoice": {"auto": {}}}, "outputConfig":
+      {"textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"schema": "{\"additionalProperties\": false, \"properties\":
+      {\"city\": {\"type\": \"string\"}, \"country\": {\"type\": \"string\"}, \"population\": {\"type\": \"integer\"}}, \"required\":
+      [\"city\", \"country\", \"population\"], \"type\": \"object\"}", "name": "CityInfo", "description": "Information about
+      a city."}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NDg0ODVhMTItOTIyMy00ZWNiLTk0YTctZTVlYjY4NTAyNWJm
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1118'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '414'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1662
+      output:
+        message:
+          content:
+          - text: '{"city": "Paris", "country": "France", "population": 2161000}'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 816
+        outputTokens: 23
+        serverToolUsage: {}
+        totalTokens: 839
+    status:
+      code: 200
+      message: OK
+version: 1

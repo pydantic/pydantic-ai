@@ -1,10 +1,12 @@
 from __future__ import annotations as _annotations
 
 from datetime import date, datetime, timezone
+from enum import Enum
 from types import SimpleNamespace
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
+from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -44,6 +46,7 @@ from pydantic_ai.messages import (
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.output import NativeOutput, OutputObjectDefinition
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -3241,6 +3244,584 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                     provider_name='bedrock',
                     provider_details={'status': 'success'},
                 )
+            ),
+        ]
+    )
+
+
+async def test_bedrock_native_output_supported_model(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude Sonnet 4.5 via Bedrock: NativeOutput → outputConfig with json_schema."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    result = await agent.run('What is the capital of France? Give me the city name, country, and population.')
+
+    assert result.output == snapshot(CityInfo(city='Paris', country='France', population=2161000))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of France? Give me the city name, country, and population.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city":"Paris","country":"France","population":2161000}')],
+                usage=RequestUsage(input_tokens=210, output_tokens=18),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_bedrock_native_output_strict_false_raises(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """NativeOutput(strict=False) → raises UserError."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    agent = Agent(model, output_type=NativeOutput(CityInfo, strict=False))
+
+    with pytest.raises(
+        UserError,
+        match='Setting `strict=False` on `output_type=NativeOutput\\(\\.\\.\\.\\)` is not allowed for Bedrock models.',
+    ):
+        agent.run_sync('Tell me about Paris')
+
+
+def test_bedrock_native_output_unsupported_model_raises(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude 3.5 Sonnet (not 4.5): NativeOutput → raises UserError (model doesn't support it)."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20241022-v2:0', provider=bedrock_provider)
+
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
+        agent.run_sync('Tell me about Berlin')
+
+
+def test_bedrock_strict_tool_definition_supported_model(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude Sonnet 4.5 via Bedrock: strict=True → strict field in tool definition."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a city',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+        strict=True,
+    )
+
+    result = model._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot(
+        {
+            'toolSpec': {
+                'name': 'get_weather',
+                'inputSchema': {
+                    'json': {'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']}
+                },
+                'description': 'Get the weather for a city',
+                'strict': True,
+            }
+        }
+    )
+
+
+def test_bedrock_strict_tool_definition_unsupported_model(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude 3.5 Sonnet: strict=True specified but not sent (model doesn't support it)."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20241022-v2:0', provider=bedrock_provider)
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a city',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+        strict=True,
+    )
+
+    result = model._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot(
+        {
+            'toolSpec': {
+                'name': 'get_weather',
+                'inputSchema': {
+                    'json': {'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']}
+                },
+                'description': 'Get the weather for a city',
+            }
+        }
+    )
+
+
+def test_bedrock_strict_tool_definition_none(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Any model: strict=None → no strict field."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a city',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']},
+        strict=None,
+    )
+
+    result = model._map_tool_definition(tool_def)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot(
+        {
+            'toolSpec': {
+                'name': 'get_weather',
+                'inputSchema': {
+                    'json': {'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']}
+                },
+                'description': 'Get the weather for a city',
+            }
+        }
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_strict_tool_supported_model(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude Sonnet 4.5 via Bedrock: strict=True tool with API call."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain(strict=True)
+    def get_weather(city: str) -> str:
+        return f'Weather in {city}: Sunny, 22°C'
+
+    result = await agent.run("What's the weather in Paris?")
+    assert result.output == snapshot(
+        "The current weather in Paris is sunny with a temperature of 22°C (approximately 72°F). It's a beautiful day!"
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content="What's the weather in Paris?", timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=560, output_tokens=53),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='Weather in Paris: Sunny, 22°C',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="The current weather in Paris is sunny with a temperature of 22°C (approximately 72°F). It's a beautiful day!"
+                    )
+                ],
+                usage=RequestUsage(input_tokens=637, output_tokens=31),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_mixed_strict_tool_run(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Exercise both strict=True and strict=False tool definitions against Bedrock."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='Always call `country_source` first, then call `capital_lookup` with that result before replying.',
+    )
+
+    @agent.tool_plain(strict=True)
+    async def country_source() -> str:
+        return 'Japan'
+
+    @agent.tool_plain(strict=False)
+    async def capital_lookup(country: str) -> str:
+        if country == 'Japan':
+            return 'Tokyo'
+        return f'Unknown capital for {country}'  # pragma: no cover
+
+    result = await agent.run('Use the registered tools and respond exactly as `Capital: <city>`.')
+    assert result.output == snapshot('Capital: Tokyo')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='Always call `country_source` first, then call `capital_lookup` with that result before replying.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='Use the registered tools and respond exactly as `Capital: <city>`.',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="I'll help you find the capital city. Let me use the tools to get this information."
+                    ),
+                    ToolCallPart(tool_name='country_source', args={}, tool_call_id=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=628, output_tokens=56),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='country_source',
+                        content='Japan',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='capital_lookup',
+                        args={'country': 'Japan'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=697, output_tokens=53),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='capital_lookup',
+                        content='Tokyo',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Capital: Tokyo')],
+                usage=RequestUsage(input_tokens=763, output_tokens=6),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_strict_tool_with_native_output(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude Sonnet 4.5 via Bedrock: strict=True tool + NativeOutput."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    @agent.tool_plain(strict=True)
+    def lookup_population(city: str) -> int:
+        return 2_161_000 if city == 'Paris' else 1_000_000
+
+    result = await agent.run('Give me details about Paris including its population')
+
+    assert result.output == snapshot(CityInfo(city='Paris', country='France', population=2161000))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Give me details about Paris including its population', timestamp=IsDatetime()
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_population',
+                        args={'city': 'Paris'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=747, output_tokens=53),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup_population',
+                        content=2161000,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city": "Paris", "country": "France", "population": 2161000}')],
+                usage=RequestUsage(input_tokens=816, output_tokens=23),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_bedrock_native_output_format_structure():
+    """Test that _native_output_format produces the correct AWS outputConfig structure."""
+    params = ModelRequestParameters(
+        output_mode='native',
+        output_object=OutputObjectDefinition(
+            json_schema={
+                'type': 'object',
+                'properties': {
+                    'city': {'type': 'string'},
+                    'country': {'type': 'string'},
+                },
+                'required': ['city', 'country'],
+            },
+            name='CityInfo',
+            description='Information about a city',
+        ),
+    )
+
+    result = BedrockConverseModel._native_output_format(params)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot(
+        {
+            'textFormat': {
+                'type': 'json_schema',
+                'structure': {
+                    'jsonSchema': {
+                        'name': 'CityInfo',
+                        'schema': '{"type": "object", "properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"]}',
+                        'description': 'Information about a city',
+                    }
+                },
+            }
+        }
+    )
+
+
+def test_bedrock_native_output_format_auto_mode():
+    """Test that _native_output_format returns None for auto output mode."""
+    params = ModelRequestParameters(output_mode='auto')
+
+    result = BedrockConverseModel._native_output_format(params)  # pyright: ignore[reportPrivateUsage]
+
+    assert result is None
+
+
+def test_bedrock_native_output_format_without_name_description():
+    """Test that _native_output_format uses default name when not provided and omits description."""
+    params = ModelRequestParameters(
+        output_mode='native',
+        output_object=OutputObjectDefinition(
+            json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}},
+        ),
+    )
+
+    result = BedrockConverseModel._native_output_format(params)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == snapshot(
+        {
+            'textFormat': {
+                'type': 'json_schema',
+                'structure': {
+                    'jsonSchema': {
+                        'name': 'final_result',
+                        'schema': '{"type": "object", "properties": {"city": {"type": "string"}}}',
+                    }
+                },
+            }
+        }
+    )
+
+
+class CityInfo(BaseModel):
+    """Information about a city."""
+
+    model_config = {'extra': 'forbid'}
+    city: str
+    country: str
+    population: int
+
+
+@pytest.mark.vcr()
+async def test_bedrock_native_output_numerical_constraints(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """NativeOutput with numeric constraints succeeds — transformer strips incompatible constraints."""
+
+    class Priority(str, Enum):
+        """Priority level."""
+
+        LOW = 'low'
+        MEDIUM = 'medium'
+        HIGH = 'high'
+
+    class TaskWithNumericalConstraints(BaseModel):
+        """Task with numerical constraints (minimum, maximum, multipleOf)."""
+
+        score: Annotated[float, Field(ge=0.0, le=100.0)]
+        rating: Annotated[int, Field(multiple_of=5)]
+        priority: Priority
+
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(TaskWithNumericalConstraints))
+
+    result = await agent.run('Rate this task: score 85.5 out of 100, rating 15, priority high.')
+    assert result.output == snapshot(TaskWithNumericalConstraints(score=85.5, rating=15, priority=Priority.HIGH))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Rate this task: score 85.5 out of 100, rating 15, priority high.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"score": 85.5, "rating": 15, "priority": "high"}')],
+                usage=RequestUsage(input_tokens=308, output_tokens=23),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_native_output_stream(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Claude Sonnet 4.5 via Bedrock: NativeOutput with streaming."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    async with agent.run_stream(
+        'What is the capital of France? Give me the city name, country, and population.'
+    ) as result:
+        output = await result.get_output()
+
+    assert output == snapshot(CityInfo(city='Paris', country='France', population=2161000))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of France? Give me the city name, country, and population.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city":"Paris","country":"France","population":2161000}')],
+                usage=RequestUsage(input_tokens=210, output_tokens=18),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )

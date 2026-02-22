@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import functools
+import json
 import typing
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from itertools import count
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
@@ -40,6 +41,7 @@ from pydantic_ai import (
     _utils,
     usage,
 )
+from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
@@ -358,17 +360,54 @@ class BedrockConverseModel(Model):
         """The set of builtin tool types this model can handle."""
         return frozenset({CodeExecutionTool})
 
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        if model_request_parameters.output_mode == 'native':
+            assert model_request_parameters.output_object is not None
+            if model_request_parameters.output_object.strict is False:
+                raise UserError(
+                    'Setting `strict=False` on `output_type=NativeOutput(...)` is not allowed for Bedrock models.'
+                )
+            model_request_parameters = replace(
+                model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
+            )
+        return super().prepare_request(model_settings, model_request_parameters)
+
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
+    def _map_tool_definition(self, f: ToolDefinition) -> ToolTypeDef:
         tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
 
         if f.description:  # pragma: no branch
             tool_spec['description'] = f.description
 
+        if f.strict and self.profile.supports_json_schema_output:
+            tool_spec['strict'] = f.strict  # type: ignore[typeddict-unknown-key]
+
         return {'toolSpec': tool_spec}
+
+    @staticmethod
+    def _native_output_format(
+        model_request_parameters: ModelRequestParameters,
+    ) -> dict[str, Any] | None:
+        """Build outputConfig for native structured output. See: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html."""
+        if model_request_parameters.output_mode != 'native':
+            return None
+
+        assert model_request_parameters.output_object is not None
+        output_object = model_request_parameters.output_object
+
+        json_schema_config: dict[str, Any] = {
+            'name': output_object.name or DEFAULT_OUTPUT_TOOL_NAME,
+            'schema': json.dumps(output_object.json_schema),
+        }
+
+        if output_object.description:
+            json_schema_config['description'] = output_object.description
+
+        return {'textFormat': {'type': 'json_schema', 'structure': {'jsonSchema': json_schema_config}}}
 
     async def request(
         self,
@@ -565,6 +604,9 @@ class BedrockConverseModel(Model):
 
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
+
+        if output_config := self._native_output_format(model_request_parameters):
+            params['outputConfig'] = output_config  # type: ignore[typeddict-unknown-key]
 
         # Bedrock supports a set of specific extra parameters
         if model_settings:
