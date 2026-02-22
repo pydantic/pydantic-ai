@@ -2496,39 +2496,134 @@ async def test_prompts_cache_invalidation_on_notification() -> None:
         assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_map_prompt_content_image_with_annotations() -> None:
-    """Test _map_prompt_content with ImageContent including annotations."""
-    from mcp.types import Annotations, GetPromptResult, PromptMessage as McpPromptMessage
+async def test_map_prompt_content() -> None:
+    """Test _map_prompt_content with all content types."""
+    from mcp.types import (
+        Annotations,
+        AudioContent as McpAudioContent,
+        EmbeddedResource as McpEmbeddedResource,
+        GetPromptResult,
+        PromptMessage as McpPromptMessage,
+        ResourceLink as McpResourceLink,
+        TextResourceContents,
+    )
+    from pydantic import AnyUrl
 
-    from pydantic_ai.mcp import ImageContent as PydanticAIImageContent, PromptAnnotations
+    from pydantic_ai.mcp import (
+        AudioContent as PydanticAIAudioContent,
+        EmbeddedResource as PydanticAIEmbeddedResource,
+        ImageContent as PydanticAIImageContent,
+        PromptAnnotations,
+        ResourceLink as PydanticAIResourceLink,
+        TextContent as PydanticAITextContent,
+    )
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
-        image_data = base64.b64encode(b'fake_image_data').decode('utf-8')
-        mock_result = GetPromptResult(
-            messages=[
-                McpPromptMessage(
-                    role='user',
-                    content=ImageContent(
-                        type='image',
-                        data=image_data,
-                        mimeType='image/png',
-                        annotations=Annotations(audience=['user'], priority=0.8),
-                    ),
-                )
-            ]
-        )
         mock_client = AsyncMock()
-        mock_client.get_prompt.return_value = mock_result
-        with patch.object(server, '_client', mock_client):
-            result = await server.get_prompt('image_prompt')
 
-    assert len(result.messages) == 1
-    content = result.messages[0].content
-    assert isinstance(content, PydanticAIImageContent)
-    assert content.data == image_data
-    assert content.mimeType == 'image/png'
-    assert content.annotations is not None
-    assert isinstance(content.annotations, PromptAnnotations)
-    assert content.annotations.audience == ['user']
-    assert content.annotations.priority == 0.8
+        def make_result(*contents: Any) -> GetPromptResult:
+            return GetPromptResult(messages=[McpPromptMessage(role='user', content=c) for c in contents])
+
+        with patch.object(server, '_client', mock_client):
+            # TextContent (no annotations)
+            mock_client.get_prompt.return_value = make_result(TextContent(type='text', text='hello world'))
+            result = await server.get_prompt('text_prompt')
+            content = result.messages[0].content
+            assert isinstance(content, PydanticAITextContent)
+            assert content.text == 'hello world'
+            assert content.annotations is None
+
+            # TextContent with annotations
+            mock_client.get_prompt.return_value = make_result(
+                TextContent(
+                    type='text', text='annotated text', annotations=Annotations(audience=['user'], priority=1.0)
+                )
+            )
+            result = await server.get_prompt('text_prompt_annotated')
+            content = result.messages[0].content
+            assert isinstance(content, PydanticAITextContent)
+            assert content.text == 'annotated text'
+            assert isinstance(content.annotations, PromptAnnotations)
+            assert content.annotations.audience == ['user']
+            assert content.annotations.priority == 1.0
+
+            # ImageContent with annotations
+            image_data = base64.b64encode(b'fake_image_data').decode('utf-8')
+            mock_client.get_prompt.return_value = make_result(
+                ImageContent(
+                    type='image',
+                    data=image_data,
+                    mimeType='image/png',
+                    annotations=Annotations(audience=['user'], priority=0.8),
+                )
+            )
+            result = await server.get_prompt('image_prompt')
+            content = result.messages[0].content
+            assert isinstance(content, PydanticAIImageContent)
+            assert content.data == image_data
+            assert content.mimeType == 'image/png'
+            assert isinstance(content.annotations, PromptAnnotations)
+            assert content.annotations.audience == ['user']
+            assert content.annotations.priority == 0.8
+
+            # AudioContent with annotations
+            audio_data = base64.b64encode(b'fake_audio_data').decode('utf-8')
+            mock_client.get_prompt.return_value = make_result(
+                McpAudioContent(
+                    type='audio',
+                    data=audio_data,
+                    mimeType='audio/wav',
+                    annotations=Annotations(audience=['assistant'], priority=0.3),
+                )
+            )
+            result = await server.get_prompt('audio_prompt')
+            content = result.messages[0].content
+            assert isinstance(content, PydanticAIAudioContent)
+            assert content.data == audio_data
+            assert content.mimeType == 'audio/wav'
+            assert isinstance(content.annotations, PromptAnnotations)
+            assert content.annotations.audience == ['assistant']
+            assert content.annotations.priority == 0.3
+
+            # EmbeddedResource with annotations
+            mock_client.get_prompt.return_value = make_result(
+                McpEmbeddedResource(
+                    type='resource',
+                    resource=TextResourceContents(
+                        uri=AnyUrl('file:///test.txt'),
+                        text='hello world',
+                        mimeType='text/plain',
+                    ),
+                    annotations=Annotations(audience=['user'], priority=0.5),
+                )
+            )
+            result = await server.get_prompt('embedded_resource_prompt')
+            content = result.messages[0].content
+            assert isinstance(content, PydanticAIEmbeddedResource)
+            assert content.uri == 'file:///test.txt'
+            assert content.content == 'hello world'
+            assert content.mime_type == 'text/plain'
+            assert isinstance(content.annotations, PromptAnnotations)
+            assert content.annotations.audience == ['user']
+            assert content.annotations.priority == 0.5
+
+            # ResourceLink
+            mock_client.get_prompt.return_value = make_result(
+                McpResourceLink(
+                    type='resource_link',
+                    uri=AnyUrl('file:///resource.txt'),
+                    name='test-resource',
+                    title='Test Resource',
+                    description='A test resource',
+                    mimeType='text/plain',
+                )
+            )
+            result = await server.get_prompt('resource_link_prompt')
+            content = result.messages[0].content
+            assert isinstance(content, PydanticAIResourceLink)
+            assert content.uri == 'file:///resource.txt'
+            assert content.name == 'test-resource'
+            assert content.title == 'Test Resource'
+            assert content.description == 'A test resource'
+            assert content.mime_type == 'text/plain'

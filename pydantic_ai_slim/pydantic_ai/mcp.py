@@ -62,6 +62,8 @@ __all__ = (
     'PromptMessage',
     'PromptResult',
     'Icon',
+    'ResourceLink',
+    'EmbeddedResource',
 )
 
 
@@ -215,6 +217,42 @@ class ResourceTemplate(BaseResource):
             if mcp_template.annotations
             else None,
             metadata=mcp_template.meta,
+        )
+
+
+@dataclass(repr=False, kw_only=True)
+class ResourceLink(Resource):
+    """A resource link referenced in a prompt or tool call result.
+
+    Unlike :class:`EmbeddedResource`, this does not include the resource content directly —
+    it is a reference to a resource that the server can read.
+
+    Note: resource links returned by tools are not guaranteed to appear in the results of
+    `resources/list` requests.
+
+    See the [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources).
+    """
+
+    type: Literal['resource_link'] = 'resource_link'
+    """Discriminator for resource link content."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+    @classmethod
+    def from_mcp_sdk(cls, mcp_resource: mcp_types.ResourceLink) -> ResourceLink:  # type: ignore[override]
+        """Convert from MCP SDK ResourceLink to PydanticAI ResourceLink."""
+        return cls(
+            type='resource_link',
+            uri=str(mcp_resource.uri),
+            name=mcp_resource.name,
+            title=mcp_resource.title,
+            description=mcp_resource.description,
+            mime_type=mcp_resource.mimeType,
+            size=mcp_resource.size,
+            annotations=ResourceAnnotations.from_mcp_sdk(mcp_resource.annotations)
+            if mcp_resource.annotations
+            else None,
+            metadata=mcp_resource.meta,
         )
 
 
@@ -394,7 +432,53 @@ class AudioContent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-ContentBlock = TextContent | ImageContent | AudioContent
+@dataclass(repr=False, kw_only=True)
+class EmbeddedResource:
+    """A resource embedded into a prompt or tool call result.
+
+    Contains the actual resource content alongside its metadata, unlike :class:`ResourceLink`
+    which is only a reference.
+
+    See the [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources).
+    """
+
+    type: Literal['resource']
+    """Discriminator for embedded resource content."""
+
+    uri: str
+    """The URI of the embedded resource."""
+
+    content: str | messages.BinaryContent
+    """The content of the embedded resource."""
+
+    mime_type: str | None = None
+    """The MIME type of the resource, if known."""
+
+    annotations: PromptAnnotations | None = None
+    """Optional annotations for the resource."""
+
+    meta: dict[str, Any] | None = None
+    """
+    See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
+    for notes on _meta usage.
+    """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+    @classmethod
+    def from_mcp_sdk(cls, part: mcp_types.EmbeddedResource, content: str | messages.BinaryContent) -> EmbeddedResource:
+        """Convert from MCP SDK EmbeddedResource to PydanticAI EmbeddedResource."""
+        return cls(
+            type='resource',
+            uri=str(part.resource.uri),
+            content=content,
+            mime_type=part.resource.mimeType,
+            annotations=PromptAnnotations.from_mcp_sdk(part.annotations) if part.annotations else None,
+            meta=part.meta,
+        )
+
+
+ContentBlock = TextContent | ImageContent | AudioContent | ResourceLink | EmbeddedResource
 """A content block that can be used in prompts and tool results."""
 
 
@@ -1059,7 +1143,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 annotations=PromptAnnotations.from_mcp_sdk(part.annotations) if part.annotations else None,
                 meta=part.meta,
             )
-        elif isinstance(part, mcp_types.AudioContent):  # pragma: no cover
+        elif isinstance(part, mcp_types.AudioContent):
             return AudioContent(
                 type='audio',
                 data=part.data,
@@ -1068,17 +1152,9 @@ class MCPServer(AbstractToolset[Any], ABC):
                 meta=part.meta,
             )
         elif isinstance(part, mcp_types.EmbeddedResource):
-            resource_content = self._get_content(part.resource)
-            if isinstance(resource_content, str):
-                return TextContent(type='text', text=resource_content)
-            else:
-                return TextContent(type='text', text=str(resource_content))
+            return EmbeddedResource.from_mcp_sdk(part, self._get_content(part.resource))
         elif isinstance(part, mcp_types.ResourceLink):
-            resource_content = await self.read_resource(str(part.uri))
-            if isinstance(resource_content, str):
-                return TextContent(type='text', text=resource_content)
-            else:
-                return TextContent(type='text', text=str(resource_content))
+            return ResourceLink.from_mcp_sdk(part)
         else:
             assert_never(part)
 
