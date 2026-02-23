@@ -23,14 +23,14 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import TypeAliasType, deprecated
 
 from . import _otel_messages, _utils
-from ._model_request_parameters import ModelRequestParameters
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
-from .settings import ModelSettings
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
+    from ._model_request_parameters import ModelRequestParameters
     from .models.instrumented import InstrumentationSettings
+    from .settings import ModelSettings
 
     ModelRequestParametersField = ModelRequestParameters | None
     ModelSettingsField = ModelSettings | None
