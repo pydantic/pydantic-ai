@@ -18,7 +18,7 @@ __all__ = ('you_search_tool',)
 
 _YOU_SEARCH_URL = 'https://ydc-index.io/v1/search'
 
-Country = Literal[
+_Country = Literal[
     'AR',
     'AU',
     'AT',
@@ -57,7 +57,7 @@ Country = Literal[
     'US',
 ]
 
-Language = Literal[
+_Language = Literal[
     'AR',
     'EU',
     'BN',
@@ -172,10 +172,10 @@ class YouSearchTool:
     freshness: Freshness | None = None
     """Default freshness of results: 'day', 'week', 'month', 'year', or date range 'YYYY-MM-DDtoYYYY-MM-DD'."""
 
-    country: Country | str | None = None
+    country: _Country | str | None = None
     """Default country code for geographic focus of results."""
 
-    language: Language | str | None = None
+    language: _Language | str | None = None
     """Default language of results (BCP 47 format). Default: 'EN'."""
 
     safesearch: SafeSearch | str | None = None
@@ -238,8 +238,8 @@ class YouSearchTool:
         query: str,
         count: int | None,
         freshness: Freshness | None,
-        country: Country | str | None,
-        language: Language | str | None,
+        country: _Country | str | None,
+        language: _Language | str | None,
         safesearch: SafeSearch | str | None,
         livecrawl: LiveCrawl | str | None,
         livecrawl_formats: LiveCrawlFormats | str | None,
@@ -407,8 +407,8 @@ def you_search_tool(
     count: int | None = None,
     offset: int | None = None,
     freshness: Freshness | None = None,
-    country: Country | str | None = None,
-    language: Language | str | None = None,
+    country: _Country | str | None = None,
+    language: _Language | str | None = None,
     safesearch: SafeSearch | str | None = None,
     livecrawl: LiveCrawl | str | None = None,
     livecrawl_formats: LiveCrawlFormats | str | None = None,
