@@ -109,12 +109,17 @@ class BedrockProvider(Provider[BaseClient]):
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': lambda model_name: BedrockModelProfile(
-                bedrock_supports_tool_choice=True,
-                bedrock_send_back_thinking_parts=True,
-                bedrock_supports_prompt_caching=True,
-                bedrock_supports_tool_caching=True,
-            ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
+            'anthropic': lambda model_name: replace(
+                BedrockModelProfile(
+                    bedrock_supports_tool_choice=True,
+                    bedrock_send_back_thinking_parts=True,
+                    bedrock_supports_prompt_caching=True,
+                    bedrock_supports_tool_caching=True,
+                ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
+                # We don't currently support native structured output with Bedrock.
+                # See https://github.com/pydantic/pydantic-ai/issues/4209.
+                supports_json_schema_output=False,
+            ),
             'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
                 _without_builtin_tools(mistral_model_profile(model_name))
             ),
