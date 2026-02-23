@@ -772,20 +772,21 @@ class MCPServer(AbstractToolset[Any], ABC):
         Raises:
             MCPError: If the server returns an error.
         """
+        if self.cache_prompts and self._cached_prompts is not None:
+            return self._cached_prompts
+
         async with self:
             if not self.capabilities.prompts:
                 return []
             try:
+                result = await self._client.list_prompts()
+                prompts = [Prompt.from_mcp_sdk(p) for p in result.prompts]
                 if self.cache_prompts:
-                    if self._cached_prompts is not None:
-                        return self._cached_prompts
-                    result = await self._client.list_prompts()
-                    prompts = [Prompt.from_mcp_sdk(p) for p in result.prompts]
                     self._cached_prompts = prompts
-                    return prompts
-                else:
-                    result = await self._client.list_prompts()
-                    return [Prompt.from_mcp_sdk(p) for p in result.prompts]
+                return prompts
+            except mcp_exceptions.McpError as e:  # pragma: no cover
+                raise MCPError.from_mcp_sdk(e) from e  # pragma: no cover
+
             except mcp_exceptions.McpError as e:  # pragma: no cover
                 raise MCPError.from_mcp_sdk(e) from e  # pragma: no cover
 
