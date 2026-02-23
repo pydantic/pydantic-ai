@@ -119,6 +119,31 @@ class BedrockModelProfile(ModelProfile):
     bedrock_supports_tool_caching: bool = False
 
 
+# Anthropic models that support native structured output on Bedrock.
+# https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
+_BEDROCK_ANTHROPIC_STRUCTURED_OUTPUT_MODELS = (
+    'claude-haiku-4-5',
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-6',
+    'claude-opus-4-5',
+    'claude-opus-4-6',
+)
+
+
+def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an Anthropic model used via Bedrock."""
+    return replace(
+        BedrockModelProfile(
+            bedrock_supports_tool_choice=True,
+            bedrock_send_back_thinking_parts=True,
+            bedrock_supports_prompt_caching=True,
+            bedrock_supports_tool_caching=True,
+            json_schema_transformer=BedrockJsonSchemaTransformer,
+        ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
+        supports_json_schema_output=model_name.startswith(_BEDROCK_ANTHROPIC_STRUCTURED_OUTPUT_MODELS),
+    )
+
+
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Amazon model used via Bedrock."""
     profile = _without_builtin_tools(amazon_model_profile(model_name))
@@ -183,13 +208,7 @@ class BedrockProvider(Provider[BaseClient]):
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': lambda model_name: BedrockModelProfile(
-                bedrock_supports_tool_choice=True,
-                bedrock_send_back_thinking_parts=True,
-                bedrock_supports_prompt_caching=True,
-                bedrock_supports_tool_caching=True,
-                json_schema_transformer=BedrockJsonSchemaTransformer,
-            ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
+            'anthropic': bedrock_anthropic_model_profile,
             'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
                 _without_builtin_tools(mistral_model_profile(model_name))
             ),
