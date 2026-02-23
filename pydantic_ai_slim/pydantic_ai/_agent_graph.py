@@ -912,9 +912,7 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
         merged_response = self.model_response
         while True:
             new_response = await self._request(ctx)
-            merged_response, should_continue = self._process_response(
-                ctx, merged_response, new_response, skip_request_increment=True
-            )
+            merged_response, should_continue = self._process_response(ctx, merged_response, new_response)
             if not should_continue:
                 break
 
@@ -958,9 +956,7 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         yield event
 
             new_response = streamed_response.get()
-            merged_response, should_continue = self._process_response(
-                ctx, merged_response, new_response, skip_request_increment=True
-            )
+            merged_response, should_continue = self._process_response(ctx, merged_response, new_response)
             if not should_continue:
                 break
 
@@ -996,15 +992,11 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         merged_response: _messages.ModelResponse,
         new_response: _messages.ModelResponse,
-        *,
-        skip_request_increment: bool = False,
     ) -> tuple[_messages.ModelResponse, bool]:
         """Process a continuation response: track usage, merge, update history.
 
         Returns the merged response and whether to continue (True if still suspended).
         """
-        if not skip_request_increment:
-            ctx.state.usage.requests += 1
         ctx.state.usage.incr(new_response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
