@@ -29,20 +29,6 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.mcp import (
-    MCPError,
-    MCPServerStreamableHTTP,
-    Prompt,
-    PromptArgument,
-    PromptMessage,
-    PromptResult,
-    Resource,
-    ResourceAnnotations,
-    ResourceTemplate,
-    ServerCapabilities,
-    TextContent,
-    load_mcp_servers,
-)
 from pydantic_ai.models import Model, cached_async_http_client
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
@@ -72,10 +58,15 @@ with try_import() as imports_successful:
         MCPServerSSE,
         MCPServerStdio,
         MCPServerStreamableHTTP,
+        Prompt,
+        PromptArgument,
+        PromptMessage,
+        PromptResult,
         Resource,
         ResourceAnnotations,
         ResourceTemplate,
         ServerCapabilities,
+        TextContent,
         ToolResult,
         load_mcp_servers,
     )
