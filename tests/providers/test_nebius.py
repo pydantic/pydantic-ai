@@ -127,3 +127,4 @@ def test_nebius_provider_model_profile(mocker: MockerFixture):
 def test_nebius_provider_model_name_without_slash():
     profile = NebiusProvider.model_profile('invalid-model-name')
     assert profile is not None
+    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer

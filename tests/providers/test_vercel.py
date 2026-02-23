@@ -131,6 +131,7 @@ def test_vercel_with_http_client():
 def test_vercel_provider_model_name_without_slash():
     profile = VercelProvider.model_profile('invalid-model-name')
     assert profile is not None
+    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
 
 def test_vercel_provider_unknown_provider():
