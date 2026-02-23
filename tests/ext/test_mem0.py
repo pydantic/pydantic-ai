@@ -13,7 +13,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from .._inline_snapshot import snapshot
+from inline_snapshot import snapshot
 
 
 class AddCall(TypedDict):
