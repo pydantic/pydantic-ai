@@ -113,6 +113,27 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 yield event
 
 
+def _map_response_done(data: dict[str, Any]) -> RealtimeEvent | None:
+    """Map a ``response.done`` event, returning ``None`` for function-call-only responses."""
+    response = data.get('response')
+    if isinstance(response, dict):
+        response_dict = cast(dict[str, Any], response)
+        # Skip TurnComplete for function-call-only responses - the session
+        # handles tool execution and the model will send another response.done
+        # after receiving the tool result with the actual answer.
+        output = response_dict.get('output', [])
+        if (
+            isinstance(output, list)
+            and output
+            and all(isinstance(item, dict) and item.get('type') == 'function_call' for item in output)
+        ):
+            return None
+        interrupted = response_dict.get('status') == 'cancelled'
+    else:
+        interrupted = False
+    return TurnComplete(interrupted=interrupted)
+
+
 def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
     """Map an OpenAI Realtime event dict to a `RealtimeEvent`."""
     event_type = data.get('type')
@@ -150,21 +171,7 @@ def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
         return ToolCall(tool_call_id=call_id, tool_name=name, args=arguments)
 
     if event_type == 'response.done':
-        response = data.get('response')
-        if isinstance(response, dict):
-            response_dict = cast(dict[str, Any], response)
-            # Skip TurnComplete for function-call-only responses - the session
-            # handles tool execution and the model will send another response.done
-            # after receiving the tool result with the actual answer.
-            output = response_dict.get('output', [])
-            if isinstance(output, list) and output and all(
-                isinstance(item, dict) and item.get('type') == 'function_call' for item in output
-            ):
-                return None
-            interrupted = response_dict.get('status') == 'cancelled'
-        else:
-            interrupted = False
-        return TurnComplete(interrupted=interrupted)
+        return _map_response_done(data)
 
     if event_type == 'error':
         error = data.get('error')

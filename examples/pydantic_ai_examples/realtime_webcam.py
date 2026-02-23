@@ -66,7 +66,9 @@ console = Console()
 INPUT_SAMPLE_RATE = 16_000  # Gemini expects 16kHz mono PCM16
 OUTPUT_SAMPLE_RATE = 24_000  # Gemini outputs 24kHz mono PCM16
 MIC_ENERGY_THRESHOLD = 300  # RMS threshold for voice activity detection
-MIC_HOLD_SECONDS = 2.0  # Keep sending audio this long after speech stops (for end-of-speech detection)
+MIC_HOLD_SECONDS = (
+    2.0  # Keep sending audio this long after speech stops (for end-of-speech detection)
+)
 
 playwright_server = MCPServerStdio('npx', args=['@playwright/mcp@latest'])
 
@@ -144,7 +146,9 @@ async def _run_session(model: Any, stop: threading.Event) -> None:
             blocksize=4000,
             callback=callback,
         )
-        console.print(f'[dim]Audio device: {stream.device}, samplerate: {stream.samplerate}, channels: {stream.channels}[/dim]')
+        console.print(
+            f'[dim]Audio device: {stream.device}, samplerate: {stream.samplerate}, channels: {stream.channels}[/dim]'
+        )
         with stream:
             console.print('[green]Mic open - listening...[/green]')
             last_speech = 0.0
@@ -159,7 +163,11 @@ async def _run_session(model: Any, stop: threading.Event) -> None:
                 now = time.monotonic()
                 if rms >= MIC_ENERGY_THRESHOLD:
                     last_speech = now
-                    logfire.info('mic audio sent rms={rms:.0f} bytes={size}', rms=rms, size=len(chunk))
+                    logfire.info(
+                        'mic audio sent rms={rms:.0f} bytes={size}',
+                        rms=rms,
+                        size=len(chunk),
+                    )
                 # Send audio during speech and for HOLD seconds after
                 if now - last_speech < MIC_HOLD_SECONDS:
                     await session.send(AudioInput(data=chunk))

@@ -147,6 +147,7 @@ nav:
           - api/format_prompt.md
           - api/mcp.md
           - api/messages.md
+          - api/realtime.md
           - api/models/anthropic.md
           - api/models/base.md
           - api/models/bedrock.md

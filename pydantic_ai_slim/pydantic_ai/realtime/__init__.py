@@ -19,7 +19,7 @@ from ._base import (
     Transcript,
     TurnComplete,
 )
-from ._session import RealtimeSession, ToolRunner
+from ._session import RealtimeSession
 
 __all__ = (
     'AudioDelta',
@@ -38,7 +38,6 @@ __all__ = (
     'ToolCallCompleted',
     'ToolCallStarted',
     'ToolResult',
-    'ToolRunner',
     'Transcript',
     'TurnComplete',
 )

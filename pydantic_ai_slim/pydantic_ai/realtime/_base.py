@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 
-from typing_extensions import TypeAliasType, TypeVar
+from typing_extensions import TypeAliasType
 
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -155,8 +155,6 @@ RealtimeSessionEvent = TypeAliasType(
 # ---------------------------------------------------------------------------
 # Provider ABCs
 # ---------------------------------------------------------------------------
-
-InputT = TypeVar('InputT', bound=RealtimeInput, default=RealtimeInput)
 
 
 class RealtimeConnection(ABC):

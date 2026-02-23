@@ -393,7 +393,7 @@ async def test_gemini_connect_and_transcript(gemini_realtime_model: GeminiRealti
             if isinstance(event, TurnComplete):
                 break
 
-    assert events == snapshot([Transcript(text='Hello there!'), TurnComplete()])
+    assert events == snapshot([Transcript(text='Hello there!'), Transcript(text='', is_final=True), TurnComplete()])
 
 
 @pytest.mark.anyio

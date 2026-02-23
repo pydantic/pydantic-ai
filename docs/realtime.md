@@ -20,7 +20,7 @@ pip install "pydantic-ai-slim[google]"
 
 ## Quick Start
 
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.realtime import AudioDelta, ToolCallCompleted, Transcript, TurnComplete
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
@@ -55,20 +55,25 @@ async def main():
 
 Content is sent to the model via the [`send()`][pydantic_ai.realtime.RealtimeSession.send] method using typed input dataclasses. Each provider accepts a specific subset of input types:
 
-| Input type | Description | OpenAI | Gemini Live | Nova Sonic |
-|---|---|---|---|---|
-| [`AudioInput`][pydantic_ai.realtime.AudioInput] | Raw audio chunk | Yes | Yes | Yes |
-| [`ImageInput`][pydantic_ai.realtime.ImageInput] | Image frame | No | Yes | No |
-| [`ToolResult`][pydantic_ai.realtime.ToolResult] | Tool call response | Yes | Yes | Yes |
+| Input type | Description | OpenAI | Gemini Live |
+|---|---|---|---|
+| [`AudioInput`][pydantic_ai.realtime.AudioInput] | Raw audio chunk | Yes | Yes |
+| [`TextInput`][pydantic_ai.realtime.TextInput] | Text message | Yes | Yes |
+| [`ImageInput`][pydantic_ai.realtime.ImageInput] | Image frame | No | Yes |
+| [`ToolResult`][pydantic_ai.realtime.ToolResult] | Tool call response | Yes | Yes |
 
 Sending an unsupported input type raises `NotImplementedError` at runtime. When using a specific provider class directly, type checkers will also flag the mismatch at check time.
 
-A convenience [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] method is available for the most common case:
+Convenience methods are available for the most common cases:
 
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 # These are equivalent:
 await session.send_audio(audio_bytes)
 await session.send(AudioInput(data=audio_bytes))
+
+# And these are equivalent:
+await session.send_text('Hello')
+await session.send(TextInput(text='Hello'))
 ```
 
 ## Event Types
@@ -163,7 +168,7 @@ _Coming soon._ Uses [Amazon Bedrock bidirectional streaming](https://docs.aws.am
 
 For advanced use cases where you want manual control over tool execution, you can use a `RealtimeModel` directly without the agent wrapper:
 
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 from pydantic_ai.realtime import AudioInput, ToolCall, ToolResult
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
