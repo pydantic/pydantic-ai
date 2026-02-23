@@ -503,6 +503,11 @@ def test_file_part_has_content():
     assert filepart.has_content()
 
 
+def test_tool_call_part_has_content_falsy_values():
+    part = ToolCallPart('test', {'limit': 0, 'enabled': False})
+    assert part.has_content()
+
+
 def test_file_part_serialization_roundtrip():
     # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
     messages: list[ModelMessage] = [
