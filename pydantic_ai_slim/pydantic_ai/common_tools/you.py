@@ -188,11 +188,11 @@ class YouSearchTool:
         query: str,
         count: int | None = None,
         freshness: Freshness | None = None,
-        country: Country | str | None = None,
-        language: Language | str | None = None,
-        safesearch: SafeSearch | str | None = None,
-        livecrawl: LiveCrawl | str | None = None,
-        livecrawl_formats: LiveCrawlFormats | str | None = None,
+        country: str | None = None,
+        language: str | None = None,
+        safesearch: SafeSearch | None = None,
+        livecrawl: LiveCrawl | None = None,
+        livecrawl_formats: LiveCrawlFormats | None = None,
     ) -> list[YouSearchResult]:
         """Searches You.com for the given query and returns the results.
 
@@ -201,11 +201,16 @@ class YouSearchTool:
             count: Maximum number of results per section (1-100). Only used if not configured at tool creation.
             freshness: Result freshness: 'day', 'week', 'month', 'year', or 'YYYY-MM-DDtoYYYY-MM-DD'.
                 Only used if not configured at tool creation.
-            country: Country code for geographic focus. Only used if not configured at tool creation.
-            language: Language of results (BCP 47 format). Only used if not configured at tool creation.
-            safesearch: Content moderation filter. Only used if not configured at tool creation.
-            livecrawl: Sections to livecrawl for full page content. Only used if not configured at tool creation.
-            livecrawl_formats: Format for livecrawled content. Only used if not configured at tool creation.
+            country: ISO 3166-1 alpha-2 country code for geographic focus (e.g. 'US', 'GB', 'DE').
+                Only used if not configured at tool creation.
+            language: BCP 47 language code for results (e.g. 'EN', 'FR', 'ZH-HANS').
+                Only used if not configured at tool creation.
+            safesearch: Content moderation filter: 'off', 'moderate', or 'strict'.
+                Only used if not configured at tool creation.
+            livecrawl: Sections to livecrawl for full page content: 'web', 'news', or 'all'.
+                Only used if not configured at tool creation.
+            livecrawl_formats: Format for livecrawled content: 'html' or 'markdown'.
+                Only used if not configured at tool creation.
 
         Returns:
             A list of search results from You.com.
