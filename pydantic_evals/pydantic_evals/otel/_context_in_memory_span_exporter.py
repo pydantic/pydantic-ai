@@ -155,10 +155,7 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
                 f' For more information, refer to the documentation at https://ai.pydantic.dev/evals/#opentelemetry-integration.'
             )
         else:
-            # The user is using a custom OpenTelemetry TracerProvider (e.g. ddtrace's TracerProvider)
-            # that doesn't implement `add_span_processor`. Instead of crashing the application,
-            # we gracefully degrade by returning a SpanTreeRecordingError, so span tree recording
-            # is unavailable but pydantic-evals still works.
+            # Custom TracerProvider (e.g. ddtrace) without add_span_processor - degrade gracefully.
             return SpanTreeRecordingError(
                 f'The current TracerProvider ({type(tracer_provider).__qualname__}) does not support'
                 f' `add_span_processor`, so span tree recording is not available.'
