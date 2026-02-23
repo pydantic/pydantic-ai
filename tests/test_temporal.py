@@ -452,7 +452,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -466,7 +466,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -571,7 +571,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -884,10 +884,14 @@ async def test_complex_agent_run(allow_model_requests: None):
                 ),
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z')
+                part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
+                args_valid=True,
             ),
             FunctionToolCallEvent(
-                part=ToolCallPart(tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5')
+                part=ToolCallPart(
+                    tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'
+                ),
+                args_valid=True,
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -936,7 +940,8 @@ async def test_complex_agent_run(allow_model_requests: None):
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
-                )
+                ),
+                args_valid=True,
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -2148,7 +2153,6 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     # but temporal tests fail when we use IsNow
                     timestamp=IsDatetime(),
                     instructions='Just call tools without asking for confirmation.',
-                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[

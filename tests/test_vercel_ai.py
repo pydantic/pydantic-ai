@@ -328,7 +328,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolCallId': IsStr(),
                 'toolName': 'web_search',
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e647f909248191bfe8d05eeed67645',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-input-delta',
@@ -344,7 +349,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'type': 'search',
                 },
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e647f909248191bfe8d05eeed67645',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-output-available',
@@ -379,7 +389,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolCallId': IsStr(),
                 'toolName': 'web_search',
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e647fb73c48191b0bdb147c3a0d22c',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-input-delta',
@@ -392,7 +407,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolName': 'web_search',
                 'input': {'query': 'OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python', 'type': 'search'},
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e647fb73c48191b0bdb147c3a0d22c',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-output-available',
@@ -427,7 +447,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolCallId': IsStr(),
                 'toolName': 'web_search',
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e647fee97c8191919865e0c0a78bba',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-input-delta',
@@ -440,7 +465,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolName': 'web_search',
                 'input': {'query': 'OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python', 'type': 'search'},
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e647fee97c8191919865e0c0a78bba',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-output-available',
@@ -475,7 +505,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolCallId': IsStr(),
                 'toolName': 'web_search',
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e64803f27c81918a39ce50cb8dfbc2',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-input-delta',
@@ -491,7 +526,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'type': 'search',
                 },
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e64803f27c81918a39ce50cb8dfbc2',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-output-available',
@@ -526,7 +566,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolCallId': IsStr(),
                 'toolName': 'web_search',
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-input-delta',
@@ -539,7 +584,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolName': 'web_search',
                 'input': {'type': 'search'},
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-output-available',
@@ -574,7 +624,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolCallId': IsStr(),
                 'toolName': 'web_search',
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e6480e11208191834104e1aaab1148',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-input-delta',
@@ -587,7 +642,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolName': 'web_search',
                 'input': {'type': 'search'},
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e6480e11208191834104e1aaab1148',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-output-available',
@@ -622,7 +682,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolCallId': IsStr(),
                 'toolName': 'web_search',
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e648118bf88191aa7f804637c45b32',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-input-delta',
@@ -635,7 +700,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolName': 'web_search',
                 'input': {'query': 'OTEL_PYTHON_LOG_CORRELATION environment variable', 'type': 'search'},
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e648118bf88191aa7f804637c45b32',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-output-available',
@@ -2254,7 +2324,6 @@ async def test_tool_approval_request_emission():
                     )
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='delete_file', args='{"path": "test.txt"}', tool_call_id='delete_1')],
