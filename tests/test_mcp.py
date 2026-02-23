@@ -2499,7 +2499,7 @@ async def test_prompts_cache_invalidation_on_notification() -> None:
 async def test_map_prompt_content() -> None:
     """Test _map_prompt_content with all content types."""
     from mcp.types import (
-        Annotations,
+        Annotations as McpAnnotations,
         AudioContent as McpAudioContent,
         EmbeddedResource as McpEmbeddedResource,
         GetPromptResult,
@@ -2510,10 +2510,10 @@ async def test_map_prompt_content() -> None:
     from pydantic import AnyUrl
 
     from pydantic_ai.mcp import (
+        Annotations,
         AudioContent as PydanticAIAudioContent,
         EmbeddedResource as PydanticAIEmbeddedResource,
         ImageContent as PydanticAIImageContent,
-        PromptAnnotations,
         ResourceLink as PydanticAIResourceLink,
         TextContent as PydanticAITextContent,
     )
@@ -2537,14 +2537,14 @@ async def test_map_prompt_content() -> None:
             # TextContent with annotations
             mock_client.get_prompt.return_value = make_result(
                 TextContent(
-                    type='text', text='annotated text', annotations=Annotations(audience=['user'], priority=1.0)
+                    type='text', text='annotated text', annotations=McpAnnotations(audience=['user'], priority=1.0)
                 )
             )
             result = await server.get_prompt('text_prompt_annotated')
             content = result.messages[0].content
             assert isinstance(content, PydanticAITextContent)
             assert content.text == 'annotated text'
-            assert isinstance(content.annotations, PromptAnnotations)
+            assert isinstance(content.annotations, Annotations)
             assert content.annotations.audience == ['user']
             assert content.annotations.priority == 1.0
 
@@ -2555,7 +2555,7 @@ async def test_map_prompt_content() -> None:
                     type='image',
                     data=image_data,
                     mimeType='image/png',
-                    annotations=Annotations(audience=['user'], priority=0.8),
+                    annotations=McpAnnotations(audience=['user'], priority=0.8),
                 )
             )
             result = await server.get_prompt('image_prompt')
@@ -2563,7 +2563,7 @@ async def test_map_prompt_content() -> None:
             assert isinstance(content, PydanticAIImageContent)
             assert content.data == image_data
             assert content.mimeType == 'image/png'
-            assert isinstance(content.annotations, PromptAnnotations)
+            assert isinstance(content.annotations, Annotations)
             assert content.annotations.audience == ['user']
             assert content.annotations.priority == 0.8
 
@@ -2574,7 +2574,7 @@ async def test_map_prompt_content() -> None:
                     type='audio',
                     data=audio_data,
                     mimeType='audio/wav',
-                    annotations=Annotations(audience=['assistant'], priority=0.3),
+                    annotations=McpAnnotations(audience=['assistant'], priority=0.3),
                 )
             )
             result = await server.get_prompt('audio_prompt')
@@ -2582,7 +2582,7 @@ async def test_map_prompt_content() -> None:
             assert isinstance(content, PydanticAIAudioContent)
             assert content.data == audio_data
             assert content.mimeType == 'audio/wav'
-            assert isinstance(content.annotations, PromptAnnotations)
+            assert isinstance(content.annotations, Annotations)
             assert content.annotations.audience == ['assistant']
             assert content.annotations.priority == 0.3
 
@@ -2595,7 +2595,7 @@ async def test_map_prompt_content() -> None:
                         text='hello world',
                         mimeType='text/plain',
                     ),
-                    annotations=Annotations(audience=['user'], priority=0.5),
+                    annotations=McpAnnotations(audience=['user'], priority=0.5),
                 )
             )
             result = await server.get_prompt('embedded_resource_prompt')
@@ -2604,7 +2604,7 @@ async def test_map_prompt_content() -> None:
             assert content.uri == 'file:///test.txt'
             assert content.content == 'hello world'
             assert content.mime_type == 'text/plain'
-            assert isinstance(content.annotations, PromptAnnotations)
+            assert isinstance(content.annotations, Annotations)
             assert content.annotations.audience == ['user']
             assert content.annotations.priority == 0.5
 

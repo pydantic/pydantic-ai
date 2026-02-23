@@ -53,6 +53,7 @@ __all__ = (
     'MCPServerStreamableHTTP',
     'load_mcp_servers',
     'MCPError',
+    'Annotations',
     'Resource',
     'ResourceAnnotations',
     'ResourceTemplate',
@@ -107,10 +108,10 @@ class MCPError(RuntimeError):
 
 
 @dataclass(repr=False, kw_only=True)
-class ResourceAnnotations:
+class Annotations:
     """Additional properties describing MCP entities.
 
-    See the [resource annotations in the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#annotations).
+    See the [annotations in the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#annotations).
     """
 
     audience: list[mcp_types.Role] | None = None
@@ -122,13 +123,17 @@ class ResourceAnnotations:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
     @classmethod
-    def from_mcp_sdk(cls, mcp_annotations: mcp_types.Annotations) -> ResourceAnnotations:
-        """Convert from MCP SDK Annotations to ResourceAnnotations.
+    def from_mcp_sdk(cls, mcp_annotations: mcp_types.Annotations) -> Annotations:
+        """Convert from MCP SDK Annotations to Annotations.
 
         Args:
             mcp_annotations: The MCP SDK annotations object.
         """
         return cls(audience=mcp_annotations.audience, priority=mcp_annotations.priority)
+
+
+ResourceAnnotations = Annotations
+"""Backward-compatible alias for `Annotations`."""
 
 
 @dataclass(repr=False, kw_only=True)
@@ -147,7 +152,7 @@ class BaseResource(ABC):
     mime_type: str | None = None
     """The MIME type of the resource, if known."""
 
-    annotations: ResourceAnnotations | None = None
+    annotations: Annotations | None = None
     """Optional annotations for the resource."""
 
     metadata: dict[str, Any] | None = None
@@ -183,9 +188,7 @@ class Resource(BaseResource):
             description=mcp_resource.description,
             mime_type=mcp_resource.mimeType,
             size=mcp_resource.size,
-            annotations=ResourceAnnotations.from_mcp_sdk(mcp_resource.annotations)
-            if mcp_resource.annotations
-            else None,
+            annotations=Annotations.from_mcp_sdk(mcp_resource.annotations) if mcp_resource.annotations else None,
             metadata=mcp_resource.meta,
         )
 
@@ -213,9 +216,7 @@ class ResourceTemplate(BaseResource):
             title=mcp_template.title,
             description=mcp_template.description,
             mime_type=mcp_template.mimeType,
-            annotations=ResourceAnnotations.from_mcp_sdk(mcp_template.annotations)
-            if mcp_template.annotations
-            else None,
+            annotations=Annotations.from_mcp_sdk(mcp_template.annotations) if mcp_template.annotations else None,
             metadata=mcp_template.meta,
         )
 
@@ -249,9 +250,7 @@ class ResourceLink(Resource):
             description=mcp_resource.description,
             mime_type=mcp_resource.mimeType,
             size=mcp_resource.size,
-            annotations=ResourceAnnotations.from_mcp_sdk(mcp_resource.annotations)
-            if mcp_resource.annotations
-            else None,
+            annotations=Annotations.from_mcp_sdk(mcp_resource.annotations) if mcp_resource.annotations else None,
             metadata=mcp_resource.meta,
         )
 
@@ -351,38 +350,13 @@ Role = Literal['user', 'assistant']
 
 
 @dataclass(repr=False, kw_only=True)
-class PromptAnnotations:
-    """Additional properties describing MCP entities.
-
-    See the [resource annotations in the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#annotations).
-    """
-
-    audience: list[mcp_types.Role] | None = None
-    """Intended audience for this entity."""
-
-    priority: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
-    """Priority level for this entity, ranging from 0.0 to 1.0."""
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
-    @classmethod
-    def from_mcp_sdk(cls, mcp_annotations: mcp_types.Annotations) -> PromptAnnotations:
-        """Convert from MCP SDK Annotations to PromptAnnotations.
-
-        Args:
-            mcp_annotations: The MCP SDK annotations object.
-        """
-        return cls(audience=mcp_annotations.audience, priority=mcp_annotations.priority)
-
-
-@dataclass(repr=False, kw_only=True)
 class TextContent:
     """Text content for a message."""
 
     type: Literal['text']
     text: str
     """The text content of the message."""
-    annotations: PromptAnnotations | None = None
+    annotations: Annotations | None = None
     meta: dict[str, Any] | None = None
     """
     See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
@@ -402,7 +376,7 @@ class ImageContent:
     The MIME type of the image. Different providers may support different
     image types.
     """
-    annotations: PromptAnnotations | None = None
+    annotations: Annotations | None = None
     meta: dict[str, Any] | None = None
     """
     See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
@@ -423,7 +397,7 @@ class AudioContent:
     The MIME type of the audio. Different providers may support different
     audio types.
     """
-    annotations: PromptAnnotations | None = None
+    annotations: Annotations | None = None
     meta: dict[str, Any] | None = None
     """
     See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
@@ -454,7 +428,7 @@ class EmbeddedResource:
     mime_type: str | None = None
     """The MIME type of the resource, if known."""
 
-    annotations: PromptAnnotations | None = None
+    annotations: Annotations | None = None
     """Optional annotations for the resource."""
 
     meta: dict[str, Any] | None = None
@@ -473,7 +447,7 @@ class EmbeddedResource:
             uri=str(part.resource.uri),
             content=content,
             mime_type=part.resource.mimeType,
-            annotations=PromptAnnotations.from_mcp_sdk(part.annotations) if part.annotations else None,
+            annotations=Annotations.from_mcp_sdk(part.annotations) if part.annotations else None,
             meta=part.meta,
         )
 
@@ -1132,7 +1106,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             return TextContent(
                 type='text',
                 text=part.text,
-                annotations=PromptAnnotations.from_mcp_sdk(part.annotations) if part.annotations else None,
+                annotations=Annotations.from_mcp_sdk(part.annotations) if part.annotations else None,
                 meta=part.meta,
             )
         elif isinstance(part, mcp_types.ImageContent):
@@ -1140,7 +1114,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 type='image',
                 data=part.data,
                 mimeType=part.mimeType,
-                annotations=PromptAnnotations.from_mcp_sdk(part.annotations) if part.annotations else None,
+                annotations=Annotations.from_mcp_sdk(part.annotations) if part.annotations else None,
                 meta=part.meta,
             )
         elif isinstance(part, mcp_types.AudioContent):
@@ -1148,7 +1122,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 type='audio',
                 data=part.data,
                 mimeType=part.mimeType,
-                annotations=PromptAnnotations.from_mcp_sdk(part.annotations) if part.annotations else None,
+                annotations=Annotations.from_mcp_sdk(part.annotations) if part.annotations else None,
                 meta=part.meta,
             )
         elif isinstance(part, mcp_types.EmbeddedResource):
