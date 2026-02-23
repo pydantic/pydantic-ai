@@ -73,4 +73,88 @@ interactions:
     status:
       code: 200
       message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '131'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: false
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '972'
+      content-type:
+      - application/json; charset=UTF-8
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 is 4.
+          reasoning_content: |-
+            1.  **Identify the core question:** The user is asking for the sum of 2 and 2.
+
+            2.  **Perform the calculation:** 2 + 2 = 4.
+
+            3.  **Determine the appropriate response:**
+                *   The question is a simple arithmetic fact.
+                *   The answer is unambiguous.
+                *   The response should be direct and polite.
+
+            4.  **Draft the response:** "2 + 2 equals 4."
+
+            5.  **Final Polish:** "2 + 2 is 4." or simply "4."
+
+            6.  **Select the best output:** "2 + 2 is 4." is clear and complete.
+          role: assistant
+      created: 1771856624
+      id: 20260223222342ef2897aa82584212
+      model: glm-4.7
+      object: chat.completion
+      request_id: 20260223222342ef2897aa82584212
+      usage:
+        completion_tokens: 154
+        completion_tokens_details:
+          reasoning_tokens: 144
+        prompt_tokens: 13
+        prompt_tokens_details:
+          cached_tokens: 2
+        total_tokens: 167
+    status:
+      code: 200
+      message: OK
 version: 1
