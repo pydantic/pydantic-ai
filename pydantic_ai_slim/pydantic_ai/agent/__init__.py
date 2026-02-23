@@ -703,7 +703,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             builtin_tools=[*self._builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,
-            instructions=get_instructions,
+            get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
         )
 
