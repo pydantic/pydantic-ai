@@ -876,9 +876,9 @@ async def test_context_subtree_custom_tracer_provider_without_add_span_processor
     with context_subtree() as span_tree:
         pass
     assert str(span_tree) == snapshot(
-        "The current TracerProvider (NoneType) does not support `add_span_processor`,"
-        " so span tree recording is not available."
-        " Evaluation will still work, but `span_tree` will not be populated in evaluator results."
+        'The current TracerProvider (NoneType) does not support `add_span_processor`,'
+        ' so span tree recording is not available.'
+        ' Evaluation will still work, but `span_tree` will not be populated in evaluator results.'
     )
 
 
