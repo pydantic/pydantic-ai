@@ -10360,37 +10360,29 @@ async def test_background_mode_streaming_continuation_vcr(allow_model_requests: 
         user_prompt='What is 2 + 2?',
         model_settings=OpenAIResponsesModelSettings(openai_background=True),
     ) as agent_run:
-        async for node in agent_run:
-            if not Agent.is_model_request_node(node):
-                continue
-
-            original_request = node.request
-            async with node.stream(agent_run.ctx) as request_stream:
-                # Intentionally stop reading early so background mode remains suspended.
-                async for _ in request_stream:
-                    break
-                suspended_response = request_stream.get()
-            break
+        node = await anext(node async for node in agent_run if Agent.is_model_request_node(node))
+        original_request = node.request
+        async with node.stream(agent_run.ctx) as request_stream:
+            # Intentionally stop reading early so background mode remains suspended.
+            await anext(aiter(request_stream))
+            suspended_response = request_stream.get()
 
     assert original_request is not None
     assert suspended_response is not None
     assert suspended_response.state == 'suspended'
     assert suspended_response.provider_response_id
 
-    continuation_response = suspended_response
-    continuation_stream_state = suspended_response.state
-    for _ in range(10):
+    async def continue_stream() -> tuple[ModelResponse, str]:
         async with model.request_stream(
-            messages=[original_request, continuation_response],
+            messages=[original_request, suspended_response],
             model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
             model_request_parameters=ModelRequestParameters(),
         ) as continuation_stream:
             async for _ in continuation_stream:
                 pass
-            continuation_response = continuation_stream.get()
-            continuation_stream_state = continuation_stream.state
-        if continuation_response.state == 'complete':
-            break
+            return continuation_stream.get(), continuation_stream.state
+
+    continuation_response, continuation_stream_state = await asyncio.wait_for(continue_stream(), timeout=60)
 
     continuation_output = ''.join(part.content for part in continuation_response.parts if isinstance(part, TextPart))
 
@@ -10414,31 +10406,23 @@ async def test_background_mode_streaming_starting_after_vcr(
         user_prompt='What is 2 + 2?',
         model_settings=OpenAIResponsesModelSettings(openai_background=True),
     ) as agent_run:
-        async for node in agent_run:
-            if not Agent.is_model_request_node(node):
-                continue
-
-            original_request = node.request
-            async with node.stream(agent_run.ctx) as request_stream:
-                # Stop early so request_stream exits with state='suspended' and continuation metadata.
-                async for _ in request_stream:
-                    break
-                suspended_response = request_stream.get()
-            break
+        node = await anext(node async for node in agent_run if Agent.is_model_request_node(node))
+        original_request = node.request
+        async with node.stream(agent_run.ctx) as request_stream:
+            # Stop early so request_stream exits with state='suspended' and continuation metadata.
+            await anext(aiter(request_stream))
+            suspended_response = request_stream.get()
 
     assert original_request is not None
     assert suspended_response is not None
     assert suspended_response.state == 'suspended'
     assert suspended_response.provider_response_id
     provider_details: dict[str, Any] = suspended_response.provider_details or {}
-    last_sequence_number = provider_details.get('openai_last_sequence_number')
-    if not isinstance(last_sequence_number, int):
-        # If the stream is interrupted before iterator finalization, this metadata may be absent.
-        last_sequence_number = 0
-        suspended_response = replace(
-            suspended_response,
-            provider_details={**provider_details, 'openai_last_sequence_number': last_sequence_number},
-        )
+    last_sequence_number = cast(int, provider_details.get('openai_last_sequence_number') or 0)
+    suspended_response = replace(
+        suspended_response,
+        provider_details={**provider_details, 'openai_last_sequence_number': last_sequence_number},
+    )
 
     retrieve_kwargs: list[dict[str, Any]] = []
     original_retrieve = model.client.responses.retrieve
