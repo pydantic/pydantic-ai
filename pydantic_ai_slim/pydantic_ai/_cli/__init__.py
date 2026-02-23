@@ -102,7 +102,9 @@ def load_agent(agent_path: str) -> Agent[Any, Any] | None:
     Returns:
         Agent instance or None if loading fails
     """
-    sys.path.insert(0, str(Path.cwd()))
+    cwd_str = str(Path.cwd())
+    sys_path_original = list(sys.path)
+    sys.path.insert(0, cwd_str)
     try:
         obj = _import_string_adapter.validate_python(agent_path)
         if not isinstance(obj, Agent):
@@ -110,6 +112,8 @@ def load_agent(agent_path: str) -> Agent[Any, Any] | None:
         return obj  # pyright: ignore[reportUnknownVariableType]
     except ValidationError:
         return None
+    finally:
+        sys.path[:] = sys_path_original
 
 
 @cli_agent.system_prompt

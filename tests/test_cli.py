@@ -131,6 +131,20 @@ def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker:
     assert 'Could not load agent from bad_path' in capfd.readouterr().out
 
 
+def test_load_agent_does_not_mutate_sys_path(create_test_module: Callable[..., None]):
+    from pydantic_ai._cli import load_agent
+
+    test_agent = Agent(TestModel(custom_output_text='Hello from custom agent'))
+    create_test_module(custom_agent=test_agent)
+
+    sys_path_original = list(sys.path)
+    try:
+        loaded = load_agent('test_module:custom_agent')
+        assert loaded is test_agent
+    finally:
+        assert sys.path == sys_path_original
+
+
 def test_no_command_defaults_to_chat(mocker: MockerFixture):
     """Test that running clai with no command defaults to chat mode."""
     # Mock _run_chat_command to avoid actual execution
