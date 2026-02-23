@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from dataclasses import replace
@@ -10348,7 +10349,7 @@ async def test_background_mode_streaming_vcr(allow_model_requests: None, openai_
 
 @pytest.mark.vcr()
 async def test_background_mode_streaming_continuation_vcr(allow_model_requests: None, openai_api_key: str):
-    """VCR test: manually continue a suspended background stream via `model.request_stream()`."""
+    """VCR test: manually continue a suspended background response via `model.request_stream()`."""
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
 
@@ -10376,20 +10377,26 @@ async def test_background_mode_streaming_continuation_vcr(allow_model_requests: 
     assert suspended_response.state == 'suspended'
     assert suspended_response.provider_response_id
 
-    async with model.request_stream(
-        messages=[original_request, suspended_response],
-        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
-        model_request_parameters=ModelRequestParameters(),
-    ) as continuation_stream:
-        async for _ in continuation_stream:
-            pass
+    continuation_response = suspended_response
+    continuation_stream_state = suspended_response.state
+    for _ in range(10):
+        async with model.request_stream(
+            messages=[original_request, continuation_response],
+            model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+            model_request_parameters=ModelRequestParameters(),
+        ) as continuation_stream:
+            async for _ in continuation_stream:
+                pass
+            continuation_response = continuation_stream.get()
+            continuation_stream_state = continuation_stream.state
+        if continuation_response.state == 'complete':
+            break
 
-    continuation_response = continuation_stream.get()
     continuation_output = ''.join(part.content for part in continuation_response.parts if isinstance(part, TextPart))
 
     assert continuation_output == snapshot('2 + 2 equals 4.')
     assert continuation_response.state == 'complete'
-    assert continuation_stream.state == 'complete'
+    assert continuation_stream_state == 'complete'
 
 
 @pytest.mark.vcr()
@@ -10442,25 +10449,99 @@ async def test_background_mode_streaming_starting_after_vcr(
 
     monkeypatch.setattr(model.client.responses, 'retrieve', capture_retrieve)
 
-    async with model.request_stream(
-        messages=[original_request, suspended_response],
-        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
-        model_request_parameters=ModelRequestParameters(),
-    ) as continuation_stream:
-        async for _ in continuation_stream:
-            pass
+    async def continue_stream() -> tuple[ModelResponse, str]:
+        async with model.request_stream(
+            messages=[original_request, suspended_response],
+            model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+            model_request_parameters=ModelRequestParameters(),
+        ) as continuation_stream:
+            async for _ in continuation_stream:
+                pass
+            return continuation_stream.get(), continuation_stream.state
 
-    continuation_response = continuation_stream.get()
+    continuation_response, continuation_stream_state = await asyncio.wait_for(continue_stream(), timeout=60)
     continuation_output = ''.join(part.content for part in continuation_response.parts if isinstance(part, TextPart))
 
     assert continuation_output == snapshot('2 + 2 equals 4.')
     assert continuation_response.state == 'complete'
-    assert continuation_stream.state == 'complete'
+    assert continuation_stream_state == 'complete'
+    assert {
+        'state': suspended_response.state,
+        'provider_response_id': suspended_response.provider_response_id,
+        'openai_last_sequence_number': last_sequence_number,
+    } == snapshot(
+        {
+            'state': 'suspended',
+            'provider_response_id': IsStr(),
+            'openai_last_sequence_number': IsInt(),
+        }
+    )
 
     assert len(retrieve_kwargs) == 1
     assert retrieve_kwargs[0]['response_id'] == suspended_response.provider_response_id
     assert retrieve_kwargs[0]['stream'] is True
     assert retrieve_kwargs[0]['starting_after'] == last_sequence_number
+
+
+@pytest.mark.vcr()
+async def test_background_mode_streaming_without_starting_after_vcr(
+    allow_model_requests: None, openai_api_key: str, monkeypatch: pytest.MonkeyPatch
+):
+    """VCR test: non-stream background response resumes via non-stream retrieve without `starting_after`."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+
+    original_request = ModelRequest(parts=[UserPromptPart(content='What is 2 + 2?')])
+    initial_response = await model.request(
+        messages=[original_request],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        model_request_parameters=ModelRequestParameters(),
+    )
+    assert initial_response.provider_response_id
+
+    provider_details: dict[str, Any] = {
+        **(initial_response.provider_details or {}),
+    }
+    assert 'openai_last_sequence_number' not in provider_details
+    provider_details.pop('openai_last_sequence_number', None)
+    suspended_response = replace(initial_response, state='suspended', provider_details=provider_details or None)
+
+    retrieve_kwargs: list[dict[str, Any]] = []
+    original_retrieve = model.client.responses.retrieve
+
+    async def capture_retrieve(*args: Any, **kwargs: Any):
+        retrieve_kwargs.append(kwargs)
+        return await original_retrieve(*args, **kwargs)
+
+    monkeypatch.setattr(model.client.responses, 'retrieve', capture_retrieve)
+
+    async def continue_stream() -> tuple[ModelResponse, str]:
+        async with model.request_stream(
+            messages=[original_request, suspended_response],
+            model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+            model_request_parameters=ModelRequestParameters(),
+        ) as continuation_stream:
+            return continuation_stream.get(), continuation_stream.state
+
+    continuation_response, continuation_stream_state = await asyncio.wait_for(continue_stream(), timeout=30)
+
+    assert continuation_stream_state in ('suspended', 'complete')
+    assert continuation_response.state in ('suspended', 'complete')
+    assert {
+        'state': suspended_response.state,
+        'provider_response_id': suspended_response.provider_response_id,
+        'continuation_state': continuation_response.state,
+    } == snapshot(
+        {
+            'state': 'suspended',
+            'provider_response_id': IsStr(),
+            'continuation_state': IsStr(),
+        }
+    )
+
+    assert len(retrieve_kwargs) == 1
+    assert retrieve_kwargs[0]['response_id'] == suspended_response.provider_response_id
+    assert retrieve_kwargs[0]['stream'] is False
+    assert 'starting_after' not in retrieve_kwargs[0]
 
 
 async def test_background_queued_then_completed(allow_model_requests: None):
@@ -10619,7 +10700,7 @@ async def test_background_retrieve_uses_response_id(allow_model_requests: None):
     assert retrieve_kwargs[0]['response_id'] == 'resp_bg_123'
 
 
-async def test_background_request_stream_uses_retrieve_stream(allow_model_requests: None):
+async def test_background_request_stream_uses_non_stream_retrieve_without_sequence(allow_model_requests: None):
     initial_response = ModelResponse(
         parts=[],
         model_name='gpt-4o',
@@ -10630,14 +10711,7 @@ async def test_background_request_stream_uses_retrieve_stream(allow_model_reques
     queued_response.id = 'resp_bg_123'
     queued_response.status = 'queued'
 
-    mock_client = cast(
-        AsyncOpenAI,
-        MockOpenAIResponses(
-            retrieve_stream=[
-                [ResponseCreatedEvent(response=queued_response, sequence_number=0, type='response.created')]
-            ]
-        ),
-    )
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_responses=[queued_response]))
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
 
     async with model.request_stream(
@@ -10654,7 +10728,7 @@ async def test_background_request_stream_uses_retrieve_stream(allow_model_reques
     retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
     assert len(retrieve_kwargs) == 1
     assert retrieve_kwargs[0]['response_id'] == 'resp_bg_123'
-    assert retrieve_kwargs[0]['stream'] is True
+    assert retrieve_kwargs[0]['stream'] is False
     assert 'starting_after' not in retrieve_kwargs[0]
 
 

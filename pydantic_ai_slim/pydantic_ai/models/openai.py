@@ -1463,6 +1463,16 @@ class OpenAIResponsesModel(Model):
             response_id, last_sequence_number, previous_model_name = info
             poll_interval = settings.get('openai_background_poll_interval', 1.0)
             await asyncio.sleep(poll_interval)
+            if last_sequence_number is None:
+                # Some background responses were not previously streamed and have no resumable
+                # sequence cursor. `retrieve(stream=True)` can block for a long time in this case,
+                # so fall back to non-stream retrieve and return a static streamed wrapper.
+                response = await self._responses_retrieve(response_id, settings)
+                yield _ModelResponseStreamedResponse(
+                    model_request_parameters=model_request_parameters,
+                    _model_response=self._process_response(response, settings, model_request_parameters),
+                )
+                return
             response = await self._responses_retrieve(
                 response_id, settings, stream=True, starting_after=last_sequence_number
             )
