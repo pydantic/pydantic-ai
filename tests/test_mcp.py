@@ -33,10 +33,15 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.mcp import (
     MCPError,
     MCPServerStreamableHTTP,
+    Prompt,
+    PromptArgument,
+    PromptMessage,
+    PromptResult,
     Resource,
     ResourceAnnotations,
     ResourceTemplate,
     ServerCapabilities,
+    TextContent,
     load_mcp_servers,
 )
 from pydantic_ai.models import Model, cached_async_http_client
@@ -56,7 +61,7 @@ with try_import() as imports_successful:
         ElicitResult,
         ImageContent,
         Implementation,
-        TextContent,
+        TextContent as McpTextContent,
         ToolUseContent,
     )
 
@@ -1619,7 +1624,7 @@ async def test_mcp_server_raises_mcp_error(
 def test_map_from_mcp_params_model_request():
     params = CreateMessageRequestParams(
         messages=[
-            SamplingMessage(role='user', content=TextContent(type='text', text='xx')),
+            SamplingMessage(role='user', content=McpTextContent(type='text', text='xx')),
             SamplingMessage(
                 role='user',
                 content=ImageContent(type='image', data=base64.b64encode(b'img').decode(), mimeType='image/png'),
@@ -1646,7 +1651,7 @@ def test_map_from_mcp_params_model_request():
 def test_map_from_mcp_params_model_response():
     params = CreateMessageRequestParams(
         messages=[
-            SamplingMessage(role='assistant', content=TextContent(type='text', text='xx')),
+            SamplingMessage(role='assistant', content=McpTextContent(type='text', text='xx')),
         ],
         maxTokens=8,
     )
@@ -2410,7 +2415,16 @@ async def test_list_prompts() -> None:
         assert server.capabilities.prompts
 
         prompts = await server.list_prompts()
-        assert len(prompts) == 2
+        assert prompts == snapshot(
+            [
+                Prompt(name='simple_prompt', description='A simple prompt template.'),
+                Prompt(
+                    name='parameterized_prompt',
+                    description='A prompt template with parameters.',
+                    arguments=[PromptArgument(name='name', required=True), PromptArgument(name='topic', required=True)],
+                ),
+            ]
+        )
 
         # Test caching behavior
         assert server._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
@@ -2438,21 +2452,27 @@ async def test_get_prompt() -> None:
     """Test get_prompt() retrieves specific prompts and handles errors."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
-        # Test simple prompt (no parameters) - using None
+        # Test simple prompt (no parameters)
         result = await server.get_prompt('simple_prompt')
-        assert result.messages is not None
-        assert len(result.messages) > 0
+        assert result == snapshot(
+            PromptResult(
+                messages=[PromptMessage(role='user', content=TextContent(type='text', text='This is a simple prompt'))],
+                description='A simple prompt template.',
+            )
+        )
 
         # Test parameterized prompt with arguments
         result = await server.get_prompt('parameterized_prompt', {'name': 'Alice', 'topic': 'AI'})
-        assert result.messages is not None
-        assert len(result.messages) > 0
-
-        parameterized_prompt = result.messages[0]
-        from pydantic_ai.mcp import TextContent as PydanticAITextContent
-
-        assert isinstance(parameterized_prompt.content, PydanticAITextContent)
-        assert parameterized_prompt.content.text == "Hello Alice, let's talk about AI!"
+        assert result == snapshot(
+            PromptResult(
+                messages=[
+                    PromptMessage(
+                        role='user', content=TextContent(type='text', text="Hello Alice, let's talk about AI!")
+                    )
+                ],
+                description='A prompt template with parameters.',
+            )
+        )
 
         # Test error handling for nonexistent prompt
         with pytest.raises(MCPError) as exc_info:
@@ -2527,7 +2547,7 @@ async def test_map_prompt_content() -> None:
 
         with patch.object(server, '_client', mock_client):
             # TextContent (no annotations)
-            mock_client.get_prompt.return_value = make_result(TextContent(type='text', text='hello world'))
+            mock_client.get_prompt.return_value = make_result(McpTextContent(type='text', text='hello world'))
             result = await server.get_prompt('text_prompt')
             content = result.messages[0].content
             assert isinstance(content, PydanticAITextContent)
@@ -2536,7 +2556,7 @@ async def test_map_prompt_content() -> None:
 
             # TextContent with annotations
             mock_client.get_prompt.return_value = make_result(
-                TextContent(
+                McpTextContent(
                     type='text', text='annotated text', annotations=McpAnnotations(audience=['user'], priority=1.0)
                 )
             )
