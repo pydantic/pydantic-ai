@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
@@ -13,8 +14,11 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
+<<<<<<< HEAD
 from inline_snapshot import snapshot
 
+=======
+>>>>>>> dfd36425 (ruff fixes added)
 
 class AddCall(TypedDict):
     messages: list[dict[str, str]]
