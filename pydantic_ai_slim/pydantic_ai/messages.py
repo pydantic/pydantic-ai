@@ -1094,20 +1094,20 @@ class ModelRequest:
     instructions: str | None = None
     """The instructions for the model."""
 
-    model_request_parameters: Annotated[ModelRequestParametersField, pydantic.Field(exclude=True, repr=False)] = field(
+    model_request_parameters: Annotated[ModelRequestParametersField, pydantic.Field(exclude=True)] = field(
         default=None, repr=False, compare=False
     )
     """Full request parameters captured for this request.
 
-    Available for introspection during a run. This field is excluded from serialization.
+    This field is excluded from serialization.
     """
 
-    model_settings: Annotated[ModelSettingsField, pydantic.Field(exclude=True, repr=False)] = field(
+    model_settings: Annotated[ModelSettingsField, pydantic.Field(exclude=True)] = field(
         default=None, repr=False, compare=False
     )
     """Effective model settings that were applied to this request.
 
-    Available for introspection during a run. This field is excluded from serialization.
+    This field is excluded from serialization.
     """
 
     kind: Literal['request'] = 'request'
