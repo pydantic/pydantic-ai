@@ -371,7 +371,7 @@ class ImageContent:
     type: Literal['image']
     data: str
     """The base64-encoded image data."""
-    mimeType: str
+    mime_type: str
     """
     The MIME type of the image. Different providers may support different
     image types.
@@ -392,7 +392,7 @@ class AudioContent:
     type: Literal['audio']
     data: str
     """The base64-encoded audio data."""
-    mimeType: str
+    mime_type: str
     """
     The MIME type of the audio. Different providers may support different
     audio types.
@@ -1113,7 +1113,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             return ImageContent(
                 type='image',
                 data=part.data,
-                mimeType=part.mimeType,
+                mime_type=part.mimeType,
                 annotations=Annotations.from_mcp_sdk(part.annotations) if part.annotations else None,
                 meta=part.meta,
             )
@@ -1121,7 +1121,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             return AudioContent(
                 type='audio',
                 data=part.data,
-                mimeType=part.mimeType,
+                mime_type=part.mimeType,
                 annotations=Annotations.from_mcp_sdk(part.annotations) if part.annotations else None,
                 meta=part.meta,
             )

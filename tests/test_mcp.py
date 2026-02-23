@@ -2562,7 +2562,7 @@ async def test_map_prompt_content() -> None:
             content = result.messages[0].content
             assert isinstance(content, PydanticAIImageContent)
             assert content.data == image_data
-            assert content.mimeType == 'image/png'
+            assert content.mime_type == 'image/png'
             assert isinstance(content.annotations, Annotations)
             assert content.annotations.audience == ['user']
             assert content.annotations.priority == 0.8
@@ -2581,7 +2581,7 @@ async def test_map_prompt_content() -> None:
             content = result.messages[0].content
             assert isinstance(content, PydanticAIAudioContent)
             assert content.data == audio_data
-            assert content.mimeType == 'audio/wav'
+            assert content.mime_type == 'audio/wav'
             assert isinstance(content.annotations, Annotations)
             assert content.annotations.audience == ['assistant']
             assert content.annotations.priority == 0.3
