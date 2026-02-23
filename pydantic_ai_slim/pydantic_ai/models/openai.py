@@ -484,6 +484,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Seconds to wait between polling a background response via `retrieve()`.
 
     Only used when `openai_background` is enabled and the response is still pending.
+    Polling uses this fixed interval (it does not apply exponential backoff).
     Defaults to 1.0 second.
     """
 

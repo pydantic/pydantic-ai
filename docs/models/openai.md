@@ -228,7 +228,9 @@ result = agent.run_sync(
 print(result.output)
 ```
 
-Polling is capped internally at a high default to prevent unbounded requests, with a 1-second delay between each poll. You can configure the polling interval via the [`openai_background_poll_interval`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_background_poll_interval] model setting.
+Polling uses a fixed interval (default: `1.0` second) and is bounded by the agent continuation limit to prevent unbounded requests. You can configure the interval via the [`openai_background_poll_interval`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_background_poll_interval] model setting.
+
+For long-running background tasks, consider increasing `openai_background_poll_interval` to reduce `retrieve()` call volume and avoid hitting the continuation limit too quickly.
 
 This also works correctly with [`FallbackModel`](../multi-model-agents.md#fallback-model) — continuation requests are pinned to the same model rather than restarting the fallback chain.
 
