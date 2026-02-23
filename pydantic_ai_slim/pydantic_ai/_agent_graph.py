@@ -912,7 +912,9 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
         merged_response = self.model_response
         while True:
             new_response = await self._request(ctx)
-            merged_response, should_continue = self._process_response(ctx, merged_response, new_response)
+            merged_response, should_continue = self._process_response(
+                ctx, merged_response, new_response, skip_request_increment=True
+            )
             if not should_continue:
                 break
 
@@ -940,6 +942,7 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         while True:
             self._check_continuation_limit(ctx)
+            ctx.deps.usage_limits.check_before_request(ctx.state.usage)
 
             model_request_parameters = await _prepare_request_parameters(ctx)
             model_settings = ctx.deps.model_settings
@@ -968,6 +971,7 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> _messages.ModelResponse:
         """Make a single non-streaming continuation request."""
         self._check_continuation_limit(ctx)
+        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
 
         model_request_parameters = await _prepare_request_parameters(ctx)
         model_settings = ctx.deps.model_settings

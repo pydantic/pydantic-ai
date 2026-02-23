@@ -476,9 +476,8 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     When enabled, this setting both passes `background=True` to the Responses API
     **and** opts into automatic polling for completion. If the response status is
-    `'queued'` or `'in_progress'`, it maps to `finish_reason='incomplete'` and sets
-    `state='suspended'`, triggering the agent's `ContinueRequestNode` loop which
-    polls via `retrieve()`.
+    `'queued'` or `'in_progress'`, it sets `state='suspended'`, triggering the
+    agent's `ContinueRequestNode` loop which polls via `retrieve()`.
     """
 
     openai_background_poll_interval: float
@@ -2542,6 +2541,7 @@ class _ModelResponseStreamedResponse(StreamedResponse):
         self.provider_details = self._model_response.provider_details
         self.finish_reason = self._model_response.finish_reason
         self.state = self._model_response.state
+        self.metadata = self._model_response.metadata
         for index, part in enumerate(self._model_response.parts):
             self._parts_manager.handle_part(vendor_part_id=index, part=part)
 

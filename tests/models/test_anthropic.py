@@ -324,7 +324,7 @@ async def test_pause_turn_exceeds_max_continuations(allow_model_requests: None):
     agent = Agent(model)
 
     with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum continuations \\(50\\)'):
-        await agent.run('test prompt')
+        await agent.run('test prompt', usage_limits=UsageLimits(request_limit=None))
 
 
 @pytest.mark.vcr()

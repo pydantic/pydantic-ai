@@ -49,7 +49,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
@@ -10451,6 +10451,7 @@ async def test_background_max_continuations(allow_model_requests: None):
         await agent.run(
             'test',
             model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+            usage_limits=UsageLimits(request_limit=None),
         )
 
 
