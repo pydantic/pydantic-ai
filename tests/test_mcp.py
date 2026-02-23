@@ -2437,6 +2437,7 @@ async def test_list_prompts() -> None:
         # Test without capability - mock the capabilities to not support prompts
         mock_capabilities = ServerCapabilities(prompts=False)
         with patch.object(server, '_server_capabilities', mock_capabilities):
+            server._cached_prompts = None  # pyright: ignore[reportPrivateUsage]
             result = await server.list_prompts()
             assert result == []
 

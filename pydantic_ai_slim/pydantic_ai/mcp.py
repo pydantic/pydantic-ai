@@ -787,9 +787,6 @@ class MCPServer(AbstractToolset[Any], ABC):
             except mcp_exceptions.McpError as e:  # pragma: no cover
                 raise MCPError.from_mcp_sdk(e) from e  # pragma: no cover
 
-            except mcp_exceptions.McpError as e:  # pragma: no cover
-                raise MCPError.from_mcp_sdk(e) from e  # pragma: no cover
-
     async def get_prompt(self, name: str, arguments: dict[str, str] | None = None) -> PromptResult:
         """Retrieve a specific prompt by name.
 
