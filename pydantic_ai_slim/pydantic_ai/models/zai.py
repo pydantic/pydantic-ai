@@ -44,6 +44,13 @@ LatestZaiModelNames = Literal[
 ]
 
 ZaiModelName = str | LatestZaiModelNames
+"""Possible Z.AI model names.
+
+Since Z.AI supports a variety of models and the list changes frequently, we explicitly list known models
+but allow any name in the type hints.
+
+See <https://docs.z.ai/> for an up to date list of models.
+"""
 
 
 class ZaiModelSettings(ModelSettings, total=False):
@@ -56,7 +63,7 @@ class ZaiModelSettings(ModelSettings, total=False):
     """Enable thinking/reasoning mode for the model.
 
     When enabled, the model will produce reasoning content before the final response.
-    Supported on `glm-4.7` and `glm-4.6` (hybrid thinking mode).
+    Supported on `glm-5`, `glm-4.7`, `glm-4.6` (hybrid thinking), and `glm-4.5` (interleaved thinking).
 
     See [the Z.AI docs](https://docs.z.ai/guides/capabilities/thinking-mode) for more details.
     """

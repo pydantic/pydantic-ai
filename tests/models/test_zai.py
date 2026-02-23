@@ -4,7 +4,7 @@ from typing import Any, cast
 
 import pytest
 
-from pydantic_ai import Agent, ModelRequest, TextPart
+from pydantic_ai import Agent, ModelRequest, TextPart, ThinkingPart
 from pydantic_ai.direct import model_request
 
 from ..conftest import try_import
@@ -39,6 +39,10 @@ async def test_zai_thinking_mode(allow_model_requests: None, zai_api_key: str):
     model = ZaiModel('glm-4.7', provider=provider)
     settings = ZaiModelSettings(zai_thinking=True)
     response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
+    # Verify thinking part is present (glm-4.7 produces reasoning_content)
+    thinking_parts = [p for p in response.parts if isinstance(p, ThinkingPart)]
+    assert len(thinking_parts) >= 1
+    # Verify text response
     text_part = cast(TextPart, response.parts[-1])
     assert '4' in text_part.content
 
