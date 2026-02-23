@@ -695,6 +695,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         tool_name='web_search',
                         args={'query': 'top world news September 12, 2025 Reuters', 'type': 'search'},
                         tool_call_id='ws_0e3d55e9502941380068c4aaab56508195a1effa9583720d20',
+                        id='ws_0e3d55e9502941380068c4aaab56508195a1effa9583720d20',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -714,6 +715,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         tool_name='web_search',
                         args={'query': 'Nepal protests September 12 2025 Reuters', 'type': 'search'},
                         tool_call_id='ws_0e3d55e9502941380068c4aab0c534819593df0190332e7aa3',
+                        id='ws_0e3d55e9502941380068c4aab0c534819593df0190332e7aa3',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -736,6 +738,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                             'type': 'search',
                         },
                         tool_call_id='ws_0e3d55e9502941380068c4aab597f48195ac7021b00e057308',
+                        id='ws_0e3d55e9502941380068c4aab597f48195ac7021b00e057308',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -758,6 +761,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                             'type': 'search',
                         },
                         tool_call_id='ws_0e3d55e9502941380068c4aabe83a88195b7a5ec62ec10a26e',
+                        id='ws_0e3d55e9502941380068c4aabe83a88195b7a5ec62ec10a26e',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -777,6 +781,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         tool_name='web_search',
                         args={'query': 'typhoon September 12 2025', 'type': 'search'},
                         tool_call_id='ws_0e3d55e9502941380068c4aac378308195aca61a302c5ebae6',
+                        id='ws_0e3d55e9502941380068c4aac378308195aca61a302c5ebae6',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -796,6 +801,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         tool_name='web_search',
                         args={'query': 'Nepal protests September 12 2025 BBC', 'type': 'search'},
                         tool_call_id='ws_0e3d55e9502941380068c4aac9b92081958054d2ec8fabe63f',
+                        id='ws_0e3d55e9502941380068c4aac9b92081958054d2ec8fabe63f',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -907,6 +913,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                         tool_name='web_search',
                         args={'query': 'weather: San Francisco, CA', 'type': 'search'},
                         tool_call_id='ws_028829e50fbcad090068c9c8306aec8195ae9451d32175ed69',
+                        id='ws_028829e50fbcad090068c9c8306aec8195ae9451d32175ed69',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -973,6 +980,7 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                         tool_name='web_search',
                         args={'query': 'weather: Mexico City, Mexico', 'type': 'search'},
                         tool_call_id='ws_028829e50fbcad090068c9c83e3a648195a241c1a97eddfee8',
+                        id='ws_028829e50fbcad090068c9c83e3a648195a241c1a97eddfee8',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -1049,6 +1057,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                         tool_name='web_search',
                         args={'query': 'weather: Utrecht, Netherlands', 'type': 'search'},
                         tool_call_id='ws_0b385a0fdc82fd920068c4aaf7037081978e951ac15bf07978',
+                        id='ws_0b385a0fdc82fd920068c4aaf7037081978e951ac15bf07978',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -1134,6 +1143,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                             ],
                         },
                         tool_call_id=IsStr(),
+                        id='ws_08e7da464e3f8cf70069780c0760ac819ba9469051f9e5f511',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -1160,6 +1170,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                             ],
                         },
                         tool_call_id=IsStr(),
+                        id='ws_08e7da464e3f8cf70069780c0d1c34819ba50e2b797aa61283',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -1182,6 +1193,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                             'url': 'https://en.wikipedia.org/wiki/List_of_Japanese_prefectures_by_population',
                         },
                         tool_call_id=IsStr(),
+                        id='ws_08e7da464e3f8cf70069780c102fac819bae37eff938310983',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -1201,6 +1213,7 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                         tool_name='web_search',
                         args={'type': 'open_page', 'url': 'https://en.wikipedia.org/wiki/Demographics_of_Tokyo'},
                         tool_call_id=IsStr(),
+                        id='ws_08e7da464e3f8cf70069780c1f76ac819ba8a7b5c5262ecb0b',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -1269,6 +1282,7 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                         tool_name='web_search',
                         args={'query': 'weather: Brazil, Bahia, Salvador', 'type': 'search'},
                         tool_call_id='ws_0b4f29854724a3120068c4ab0f070c8191b903ff534320cb64',
+                        id='ws_0b4f29854724a3120068c4ab0f070c8191b903ff534320cb64',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -1353,6 +1367,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                         tool_name='web_search',
                         args={'query': 'weather: San Francisco, CA', 'type': 'search'},
                         tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
+                        id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -1424,6 +1439,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
+                    id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     provider_name='openai',
                 ),
                 previous_part_kind='thinking',
@@ -1441,6 +1457,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     tool_name='web_search',
                     args={'query': 'weather: San Francisco, CA', 'type': 'search'},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
+                    id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     provider_name='openai',
                 ),
                 next_part_kind='builtin-tool-return',
@@ -1671,6 +1688,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     tool_name='web_search',
                     args={'query': 'weather: San Francisco, CA', 'type': 'search'},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
+                    id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     provider_name='openai',
                 )
             ),
@@ -1712,6 +1730,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                         tool_name='web_search',
                         args={'query': 'weather: Mexico City, Mexico', 'type': 'search'},
                         tool_call_id='ws_00a60507bf41223d0068c9d31b6aec81a09d9e568afa7b59aa',
+                        id='ws_00a60507bf41223d0068c9d31b6aec81a09d9e568afa7b59aa',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -7922,6 +7941,79 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
     )
 
 
+async def test_openai_responses_builtin_tool_call_id_uses_id_field(allow_model_requests: None):
+    """Regression test: BuiltinToolCallPart.id should be preferred over tool_call_id when replaying.
+
+    The Responses API generates long id fields (~53 chars) for ResponseFunctionWebSearch items.
+    These are stored as both tool_call_id and id on BuiltinToolCallPart. When replayed via
+    _map_messages, the id field should be used to preserve the original Responses API item id.
+    See: https://github.com/pydantic/pydantic-ai/issues/4389
+    """
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg_123',
+                    content=cast(
+                        list[Content],
+                        [ResponseOutputText(text='Here is the answer.', type='output_text', annotations=[])],
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                ),
+            ],
+        )
+    )
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+    )
+
+    long_id = 'ws_67e886540a108191a3db18a0336eb0f80bb7f4baa8488460a1'  # 53 chars, typical Responses API id
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content='Search the web for Python news'),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    tool_call_id=long_id,
+                    args={'query': 'Python news'},
+                    provider_name='openai',
+                    id=long_id,
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id=long_id,
+                    content={'status': 'completed'},
+                    provider_name='openai',
+                ),
+                TextPart(content='Here are the results.', id='msg_456', provider_name='openai'),
+            ],
+            model_name='gpt-4o',
+            provider_name='openai',
+        ),
+    ]
+
+    _, openai_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        messages,
+        model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    # Find the web_search_call item in the output and verify the id field is preserved
+    web_search_items = [m for m in openai_messages if isinstance(m, dict) and m.get('type') == 'web_search_call']
+    assert len(web_search_items) == 1
+    web_search_item = cast(dict[str, Any], web_search_items[0])
+    assert web_search_item['id'] == long_id
+
+
 async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel(
         'o4-mini',
@@ -9444,6 +9536,7 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                             tool_name='file_search',
                             args={'queries': ['What is the capital of France?']},
                             tool_call_id=IsStr(),
+                            id='fs_0995dffd0769e0bd006931d72fecf48194bf314348aa6b2494',
                             provider_name='openai',
                         ),
                         BuiltinToolReturnPart(
@@ -9489,6 +9582,7 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                             tool_name='file_search',
                             args={'queries': ['Eiffel Tower']},
                             tool_call_id=IsStr(),
+                            id='fs_019d8541afd6ed8d006931d7382ef481998c5cd3117a0ff8fe',
                             provider_name='openai',
                         ),
                         BuiltinToolReturnPart(
@@ -9550,6 +9644,7 @@ def test_map_file_search_tool_call():
                 tool_name='file_search',
                 args={'queries': ['test query']},
                 tool_call_id='test-id',
+                id='test-id',
                 provider_name='openai',
             ),
             BuiltinToolReturnPart(
@@ -9630,6 +9725,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                             tool_name='file_search',
                             args={'queries': ['What is the capital of France?']},
                             tool_call_id=IsStr(),
+                            id='fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4',
                             provider_name='openai',
                         ),
                         BuiltinToolReturnPart(
@@ -9661,6 +9757,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                     part=BuiltinToolCallPart(
                         tool_name='file_search',
                         tool_call_id=IsStr(),
+                        id='fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4',
                         provider_name='openai',
                     ),
                 ),
@@ -9677,6 +9774,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                         tool_name='file_search',
                         args={'queries': ['What is the capital of France?']},
                         tool_call_id=IsStr(),
+                        id='fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4',
                         provider_name='openai',
                     ),
                     next_part_kind='builtin-tool-return',
@@ -9713,6 +9811,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                         tool_name='file_search',
                         args={'queries': ['What is the capital of France?']},
                         tool_call_id=IsStr(),
+                        id='fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4',
                         provider_name='openai',
                     )
                 ),
@@ -9783,6 +9882,7 @@ async def test_openai_responses_model_file_search_tool_with_results(
                             tool_name='file_search',
                             args={'queries': ['What is the capital of France?']},
                             tool_call_id=IsStr(),
+                            id='fs_08aa886305ae5628006939ad6cfa30819a85b07d52d61eb121',
                             provider_name='openai',
                         ),
                         BuiltinToolReturnPart(
@@ -9879,6 +9979,7 @@ async def test_web_search_call_action_find_in_page(allow_model_requests: None):
                     tool_name='web_search',
                     args={'type': 'find_in_page', 'pattern': 'test', 'url': 'https://example.com'},
                     tool_call_id='web-search-1',
+                    id='web-search-1',
                     provider_name='openai',
                 ),
                 BuiltinToolReturnPart(
