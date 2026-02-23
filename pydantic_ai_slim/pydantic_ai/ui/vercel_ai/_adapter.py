@@ -213,6 +213,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     file_id=uploaded_file_id,
                                     provider_name=cast(UploadedFileProviderName, uploaded_file_provider),
                                     media_type=part.media_type,
+                                    vendor_metadata=provider_meta.get('vendor_metadata'),
+                                    identifier=provider_meta.get('identifier'),
                                 )
                             else:
                                 media_type_prefix = part.media_type.split('/', 1)[0]
@@ -641,7 +643,12 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 ui_parts.append(FileUIPart(url=item.url, media_type=item.media_type))
             elif isinstance(item, UploadedFile):
                 # Store uploaded file info in provider_metadata for round-trip support
-                provider_metadata = dump_provider_metadata(file_id=item.file_id, provider_name=item.provider_name)
+                provider_metadata = dump_provider_metadata(
+                    file_id=item.file_id,
+                    provider_name=item.provider_name,
+                    vendor_metadata=item.vendor_metadata,
+                    identifier=item._identifier,  # pyright: ignore[reportPrivateUsage]
+                )
                 ui_parts.append(
                     FileUIPart(url=item.file_id, media_type=item.media_type, provider_metadata=provider_metadata)
                 )

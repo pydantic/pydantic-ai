@@ -4369,6 +4369,91 @@ async def test_adapter_load_messages_uploaded_file():
     )
 
 
+async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
+    """Test converting a user prompt with UploadedFile that has vendor_metadata and custom identifier."""
+    from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
+
+    part = UserPromptPart(
+        content=[
+            UploadedFile(
+                file_id='files/video123',
+                provider_name='google-gla',
+                media_type='video/mp4',
+                vendor_metadata={'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
+                identifier='my-custom-id',
+            )
+        ]
+    )
+    ui_parts = _convert_user_prompt_part(part)
+    assert ui_parts == snapshot(
+        [
+            FileUIPart(
+                media_type='video/mp4',
+                url='files/video123',
+                provider_metadata={
+                    'pydantic_ai': {
+                        'file_id': 'files/video123',
+                        'provider_name': 'google-gla',
+                        'vendor_metadata': {'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
+                        'identifier': 'my-custom-id',
+                    }
+                },
+            ),
+        ]
+    )
+
+
+async def test_adapter_load_messages_uploaded_file_with_vendor_metadata():
+    """Test round-tripping UploadedFile with vendor_metadata and custom identifier."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='user',
+            parts=[
+                FileUIPart(
+                    media_type='video/mp4',
+                    url='files/video123',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'file_id': 'files/video123',
+                            'provider_name': 'google-gla',
+                            'vendor_metadata': {'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
+                            'identifier': 'my-custom-id',
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            UploadedFile(
+                                file_id='files/video123',
+                                provider_name='google-gla',
+                                _media_type='video/mp4',
+                                media_type='video/mp4',
+                                vendor_metadata={
+                                    'start_offset': {'seconds': 10},
+                                    'end_offset': {'seconds': 60},
+                                },
+                                _identifier='my-custom-id',
+                                identifier='my-custom-id',
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )
+
+
 async def test_adapter_load_messages_file_url_without_metadata():
     """Test loading FileUIPart without provider_metadata falls back to URL-based detection."""
     ui_messages = [
