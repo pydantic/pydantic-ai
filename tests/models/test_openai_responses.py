@@ -10346,6 +10346,123 @@ async def test_background_mode_streaming_vcr(allow_model_requests: None, openai_
     )
 
 
+@pytest.mark.vcr()
+async def test_background_mode_streaming_continuation_vcr(allow_model_requests: None, openai_api_key: str):
+    """VCR test: manually continue a suspended background stream via `model.request_stream()`."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    original_request: ModelRequest | None = None
+    suspended_response: ModelResponse | None = None
+
+    async with agent.iter(
+        user_prompt='What is 2 + 2?',
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+    ) as agent_run:
+        async for node in agent_run:
+            if not Agent.is_model_request_node(node):
+                continue
+
+            original_request = node.request
+            async with node.stream(agent_run.ctx) as request_stream:
+                # Intentionally stop reading early so background mode remains suspended.
+                async for _ in request_stream:
+                    break
+                suspended_response = request_stream.get()
+            break
+
+    assert original_request is not None
+    assert suspended_response is not None
+    assert suspended_response.state == 'suspended'
+    assert suspended_response.provider_response_id
+
+    async with model.request_stream(
+        messages=[original_request, suspended_response],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_request_parameters=ModelRequestParameters(),
+    ) as continuation_stream:
+        async for _ in continuation_stream:
+            pass
+
+    continuation_response = continuation_stream.get()
+    continuation_output = ''.join(part.content for part in continuation_response.parts if isinstance(part, TextPart))
+
+    assert continuation_output == snapshot('2 + 2 equals 4.')
+    assert continuation_response.state == 'complete'
+    assert continuation_stream.state == 'complete'
+
+
+@pytest.mark.vcr()
+async def test_background_mode_streaming_starting_after_vcr(
+    allow_model_requests: None, openai_api_key: str, monkeypatch: pytest.MonkeyPatch
+):
+    """VCR test: continuation retrieve call includes `starting_after` from suspended stream state."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    original_request: ModelRequest | None = None
+    suspended_response: ModelResponse | None = None
+
+    async with agent.iter(
+        user_prompt='What is 2 + 2?',
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+    ) as agent_run:
+        async for node in agent_run:
+            if not Agent.is_model_request_node(node):
+                continue
+
+            original_request = node.request
+            async with node.stream(agent_run.ctx) as request_stream:
+                # Stop early so request_stream exits with state='suspended' and continuation metadata.
+                async for _ in request_stream:
+                    break
+                suspended_response = request_stream.get()
+            break
+
+    assert original_request is not None
+    assert suspended_response is not None
+    assert suspended_response.state == 'suspended'
+    assert suspended_response.provider_response_id
+    provider_details: dict[str, Any] = suspended_response.provider_details or {}
+    last_sequence_number = provider_details.get('openai_last_sequence_number')
+    if not isinstance(last_sequence_number, int):
+        # If the stream is interrupted before iterator finalization, this metadata may be absent.
+        last_sequence_number = 0
+        suspended_response = replace(
+            suspended_response,
+            provider_details={**provider_details, 'openai_last_sequence_number': last_sequence_number},
+        )
+
+    retrieve_kwargs: list[dict[str, Any]] = []
+    original_retrieve = model.client.responses.retrieve
+
+    async def capture_retrieve(*args: Any, **kwargs: Any):
+        retrieve_kwargs.append(kwargs)
+        return await original_retrieve(*args, **kwargs)
+
+    monkeypatch.setattr(model.client.responses, 'retrieve', capture_retrieve)
+
+    async with model.request_stream(
+        messages=[original_request, suspended_response],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_request_parameters=ModelRequestParameters(),
+    ) as continuation_stream:
+        async for _ in continuation_stream:
+            pass
+
+    continuation_response = continuation_stream.get()
+    continuation_output = ''.join(part.content for part in continuation_response.parts if isinstance(part, TextPart))
+
+    assert continuation_output == snapshot('2 + 2 equals 4.')
+    assert continuation_response.state == 'complete'
+    assert continuation_stream.state == 'complete'
+
+    assert len(retrieve_kwargs) == 1
+    assert retrieve_kwargs[0]['response_id'] == suspended_response.provider_response_id
+    assert retrieve_kwargs[0]['stream'] is True
+    assert retrieve_kwargs[0]['starting_after'] == last_sequence_number
+
+
 async def test_background_queued_then_completed(allow_model_requests: None):
     """Background mode: create returns status='queued', retrieve returns status='completed'."""
     mock_client = MockOpenAIResponses(
@@ -10538,6 +10655,102 @@ async def test_background_request_stream_uses_retrieve_stream(allow_model_reques
     assert len(retrieve_kwargs) == 1
     assert retrieve_kwargs[0]['response_id'] == 'resp_bg_123'
     assert retrieve_kwargs[0]['stream'] is True
+    assert 'starting_after' not in retrieve_kwargs[0]
+
+
+async def test_background_streaming_passes_starting_after(allow_model_requests: None):
+    initial_response = ModelResponse(
+        parts=[TextPart('partial')],
+        model_name='gpt-4o-2024-08-06',
+        provider_response_id='resp_bg_456',
+        state='suspended',
+        provider_details={'openai_last_sequence_number': 5},
+    )
+    queued_response = response_message([])
+    queued_response.id = 'resp_bg_456'
+    queued_response.status = 'queued'
+
+    mock_client = cast(
+        AsyncOpenAI,
+        MockOpenAIResponses(
+            retrieve_stream=[
+                [ResponseCreatedEvent(response=queued_response, sequence_number=0, type='response.created')]
+            ]
+        ),
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[
+            ModelRequest(parts=[UserPromptPart(content='test')]),
+            initial_response,
+        ],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert [event async for event in request_stream] == []
+
+    retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
+    assert len(retrieve_kwargs) == 1
+    assert retrieve_kwargs[0]['response_id'] == 'resp_bg_456'
+    assert retrieve_kwargs[0]['stream'] is True
+    assert retrieve_kwargs[0]['starting_after'] == 5
+
+
+async def test_background_streaming_continuation_without_created_event(allow_model_requests: None):
+    initial_response = ModelResponse(
+        parts=[TextPart('The')],
+        model_name='gpt-4o-2024-08-06',
+        provider_response_id='resp_bg_789',
+        state='suspended',
+        provider_details={'openai_last_sequence_number': 5},
+    )
+    completed_response = response_message([])
+    completed_response.id = 'resp_bg_789'
+    completed_response.model = 'gpt-4o-2024-08-06'
+    completed_response.status = 'completed'
+
+    mock_client = cast(
+        AsyncOpenAI,
+        MockOpenAIResponses(
+            retrieve_stream=[
+                [
+                    responses.ResponseTextDeltaEvent(
+                        content_index=0,
+                        delta=' capital of France.',
+                        item_id='msg_1',
+                        logprobs=[],
+                        output_index=0,
+                        sequence_number=6,
+                        type='response.output_text.delta',
+                    ),
+                    responses.ResponseCompletedEvent(
+                        response=completed_response,
+                        sequence_number=7,
+                        type='response.completed',
+                    ),
+                ]
+            ]
+        ),
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[
+            ModelRequest(parts=[UserPromptPart(content='test')]),
+            initial_response,
+        ],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert [event async for event in request_stream] != []
+
+    model_response = request_stream.get()
+    assert model_response.model_name == 'gpt-4o-2024-08-06'
+    assert model_response.state == 'complete'
+
+    retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
+    assert retrieve_kwargs[0]['starting_after'] == 5
 
 
 async def test_request_stream_handles_model_response_from_responses_create(
@@ -10606,6 +10819,8 @@ async def test_stream_sets_suspended_state_for_pending_statuses(
     model_response = request_stream.get()
     assert model_response.state == 'suspended'
     assert model_response.provider_response_id == f'resp_{status}'
+    assert model_response.provider_details is not None
+    assert model_response.provider_details.get('openai_last_sequence_number') == 0
 
 
 async def test_request_stream_model_response_with_parts(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):

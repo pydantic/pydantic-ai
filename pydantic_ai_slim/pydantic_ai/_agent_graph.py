@@ -1032,12 +1032,15 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if existing.model_name and new.model_name and existing.model_name != new.model_name:
             return new
 
-        # Same model, different response → accumulate parts and sum usage
+        # Same model, different response → accumulate parts and sum usage.
+        # Preserve existing provider response IDs when continuation responses omit them
+        # (e.g. resumed OpenAI streams that start after a sequence number).
         merged_usage = existing.usage + new.usage
         return replace(
             new,
             parts=[*existing.parts, *new.parts],
             usage=merged_usage,
+            provider_response_id=new.provider_response_id or existing.provider_response_id,
         )
 
     __repr__ = dataclasses_no_defaults_repr
