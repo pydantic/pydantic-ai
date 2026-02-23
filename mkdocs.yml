@@ -360,13 +360,13 @@ plugins:
           - troubleshooting.md
         Concepts documentation:
           - a2a.md
-          - ag-ui.md
-          - Agents: agent.md
+          - agent.md
           - builtin-tools.md
           - dependencies.md
           - deferred-tools.md
           - direct.md
           - embeddings.md
+          - gateway.md
           - input.md
           - tools.md
           - common-tools.md
@@ -378,14 +378,17 @@ plugins:
           - third-party-tools.md
           - tools-advanced.md
           - toolsets.md
+          - web.md
         Models:
           - models/*.md
         Graphs:
           - graph.md
+          - graph/*.md
         API Reference:
           - api/*.md
         Evals:
           - evals.md
+          - evals/*.md
         Durable Execution:
           - durable_execution/*.md
         MCP:

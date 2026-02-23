@@ -2,7 +2,6 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import (
     Agent,
@@ -20,6 +19,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr
 
 pytestmark = [pytest.mark.anyio]

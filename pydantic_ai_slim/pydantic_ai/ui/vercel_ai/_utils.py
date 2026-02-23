@@ -4,6 +4,18 @@ from collections.abc import Iterable, Iterator
 from typing import Any
 
 from pydantic_ai.messages import ProviderDetailsDelta, ToolReturnPart
+from pydantic_ai.ui.vercel_ai.request_types import (
+    DynamicToolInputAvailablePart,
+    DynamicToolInputStreamingPart,
+    DynamicToolOutputAvailablePart,
+    DynamicToolOutputErrorPart,
+    ToolApprovalResponded,
+    ToolInputAvailablePart,
+    ToolInputStreamingPart,
+    ToolOutputAvailablePart,
+    ToolOutputErrorPart,
+    UIMessage,
+)
 from pydantic_ai.ui.vercel_ai.response_types import (
     DataChunk,
     FileChunk,
@@ -81,3 +93,26 @@ def iter_metadata_chunks(
         for item in possible:  # type: ignore[reportUnknownMemberType]
             if isinstance(item, _DATA_CHUNK_TYPES):  # pragma: no branch
                 yield item
+
+
+_TOOL_PART_TYPES = (
+    ToolInputStreamingPart,
+    ToolInputAvailablePart,
+    ToolOutputAvailablePart,
+    ToolOutputErrorPart,
+    DynamicToolInputStreamingPart,
+    DynamicToolInputAvailablePart,
+    DynamicToolOutputAvailablePart,
+    DynamicToolOutputErrorPart,
+)
+
+
+def iter_tool_approval_responses(
+    messages: list[UIMessage],
+) -> Iterator[tuple[str, ToolApprovalResponded]]:
+    """Yield `(tool_call_id, approval)` for each responded tool approval in assistant messages."""
+    for msg in messages:
+        if msg.role == 'assistant':
+            for part in msg.parts:
+                if isinstance(part, _TOOL_PART_TYPES) and isinstance(part.approval, ToolApprovalResponded):
+                    yield part.tool_call_id, part.approval

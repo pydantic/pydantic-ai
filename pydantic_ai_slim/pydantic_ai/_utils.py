@@ -160,6 +160,20 @@ def is_set(t_or_unset: T | Unset) -> TypeGuard[T]:
     return t_or_unset is not UNSET
 
 
+async def _cleanup_temporal_group(
+    task: asyncio.Task[Any] | None,
+    aiterator: AsyncIterator[Any],
+) -> None:
+    """Clean up pending task and async iterator after group_by_temporal exits."""
+    if task:
+        task.cancel('Cancelling group_by_temporal pending task')
+        with suppress(asyncio.CancelledError, StopAsyncIteration):
+            await task
+    aclose = getattr(aiterator, 'aclose', None)
+    if aclose is not None:  # pragma: no branch
+        await aclose()
+
+
 @asynccontextmanager
 async def group_by_temporal(
     aiterable: AsyncIterable[T], soft_max_interval: float | None
@@ -188,75 +202,72 @@ async def group_by_temporal(
     Returns:
         A context manager usable as an async iterable of lists of items produced by the input async iterable.
     """
-    if soft_max_interval is None:
-
-        async def async_iter_groups_noop() -> AsyncIterator[list[T]]:
-            async for item in aiterable:
-                yield [item]
-
-        yield async_iter_groups_noop()
-        return
-
     # we might wait for the next item more than once, so we store the task to await next time
     task: asyncio.Task[T] | None = None
+    aiterator = aiter(aiterable)
 
-    async def async_iter_groups() -> AsyncIterator[list[T]]:
-        nonlocal task
+    if soft_max_interval is None:
 
-        assert soft_max_interval is not None and soft_max_interval >= 0, 'soft_max_interval must be a positive number'
-        buffer: list[T] = []
-        group_start_time = time.monotonic()
+        async def async_iter_groups() -> AsyncIterator[list[T]]:
+            async for item in aiterator:
+                yield [item]
 
-        aiterator = aiter(aiterable)
-        while True:
-            if group_start_time is None:
-                # group hasn't started, we just wait for the maximum interval
-                wait_time = soft_max_interval
-            else:
-                # wait for the time remaining in the group
-                wait_time = soft_max_interval - (time.monotonic() - group_start_time)
+    else:
 
-            # if there's no current task, we get the next one
-            if task is None:
-                # anext(aiter) returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
-                # so far, this doesn't seem to be a problem
-                task = asyncio.create_task(anext(aiterator))  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
+        async def async_iter_groups() -> AsyncIterator[list[T]]:
+            nonlocal task
 
-            # we use asyncio.wait to avoid cancelling the coroutine if it's not done
-            done, _ = await asyncio.wait((task,), timeout=wait_time)
+            assert soft_max_interval is not None and soft_max_interval >= 0, (
+                'soft_max_interval must be a positive number'
+            )
+            buffer: list[T] = []
+            group_start_time = time.monotonic()
 
-            if done:
-                # the one task we waited for completed
-                try:
-                    item = done.pop().result()
-                except StopAsyncIteration:
-                    # if the task raised StopAsyncIteration, we're done iterating
-                    if buffer:
-                        yield buffer
-                    task = None
-                    break
+            while True:
+                if group_start_time is None:
+                    # group hasn't started, we just wait for the maximum interval
+                    wait_time = soft_max_interval
                 else:
-                    # we got an item, add it to the buffer and set task to None to get the next item
-                    buffer.append(item)
-                    task = None
-                    # if this is the first item in the group, set the group start time
-                    if group_start_time is None:
-                        group_start_time = time.monotonic()
-            elif buffer:
-                # otherwise if the task timeout expired and we have items in the buffer, yield the buffer
-                yield buffer
-                # clear the buffer and reset the group start time ready for the next group
-                buffer = []
-                group_start_time = None
+                    # wait for the time remaining in the group
+                    wait_time = soft_max_interval - (time.monotonic() - group_start_time)
+
+                # if there's no current task, we get the next one
+                if task is None:
+                    # anext(aiter) returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
+                    # so far, this doesn't seem to be a problem
+                    task = asyncio.create_task(anext(aiterator))  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
+
+                # we use asyncio.wait to avoid cancelling the coroutine if it's not done
+                done, _ = await asyncio.wait((task,), timeout=wait_time)
+
+                if done:
+                    # the one task we waited for completed
+                    try:
+                        item = done.pop().result()
+                    except StopAsyncIteration:
+                        # if the task raised StopAsyncIteration, we're done iterating
+                        if buffer:
+                            yield buffer
+                        task = None
+                        break
+                    else:
+                        # we got an item, add it to the buffer and set task to None to get the next item
+                        buffer.append(item)
+                        task = None
+                        # if this is the first item in the group, set the group start time
+                        if group_start_time is None:
+                            group_start_time = time.monotonic()
+                elif buffer:
+                    # otherwise if the task timeout expired and we have items in the buffer, yield the buffer
+                    yield buffer
+                    # clear the buffer and reset the group start time ready for the next group
+                    buffer = []
+                    group_start_time = None
 
     try:
         yield async_iter_groups()
-    finally:  # pragma: no cover
-        # after iteration if a tasks still exists, cancel it, this will only happen if an error occurred
-        if task:
-            task.cancel('Cancelling due to error in iterator')
-            with suppress(asyncio.CancelledError):
-                await task
+    finally:
+        await _cleanup_temporal_group(task, aiterator)
 
 
 def sync_anext(iterator: Iterator[T]) -> T:

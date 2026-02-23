@@ -69,10 +69,10 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
-from inline_snapshot import snapshot
-
 from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+
+from ._inline_snapshot import snapshot
 
 pytestmark = [
     pytest.mark.anyio,
@@ -98,6 +98,15 @@ def setup_logfire_instrumentation() -> Iterator[None]:
     # Set up logfire for the tests.
     logfire.configure(metrics=False)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_mcp_tool_cache() -> None:
+    """Clear cached tool defs on module-level DBOSMCPServer instances between tests."""
+    for agent in (complex_dbos_agent, seq_complex_dbos_agent):
+        for toolset in agent.toolsets:
+            if isinstance(toolset, DBOSMCPServer):
+                toolset._cached_tool_defs = None  # pyright: ignore[reportPrivateUsage]
 
 
 @contextmanager
@@ -248,12 +257,10 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             'complex_agent__mcp_server__mcp.call_tool',
             'event_stream_handler',
             'event_stream_handler',
-            'complex_agent__mcp_server__mcp.get_tools',
             'complex_agent__model.request_stream',
             'event_stream_handler',
             'get_weather',
             'event_stream_handler',
-            'complex_agent__mcp_server__mcp.get_tools',
             'complex_agent__model.request_stream',
         ]
     )
@@ -368,7 +375,6 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                 ),
                             ],
                         ),
-                        BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
                         BasicSpan(
                             content='chat gpt-4o',
                             children=[
@@ -432,7 +438,6 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                                 ),
                             ],
                         ),
-                        BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
                         BasicSpan(
                             content='chat gpt-4o',
                             children=[
@@ -580,6 +585,42 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
     )
 
 
+async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None, dbos: DBOS) -> None:
+    """Verify that wrapper-level caching is skipped when cache_tools=False.
+
+    With caching disabled, every model request should be preceded by a get_tools step,
+    rather than only the first one populating the cache.
+    """
+    mcp_toolset = next(ts for ts in complex_dbos_agent.toolsets if isinstance(ts, DBOSMCPServer))
+    server = mcp_toolset._server  # pyright: ignore[reportPrivateUsage]
+
+    original_cache_tools = server.cache_tools
+    server.cache_tools = False
+
+    try:
+        wfid = str(uuid.uuid4())
+        with SetWorkflowID(wfid):
+            result = await complex_dbos_agent.run(
+                'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
+            )
+        assert result.output == snapshot(
+            Response(
+                answers=[
+                    Answer(label='Capital of the country', answer='Mexico City'),
+                    Answer(label='Weather in the capital', answer='Sunny'),
+                    Answer(label='Product Name', answer='Pydantic AI'),
+                ]
+            )
+        )
+
+        steps = await dbos.list_workflow_steps_async(wfid)
+        step_names = [step['function_name'] for step in steps]
+        # Without caching, get_tools should be called 3 times (once per model request)
+        assert step_names.count('complex_agent__mcp_server__mcp.get_tools') == 3
+    finally:
+        server.cache_tools = original_cache_tools
+
+
 # Test sequential tool call works
 async def test_complex_agent_run_sequential_tool(allow_model_requests: None, dbos: DBOS) -> None:
     # Set a workflow ID for testing list steps
@@ -610,12 +651,10 @@ async def test_complex_agent_run_sequential_tool(allow_model_requests: None, dbo
             'event_stream_handler',
             'seq_complex_agent__mcp_server__mcp.call_tool',
             'event_stream_handler',
-            'seq_complex_agent__mcp_server__mcp.get_tools',
             'seq_complex_agent__model.request_stream',
             'event_stream_handler',
             'get_weather',
             'event_stream_handler',
-            'seq_complex_agent__mcp_server__mcp.get_tools',
             'seq_complex_agent__model.request_stream',
         ]
     )
@@ -844,10 +883,9 @@ async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_
     with pytest.raises(Exception) as exc_info:
         await simple_dbos_agent.run('What is the capital of Mexico?', event_stream_handler=simple_event_stream_handler)
 
-    assert (
-        "local object 'test_dbos_agent_run_in_workflow_with_event_stream_handler.<locals>.simple_event_stream_handler'"
-        in str(exc_info.value)
-    )
+    # 3.14+: _pickle.PicklingError("Can't pickle local object <function ...>")
+    # <=3.13: AttributeError("Can't get local object '...<locals>...'")
+    assert 'local object' in str(exc_info.value) and 'simple_event_stream_handler' in str(exc_info.value)
 
 
 async def test_dbos_agent_run_in_workflow_with_model(allow_model_requests: None, dbos: DBOS):

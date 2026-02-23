@@ -9,7 +9,6 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, MCPServerTool
@@ -19,6 +18,7 @@ from pydantic_ai.profiles.google import GoogleModelProfile
 from pydantic_ai.profiles.groq import GroqModelProfile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 
+from ._inline_snapshot import snapshot
 from .conftest import try_import
 
 with try_import() as starlette_import_successful:

@@ -177,7 +177,11 @@ PrecisionRecallEvaluator(
 | `title` | `str` | `'Precision-Recall Curve'` | Title shown in reports |
 | `n_thresholds` | `int` | `100` | Number of threshold points on the curve |
 
-**Returns:** [`PrecisionRecall`][pydantic_evals.reporting.analyses.PrecisionRecall]
+**Returns:** [`PrecisionRecall`][pydantic_evals.reporting.analyses.PrecisionRecall] + [`ScalarResult`][pydantic_evals.reporting.analyses.ScalarResult] (AUC)
+
+The AUC is computed at full resolution (using every unique score as a threshold) for accuracy,
+then the curve points are downsampled to `n_thresholds` for display. The AUC is returned both
+on the curve (for chart rendering) and as a separate `ScalarResult` for querying and sorting.
 
 **Score Sources:**
 
@@ -234,6 +238,77 @@ dataset = Dataset(
     ],
 )
 ```
+
+---
+
+### ROCAUCEvaluator
+
+Computes an ROC (Receiver Operating Characteristic) curve and AUC from numeric scores
+and binary ground-truth labels. The ROC curve plots the True Positive Rate against the
+False Positive Rate at various threshold values, with a dashed random-baseline diagonal
+for reference.
+
+```python
+from pydantic_evals.evaluators import ROCAUCEvaluator
+
+ROCAUCEvaluator(
+    score_key='confidence',
+    positive_from='assertions',
+    positive_key='is_correct',
+)
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `score_key` | `str` | _(required)_ | Key in scores or metrics dict |
+| `positive_from` | `'expected_output' \| 'assertions' \| 'labels'` | _(required)_ | Source for ground-truth binary labels |
+| `positive_key` | `str \| None` | `None` | Key in assertions or labels dict |
+| `score_from` | `'scores' \| 'metrics'` | `'scores'` | Source for numeric scores |
+| `title` | `str` | `'ROC Curve'` | Title shown in reports |
+| `n_thresholds` | `int` | `100` | Number of threshold points on the curve |
+
+**Returns:** [`LinePlot`][pydantic_evals.reporting.analyses.LinePlot] + [`ScalarResult`][pydantic_evals.reporting.analyses.ScalarResult] (AUC)
+
+The AUC is computed at full resolution. The chart includes a dashed "Random" baseline
+diagonal from (0, 0) to (1, 1) for visual comparison.
+
+**Score and Positive Sources:** Same as [`PrecisionRecallEvaluator`](#precisionrecallevaluator).
+
+---
+
+### KolmogorovSmirnovEvaluator
+
+Computes a Kolmogorov-Smirnov plot and KS statistic from numeric scores and binary
+ground-truth labels. The KS plot shows the empirical CDFs (cumulative distribution functions)
+of the score distribution for positive and negative cases. The KS statistic is the maximum
+vertical distance between the two CDFs — higher values indicate better class separation.
+
+```python
+from pydantic_evals.evaluators import KolmogorovSmirnovEvaluator
+
+KolmogorovSmirnovEvaluator(
+    score_key='confidence',
+    positive_from='assertions',
+    positive_key='is_correct',
+)
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `score_key` | `str` | _(required)_ | Key in scores or metrics dict |
+| `positive_from` | `'expected_output' \| 'assertions' \| 'labels'` | _(required)_ | Source for ground-truth binary labels |
+| `positive_key` | `str \| None` | `None` | Key in assertions or labels dict |
+| `score_from` | `'scores' \| 'metrics'` | `'scores'` | Source for numeric scores |
+| `title` | `str` | `'KS Plot'` | Title shown in reports |
+| `n_thresholds` | `int` | `100` | Number of threshold points on the curve |
+
+**Returns:** [`LinePlot`][pydantic_evals.reporting.analyses.LinePlot] + [`ScalarResult`][pydantic_evals.reporting.analyses.ScalarResult] (KS Statistic)
+
+**Score and Positive Sources:** Same as [`PrecisionRecallEvaluator`](#precisionrecallevaluator).
 
 ---
 
@@ -373,6 +448,54 @@ Precision-recall curve data (typically produced by `PrecisionRecallEvaluator`):
 Each `PrecisionRecallCurve` contains a `name`, a list of `PrecisionRecallPoint`s (with `threshold`,
 `precision`, `recall`), and an optional `auc` value.
 
+---
+
+#### LinePlot
+
+A generic XY line chart with labeled axes, supporting multiple curves. Use this for ROC curves,
+KS plots, calibration curves, or any custom line chart:
+
+```python
+from pydantic_evals.reporting.analyses import LinePlot, LinePlotCurve, LinePlotPoint
+
+LinePlot(
+    title='ROC Curve',
+    x_label='False Positive Rate',
+    y_label='True Positive Rate',
+    x_range=(0, 1),
+    y_range=(0, 1),
+    curves=[
+        LinePlotCurve(
+            name='Model (AUC: 0.95)',
+            points=[LinePlotPoint(x=0.0, y=0.0), LinePlotPoint(x=0.1, y=0.8), LinePlotPoint(x=1.0, y=1.0)],
+        ),
+        LinePlotCurve(
+            name='Random',
+            points=[LinePlotPoint(x=0, y=0), LinePlotPoint(x=1, y=1)],
+            style='dashed',
+        ),
+    ],
+)
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `title` | `str` | Display name |
+| `x_label` | `str` | Label for the x-axis |
+| `y_label` | `str` | Label for the y-axis |
+| `x_range` | `tuple[float, float] \| None` | Optional fixed range for x-axis |
+| `y_range` | `tuple[float, float] \| None` | Optional fixed range for y-axis |
+| `curves` | `list[LinePlotCurve]` | One or more curves to plot |
+| `description` | `str \| None` | Optional longer description |
+
+Each `LinePlotCurve` contains a `name`, a list of `LinePlotPoint`s (with `x`, `y`),
+an optional `style` (`'solid'` or `'dashed'`), and an optional `step` interpolation
+mode (`'start'`, `'middle'`, or `'end'`) for step functions like empirical CDFs.
+
+`LinePlot` is the recommended return type for custom curve-based evaluators — any evaluator
+that returns a `LinePlot` will be rendered as a line chart in the Logfire UI without requiring
+any frontend changes.
+
 ### Returning Multiple Analyses
 
 A single report evaluator can return multiple analyses by returning a list:
@@ -471,8 +594,8 @@ report_evaluators:
       positive_key: is_correct
 ```
 
-Built-in report evaluators (`ConfusionMatrixEvaluator`, `PrecisionRecallEvaluator`) are
-recognized automatically. For custom report evaluators, pass them via `custom_report_evaluator_types`:
+Built-in report evaluators (`ConfusionMatrixEvaluator`, `PrecisionRecallEvaluator`,
+`ROCAUCEvaluator`, `KolmogorovSmirnovEvaluator`) are recognized automatically. For custom report evaluators, pass them via `custom_report_evaluator_types`:
 
 ```python {test="skip" lint="skip"}
 from pydantic_evals import Dataset
@@ -501,6 +624,7 @@ as interactive visualizations:
 
 - **Confusion matrices** are displayed as heatmaps
 - **Precision-recall curves** are rendered as line charts with AUC in the legend
+- **Line plots** (ROC curves, KS plots, etc.) are rendered as line charts with configurable axes
 - **Scalar results** are shown as labeled values
 - **Tables** are rendered as formatted data tables
 
@@ -520,9 +644,11 @@ from pydantic_evals.evaluators import (
     ConfusionMatrixEvaluator,
     Evaluator,
     EvaluatorContext,
+    KolmogorovSmirnovEvaluator,
     PrecisionRecallEvaluator,
     ReportEvaluator,
     ReportEvaluatorContext,
+    ROCAUCEvaluator,
 )
 from pydantic_evals.reporting.analyses import ScalarResult
 
@@ -586,6 +712,18 @@ dataset = Dataset(
             positive_from='assertions',
             positive_key='is_correct',
         ),
+        ROCAUCEvaluator(
+            score_from='scores',
+            score_key='confidence',
+            positive_from='assertions',
+            positive_key='is_correct',
+        ),
+        KolmogorovSmirnovEvaluator(
+            score_from='scores',
+            score_key='confidence',
+            positive_from='assertions',
+            positive_key='is_correct',
+        ),
         AccuracyEvaluator(),
     ],
 )
@@ -597,6 +735,11 @@ for analysis in report.analyses:
     print(f'{analysis.type}: {analysis.title}')
     #> confusion_matrix: Animal Classification
     #> precision_recall: Precision-Recall Curve
+    #> scalar: Precision-Recall Curve AUC
+    #> line_plot: ROC Curve
+    #> scalar: ROC Curve AUC
+    #> line_plot: KS Plot
+    #> scalar: KS Statistic
     #> scalar: Accuracy
 ```
 
