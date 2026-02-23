@@ -11,6 +11,7 @@ from typing import Literal, cast
 import httpx
 from typing_extensions import Any, TypedDict
 
+from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.tools import Tool
 
 __all__ = ('you_search_tool',)
@@ -159,6 +160,9 @@ class YouSearchTool:
     api_key: str
     """The You.com API key."""
 
+    http_client: httpx.AsyncClient | None = None
+    """HTTP client for API requests. If `None`, a shared cached client is used."""
+
     count: int | None = None
     """Default maximum number of results per section (web/news). Range: 1-100. API default is 10."""
 
@@ -267,14 +271,14 @@ class YouSearchTool:
         return params
 
     async def _request(self, params: dict[str, str | int]) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(
-                _YOU_SEARCH_URL,
-                params=params,
-                headers={'X-API-Key': self.api_key},
-            )
-            response.raise_for_status()
-            payload = response.json()
+        client = self.http_client or cached_async_http_client(provider='you')
+        response = await client.get(
+            _YOU_SEARCH_URL,
+            params=params,
+            headers={'X-API-Key': self.api_key},
+        )
+        response.raise_for_status()
+        payload = response.json()
         if isinstance(payload, dict):
             return cast(dict[str, Any], payload)
         return {}
@@ -399,6 +403,7 @@ class YouSearchTool:
 def you_search_tool(
     api_key: str,
     *,
+    http_client: httpx.AsyncClient | None = None,
     count: int | None = None,
     offset: int | None = None,
     freshness: Freshness | None = None,
@@ -412,6 +417,8 @@ def you_search_tool(
 
     Args:
         api_key: You.com API key. [Get one here](https://you.com/platform/api-keys).
+        http_client: An existing `httpx.AsyncClient` to use.
+            If not provided, a shared cached client is used.
         count: Default maximum number of results per section (1-100). Default: 10.
         offset: Pagination offset (0-9). Not controllable by LLM.
         freshness: Default result freshness: 'day', 'week', 'month', 'year', or 'YYYY-MM-DDtoYYYY-MM-DD'.
@@ -427,6 +434,7 @@ def you_search_tool(
     return Tool[Any](
         YouSearchTool(
             api_key=api_key,
+            http_client=http_client,
             count=count,
             offset=offset,
             freshness=freshness,
@@ -437,5 +445,5 @@ def you_search_tool(
             livecrawl_formats=livecrawl_formats,
         ).__call__,
         name='you_search',
-        description='Leverages the You.com Search API to search the web and return web and/or news results.',
+        description='Searches the web and news using the You.com Search API and returns the results.',
     )
