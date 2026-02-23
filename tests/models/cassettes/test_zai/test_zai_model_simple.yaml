@@ -73,4 +73,89 @@ interactions:
     status:
       code: 200
       message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '98'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: false
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1106'
+      content-type:
+      - application/json; charset=UTF-8
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 is 4.
+          reasoning_content: |-
+            1.  **Analyze the user's input:** The user is asking a very simple, straightforward arithmetic question: "What is 2 + 2?".
+
+            2.  **Identify the core task:** The task is to perform addition of two integers.
+
+            3.  **Perform the calculation:**
+                *   $2 + 2 = 4$.
+
+            4.  **Formulate the response:**
+                *   The answer is 4.
+                *   It's a direct question, so a direct answer is best.
+                *   There is no ambiguity or hidden meaning.
+
+            5.  **Final Output Construction:** "2 + 2 is 4." or just "4".
+
+            6.  **Review:** Does this answer the prompt accurately? Yes. Is it concise? Yes.
+
+            7.  **Final Result:** 2 + 2 = 4.
+          role: assistant
+      created: 1771856621
+      id: 202602232223385839ca489e1c4bc1
+      model: glm-4.7
+      object: chat.completion
+      request_id: 202602232223385839ca489e1c4bc1
+      usage:
+        completion_tokens: 190
+        completion_tokens_details:
+          reasoning_tokens: 180
+        prompt_tokens: 13
+        prompt_tokens_details:
+          cached_tokens: 2
+        total_tokens: 203
+    status:
+      code: 200
+      message: OK
 version: 1
