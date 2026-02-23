@@ -3949,8 +3949,8 @@ async def test_bedrock_native_output_supported_model(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
 ):
-    """Claude Sonnet 4.5 via Bedrock: NativeOutput → outputConfig with json_schema."""
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    """Claude Sonnet 4.6 via Bedrock: NativeOutput → outputConfig with json_schema."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
     agent = Agent(model, output_type=NativeOutput(CityInfo))
 
     result = await agent.run('What is the capital of France? Give me the city name, country, and population.')
@@ -3970,8 +3970,8 @@ async def test_bedrock_native_output_supported_model(
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Paris","country":"France","population":2161000}')],
-                usage=RequestUsage(input_tokens=210, output_tokens=18),
-                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                usage=RequestUsage(input_tokens=211, output_tokens=18),
+                model_name='us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
