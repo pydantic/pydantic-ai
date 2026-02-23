@@ -39,10 +39,10 @@ class ModelRequestParameters:
 
     @cached_property
     def prompted_output_instructions(self) -> str | None:
-        if self.output_mode == 'prompted' and self.prompted_output_template and self.output_object:
-            from ._output import PromptedOutputSchema
+        if self.prompted_output_template and self.output_object:
+            from ._output import StructuredTextOutputSchema
 
-            return PromptedOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
+            return StructuredTextOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
         return None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
