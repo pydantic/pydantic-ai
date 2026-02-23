@@ -21,13 +21,13 @@ and pick up conversations where it left off.
 Install the additional dependencies:
 
 ```bash
-pip install sayou-pydantic-ai
+pip install pydantic-ai sayou-pydantic-ai
 ```
 
-Then run:
+Save the code below to a file called `persistent_memory.py`, then run:
 
 ```bash
-python -c "import asyncio; from persistent_memory import main; asyncio.run(main())"
+python persistent_memory.py
 ```
 
 ## Example Code
