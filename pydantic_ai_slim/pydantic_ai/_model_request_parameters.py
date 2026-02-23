@@ -10,6 +10,9 @@ from .builtin_tools import AbstractBuiltinTool
 if TYPE_CHECKING:
     from .tools import ToolDefinition
 else:  # pragma: no cover
+    # Runtime-importing `ToolDefinition` from `tools` creates a circular import:
+    # `messages` -> `_model_request_parameters` -> `tools` -> `messages`.
+    # We only need the concrete type for static checking.
     ToolDefinition = Any
 
 if TYPE_CHECKING:

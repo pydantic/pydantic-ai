@@ -35,6 +35,9 @@ if TYPE_CHECKING:
     ModelRequestParametersField = ModelRequestParameters | None
     ModelSettingsField = ModelSettings | None
 else:  # pragma: no cover
+    # These fields are excluded from serialization, but `ModelMessagesTypeAdapter` still builds the full schema for
+    # `ModelRequest`. Keeping them as `Any` at runtime avoids deep schema inspection of nested types
+    # (including `httpx.Timeout` in `ModelSettings`) for data we never serialize.
     ModelRequestParametersField = Any
     ModelSettingsField = Any
 
