@@ -383,7 +383,7 @@ class TextContent:
     text: str
     """The text content of the message."""
     annotations: PromptAnnotations | None = None
-    meta: dict[str, Any] | None = Field(alias='_meta', default=None)
+    meta: dict[str, Any] | None = None
     """
     See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
     for notes on _meta usage.
@@ -403,7 +403,7 @@ class ImageContent:
     image types.
     """
     annotations: PromptAnnotations | None = None
-    meta: dict[str, Any] | None = Field(alias='_meta', default=None)
+    meta: dict[str, Any] | None = None
     """
     See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
     for notes on _meta usage.
@@ -424,7 +424,7 @@ class AudioContent:
     audio types.
     """
     annotations: PromptAnnotations | None = None
-    meta: dict[str, Any] | None = Field(alias='_meta', default=None)
+    meta: dict[str, Any] | None = None
     """
     See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
     for notes on _meta usage.
