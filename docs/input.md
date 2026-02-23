@@ -71,7 +71,7 @@ If you have a direct URL for the document, you can use [`DocumentUrl`][pydantic_
 ```py {title="document_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, DocumentUrl
 
-agent = Agent(model='anthropic:claude-sonnet-4-5')
+agent = Agent(model='anthropic:claude-sonnet-4-6')
 result = agent.run_sync(
     [
         'What is the main content of this document?',
@@ -91,7 +91,7 @@ from pathlib import Path
 from pydantic_ai import Agent, BinaryContent
 
 pdf_path = Path('document.pdf')
-agent = Agent(model='anthropic:claude-sonnet-4-5')
+agent = Agent(model='anthropic:claude-sonnet-4-6')
 result = agent.run_sync(
     [
         'What is the main content of this document?',

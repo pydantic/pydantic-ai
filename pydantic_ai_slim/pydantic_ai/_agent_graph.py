@@ -628,13 +628,18 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # Check for content filter on empty response
                     if self.model_response.finish_reason == 'content_filter':
                         details = self.model_response.provider_details or {}
-                        reason = details.get('finish_reason', 'content_filter')
-
                         body = _messages.ModelMessagesTypeAdapter.dump_json([self.model_response]).decode()
 
-                        raise exceptions.ContentFilterError(
-                            f"Content filter triggered. Finish reason: '{reason}'", body=body
-                        )
+                        if reason := details.get('finish_reason'):
+                            message = f"Content filter triggered. Finish reason: '{reason}'"
+                        elif reason := details.get('block_reason'):
+                            message = f"Content filter triggered. Block reason: '{reason}'"
+                        elif refusal := details.get('refusal'):
+                            message = f'Content filter triggered. Refusal: {refusal!r}'
+                        else:  # pragma: no cover
+                            message = 'Content filter triggered.'
+
+                        raise exceptions.ContentFilterError(message, body=body)
 
                     # we got an empty response.
                     # this sometimes happens with anthropic (and perhaps other models)
