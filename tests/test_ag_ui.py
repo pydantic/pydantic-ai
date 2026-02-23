@@ -2602,9 +2602,6 @@ async def test_frontend_system_prompt_only_request_dropped():
             async for _ in adapter.encode_stream(adapter.run_stream()):
                 pass
 
-    assert not any(
-        isinstance(part, SystemPromptPart) for msg in messages if isinstance(msg, ModelRequest) for part in msg.parts
-    )
     assert messages == snapshot(
         [
             ModelResponse(
@@ -2709,6 +2706,72 @@ async def test_frontend_system_prompt_accepted_no_agent_prompt():
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_frontend_system_prompt_accepted_multi_turn():
+    """Test that accepted frontend system prompts are preserved on multi-turn conversations."""
+
+    agent = Agent(model=TestModel(), system_prompt='Agent system prompt')
+
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        messages=[
+            SystemMessage(
+                id='msg_sys',
+                content='Frontend system prompt',
+            ),
+            UserMessage(
+                id='msg_1',
+                content='First message',
+            ),
+            AssistantMessage(
+                id='msg_2',
+                content='First response',
+            ),
+            UserMessage(
+                id='msg_3',
+                content='Second message',
+            ),
+        ],
+        state=None,
+        context=[],
+        tools=[],
+        forwarded_props=None,
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept_frontend_system_prompt=True)
+
+    with capture_run_messages() as messages:
+        async for _ in adapter.encode_stream(adapter.run_stream()):
+            pass
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Frontend system prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='First message', timestamp=IsDatetime()),
+                ],
+            ),
+            ModelResponse(parts=[TextPart(content='First response')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Second message', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=57, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
