@@ -60,7 +60,7 @@ __all__ = (
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
-EndStrategy = Literal['early', 'exhaustive']
+EndStrategy = Literal['early', 'complete', 'exhaustive']
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
@@ -920,7 +920,7 @@ async def process_tool_calls(  # noqa: C901
             )
             output_parts.append(part)
         # Early strategy is chosen and final result is already set
-        elif ctx.deps.end_strategy == 'early' and final_result:
+        elif (ctx.deps.end_strategy == 'early' or ctx.deps.end_strategy == 'complete') and final_result:
             yield _messages.FunctionToolCallEvent(call)
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
