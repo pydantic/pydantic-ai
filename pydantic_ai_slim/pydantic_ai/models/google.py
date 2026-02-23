@@ -122,6 +122,7 @@ LatestGoogleModelNames = Literal[
     'gemini-3-flash-preview',
     'gemini-3-pro-preview',
     'gemini-3-pro-image-preview',
+    'gemini-3.1-pro-preview',
 ]
 """Latest Gemini models."""
 
@@ -191,6 +192,26 @@ class GoogleModelSettings(ModelSettings, total=False):
     """The name of the cached content to use for the model.
 
     See <https://ai.google.dev/gemini-api/docs/caching> for more information.
+    """
+
+    google_logprobs: bool
+    """Include log probabilities in the response.
+
+    See <https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/content-generation-parameters#log-probabilities-output-tokens> for more information.
+
+    Note: Only supported for Vertex AI and non-streaming requests.
+
+    These will be included in `ModelResponse.provider_details['logprobs']`.
+    """
+
+    google_top_logprobs: int
+    """Include log probabilities of the top n tokens in the response.
+
+    See <https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/content-generation-parameters#log-probabilities-output-tokens> for more information.
+
+    Note: Only supported for Vertex AI and non-streaming requests.
+
+    These will be included in `ModelResponse.provider_details['logprobs']`.
     """
 
 
@@ -477,7 +498,11 @@ class GoogleModel(Model):
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> GenerateContentResponse | Awaitable[AsyncIterator[GenerateContentResponse]]:
-        contents, config = await self._build_content_and_config(messages, model_settings, model_request_parameters)
+        contents, config = await self._build_content_and_config(
+            messages,
+            model_settings,
+            model_request_parameters,
+        )
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
             return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
@@ -556,6 +581,14 @@ class GoogleModel(Model):
             image_config=image_config,
         )
 
+        # Validate logprobs settings
+        logprobs_requested = model_settings.get('google_logprobs')
+        if logprobs_requested:
+            config['response_logprobs'] = True
+
+            if 'google_top_logprobs' in model_settings:
+                config['logprobs'] = model_settings.get('google_top_logprobs')
+
         return contents, config
 
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
@@ -590,6 +623,10 @@ class GoogleModel(Model):
             parts = []
         else:
             parts = candidate.content.parts or []
+
+        if candidate and (logprob_results := candidate.logprobs_result):
+            vendor_details['logprobs'] = logprob_results.model_dump(mode='json')
+            vendor_details['avg_logprobs'] = candidate.avg_logprobs
 
         usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
         grounding_metadata = candidate.grounding_metadata if candidate else None

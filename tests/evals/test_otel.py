@@ -865,16 +865,20 @@ async def test_or_cannot_be_mixed(span_tree: SpanTree):
     assert str(exc_info.value) == snapshot("Cannot combine 'or_' conditions with other conditions at the same level")
 
 
-async def test_context_subtree_invalid_tracer_provider(mocker: MockerFixture):
-    """Test that context_subtree correctly records spans in independent async contexts."""
-    # from opentelemetry import trace
+async def test_context_subtree_custom_tracer_provider_without_add_span_processor(mocker: MockerFixture):
+    """Test that context_subtree gracefully degrades when the TracerProvider lacks add_span_processor.
+
+    This covers third-party TracerProviders like ddtrace's that don't implement
+    the full OpenTelemetry SDK TracerProvider interface. See #3927.
+    """
 
     mocker.patch('pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=None)
-    with pytest.raises(TypeError) as exc_info:
-        with context_subtree():
-            pass
-    assert str(exc_info.value) == snapshot(
-        "Expected `tracer_provider` to have an `add_span_processor` method; got an instance of <class 'NoneType'>. For help resolving this, please create an issue at https://github.com/pydantic/pydantic-ai/issues."
+    with context_subtree() as span_tree:
+        pass
+    assert str(span_tree) == snapshot(
+        'The current TracerProvider (NoneType) does not support `add_span_processor`,'
+        ' so span tree recording is not available.'
+        ' Evaluation will still work, but `span_tree` will not be populated in evaluator results.'
     )
 
 
