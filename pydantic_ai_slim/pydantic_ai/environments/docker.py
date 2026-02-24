@@ -26,6 +26,7 @@ from ._base import (
     ExecutionResult,
     FileInfo,
     apply_edit,
+    glob_match,
 )
 
 try:
@@ -86,67 +87,15 @@ def _filter_grep_count_output(text: str) -> str:
     return '\n'.join(line for line in text.splitlines() if not line.endswith(':0'))
 
 
-def _globstar_zero_dir_variants(pattern: str) -> list[str]:
-    """Generate variants of *pattern* with one or more ``**/`` segments collapsed.
+def _build_find_cmd(*, path: str = '.', recursive: bool = True) -> str:
+    """Build a shell `find` command that lists all files under *path*.
 
-    In ``find -path``, the literal ``/`` inside ``**/`` requires at least one
-    directory level, so ``**`` never matches zero directories.  This helper
-    produces all the collapsed forms needed to cover the zero-directory case.
-
-    Examples::
-
-        '**/*.py'          → ['*.py']
-        'src/**/*.py'      → ['src/*.py']
-        '**/src/**/*.py'   → ['**/src/*.py', 'src/**/*.py', 'src/*.py']
+    When *recursive* is False, ``-maxdepth 1`` is added so that only files
+    directly in *path* are returned (matching ``pathlib.glob`` semantics for
+    patterns without ``**``).
     """
-    segments = pattern.split('**/')
-    if len(segments) <= 1:
-        return []
-    n = len(segments) - 1  # number of **/ occurrences
-    all_kept = (1 << n) - 1
-    variants: set[str] = set()
-    for mask in range(all_kept):  # every subset except "all kept" (= original)
-        result = segments[0]
-        for i in range(n):
-            if mask & (1 << i):
-                result += '**/' + segments[i + 1]
-            else:
-                result += segments[i + 1]
-        variants.add(result)
-    return sorted(variants)
-
-
-def _build_glob_cmd(pattern: str, *, path: str = '.') -> str:
-    """Build a shell `find` command to match files by pattern.
-
-    When the pattern does not contain ``**``, ``-maxdepth`` is added so that
-    ``*.py`` only matches in the target directory (matching Local/Memory
-    behaviour), while ``**/*.py`` recurses without limit.
-    """
-    path_pattern = f'{path}/{pattern}' if '/' in pattern else pattern
-    # Limit recursion depth for non-** patterns to match pathlib.glob semantics
-    if '**' in pattern:
-        depth_flag = ''
-    else:
-        depth_flag = f' -maxdepth {pattern.count("/") + 1}'
-    conditions = [f'-path {_shell_escape(path_pattern)}', f'-name {_shell_escape(pattern)}']
-    # `**/` in find's -path requires at least one directory level, so `**`
-    # never matches zero directories.  Add conditions for every collapsed
-    # variant to cover the zero-directory case(s).
-    for variant in _globstar_zero_dir_variants(pattern):
-        if '/' in variant:
-            conditions.append(f'-path {_shell_escape(path + "/" + variant)}')
-        else:
-            conditions.append(f'-name {_shell_escape(variant)}')
-    return f'find {_shell_escape(path)}{depth_flag} \\( {" -o ".join(conditions)} \\) 2>/dev/null | head -100'
-
-
-def _parse_glob_output(text: str) -> list[str]:
-    """Parse output of a find/glob command into a list of paths."""
-    text = text.strip()
-    if not text:
-        return []
-    return [line.removeprefix('./') for line in text.splitlines() if line]
+    depth_flag = '' if recursive else ' -maxdepth 1'
+    return f'find {_shell_escape(path)}{depth_flag} -type f 2>/dev/null | head -100'
 
 
 def _put_file(container: Container, path: str, data: bytes) -> None:
@@ -678,9 +627,22 @@ class DockerEnvironment(ExecutionEnvironment):
 
     async def glob(self, pattern: str, *, path: str = '.') -> list[str]:
         def _glob() -> list[str]:
-            cmd = _build_glob_cmd(pattern, path=path)
-            _, output = self._required_container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
-            return _parse_glob_output(output.decode('utf-8', errors='replace'))
+            recursive = '**' in pattern
+            cmd = _build_find_cmd(path=path, recursive=recursive)
+            _, output = self.container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
+            text = output.decode('utf-8', errors='replace').strip()
+            if not text:
+                return []
+            # Strip leading ./ and path prefix to get relative paths, then filter
+            results: list[str] = []
+            prefix = path.rstrip('/') + '/' if path != '.' else './'
+            for line in text.splitlines():
+                if not line:
+                    continue
+                rel = line.removeprefix(prefix).removeprefix('./')
+                if glob_match(rel, pattern):
+                    results.append(line.removeprefix('./'))
+            return sorted(results)
 
         return await anyio.to_thread.run_sync(_glob)
 

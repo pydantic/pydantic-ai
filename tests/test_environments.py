@@ -39,13 +39,10 @@ try:
 
     from pydantic_ai.environments.docker import (
         DockerEnvironment,
-        _build_glob_cmd,
         _build_grep_cmd,
         _build_read_file_cmd,
         _DockerEnvironmentProcess,
         _filter_grep_count_output,
-        _globstar_zero_dir_variants,
-        _parse_glob_output,
         _put_file,
         _shell_escape,
     )
@@ -994,6 +991,7 @@ async def test_memory_read_write():
 async def test_memory_initial_files():
     env = MemoryEnvironment(files={'a.txt': 'alpha', 'b.txt': 'beta'})
     async with env:
+        assert env.files == {'a.txt': 'alpha', 'b.txt': 'beta'}
         a = await env.read_file('a.txt')
         assert isinstance(a, str)
         assert 'alpha' in a
@@ -1748,9 +1746,27 @@ class MockContainer:
 
         # Handle find (glob)
         if 'find' in cmd_str:
+            # Extract the search path from: find '<path>' ...
+            import shlex as _shlex
+
+            find_part = cmd_str.split('|')[0].strip()
+            # Remove the 'sh -c' wrapper if present
+            if find_part.startswith('sh -c '):
+                find_part = find_part[len('sh -c '):]
+            tokens = _shlex.split(find_part)
+            # tokens[0] is 'find', tokens[1] is the path
+            search_path = tokens[1] if len(tokens) > 1 else '.'
+            wd = workdir or '/workspace'
             matches = []
-            for path in sorted(self._files):
-                matches.append(path)  # pragma: no cover
+            for fpath in sorted(self._files):
+                # Make path relative to workdir
+                if not fpath.startswith(wd + '/'):
+                    continue
+                rel = fpath[len(wd) + 1:]
+                if search_path == '.':
+                    matches.append(f'./{rel}')
+                elif rel.startswith(search_path + '/') or rel == search_path:
+                    matches.append(rel)
             return 0, '\n'.join(matches).encode('utf-8')
 
         # Handle grep
@@ -1889,10 +1905,43 @@ class TestDocker:
         entries = await mock_docker_sandbox.ls('.')
         assert isinstance(entries, list)
 
-    async def test_docker_glob(self, mock_docker_sandbox: Any) -> None:
-        """DockerEnvironment.glob returns matching paths."""
+    async def test_docker_glob_recursive(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+        """**/*.py matches files in subdirs and root."""
+        mock_container._files['/workspace/top.py'] = b''
+        mock_container._files['/workspace/src/main.py'] = b''
+        mock_container._files['/workspace/src/lib/util.py'] = b''
+        mock_container._files['/workspace/readme.md'] = b''
+        matches = await mock_docker_sandbox.glob('**/*.py')
+        assert sorted(matches) == ['src/lib/util.py', 'src/main.py', 'top.py']
+
+    async def test_docker_glob_non_recursive(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+        """*.py matches only in target dir, not subdirs."""
+        mock_container._files['/workspace/top.py'] = b''
+        mock_container._files['/workspace/src/nested.py'] = b''
         matches = await mock_docker_sandbox.glob('*.py')
-        assert isinstance(matches, list)
+        assert matches == ['top.py']
+
+    async def test_docker_glob_with_path(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+        """*.py with path='src' restricts scope."""
+        mock_container._files['/workspace/top.py'] = b''
+        mock_container._files['/workspace/src/main.py'] = b''
+        mock_container._files['/workspace/src/other.txt'] = b''
+        matches = await mock_docker_sandbox.glob('*.py', path='src')
+        assert matches == ['src/main.py']
+
+    async def test_docker_glob_no_matches(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+        """Returns empty list when nothing matches."""
+        mock_container._files['/workspace/readme.md'] = b''
+        matches = await mock_docker_sandbox.glob('*.py')
+        assert matches == []
+
+    async def test_docker_glob_zero_dir_match(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+        """**/*.py matches top-level .py files (zero-directory case)."""
+        mock_container._files['/workspace/top.py'] = b''
+        mock_container._files['/workspace/deep/nested.py'] = b''
+        matches = await mock_docker_sandbox.glob('**/*.py')
+        assert 'top.py' in matches
+        assert 'deep/nested.py' in matches
 
     async def test_docker_grep(self, mock_docker_sandbox: Any) -> None:
         """DockerEnvironment.grep returns matches."""
@@ -2663,72 +2712,6 @@ class TestDocker:
         # Even a malicious glob_pattern gets safely escaped
         cmd2 = _build_grep_cmd('pat', glob_pattern='$(evil)')
         assert '$(evil)' not in cmd2.replace("'$(evil)'", '')  # Only appears inside quotes
-
-    def test_build_glob_cmd(self):
-        cmd = _build_glob_cmd('*.py')
-        assert 'find' in cmd
-        assert "'*.py'" in cmd
-        assert "'.'" in cmd
-        assert '-maxdepth 1' in cmd
-
-    def test_build_glob_cmd_with_path(self):
-        cmd = _build_glob_cmd('*.py', path='src')
-        assert "'src'" in cmd
-        assert '-maxdepth 1' in cmd
-
-    def test_build_glob_cmd_nested_pattern(self):
-        cmd = _build_glob_cmd('src/*.py')
-        assert '-maxdepth 2' in cmd
-
-    def test_build_glob_cmd_recursive_no_maxdepth(self):
-        cmd = _build_glob_cmd('**/*.py')
-        assert '-maxdepth' not in cmd
-        # Root-level files should also match via the -name suffix condition
-        assert "-name '*.py'" in cmd
-
-    def test_build_glob_cmd_recursive_with_subdir(self):
-        cmd = _build_glob_cmd('**/subdir/*.py')
-        assert '-maxdepth' not in cmd
-        # Should include a -path condition for the root-level subdir case
-        assert "-path './subdir/*.py'" in cmd
-
-    def test_build_glob_cmd_mid_pattern_globstar(self):
-        """Mid-pattern **/ should add a zero-directory fallback condition."""
-        cmd = _build_glob_cmd('src/**/*.py')
-        assert '-maxdepth' not in cmd
-        # The zero-directory collapse of src/**/*.py → src/*.py
-        assert "-path './src/*.py'" in cmd
-
-    def test_build_glob_cmd_multiple_globstars(self):
-        """Multiple **/ segments should generate all collapsed variants."""
-        cmd = _build_glob_cmd('**/src/**/*.py')
-        assert '-maxdepth' not in cmd
-        # All three collapsed variants
-        assert "-path './**/src/*.py'" in cmd
-        assert "-path './src/**/*.py'" in cmd
-        assert "-path './src/*.py'" in cmd
-
-    def test_globstar_zero_dir_variants(self):
-        assert _globstar_zero_dir_variants('*.py') == []
-        assert _globstar_zero_dir_variants('src/*.py') == []
-        assert _globstar_zero_dir_variants('**/*.py') == ['*.py']
-        assert _globstar_zero_dir_variants('src/**/*.py') == ['src/*.py']
-        assert sorted(_globstar_zero_dir_variants('**/src/**/*.py')) == [
-            '**/src/*.py',
-            'src/**/*.py',
-            'src/*.py',
-        ]
-
-    def test_parse_glob_output_empty(self):
-        assert _parse_glob_output('') == []
-        assert _parse_glob_output('  ') == []
-        assert _parse_glob_output('\n') == []
-
-    def test_parse_glob_output_multiline(self):
-        assert _parse_glob_output('a.py\nb.py\nc.py\n') == ['a.py', 'b.py', 'c.py']
-
-    def test_parse_glob_output_strips_dot_slash(self):
-        assert _parse_glob_output('./a.py\n./src/b.py\nc.py\n') == ['a.py', 'src/b.py', 'c.py']
 
     def test_filter_grep_count_output(self):
         text = 'a.py:3\nb.py:0\nc.py:1'
