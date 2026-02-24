@@ -11,6 +11,8 @@ import pytest
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
+from pydantic_ai.settings import ModelSettings
+
 with try_import() as imports_successful:
     from pydantic_ai import Agent
     from pydantic_ai.realtime import (
@@ -454,8 +456,6 @@ async def test_connect_with_voice_and_language() -> None:
 async def test_connect_with_model_settings() -> None:
     from unittest.mock import AsyncMock, MagicMock
 
-    from pydantic_ai.settings import ModelSettings
-
     mock_session = MagicMock()
     mock_client = MagicMock()
 
@@ -502,11 +502,21 @@ def test_map_part_with_neither_audio_nor_text() -> None:
 
 
 @pytest.mark.anyio
-async def test_connect_with_partial_model_settings() -> None:
+@pytest.mark.parametrize(
+    'settings,temp,top_p,max_out',
+    [
+        pytest.param(ModelSettings(max_tokens=100), None, None, 100, id='max-tokens-only'),
+        pytest.param(ModelSettings(temperature=0.5), 0.5, None, None, id='temp-only'),
+    ],
+)
+async def test_connect_with_partial_model_settings(
+    settings: ModelSettings,
+    temp: float | None,
+    top_p: float | None,
+    max_out: int | None,
+) -> None:
     """Cover branches where individual model_settings fields are None."""
     from unittest.mock import AsyncMock, MagicMock
-
-    from pydantic_ai.settings import ModelSettings
 
     mock_session = MagicMock()
     mock_client = MagicMock()
@@ -518,17 +528,14 @@ async def test_connect_with_partial_model_settings() -> None:
 
     model = GeminiRealtimeModel(client=mock_client)
 
-    async with model.connect(
-        instructions='test',
-        model_settings=ModelSettings(max_tokens=100),
-    ) as conn:
+    async with model.connect(instructions='test', model_settings=settings) as conn:
         assert isinstance(conn, GeminiRealtimeConnection)
 
     call_kwargs = mock_client.aio.live.connect.call_args[1]
     config = call_kwargs['config']
-    assert config.temperature is None
-    assert config.top_p is None
-    assert config.max_output_tokens == 100
+    assert config.temperature == temp
+    assert config.top_p == top_p
+    assert config.max_output_tokens == max_out
 
 
 # ---------------------------------------------------------------------------

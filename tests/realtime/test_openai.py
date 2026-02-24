@@ -12,6 +12,8 @@ import pytest
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
+from pydantic_ai.settings import ModelSettings
+
 with try_import() as imports_successful:
     from pydantic_ai import Agent
     from pydantic_ai.realtime import (
@@ -34,7 +36,6 @@ with try_import() as imports_successful:
         _tool_def_to_openai,  # pyright: ignore[reportPrivateUsage]
         map_event,
     )
-    from pydantic_ai.settings import ModelSettings
     from pydantic_ai.tools import ToolDefinition
 
 pytestmark = [
@@ -411,7 +412,19 @@ async def test_connect_with_tools_and_model_settings() -> None:
 
 
 @pytest.mark.anyio
-async def test_connect_model_settings_partial() -> None:
+@pytest.mark.parametrize(
+    'settings,expected_key,expected_val,absent_key',
+    [
+        pytest.param(ModelSettings(temperature=0.5), 'temperature', 0.5, 'max_output_tokens', id='temp-only'),
+        pytest.param(ModelSettings(max_tokens=200), 'max_output_tokens', 200, 'temperature', id='max-tokens-only'),
+    ],
+)
+async def test_connect_model_settings_partial(
+    settings: ModelSettings,
+    expected_key: str,
+    expected_val: object,
+    absent_key: str,
+) -> None:
     """Test that connect() handles model_settings with only some fields set."""
     session_created = json.dumps({'type': 'session.created', 'session': {}})
     session_updated = json.dumps({'type': 'session.updated', 'session': {}})
@@ -427,15 +440,12 @@ async def test_connect_model_settings_partial() -> None:
     model = OpenAIRealtimeModel(api_key='test-key')
 
     with patch('pydantic_ai.realtime.openai.websockets.connect', fake_connect):
-        async with model.connect(
-            instructions='test',
-            model_settings=ModelSettings(temperature=0.5),
-        ) as conn:
+        async with model.connect(instructions='test', model_settings=settings) as conn:
             assert isinstance(conn, OpenAIRealtimeConnection)
 
     update = json.loads(ws.sent[0])
-    assert update['session']['temperature'] == 0.5
-    assert 'max_output_tokens' not in update['session']
+    assert update['session'][expected_key] == expected_val
+    assert absent_key not in update['session']
 
 
 @pytest.mark.anyio

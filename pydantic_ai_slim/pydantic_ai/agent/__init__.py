@@ -1711,10 +1711,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         async with self._enter_lock:
             if self._entered_count == 0:
-                async with AsyncExitStack() as exit_stack:  # pragma: no cover
+                async with AsyncExitStack() as exit_stack:
                     toolset = self._get_toolset()
-                    await exit_stack.enter_async_context(toolset)
-                    self._exit_stack = exit_stack.pop_all()
+                    await exit_stack.enter_async_context(toolset)  # pragma: no cover
+                    self._exit_stack = exit_stack.pop_all()  # pragma: no cover
             self._entered_count += 1
         return self
 
