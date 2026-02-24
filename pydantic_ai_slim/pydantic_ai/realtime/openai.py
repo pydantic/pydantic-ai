@@ -121,12 +121,8 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeEvent | None:
         # Skip TurnComplete for function-call-only responses - the session
         # handles tool execution and the model will send another response.done
         # after receiving the tool result with the actual answer.
-        output = response_dict.get('output', [])
-        if (
-            isinstance(output, list)
-            and output
-            and all(isinstance(item, dict) and item.get('type') == 'function_call' for item in output)
-        ):
+        output: list[dict[str, Any]] = response_dict.get('output', [])
+        if output and all(item.get('type') == 'function_call' for item in output):
             return None
         interrupted = response_dict.get('status') == 'cancelled'
     else:
