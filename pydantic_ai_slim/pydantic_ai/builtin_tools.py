@@ -189,10 +189,9 @@ class CodeExecutionTool(AbstractBuiltinTool):
     """
 
     file_ids: list[str] | None = None
-    """Optional list of file IDs to make available in the code execution container.
+    """Optional list of file IDs to make available in the code execution environment.
 
     Files must be uploaded via the provider's Files API before use.
-    The files will be available in the container's working directory.
 
     Supported by:
 

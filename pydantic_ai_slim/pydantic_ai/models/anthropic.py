@@ -741,7 +741,12 @@ class AnthropicModel(Model):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
-        # Extract container_file_ids from CodeExecutionTool instances in builtin_tools
+        # Extract container_file_ids from CodeExecutionTool instances in builtin_tools.
+        # Note: This happens on every agent turn and the container_upload blocks are prepended
+        # to the first user message in the history. This is intentional - Anthropic's API is
+        # stateless and requires files to be declared in the messages on every request.
+        # We keep container_upload blocks out of ModelRequest/ModelResponse to maintain
+        # provider-agnostic message history - they're regenerated from CodeExecutionTool.file_ids.
         pending_container_uploads: list[str] = []
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, CodeExecutionTool) and tool.file_ids:
