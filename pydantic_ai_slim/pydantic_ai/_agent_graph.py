@@ -285,7 +285,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         next_message.instructions = instructions
 
-        if not messages and not next_message.parts and not next_message.instructions:
+        if not messages and not next_message.parts:
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
         return ModelRequestNode[DepsT, NodeRunEndT](
