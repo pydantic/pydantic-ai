@@ -1071,367 +1071,348 @@ async def process_tool_calls(  # noqa: C901
         tool_call_ids_to_run = {call.tool_call_id for call in calls_to_run}
         if tool_call_ids_to_run != result_tool_call_ids:
             raise exceptions.UserError(
-                'Tool call results need to be provided for all deferred tool calls. '\n                f'Expected: {tool_call_ids_to_run}, got: {result_tool_call_ids}'
+                'Tool call results need to be provided for all deferred tool calls. '\
+                f'Expected: {tool_call_ids_to_run}, got: {result_tool_call_ids}'
             )
 
         # Filter out calls that were already executed before and should now be skipped
         calls_to_run_results = {call_id: value for call_id, value in tool_call_results.items() if value != 'skip'}
-        calls_to_run = [call for call in calls_to_run if call.tool_call_id in calls_to_run_results]
 
-    deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = defaultdict(list)
-    deferred_metadata: dict[str, dict[str, Any]] = {}
+    async def _call_tool(tool_call: _messages.ToolCallPart) -> tuple[_messages.ModelRequestPart, str | Sequence[_messages.UserContent] | None]:
+        # Get the result for this tool call if it was provided
+        deferred_result: DeferredToolResult | None = None
+        if calls_to_run_results:
+            deferred_result = calls_to_run_results.get(tool_call.tool_call_id)
 
-    if calls_to_run:
-        # Check usage limits before running tools
-        if ctx.deps.usage_limits.tool_calls_limit is not None:
-            projected_usage = deepcopy(ctx.state.usage)
-            projected_usage.tool_calls += len(calls_to_run)
-            ctx.deps.usage_limits.check_before_tool_call(projected_usage)
-
-        # Validate upfront and cache results. For ToolApproved deferred results, validate
-        # with the approval context so the event reflects the actual validation outcome.
-        # Other deferred result types (ToolDenied, ModelRetry, etc.) skip validation since
-        # the tool won't actually execute.
-        validated_calls: dict[str, ValidatedToolCall[DepsT]] = {}
-        for call in calls_to_run:
-            deferred_result = calls_to_run_results.get(call.tool_call_id)
-            if deferred_result is not None and not isinstance(deferred_result, ToolApproved):
-                yield _messages.FunctionToolCallEvent(call)
-                continue
-            try:
-                if isinstance(deferred_result, ToolApproved):
-                    validate_call = call
-                    if deferred_result.override_args is not None:
-                        validate_call = dataclasses.replace(call, args=deferred_result.override_args)
-                    metadata = tool_call_metadata.get(call.tool_call_id) if tool_call_metadata else None
-                    validated = await tool_manager.validate_tool_call(validate_call, approved=True, metadata=metadata)
-                else:
-                    validated = await tool_manager.validate_tool_call(call)
-            except exceptions.UnexpectedModelBehavior:
-                yield _messages.FunctionToolCallEvent(call, args_valid=False)
-                raise
-            validated_calls[call.tool_call_id] = validated
-            yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
-
-        async for event in _call_tools(
-            tool_manager=tool_manager,
-            tool_calls=calls_to_run,
-            tool_call_results=calls_to_run_results,
-            validated_calls=validated_calls,
-            tracer=ctx.deps.tracer,
-            output_parts=output_parts,
-            output_deferred_calls=deferred_calls,
-            output_deferred_metadata=deferred_metadata,
-        ):
-            yield event
-
-    # Finally, we handle deferred tool calls (unless they were already included in the run because results were provided)
-    if tool_call_results is None:
-        calls = [*tool_calls_by_kind['external'], *tool_calls_by_kind['unapproved']]
-        if final_result:
-            # If the run was already determined to end on deferred tool calls,
-            # we shouldn't insert return parts as the deferred tools will still get a real result.
-            if not isinstance(final_result.output, _output.DeferredToolRequests):
-                for call in calls:
-                    output_parts.append(
-                        _messages.ToolReturnPart(
-                            tool_name=call.tool_name,
-                            content='Tool not executed - a final result was already processed.',
-                            tool_call_id=call.tool_call_id,
-                        )
-                    )
-        elif calls:
-            for call in calls:
-                try:
-                    validated = await tool_manager.validate_tool_call(call)
-                except exceptions.UnexpectedModelBehavior:
-                    yield _messages.FunctionToolCallEvent(call, args_valid=False)
-                    raise
-
-                yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
-
-                if validated.args_valid:
-                    if call in tool_calls_by_kind['external']:
-                        deferred_calls['external'].append(call)
-                    else:
-                        deferred_calls['unapproved'].append(call)
-                else:
-                    # Call execute_tool_call to raise the validation error inside a trace span;
-                    # retries are already tracked by validate_tool_call() via failed_tools.
-                    try:
-                        await tool_manager.execute_tool_call(validated)
-                    except ToolRetryError as e:
-                        output_parts.append(e.tool_retry)
-                        yield _messages.FunctionToolResultEvent(e.tool_retry)
-
-    if not final_result and deferred_calls:
-        if not ctx.deps.output_schema.allows_deferred_tools:
-            raise exceptions.UserError(
-                'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
+        # Validate and execute the tool call
+        validated = await tool_manager.validate_tool_call(tool_call)
+        if not validated.args_valid:
+            assert validated.validation_error is not None
+            ctx.state.increment_retries(
+                ctx.deps.max_result_retries,
+                error=validated.validation_error,
+                model_settings=ctx.deps.model_settings,
             )
-        deferred_tool_requests = _output.DeferredToolRequests(
-            calls=deferred_calls['external'],
-            approvals=deferred_calls['unapproved'],
-            metadata=deferred_metadata,
+            return validated.validation_error.tool_retry, None
+
+        try:
+            return await _call_tool_inner(validated, deferred_result)
+        except ToolRetryError as e:
+            ctx.state.increment_retries(
+                ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+            )
+            return e.tool_retry, None
+
+    async def _call_tool_inner(
+        validated: ValidatedToolCall[DepsT],
+        deferred_result: DeferredToolResult | None,
+    ) -> tuple[_messages.ModelRequestPart, str | Sequence[_messages.UserContent] | None]:
+        if deferred_result is None or isinstance(deferred_result, ToolApproved):
+            # Execute the tool
+            tool_result = await tool_manager.execute_tool_call(validated)
+        elif isinstance(deferred_result, ToolDenied):
+            # Tool was denied
+            return _messages.ToolReturnPart(
+                tool_name=validated.call.tool_name,
+                content=deferred_result.message,
+                tool_call_id=validated.call.tool_call_id,
+            ), None
+        elif isinstance(deferred_result, exceptions.ModelRetry):
+            # Model retry
+            m = _messages.RetryPromptPart(
+                content=deferred_result.message,
+                tool_name=validated.call.tool_name,
+                tool_call_id=validated.call.tool_call_id,
+            )
+            raise ToolRetryError(m)
+        elif isinstance(deferred_result, _messages.RetryPromptPart):
+            # Retry prompt
+            deferred_result.tool_name = validated.call.tool_name
+            deferred_result.tool_call_id = validated.call.tool_call_id
+            raise ToolRetryError(deferred_result)
+        else:
+            # Use the provided result
+            tool_result = deferred_result
+
+        if isinstance(tool_result, _messages.ToolReturn):
+            tool_return = tool_result
+        else:
+            result_is_list = isinstance(tool_result, list)
+            contents = cast(list[Any], tool_result) if result_is_list else [tool_result]
+
+            return_values: list[Any] = []
+            user_contents: list[str | _messages.UserContent] = []
+            for content in contents:
+                if isinstance(content, _messages.ToolReturn):
+                    raise exceptions.UserError(
+                        f'The return value of tool {validated.call.tool_name!r} contains invalid nested `ToolReturn` objects. '\
+                        f'`ToolReturn` should be used directly.'
+                    )
+                elif isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES):
+                    identifier = content.identifier
+
+                    return_values.append(f'See file {identifier}')
+                    user_contents.extend([f'This is file {identifier}:', content])
+                else:
+                    return_values.append(content)
+
+            tool_return = _messages.ToolReturn(
+                return_value=return_values[0] if len(return_values) == 1 and not result_is_list else return_values,
+                content=user_contents,
+            )
+
+        if (
+            isinstance(tool_return.return_value, _messages.MULTI_MODAL_CONTENT_TYPES)
+            or isinstance(tool_return.return_value, list)
+            and any(
+                isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES)
+                for content in tool_return.return_value  # type: ignore
+            )
+        ):
+            raise exceptions.UserError(
+                f'The `return_value` of tool {validated.call.tool_name!r} contains invalid nested `MultiModalContent` objects. '\
+                f'Please use `content` instead.'
+            )
+
+        return_part = _messages.ToolReturnPart(
+            tool_name=validated.call.tool_name,
+            tool_call_id=validated.call.tool_call_id,
+            content=tool_return.return_value,  # type: ignore
+            metadata=tool_return.metadata,
         )
 
-        final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests), None, None)
+        return return_part, tool_return.content or None
+
+    # Run all tool calls in parallel
+    if calls_to_run:
+        tool_results = await asyncio.gather(*(_call_tool(call) for call in calls_to_run))
+
+        # Process the results
+        for i, (result_part, user_content) in enumerate(tool_results):
+            call = calls_to_run[i]
+            yield _messages.FunctionToolCallEvent(call, args_valid=True)
+            output_parts.append(result_part)
+            yield _messages.FunctionToolResultEvent(result_part)
+
+            # Add user content if provided
+            if user_content:
+                if isinstance(user_content, str):
+                    output_parts.append(_messages.UserPromptPart(user_content))
+                else:
+                    output_parts.append(_messages.UserPromptPart(user_content))
 
     if final_result:
         output_final_result.append(final_result)
 
 
-async def _call_tools(  # noqa: C901
-    tool_manager: ToolManager[DepsT],
-    tool_calls: list[_messages.ToolCallPart],
-    tool_call_results: dict[str, DeferredToolResult],
-    validated_calls: dict[str, ValidatedToolCall[DepsT]],
-    tracer: Tracer,
-    output_parts: list[_messages.ModelRequestPart],
-    output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
-    output_deferred_metadata: dict[str, dict[str, Any]],
-) -> AsyncIterator[_messages.HandleResponseEvent]:
-    tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
-    user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
-    deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
-    deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
-
-    with tracer.start_as_current_span(
-        'running tools',
-        attributes={
-            'tools': [call.tool_name for call in tool_calls],
-            'logfire.msg': f'running {len(tool_calls)} tool{"" if len(tool_calls) == 1 else "s"}',
-        },
-    ):
-
-        async def handle_call_or_result(
-            coro_or_task: Awaitable[
-                tuple[
-                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
-                ]
-            ]
-            | Task[
-                tuple[
-                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
-                ]
-            ],
-            index: int,
-        ) -> _messages.HandleResponseEvent | None:
-            try:
-                tool_part, tool_user_content = (
-                    (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
-                )
-            except exceptions.CallDeferred as e:
-                deferred_calls_by_index[index] = 'external'
-                deferred_metadata_by_index[index] = e.metadata
-            except exceptions.ApprovalRequired as e:
-                deferred_calls_by_index[index] = 'unapproved'
-                deferred_metadata_by_index[index] = e.metadata
-            else:
-                tool_parts_by_index[index] = tool_part
-                if tool_user_content:
-                    user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
-
-                return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
-
-        parallel_execution_mode = tool_manager.get_parallel_execution_mode(tool_calls)
-        if parallel_execution_mode == 'sequential':
-            for index, call in enumerate(tool_calls):
-                if event := await handle_call_or_result(
-                    _call_tool(
-                        tool_manager,
-                        validated_calls.get(call.tool_call_id, call),
-                        tool_call_results.get(call.tool_call_id),
-                    ),
-                    index,
-                ):
-                    yield event
-
-        else:
-            tasks = [
-                asyncio.create_task(
-                    _call_tool(
-                        tool_manager,
-                        validated_calls.get(call.tool_call_id, call),
-                        tool_call_results.get(call.tool_call_id),
-                    ),
-                    name=call.tool_name,
-                )
-                for call in tool_calls
-            ]
-            try:
-                if parallel_execution_mode == 'parallel_ordered_events':
-                    # Wait for all tasks to complete before yielding any events
-                    await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
-                    for index, task in enumerate(tasks):
-                        if event := await handle_call_or_result(coro_or_task=task, index=index):
-                            yield event
-                else:
-                    pending: set[
-                        asyncio.Task[
-                            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
-                        ]
-                    ] = set(tasks)  # pyright: ignore[reportAssignmentType]
-                    while pending:
-                        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                        for task in done:
-                            index = tasks.index(task)  # pyright: ignore[reportArgumentType]
-                            if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
-                                yield event
-
-            except asyncio.CancelledError as e:
-                for task in tasks:
-                    task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
-
-                raise
-
-    # We append the results at the end, rather than as they are received, to retain a consistent ordering
-    # This is mostly just to simplify testing
-    output_parts.extend([tool_parts_by_index[k] for k in sorted(tool_parts_by_index)])
-    output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
-
-    _populate_deferred_calls(
-        tool_calls, deferred_calls_by_index, deferred_metadata_by_index, output_deferred_calls, output_deferred_metadata
-    )
-
-
-def _populate_deferred_calls(
-    tool_calls: list[_messages.ToolCallPart],
-    deferred_calls_by_index: dict[int, Literal['external', 'unapproved']],
-    deferred_metadata_by_index: dict[int, dict[str, Any] | None],
-    output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
-    output_deferred_metadata: dict[str, dict[str, Any]],
-) -> None:
-    for index, kind in deferred_calls_by_index.items():
-        call = tool_calls[index]
-        output_deferred_calls[kind].append(call)
-        if metadata := deferred_metadata_by_index.get(index):
-            output_deferred_metadata[call.tool_call_id] = metadata
-
-
-async def _call_tool(
-    tool_manager: ToolManager[DepsT],
-    call: _messages.ToolCallPart | ValidatedToolCall[DepsT],
-    deferred_result: DeferredToolResult | None,
-) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
-    """Call a tool and return the result."""
-    if isinstance(deferred_result, ToolApproved):
-        # For approved tools, we need to execute them with the approval context
-        if deferred_result.override_args is not None:
-            call = dataclasses.replace(call, args=deferred_result.override_args)
-        result_data = await tool_manager.execute_tool_call(call)
-        part = _messages.ToolReturnPart(
-            tool_name=call.tool_name,
-            content=result_data,
-            tool_call_id=call.tool_call_id,
-        )
-        return part, None
-    elif isinstance(deferred_result, ToolDenied):
-        # For denied tools, we return a message saying the tool was denied
-        part = _messages.ToolReturnPart(
-            tool_name=call.tool_name,
-            content='Tool call denied.',
-            tool_call_id=call.tool_call_id,
-        )
-        return part, None
-    elif isinstance(deferred_result, _messages.ModelRetry):
-        # For model retries, we return a retry prompt
-        part = _messages.RetryPromptPart(content=deferred_result.content)
-        return part, None
-    else:
-        # For other deferred results, we execute the tool normally
-        result_data = await tool_manager.execute_tool_call(call)
-        part = _messages.ToolReturnPart(
-            tool_name=call.tool_name,
-            content=result_data,
-            tool_call_id=call.tool_call_id,
-        )
-        return part, None
-
-
-async def _process_message_history(
-    message_history: list[_messages.ModelMessage],
-    history_processors: Sequence[HistoryProcessor[DepsT]],
-    run_context: RunContext[DepsT],
-) -> list[_messages.ModelMessage]:
-    """Process the message history using the provided history processors."""
-    for processor in history_processors:
-        if is_takes_ctx(processor):
-            message_history = await processor(run_context, message_history)
-        else:
-            message_history = await processor(message_history)
-    return message_history
-
-
-def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
-    """Clean the message history by removing any messages that are not needed."""
-    # Remove any messages that are not ModelRequest or ModelResponse
-    return [msg for msg in messages if isinstance(msg, (_messages.ModelRequest, _messages.ModelResponse))]
-
-
-def _first_new_message_index(
-    message_history: list[_messages.ModelMessage],
-    run_id: str,
-    resumed_request: _messages.ModelRequest | None,
-) -> int:
-    """Find the index of the first message in the history that is new for this run.
-
-    A message is considered new if:
-    1. It has a run_id that matches the current run_id, or
-    2. It is a resumed request (i.e., a request that was created by resuming an existing run)
-
-    Args:
-        message_history: The message history to search
-        run_id: The current run_id
-        resumed_request: The resumed request, if any
-
-    Returns:
-        The index of the first new message
-    """
-    for i, msg in enumerate(message_history):
-        if msg.run_id == run_id or msg is resumed_request:
-            return i
-    return len(message_history)
-
-
-def _is_same_request(a: _messages.ModelRequest, b: _messages.ModelRequest) -> bool:
-    """Check if two ModelRequest objects are the same request.
-
-    This is used to determine if the tail of the message history is a resumed request.
-
-    Args:
-        a: The first ModelRequest
-        b: The second ModelRequest
-
-    Returns:
-        True if the requests are the same, False otherwise
-    """
-    return a is b or (
-        a.parts == b.parts
-        and a.instructions == b.instructions
-        and a.metadata == b.metadata
-        and a.timestamp == b.timestamp
-    )
-
-
-def capture_run_messages(messages: list[_messages.ModelMessage]) -> None:
-    """Capture run messages for use in the agent graph."""
-    _captured_run_messages.set(_CapturedRunMessages(messages))
-
-
-def get_captured_run_messages() -> _CapturedRunMessages:
-    """Get captured run messages."""
-    if messages := _captured_run_messages.get():
-        return messages
-    raise LookupError('No captured run messages found.')
-
-
 @dataclasses.dataclass
-class _CapturedRunMessages:
-    """Captured run messages."""
-
+class _RunMessages:
     messages: list[_messages.ModelMessage]
     used: bool = False
 
 
-_captured_run_messages: ContextVar[_CapturedRunMessages | None] = ContextVar('_captured_run_messages', default=None)
+_messages_ctx_var: ContextVar[_RunMessages] = ContextVar('var')
+
+
+@contextmanager
+def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
+    """Context manager to access the messages used in a [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] call.
+
+    Useful when a run may raise an exception, see [model errors](../agent.md#model-errors) for more information.
+
+    Examples:
+    ```python
+    from pydantic_ai import Agent, capture_run_messages
+
+    agent = Agent('test')
+
+    with capture_run_messages() as messages:
+        try:
+            result = agent.run_sync('foobar')
+        except Exception:
+            print(messages)
+            raise
+    ```
+
+    !!! note
+        If you call `run`, `run_sync`, or `run_stream` more than once within a single `capture_run_messages` context,
+        `messages` will represent the messages exchanged during the first call only.
+    """
+    token = None
+    messages: list[_messages.ModelMessage] = []
+
+    # Try to reuse existing message context if available
+    try:
+        messages = _messages_ctx_var.get().messages
+    except LookupError:
+        # No existing context, create a new one
+        token = _messages_ctx_var.set(_RunMessages(messages))
+
+    try:
+        yield messages
+    finally:
+        # Clean up context if we created it
+        if token is not None:
+            _messages_ctx_var.reset(token)
+
+
+def get_captured_run_messages() -> _RunMessages:
+    return _messages_ctx_var.get()
+
+
+def build_agent_graph(
+    name: str | None,
+    deps_type: type[DepsT],
+    output_type: OutputSpec[OutputT],
+) -> Graph[
+    GraphAgentState,
+    GraphAgentDeps[DepsT, OutputT],
+    UserPromptNode[DepsT, OutputT],
+    result.FinalResult[OutputT],
+]:
+    """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
+    g = GraphBuilder(
+        name=name or 'Agent',
+        state_type=GraphAgentState,
+        deps_type=GraphAgentDeps[DepsT, OutputT],
+        input_type=UserPromptNode[DepsT, OutputT],
+        output_type=result.FinalResult[OutputT],
+        auto_instrument=False,
+    )
+
+    g.add(
+        g.edge_from(g.start_node).to(UserPromptNode[DepsT, OutputT]),
+        g.node(UserPromptNode[DepsT, OutputT]),
+        g.node(ModelRequestNode[DepsT, OutputT]),
+        g.node(CallToolsNode[DepsT, OutputT]),
+        g.node(
+            SetFinalResult[DepsT, OutputT],
+        ),
+    )
+    return g.build(validate_graph_structure=False)
+
+
+async def _process_message_history(
+    messages: list[_messages.ModelMessage],
+    processors: Sequence[HistoryProcessor[DepsT]],
+    run_context: RunContext[DepsT],
+) -> list[_messages.ModelMessage]:
+    """Process message history through a sequence of processors."""
+    for processor in processors:
+        takes_ctx = is_takes_ctx(processor)
+
+        if is_async_callable(processor):
+            if takes_ctx:
+                messages = await processor(run_context, messages)
+            else:
+                messages = await processor(messages)
+        else:
+            if takes_ctx:
+                sync_processor_with_ctx = cast(_HistoryProcessorSyncWithCtx[DepsT], processor)
+                messages = await run_in_executor(sync_processor_with_ctx, run_context, messages)
+            else:
+                sync_processor = cast(_HistoryProcessorSync, processor)
+                messages = await run_in_executor(sync_processor, messages)
+
+    if len(messages) == 0:
+        raise exceptions.UserError('Processed history cannot be empty.')
+
+    if not isinstance(messages[-1], _messages.ModelRequest):
+        raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
+
+    # Ensure the last request has a timestamp (history processors may create new ModelRequest objects without one)
+    if messages[-1].timestamp is None:
+        messages[-1].timestamp = now_utc()
+
+    return messages
+
+
+def _first_run_id_index(messages: list[_messages.ModelMessage], run_id: str) -> int:
+    """Return the index of the first message for the current run, or len(messages) if none are found."""
+    for index, message in enumerate(messages):
+        if message.run_id == run_id:
+            return index
+    return len(messages)
+
+
+def _first_new_message_index(
+    messages: list[_messages.ModelMessage],
+    run_id: str,
+    *, 
+    resumed_request: _messages.ModelRequest | None,
+) -> int:
+    """Return the first index that should be included in `new_messages()`."""
+    if resumed_request is not None:
+        for index, message in enumerate(messages):
+            if message is resumed_request:
+                return index + 1
+
+        for index in range(len(messages) - 1, -1, -1):
+            if _is_same_request(messages[index], resumed_request):
+                return index + 1
+    return _first_run_id_index(messages, run_id)
+
+
+def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRequest) -> bool:
+    if not isinstance(message, _messages.ModelRequest):
+        return False
+    if message is request:
+        return True
+    # Intentionally excludes run_id: the resumed request may not have
+    # run_id set yet when this comparison is performed.
+    return (
+        message.parts == request.parts
+        and message.timestamp == request.timestamp
+        and message.instructions == request.instructions
+        and message.metadata == request.metadata
+    )
+
+
+def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
+    """Clean the message history by merging consecutive messages of the same type."""
+    clean_messages: list[_messages.ModelMessage] = []
+    for message in messages:
+        last_message = clean_messages[-1] if len(clean_messages) > 0 else None
+
+        if isinstance(message, _messages.ModelRequest):
+            if (
+                last_message
+                and isinstance(last_message, _messages.ModelRequest)
+                # Requests can only be merged if they have the same instructions
+                and (
+                    not last_message.instructions
+                    or not message.instructions
+                    or last_message.instructions == message.instructions
+                )
+            ):
+                parts = [*last_message.parts, *message.parts]
+                parts.sort(
+                    # Tool return parts always need to be at the start
+                    key=lambda x: 0 if isinstance(x, _messages.ToolReturnPart | _messages.RetryPromptPart) else 1
+                )
+                merged_message = _messages.ModelRequest(
+                    parts=parts,
+                    instructions=last_message.instructions or message.instructions,
+                    timestamp=message.timestamp or last_message.timestamp,
+                )
+                clean_messages[-1] = merged_message
+            else:
+                clean_messages.append(message)
+        elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
+            if (
+                last_message
+                and isinstance(last_message, _messages.ModelResponse)
+                # Responses can only be merged if they didn't really come from an API
+                and last_message.provider_response_id is None
+                and last_message.provider_name is None
+                and last_message.model_name is None
+                and message.provider_response_id is None
+                and message.provider_name is None
+                and message.model_name is None
+            ):
+                merged_message = replace(last_message, parts=[*last_message.parts, *message.parts])
+                clean_messages[-1] = merged_message
+            else:
+                clean_messages.append(message)
+
+    return clean_messages
