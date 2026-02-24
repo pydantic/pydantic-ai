@@ -356,3 +356,11 @@ async def test_agent_realtime_session_send_audio() -> None:
     audio_inputs = [s for s in conn.sent if isinstance(s, AudioInput)]
     assert len(audio_inputs) == 1
     assert audio_inputs[0].data == b'\xab\xcd'
+
+
+@pytest.mark.anyio
+async def test_agent_aenter_aexit() -> None:
+    """Ensure Agent.__aenter__/__aexit__ work without MCP servers."""
+    agent: Agent[None, str] = Agent()
+    async with agent:
+        pass  # entering and exiting should work with no toolsets
