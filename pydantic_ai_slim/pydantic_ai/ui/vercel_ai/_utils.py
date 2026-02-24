@@ -119,12 +119,23 @@ _TOOL_PART_TYPES = (
 )
 
 
+_APPROVAL_RESPONDED_TYPES = (
+    ToolApprovalRespondedPart,
+    DynamicToolApprovalRespondedPart,
+)
+
+
 def iter_tool_approval_responses(
     messages: list[UIMessage],
 ) -> Iterator[tuple[str, ToolApprovalResponded]]:
-    """Yield `(tool_call_id, approval)` for each responded tool approval in assistant messages."""
+    """Yield `(tool_call_id, approval)` for each responded tool approval in assistant messages.
+
+    Only ``approval-responded`` parts are matched. ``output-denied`` parts have
+    already been materialized into the message history by ``load_messages()`` and
+    must not be re-processed as deferred results.
+    """
     for msg in messages:
         if msg.role == 'assistant':
             for part in msg.parts:
-                if isinstance(part, _TOOL_PART_TYPES) and isinstance(part.approval, ToolApprovalResponded):
+                if isinstance(part, _APPROVAL_RESPONDED_TYPES) and isinstance(part.approval, ToolApprovalResponded):
                     yield part.tool_call_id, part.approval

@@ -58,6 +58,7 @@ with try_import() as starlette_import_successful:
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
     from pydantic_ai.ui.vercel_ai._utils import dump_provider_metadata, load_provider_metadata
     from pydantic_ai.ui.vercel_ai.request_types import (
+        DynamicToolApprovalRespondedPart,
         DynamicToolInputAvailablePart,
         DynamicToolOutputAvailablePart,
         FileUIPart,
@@ -2424,13 +2425,13 @@ async def test_tool_output_denied_chunk_emission():
                 role='assistant',
                 parts=[
                     TextUIPart(text='I will delete the file for you.'),
-                    DynamicToolInputAvailablePart(
+                    DynamicToolApprovalRespondedPart(
                         tool_name='delete_file',
                         tool_call_id='delete_approved',
                         input={'path': 'approved.txt'},
                         approval=ToolApprovalResponded(id='approval-456', approved=True),
                     ),
-                    DynamicToolInputAvailablePart(
+                    DynamicToolApprovalRespondedPart(
                         tool_name='delete_file',
                         tool_call_id='delete_1',
                         input={'path': 'test.txt'},
@@ -2556,7 +2557,7 @@ async def test_tool_approval_extraction_with_edge_cases():
                         input={'x': 'no_approval'},
                         approval=None,
                     ),
-                    DynamicToolInputAvailablePart(
+                    DynamicToolApprovalRespondedPart(
                         tool_name='some_tool',
                         tool_call_id='approved_tool',
                         input={'x': 'approved'},
@@ -2622,7 +2623,7 @@ async def test_tool_approval_denial_with_reason():
                 id='assistant-1',
                 role='assistant',
                 parts=[
-                    DynamicToolInputAvailablePart(
+                    DynamicToolApprovalRespondedPart(
                         tool_name='delete_file',
                         tool_call_id='delete_1',
                         input={'path': 'important.txt'},
@@ -2630,13 +2631,13 @@ async def test_tool_approval_denial_with_reason():
                             id='denial-id', approved=False, reason='User cancelled the deletion'
                         ),
                     ),
-                    DynamicToolInputAvailablePart(
+                    DynamicToolApprovalRespondedPart(
                         tool_name='delete_file',
                         tool_call_id='delete_2',
                         input={'path': 'temp.txt'},
                         approval=ToolApprovalResponded(id='denial-no-reason', approved=False),
                     ),
-                    DynamicToolInputAvailablePart(
+                    DynamicToolApprovalRespondedPart(
                         tool_name='delete_file',
                         tool_call_id='delete_3',
                         input={'path': 'ok.txt'},
@@ -2654,6 +2655,42 @@ async def test_tool_approval_denial_with_reason():
     assert approvals['delete_1'] == ToolDenied(message='User cancelled the deletion')
     assert approvals['delete_2'] is False
     assert approvals['delete_3'] is True
+
+
+async def test_tool_approval_ignores_output_denied_parts():
+    """Test that output-denied parts are not yielded by iter_tool_approval_responses.
+
+    When a denied tool is retried, the assistant message accumulates both an
+    output-denied part (terminal, already materialized by load_messages) and an
+    approval-responded part (pending, needs deferred handling). Only the latter
+    should be extracted.
+    """
+    from pydantic_ai.ui.vercel_ai._utils import iter_tool_approval_responses
+    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolOutputDeniedPart
+
+    messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                DynamicToolOutputDeniedPart(
+                    tool_name='delete_file',
+                    tool_call_id='tool_A',
+                    input={'path': 'first.txt'},
+                    approval=ToolApprovalResponded(id='deny-A', approved=False, reason='Not allowed'),
+                ),
+                DynamicToolApprovalRespondedPart(
+                    tool_name='delete_file',
+                    tool_call_id='tool_B',
+                    input={'path': 'second.txt'},
+                    approval=ToolApprovalResponded(id='deny-B', approved=False),
+                ),
+            ],
+        )
+    ]
+
+    results = dict(iter_tool_approval_responses(messages))
+    assert results == {'tool_B': ToolApprovalResponded(id='deny-B', approved=False)}
 
 
 async def test_run_stream_with_deferred_tool_results_no_model_response():
