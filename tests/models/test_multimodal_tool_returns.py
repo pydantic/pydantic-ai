@@ -159,7 +159,7 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
     ('openai_responses', 'image'): 'in_tool_result',
     ('openai_responses', 'document'): 'in_tool_result',
     ('openai_responses', 'audio'): ExpectError(NotImplementedError, r'(?i)audio.*openai responses|unsupported binary'),
-    ('openai_responses', 'video'): ExpectError(NotImplementedError, r'VideoUrl is not supported in OpenAI Responses'),
+    ('openai_responses', 'video'): ExpectError(NotImplementedError, r'(?i)video.*not supported in OpenAI Responses'),
     # xAI: images and documents as_user_content, audio/video unsupported
     ('xai', 'image'): 'as_user_content',
     ('xai', 'document'): 'as_user_content',

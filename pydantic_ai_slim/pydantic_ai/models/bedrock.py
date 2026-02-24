@@ -899,8 +899,9 @@ class BedrockConverseModel(Model):
         document_count: Iterator[int],
     ) -> _FileContentBlock | None:
         """Map a multimodal file directly to a Bedrock content block for tool results."""
-        # Resolve content kind
         kind: Literal['image', 'document', 'video']
+        source: DocumentSourceTypeDef
+
         if isinstance(file, BinaryContent):
             if file.is_image:
                 kind = 'image'
@@ -910,31 +911,28 @@ class BedrockConverseModel(Model):
                 kind = 'video'
             else:
                 return None
-        elif isinstance(file, ImageUrl):
-            kind = 'image'
-        elif isinstance(file, DocumentUrl):
-            kind = 'document'
+            source = {'bytes': file.data}
         else:
-            kind = 'video'
+            if isinstance(file, ImageUrl):
+                kind = 'image'
+            elif isinstance(file, DocumentUrl):
+                kind = 'document'
+            else:
+                kind = 'video'
+            if file.url.startswith('s3://'):
+                parsed = urlparse(file.url)
+                s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
+                if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
+                    s3_location['bucketOwner'] = bucket_owner
+                source = {'s3Location': s3_location}
+            else:
+                downloaded = await download_item(file, data_format='bytes', type_format='extension')
+                source = {'bytes': downloaded['data']}
 
-        # Validate format
         format = file.format
         valid_formats = _BEDROCK_FORMATS[kind]
         if format not in valid_formats:  # pragma: no cover
             raise ValueError(f'Unsupported {kind} format for Bedrock: {format!r}. Supported: {valid_formats}')
-
-        # Resolve source
-        if isinstance(file, BinaryContent):
-            source: DocumentSourceTypeDef = {'bytes': file.data}
-        elif file.url.startswith('s3://'):
-            parsed = urlparse(file.url)
-            s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
-            if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
-                s3_location['bucketOwner'] = bucket_owner
-            source = {'s3Location': s3_location}
-        else:
-            downloaded = await download_item(file, data_format='bytes', type_format='extension')
-            source = {'bytes': downloaded['data']}
 
         # Build typed block — format is runtime-validated above, cast to satisfy Literal types
         if kind == 'image':

@@ -45,6 +45,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    is_multi_modal_content,
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
@@ -746,21 +747,8 @@ class AnthropicModel(Model):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
 
                         for item in request_part.content_items(mode='str'):
-                            if isinstance(item, BinaryContent):
-                                if item.is_image or item.is_document:
-                                    tool_result_content.append(self._map_binary_data(item.data, item.media_type))
-                                else:
-                                    raise NotImplementedError(
-                                        f'Unsupported binary content type in Anthropic tool returns: {item.media_type}'
-                                    )
-                            elif isinstance(item, ImageUrl):
-                                tool_result_content.append(await self._map_image_url(item))
-                            elif isinstance(item, DocumentUrl):
-                                tool_result_content.append(await self._map_document_url(item))
-                            elif isinstance(item, AudioUrl):
-                                raise NotImplementedError('AudioUrl is not supported in Anthropic tool returns')
-                            elif isinstance(item, VideoUrl):
-                                raise NotImplementedError('VideoUrl is not supported in Anthropic tool returns')
+                            if is_multi_modal_content(item):
+                                tool_result_content.append(await self._map_file_to_content_block(item, 'tool returns'))
                             else:
                                 assert isinstance(item, str)
                                 tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
@@ -1141,6 +1129,25 @@ class AnthropicModel(Model):
             raise RuntimeError(f'Unsupported document media type: {item.media_type}')
 
     @staticmethod
+    async def _map_file_to_content_block(
+        item: BinaryContent | ImageUrl | DocumentUrl | AudioUrl | VideoUrl,
+        context: str,
+    ) -> BetaImageBlockParam | BetaRequestDocumentBlockParam:
+        """Map a multimodal file item to its Anthropic API content block."""
+        if isinstance(item, BinaryContent):
+            if item.is_image or item.is_document:
+                return AnthropicModel._map_binary_data(item.data, item.media_type)
+            raise NotImplementedError(f'Unsupported binary content type in Anthropic {context}: {item.media_type}')
+        elif isinstance(item, ImageUrl):
+            return await AnthropicModel._map_image_url(item)
+        elif isinstance(item, DocumentUrl):
+            return await AnthropicModel._map_document_url(item)
+        elif isinstance(item, AudioUrl):
+            raise NotImplementedError(f'AudioUrl is not supported in Anthropic {context}')
+        else:
+            raise NotImplementedError(f'VideoUrl is not supported in Anthropic {context}')
+
+    @staticmethod
     async def _map_user_prompt(
         part: UserPromptPart,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
@@ -1154,21 +1161,8 @@ class AnthropicModel(Model):
                         yield BetaTextBlockParam(text=item, type='text')
                 elif isinstance(item, CachePoint):
                     yield item
-                elif isinstance(item, BinaryContent):
-                    if item.is_image or item.is_document:
-                        yield AnthropicModel._map_binary_data(item.data, item.media_type)
-                    else:
-                        raise NotImplementedError(
-                            f'Unsupported binary content type in Anthropic user prompts: {item.media_type}'
-                        )
-                elif isinstance(item, ImageUrl):
-                    yield await AnthropicModel._map_image_url(item)
-                elif isinstance(item, DocumentUrl):
-                    yield await AnthropicModel._map_document_url(item)
-                elif isinstance(item, AudioUrl):
-                    raise NotImplementedError('AudioUrl is not supported in Anthropic user prompts')
-                elif isinstance(item, VideoUrl):
-                    raise NotImplementedError('VideoUrl is not supported in Anthropic user prompts')
+                elif is_multi_modal_content(item):
+                    yield await AnthropicModel._map_file_to_content_block(item, 'user prompts')
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 

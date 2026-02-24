@@ -61,6 +61,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    is_multi_modal_content,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
@@ -2167,86 +2168,78 @@ class OpenAIResponsesModel(Model):
         return response_format_param
 
     @staticmethod
-    async def _map_user_prompt(part: UserPromptPart) -> responses.EasyInputMessageParam:  # noqa: C901
+    async def _map_user_prompt(part: UserPromptPart) -> responses.EasyInputMessageParam:
         content: str | list[responses.ResponseInputContentParam]
         if isinstance(part.content, str):
             content = part.content
         else:
             content = []
             for item in part.content:
-                detail: Literal['auto', 'low', 'high'] = 'auto'
                 if isinstance(item, str):
                     content.append(responses.ResponseInputTextParam(text=item, type='input_text'))
-                elif isinstance(item, BinaryContent):
-                    if item.is_image:
-                        if metadata := item.vendor_metadata:
-                            detail = metadata.get('detail', 'auto')
-                        content.append(
-                            responses.ResponseInputImageParam(
-                                image_url=item.data_uri,
-                                type='input_image',
-                                detail=detail,
-                            )
-                        )
-                    elif item.is_document:
-                        content.append(
-                            responses.ResponseInputFileParam(
-                                type='input_file',
-                                file_data=item.data_uri,
-                                # NOTE: Type wise it's not necessary to include the filename, but it's required by the
-                                # API itself. If we add empty string, the server sends a 500 error - which OpenAI needs
-                                # to fix. In any case, we add a placeholder name.
-                                filename=f'filename.{item.format}',
-                            )
-                        )
-                    elif item.is_audio:
-                        raise NotImplementedError(
-                            'BinaryContent with audio is not supported in OpenAI Responses user prompts'
-                        )
-                    elif item.is_video:
-                        raise NotImplementedError('VideoUrl is not supported in OpenAI Responses user prompts')
-                    else:  # pragma: no cover
-                        raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
-                elif isinstance(item, ImageUrl):
-                    image_url = item.url
-                    if metadata := item.vendor_metadata:
-                        detail = metadata.get('detail', 'auto')
-                    if item.force_download:
-                        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
-                        image_url = downloaded_item['data']
-
-                    content.append(
-                        responses.ResponseInputImageParam(
-                            image_url=image_url,
-                            type='input_image',
-                            detail=detail,
-                        )
-                    )
-                elif isinstance(item, AudioUrl | DocumentUrl):
-                    if item.force_download:
-                        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
-                        content.append(
-                            responses.ResponseInputFileParam(
-                                type='input_file',
-                                file_data=downloaded_item['data'],
-                                filename=f'filename.{downloaded_item["data_type"]}',
-                            )
-                        )
-                    else:
-                        content.append(
-                            responses.ResponseInputFileParam(
-                                type='input_file',
-                                file_url=item.url,
-                            )
-                        )
-                elif isinstance(item, VideoUrl):
-                    raise NotImplementedError('VideoUrl is not supported in OpenAI Responses user prompts')
                 elif isinstance(item, CachePoint):
-                    # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
                     pass
+                elif is_multi_modal_content(item):
+                    content.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'user prompts'))  # pyright: ignore[reportArgumentType]
                 else:
-                    assert_never(item)
+                    raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
         return responses.EasyInputMessageParam(role='user', content=content)
+
+    @staticmethod
+    async def _map_file_to_response_content(
+        item: BinaryContent | ImageUrl | DocumentUrl | AudioUrl | VideoUrl,
+        context: str,
+    ) -> ResponseInputImageContentParam | ResponseInputFileContentParam:
+        """Map a multimodal file item to its OpenAI Responses API content param."""
+        if isinstance(item, BinaryContent):
+            if item.is_image:
+                detail: Literal['auto', 'low', 'high'] = 'auto'
+                if metadata := item.vendor_metadata:
+                    detail = metadata.get('detail', 'auto')
+                return ResponseInputImageContentParam(
+                    image_url=item.data_uri,
+                    type='input_image',
+                    detail=detail,
+                )
+            elif item.is_document:
+                return ResponseInputFileContentParam(
+                    type='input_file',
+                    file_data=item.data_uri,
+                    filename=f'filename.{item.format}',
+                )
+            elif item.is_audio:
+                raise NotImplementedError(f'BinaryContent with audio is not supported in OpenAI Responses {context}')
+            elif item.is_video:
+                raise NotImplementedError(f'BinaryContent with video is not supported in OpenAI Responses {context}')
+            else:  # pragma: no cover
+                raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
+        elif isinstance(item, ImageUrl):
+            detail = 'auto'
+            image_url = item.url
+            if metadata := item.vendor_metadata:
+                detail = metadata.get('detail', 'auto')
+            if item.force_download:
+                downloaded = await download_item(item, data_format='base64_uri', type_format='extension')
+                image_url = downloaded['data']
+            return ResponseInputImageContentParam(
+                image_url=image_url,
+                type='input_image',
+                detail=detail,
+            )
+        elif isinstance(item, (AudioUrl, DocumentUrl)):
+            if item.force_download:
+                downloaded = await download_item(item, data_format='base64_uri', type_format='extension')
+                return ResponseInputFileContentParam(
+                    type='input_file',
+                    file_data=downloaded['data'],
+                    filename=f'filename.{downloaded["data_type"]}',
+                )
+            return ResponseInputFileContentParam(
+                type='input_file',
+                file_url=item.url,
+            )
+        else:
+            raise NotImplementedError(f'VideoUrl is not supported in OpenAI Responses {context}')
 
     @staticmethod
     async def _map_tool_return_output(
@@ -2263,53 +2256,9 @@ class OpenAIResponsesModel(Model):
             ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam
         ] = []
 
-        # Iterate content directly to preserve order of mixed file/data content
         for item in part.content_items(mode='str'):
-            if isinstance(item, BinaryContent):
-                if item.is_image:
-                    detail: Literal['auto', 'low', 'high'] = 'auto'
-                    if metadata := item.vendor_metadata:
-                        detail = metadata.get('detail', 'auto')
-                    output.append(
-                        ResponseInputImageContentParam(type='input_image', image_url=item.data_uri, detail=detail)
-                    )
-                elif item.is_document:
-                    output.append(
-                        ResponseInputFileContentParam(
-                            type='input_file',
-                            file_data=item.data_uri,
-                            filename=f'filename.{item.format}',
-                        )
-                    )
-                elif item.is_video:
-                    raise NotImplementedError('VideoUrl is not supported in OpenAI Responses tool returns')
-                else:
-                    raise NotImplementedError(
-                        f'Unsupported binary content type in OpenAI Responses tool returns: {item.media_type}'
-                    )
-            elif isinstance(item, ImageUrl):
-                detail = 'auto'
-                image_url = item.url
-                if metadata := item.vendor_metadata:
-                    detail = metadata.get('detail', 'auto')
-                if item.force_download:
-                    downloaded = await download_item(item, data_format='base64_uri', type_format='extension')
-                    image_url = downloaded['data']
-                output.append(ResponseInputImageContentParam(type='input_image', image_url=image_url, detail=detail))
-            elif isinstance(item, (AudioUrl, DocumentUrl)):
-                if item.force_download:
-                    downloaded = await download_item(item, data_format='base64_uri', type_format='extension')
-                    output.append(
-                        ResponseInputFileContentParam(
-                            type='input_file',
-                            file_data=downloaded['data'],
-                            filename=f'filename.{downloaded["data_type"]}',
-                        )
-                    )
-                else:
-                    output.append(ResponseInputFileContentParam(type='input_file', file_url=item.url))
-            elif isinstance(item, VideoUrl):
-                raise NotImplementedError('VideoUrl is not supported in OpenAI Responses tool returns')
+            if is_multi_modal_content(item):
+                output.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns'))
             else:
                 assert isinstance(item, str)
                 output.append(ResponseInputTextContentParam(type='input_text', text=item))
