@@ -92,7 +92,7 @@ def gemini_realtime_model(
     3. Run with ``--record-mode=rewrite``
     """
     # NOTE: You need to comment out this line to rewrite the cassettes locally.
-    if not os.getenv('CI'):
+    if not os.getenv('CI'):  # pragma: no cover - only runs locally
         pytest.skip('Requires gcloud auth application-default login to record')
 
     cassette_name = sanitize_filename(request.node.name, 240)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]

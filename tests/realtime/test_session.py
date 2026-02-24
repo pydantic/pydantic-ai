@@ -58,7 +58,7 @@ class FakeRealtimeModel(RealtimeModel):
         self.last_tools: list[ToolDefinition] | None = None
 
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> str:  # pragma: no cover
         return 'fake-realtime'
 
     @asynccontextmanager
@@ -83,7 +83,7 @@ class FakeRealtimeModel(RealtimeModel):
 async def test_audio_delta_passthrough() -> None:
     conn = FakeRealtimeConnection([AudioDelta(data=b'\x00\x01')])
 
-    async def noop_runner(name: str, args: dict[str, Any]) -> str:
+    async def noop_runner(name: str, args: dict[str, Any]) -> str:  # pragma: no cover
         raise AssertionError('should not be called')
 
     session = RealtimeSession(conn, noop_runner)

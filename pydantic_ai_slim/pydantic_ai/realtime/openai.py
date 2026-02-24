@@ -220,7 +220,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         async with websockets.connect(url, additional_headers=headers) as ws:
             # Wait for session.created
             raw = await ws.recv()
-            if not isinstance(raw, str):
+            if not isinstance(raw, str):  # pragma: no cover
                 raise TypeError(f'Expected text message from WebSocket, got {type(raw).__name__}')
             created: dict[str, Any] = json.loads(raw)
             if created.get('type') != 'session.created':
@@ -253,7 +253,7 @@ class OpenAIRealtimeModel(RealtimeModel):
 
             # Wait for session.updated confirmation
             raw = await ws.recv()
-            if not isinstance(raw, str):
+            if not isinstance(raw, str):  # pragma: no cover
                 raise TypeError(f'Expected text message from WebSocket, got {type(raw).__name__}')
             updated: dict[str, Any] = json.loads(raw)
             if updated.get('type') != 'session.updated':

@@ -114,7 +114,7 @@ class ReplayWebSocket:
     async def __anext__(self) -> str:
         try:
             result = await self.recv()
-        except ConnectionClosedOK:
+        except ConnectionClosedOK:  # pragma: no cover - StopAsyncIteration not tracked by coverage
             raise StopAsyncIteration
         if isinstance(result, bytes):
             return result.decode('utf-8')
