@@ -398,6 +398,50 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     __repr__ = dataclasses_no_defaults_repr
 
 
+async def _prepare_request_parameters(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+) -> models.ModelRequestParameters:
+    """Build tools and create an agent model."""
+    output_schema = ctx.deps.output_schema
+
+    prompted_output_template = (
+        output_schema.template if isinstance(output_schema, _output.StructuredTextOutputSchema) else None
+    )
+
+    function_tools: list[ToolDefinition] = []
+    output_tools: list[ToolDefinition] = []
+    for tool_def in ctx.deps.tool_manager.tool_defs:
+        if tool_def.kind == 'output':
+            output_tools.append(tool_def)
+        else:
+            function_tools.append(tool_def)
+
+    # resolve dynamic builtin tools
+    builtin_tools: list[AbstractBuiltinTool] = []
+    if ctx.deps.builtin_tools:
+        run_context = build_run_context(ctx)
+        for tool in ctx.deps.builtin_tools:
+            if isinstance(tool, AbstractBuiltinTool):
+                builtin_tools.append(tool)
+            else:
+                t = tool(run_context)
+                if inspect.isawaitable(t):
+                    t = await t
+                if t is not None:
+                    builtin_tools.append(t)
+
+    return models.ModelRequestParameters(
+        function_tools=function_tools,
+        builtin_tools=builtin_tools,
+        output_mode=output_schema.mode,
+        output_tools=output_tools,
+        output_object=output_schema.object_def,
+        prompted_output_template=prompted_output_template,
+        allow_text_output=output_schema.allows_text,
+        allow_image_output=output_schema.allows_image,
+    )
+
+
 @dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that prepares the model request."""
@@ -410,13 +454,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
         model_settings, request_params, message_history, run_context = await self._prepare_request(ctx)
 
+        tracer = ctx.deps.tracer
         with tracer.start_as_current_span('model request'):
             model_response = await ctx.deps.model.run(
                 message_history=message_history,
                 request_params=request_params,
                 settings=model_settings,
                 run_context=run_context,
-                tracer=ctx.deps.tracer,
+                tracer=tracer,
                 instrumentation_settings=ctx.deps.instrumentation_settings,
             )
 
@@ -461,11 +506,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
         merged_message_history = _merge_consecutive_model_requests(message_history)
 
-        request_params = await _prepare_request_parameters(
-            ctx=ctx,
-            run_context=run_context,
-            message_history=merged_message_history,
-        )
+        request_params = await _prepare_request_parameters(ctx)
 
         return ctx.deps.model_settings, request_params, merged_message_history, run_context
 
@@ -950,50 +991,6 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
         return End(self.final_result)
 
     __repr__ = dataclasses_no_defaults_repr
-
-
-async def _prepare_request_parameters(
-    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-    run_context: RunContext[DepsT],
-    message_history: list[_messages.ModelMessage],
-) -> models.ModelRequestParameters:
-    """Build tools and create an agent model."""
-    output_schema = ctx.deps.output_schema
-
-    prompted_output_template = (
-        output_schema.template if isinstance(output_schema, _output.StructuredTextOutputSchema) else None
-    )
-
-    function_tools: list[ToolDefinition] = []
-    output_tools: list[ToolDefinition] = []
-    for tool_def in ctx.deps.tool_manager.tool_defs:
-        if tool_def.kind == 'output':
-            output_tools.append(tool_def)
-        else:
-            function_tools.append(tool_def)
-
-    # resolve dynamic builtin tools
-    builtin_tools: list[AbstractBuiltinTool] = []
-    if ctx.deps.builtin_tools:
-        for tool in ctx.deps.builtin_tools:
-            if isinstance(tool, AbstractBuiltinTool):
-                builtin_tools.append(tool)
-            else:
-                t = tool(run_context)
-                if inspect.isawaitable(t):
-                    t = await t
-                builtin_tools.append(t)
-
-    return models.ModelRequestParameters(
-        function_tools=function_tools,
-        builtin_tools=builtin_tools,
-        output_mode=output_schema.mode,
-        output_tools=output_tools,
-        output_object=output_schema.object_def,
-        prompted_output_template=prompted_output_template,
-        allow_text_output=output_schema.allows_text,
-        allow_image_output=output_schema.allows_image,
-    )
 
 
 async def _call_tools(
