@@ -429,13 +429,13 @@ async def test_connect_model_settings_partial() -> None:
     with patch('pydantic_ai.realtime.openai.websockets.connect', fake_connect):
         async with model.connect(
             instructions='test',
-            model_settings=ModelSettings(max_tokens=200),
+            model_settings=ModelSettings(temperature=0.5),
         ) as conn:
             assert isinstance(conn, OpenAIRealtimeConnection)
 
     update = json.loads(ws.sent[0])
-    assert 'temperature' not in update['session']
-    assert update['session']['max_output_tokens'] == 200
+    assert update['session']['temperature'] == 0.5
+    assert 'max_output_tokens' not in update['session']
 
 
 @pytest.mark.anyio

@@ -520,15 +520,15 @@ async def test_connect_with_partial_model_settings() -> None:
 
     async with model.connect(
         instructions='test',
-        model_settings=ModelSettings(temperature=0.5),
+        model_settings=ModelSettings(max_tokens=100),
     ) as conn:
         assert isinstance(conn, GeminiRealtimeConnection)
 
     call_kwargs = mock_client.aio.live.connect.call_args[1]
     config = call_kwargs['config']
-    assert config.temperature == 0.5
+    assert config.temperature is None
     assert config.top_p is None
-    assert config.max_output_tokens is None
+    assert config.max_output_tokens == 100
 
 
 # ---------------------------------------------------------------------------
