@@ -15,7 +15,7 @@ from typing_extensions import TypeVar
 from ..otel._errors import SpanTreeRecordingError
 from ..otel.span_tree import SpanTree
 
-__all__ = ('EvaluatorContext',)
+__all__ = ('EvaluatorContext', 'EVALUATOR_CONTEXT_ADAPTER')
 
 # ScoringContext needs to be covariant
 InputsT = TypeVar('InputsT', default=Any, covariant=True)
