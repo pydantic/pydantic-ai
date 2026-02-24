@@ -22,7 +22,6 @@ from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
-import pydantic_ai._ssrf
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
 from pydantic_ai.models import Model
@@ -345,17 +344,20 @@ def vcr_config():
     }
 
 
+_HttpClientCache: TypeAlias = 'dict[tuple[str | None, int, int], httpx.AsyncClient]'
+
+
 @pytest.fixture(autouse=True)
-async def close_created_httpx_clients(anyio_backend: str, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
-    """Cache and close HTTP clients created during each test.
+def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClientCache]:
+    """Monkeypatch `create_async_http_client` in all loaded modules and track created clients.
 
-    Monkeypatches `create_async_http_client` so that within a single test,
-    calls with the same (provider, timeout, connect) args reuse the same
-    httpx.AsyncClient (same perf as the old global @cache). On teardown,
-    all clients are closed — no process-global state leaks between tests.
+    Within a single test, calls with the same (provider, timeout, connect) args reuse the same
+    httpx.AsyncClient. On teardown, all clients are closed — no process-global state leaks.
+
+    This is a sync fixture so it applies to both sync and async tests. For async tests, the
+    companion ``close_httpx_clients`` fixture handles async cleanup first.
     """
-    cache: dict[tuple[str | None, int, int], httpx.AsyncClient] = {}
-
+    cache: _HttpClientCache = {}
     original = pydantic_ai.models.create_async_http_client
 
     def cached_per_test(**kwargs: Any) -> httpx.AsyncClient:
@@ -364,13 +366,29 @@ async def close_created_httpx_clients(anyio_backend: str, monkeypatch: pytest.Mo
             cache[key] = original(**kwargs)
         return cache[key]
 
-    monkeypatch.setattr(pydantic_ai.models, 'create_async_http_client', cached_per_test)
-    monkeypatch.setattr(pydantic_ai._ssrf, 'create_async_http_client', cached_per_test)
+    for mod in sys.modules.values():
+        if getattr(mod, 'create_async_http_client', None) is original:
+            monkeypatch.setattr(mod, 'create_async_http_client', cached_per_test)
 
+    yield cache
+
+    unclosed = [c for c in cache.values() if not c.is_closed]
+    if unclosed:
+
+        async def _close_all() -> None:
+            for client in unclosed:
+                await client.aclose()
+
+        asyncio.run(_close_all())
+
+
+@pytest.fixture(autouse=True)
+async def close_httpx_clients(anyio_backend: str, track_httpx_clients: _HttpClientCache) -> AsyncIterator[None]:
+    """Close tracked HTTP clients after async tests."""
     yield
-
-    for client in cache.values():
-        await client.aclose()
+    for client in track_httpx_clients.values():
+        if not client.is_closed:
+            await client.aclose()
 
 
 @pytest.fixture(autouse=True, scope='session')

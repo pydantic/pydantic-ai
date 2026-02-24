@@ -144,12 +144,8 @@ KnownModelName = TypeAliasType(
         'bedrock:us.meta.llama3-2-90b-instruct-v1:0',
         'bedrock:us.meta.llama3-3-70b-instruct-v1:0',
         'cerebras:gpt-oss-120b',
-        'cerebras:llama-3.3-70b',
         'cerebras:llama3.1-8b',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
-        'cerebras:qwen-3-32b',
-        'cerebras:qwen-3-coder-480b',
-        'cerebras:zai-glm-4.6',
         'cerebras:zai-glm-4.7',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
@@ -443,11 +439,18 @@ KnownModelName = TypeAliasType(
         'heroku:claude-3-haiku',
         'heroku:claude-4-5-haiku',
         'heroku:claude-4-5-sonnet',
+        'heroku:claude-4-6-sonnet',
         'heroku:claude-4-sonnet',
         'heroku:claude-opus-4-5',
+        'heroku:claude-opus-4-6',
+        'heroku:deepseek-v3-2',
+        'heroku:glm-4-7',
+        'heroku:glm-4-7-flash',
         'heroku:gpt-oss-120b',
+        'heroku:kimi-k2-5',
         'heroku:kimi-k2-thinking',
         'heroku:minimax-m2',
+        'heroku:minimax-m2-1',
         'heroku:qwen3-235b',
         'heroku:qwen3-coder-480b',
         'heroku:nova-2-lite',
@@ -655,12 +658,14 @@ class Model(ABC):
         self._profile = profile
 
     async def __aenter__(self) -> Self:
+        """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""
         provider = getattr(self, '_provider', None)
         if provider is not None:
             await provider.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
+        """Exit the model context, closing the provider's HTTP client if it owns one."""
         provider = getattr(self, '_provider', None)
         if provider is not None:
             await provider.__aexit__(*args)

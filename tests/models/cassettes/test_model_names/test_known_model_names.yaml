@@ -25,7 +25,7 @@ interactions:
     parsed_body:
       data:
       - created: 0
-        id: llama3.1-8b
+        id: zai-glm-4.7
         object: model
         owned_by: Cerebras
       - created: 0
@@ -33,7 +33,7 @@ interactions:
         object: model
         owned_by: Cerebras
       - created: 0
-        id: zai-glm-4.7
+        id: llama3.1-8b
         object: model
         owned_by: Cerebras
       - created: 0
