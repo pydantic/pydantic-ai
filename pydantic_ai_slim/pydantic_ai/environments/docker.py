@@ -95,7 +95,7 @@ def _build_find_cmd(*, path: str = '.', recursive: bool = True) -> str:
     patterns without ``**``).
     """
     depth_flag = '' if recursive else ' -maxdepth 1'
-    return f'find {_shell_escape(path)}{depth_flag} -type f 2>/dev/null | head -100'
+    return f'find {_shell_escape(path)}{depth_flag} -type f 2>/dev/null'
 
 
 def _put_file(container: Container, path: str, data: bytes) -> None:
