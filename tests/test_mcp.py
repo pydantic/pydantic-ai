@@ -211,7 +211,7 @@ async def test_server_instructions_not_initialized():
     ctx = build_run_context(0)
 
     with pytest.raises(
-        AttributeError, match='The `MCPServerStdio.get_instructions` is only instantiated after initialization.'
+        AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
     ):
         await server.get_instructions(ctx)
 
