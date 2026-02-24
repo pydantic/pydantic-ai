@@ -1339,6 +1339,7 @@ async def test_history_processor_resuming_without_prompt(
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1384,6 +1385,7 @@ async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request(
             ModelRequest(
                 parts=[UserPromptPart(content='Original prompt', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')],
@@ -1449,6 +1451,7 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1522,6 +1525,7 @@ async def test_history_processor_rebuild_resuming_without_prompt(
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
