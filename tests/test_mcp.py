@@ -2242,6 +2242,15 @@ async def test_resource_methods_without_capability(mcp_server: MCPServerStdio) -
             assert result == []
 
 
+async def test_instructions(mcp_server: MCPServerStdio) -> None:
+    with pytest.raises(
+        AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
+    ):
+        mcp_server.instructions
+    async with mcp_server:
+        assert mcp_server.instructions == 'Be a helpful assistant.'
+
+
 async def test_client_info_passed_to_session() -> None:
     """Test that provided client_info is passed unchanged to ClientSession."""
     implementation = Implementation(

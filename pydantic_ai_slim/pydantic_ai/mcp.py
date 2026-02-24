@@ -482,10 +482,6 @@ class MCPServer(AbstractToolset[Any], ABC):
         return self._server_capabilities
 
     @property
-    @deprecated(
-        'The `instructions` property is deprecated. '
-        "Use `include_instructions=True` when constructing the server to have instructions automatically injected into the agent's system prompt."
-    )
     def instructions(self) -> str | None:
         """Access the instructions sent by the MCP server during initialization."""
         if not hasattr(self, '_instructions'):
@@ -516,7 +512,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 raise AttributeError(
                     f'The `{self.__class__.__name__}.get_instructions` is only instantiated after initialization.'
                 )
-            return self._instructions
+            return self.instructions
         return None
 
     async def list_tools(self) -> list[mcp_types.Tool]:
