@@ -1423,19 +1423,13 @@ class OpenAIResponsesModel(Model):
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
-        # Background mode continuation: retrieve the pending response instead of creating a new one.
-        # Polling is done at the graph level (via ContinueRequestNode) rather than in a tight loop here,
-        # so that each poll round-trip is visible to the agent graph lifecycle (usage tracking, durable
-        # execution checkpoints, etc.).
         if info := self._get_continuation_info(messages, settings):
             response_id, _, _ = info
-            poll_interval = settings.get('openai_background_poll_interval', 1.0)
-            await asyncio.sleep(poll_interval)
+            await asyncio.sleep(settings.get('openai_background_poll_interval', 1.0))
             response = await self._responses_retrieve(response_id, settings)
         else:
             response = await self._responses_create(messages, False, settings, model_request_parameters)
 
-        # Handle ModelResponse (e.g. from Azure content filter)
         if isinstance(response, ModelResponse):
             return response
 
@@ -1456,14 +1450,9 @@ class OpenAIResponsesModel(Model):
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
-        # Background mode continuation: retrieve the pending response instead of creating a new one.
-        # Polling is done at the graph level (via ContinueRequestNode) rather than in a tight loop here,
-        # so that each poll round-trip is visible to the agent graph lifecycle (usage tracking, durable
-        # execution checkpoints, etc.).
         if info := self._get_continuation_info(messages, settings):
             response_id, last_sequence_number, previous_model_name = info
-            poll_interval = settings.get('openai_background_poll_interval', 1.0)
-            await asyncio.sleep(poll_interval)
+            await asyncio.sleep(settings.get('openai_background_poll_interval', 1.0))
             if last_sequence_number is None:
                 # Some background responses were not previously streamed and have no resumable
                 # sequence cursor. `retrieve(stream=True)` can block for a long time in this case,
@@ -1614,7 +1603,6 @@ class OpenAIResponsesModel(Model):
         if response.created_at:  # pragma: no branch
             provider_details['timestamp'] = number_to_datetime(response.created_at)
 
-        # Background mode: queued/in_progress responses expect a continuation via retrieve()
         state = _response_status_to_state(response.status)
         if refusal_text is not None:
             items = []
@@ -1813,15 +1801,16 @@ class OpenAIResponsesModel(Model):
             return None
         for message in reversed(messages):
             if isinstance(message, ModelResponse):
-                if message.state == 'suspended' and message.provider_response_id:
-                    last_sequence_number: int | None = None
-                    if isinstance(provider_details := message.provider_details, dict):
-                        sequence_number = provider_details.get('openai_last_sequence_number')
-                        if isinstance(sequence_number, int):
-                            last_sequence_number = sequence_number
-                    model_name = cast(OpenAIModelName | None, message.model_name)
-                    return message.provider_response_id, last_sequence_number, model_name
-                return None
+                if not (message.state == 'suspended' and message.provider_response_id):
+                    return None
+                details = message.provider_details if isinstance(message.provider_details, dict) else {}
+                seq = details.get('openai_last_sequence_number')
+                last_sequence_number = seq if isinstance(seq, int) else None
+                return (
+                    message.provider_response_id,
+                    last_sequence_number,
+                    cast(OpenAIModelName | None, message.model_name),
+                )
         return None
 
     def _build_include(self, model_settings: OpenAIResponsesModelSettings) -> list[responses.ResponseIncludable]:
@@ -2682,15 +2671,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
                 pass  # there's nothing we need to do here
 
+            elif isinstance(chunk, (responses.ResponseInProgressEvent, responses.ResponseQueuedEvent)):
+                self._usage += self._map_usage(chunk.response)
+                self._set_state(chunk.response.status)
+
             elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
-                self._usage += self._map_usage(chunk.response)
-                self._set_state(chunk.response.status)
-
-            elif isinstance(chunk, responses.ResponseInProgressEvent):
-                self._usage += self._map_usage(chunk.response)
-                self._set_state(chunk.response.status)
-
-            elif isinstance(chunk, responses.ResponseQueuedEvent):
                 self._usage += self._map_usage(chunk.response)
                 self._set_state(chunk.response.status)
 

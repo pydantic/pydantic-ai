@@ -207,11 +207,8 @@ class FallbackModel(Model):
                 if message.state != 'suspended':
                     return None
                 pydantic_ai_meta = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY, {})
-                name = pydantic_ai_meta.get(_FALLBACK_MODEL_NAME_KEY)
-                if name:
-                    for model in self.models:
-                        if model.model_name == name:
-                            return model
+                if name := pydantic_ai_meta.get(_FALLBACK_MODEL_NAME_KEY):
+                    return next((m for m in self.models if m.model_name == name), None)
                 return None
         return None
 

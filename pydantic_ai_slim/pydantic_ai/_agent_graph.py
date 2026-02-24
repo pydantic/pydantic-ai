@@ -65,6 +65,7 @@ EndStrategy = Literal['early', 'exhaustive']
 
 _MAX_CONTINUATIONS = 50
 """Maximum number of continuations allowed for incomplete responses (e.g., Anthropic pause_turn)."""
+
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
@@ -1019,11 +1020,8 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
         If the model changed between responses, replace entirely (incompatible responses should not be merged).
         Otherwise, accumulate parts, sum usage, and use other fields from the new response.
         """
-        if (
-            existing.provider_response_id is not None
-            and new.provider_response_id is not None
-            and existing.provider_response_id == new.provider_response_id
-        ):
+        # Same response ID → the new response is a full replacement (e.g. OpenAI background retrieve).
+        if existing.provider_response_id and existing.provider_response_id == new.provider_response_id:
             return new
 
         # Different model → replace (accumulating parts from different models is always wrong).
