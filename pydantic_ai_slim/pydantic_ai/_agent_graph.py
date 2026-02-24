@@ -1552,7 +1552,7 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
     if not isinstance(message, _messages.ModelRequest):
         return False
     if message is request:
-        return True
+        return True  # pragma: no cover
     # Intentionally excludes run_id: the resumed request may not have
     # run_id set yet when this comparison is performed.
     return (
