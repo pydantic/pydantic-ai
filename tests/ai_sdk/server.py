@@ -14,8 +14,15 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models.function import AgentInfo, DeltaThinkingCalls, DeltaThinkingPart, FunctionModel
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaThinkingCalls,
+    DeltaThinkingPart,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
@@ -40,8 +47,28 @@ def get_weather(city: str) -> str:
     return f'Sunny in {city}'
 
 
+def _count_denials(messages: list[ModelMessage]) -> int:
+    return sum(
+        1
+        for msg in messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and 'denied' in str(part.content).lower()
+    )
+
+
+async def _approval_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+    denials = _count_denials(messages)
+    if denials == 0:
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "test.txt"}')}
+    elif denials == 1:
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "retry.txt"}')}
+    else:
+        yield 'Done.'
+
+
 approval_agent: Agent[None, str | DeferredToolRequests] = Agent(
-    model=TestModel(),
+    model=FunctionModel(stream_function=_approval_stream),
     output_type=[str, DeferredToolRequests],
 )
 
