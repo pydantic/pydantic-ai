@@ -399,6 +399,102 @@ def test_default_model_name() -> None:
 
 
 # ---------------------------------------------------------------------------
+# GeminiRealtimeModel._get_client tests
+# ---------------------------------------------------------------------------
+
+
+def test_get_client_with_prebuilt_client() -> None:
+    from unittest.mock import MagicMock
+
+    mock_client = MagicMock()
+    model = GeminiRealtimeModel(client=mock_client)
+    assert model._get_client() is mock_client
+
+
+def test_get_client_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('GOOGLE_API_KEY', 'test-key')
+    from unittest.mock import patch
+
+    with patch('pydantic_ai.realtime.gemini.GenaiClient') as mock_cls:
+        model = GeminiRealtimeModel()
+        model._get_client()
+        mock_cls.assert_called_once_with(api_key='test-key')
+
+
+# ---------------------------------------------------------------------------
+# GeminiRealtimeModel.connect config tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_connect_with_voice_and_language() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+
+    connect_cm = AsyncMock()
+    connect_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    connect_cm.__aexit__ = AsyncMock(return_value=False)
+    mock_client.aio.live.connect.return_value = connect_cm
+
+    model = GeminiRealtimeModel(client=mock_client, voice='Kore', language_code='en-US')
+
+    async with model.connect(instructions='Be helpful') as conn:
+        assert isinstance(conn, GeminiRealtimeConnection)
+
+    call_kwargs = mock_client.aio.live.connect.call_args[1]
+    config = call_kwargs['config']
+    assert config.speech_config is not None
+    assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == 'Kore'
+    assert config.speech_config.language_code == 'en-US'
+
+
+@pytest.mark.anyio
+async def test_connect_with_model_settings() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from pydantic_ai.settings import ModelSettings
+
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+
+    connect_cm = AsyncMock()
+    connect_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    connect_cm.__aexit__ = AsyncMock(return_value=False)
+    mock_client.aio.live.connect.return_value = connect_cm
+
+    model = GeminiRealtimeModel(client=mock_client)
+
+    async with model.connect(
+        instructions='Be helpful',
+        model_settings=ModelSettings(temperature=0.7, top_p=0.9, max_tokens=100),
+    ) as conn:
+        assert isinstance(conn, GeminiRealtimeConnection)
+
+    call_kwargs = mock_client.aio.live.connect.call_args[1]
+    config = call_kwargs['config']
+    assert config.temperature == 0.7
+    assert config.top_p == 0.9
+    assert config.max_output_tokens == 100
+
+
+# ---------------------------------------------------------------------------
+# map_message edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_map_text_part_in_model_turn() -> None:
+    """Cover the elif part.text branch when inline_data is None."""
+    msg = StubMessage(server_content=StubServerContent(model_turn=StubModelTurn(parts=[StubPart(text='Hello')])))
+    events = map_message(msg)
+    assert len(events) == 1
+    assert isinstance(events[0], Transcript)
+    assert events[0].text == 'Hello'
+    assert events[0].is_final is False
+
+
+# ---------------------------------------------------------------------------
 # Integration tests (WebSocket cassette recording/replay)
 # ---------------------------------------------------------------------------
 

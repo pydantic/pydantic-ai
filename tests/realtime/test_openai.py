@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 import base64
 import json
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 
@@ -27,7 +28,14 @@ with try_import() as imports_successful:
         Transcript,
         TurnComplete,
     )
-    from pydantic_ai.realtime.openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, map_event
+    from pydantic_ai.realtime.openai import (
+        OpenAIRealtimeConnection,
+        OpenAIRealtimeModel,
+        _tool_def_to_openai,
+        map_event,
+    )
+    from pydantic_ai.settings import ModelSettings
+    from pydantic_ai.tools import ToolDefinition
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='websockets not installed'),
@@ -137,6 +145,68 @@ def test_map_error() -> None:
     assert event.message == 'rate limit exceeded'
 
 
+def test_map_error_non_dict() -> None:
+    data: dict[str, object] = {'type': 'error', 'error': 'simple string error'}
+    event = map_event(data)
+    assert isinstance(event, SessionError)
+    assert event.message == 'simple string error'
+
+
+def test_map_error_dict_no_message() -> None:
+    data: dict[str, object] = {'type': 'error', 'error': {'code': 'rate_limit'}}
+    event = map_event(data)
+    assert isinstance(event, SessionError)
+    assert 'rate_limit' in event.message
+
+
+def test_map_response_done_no_response() -> None:
+    data: dict[str, object] = {'type': 'response.done'}
+    event = map_event(data)
+    assert isinstance(event, TurnComplete)
+    assert event.interrupted is False
+
+
+def test_map_response_done_function_call_only() -> None:
+    data: dict[str, object] = {
+        'type': 'response.done',
+        'response': {
+            'status': 'completed',
+            'output': [{'type': 'function_call', 'name': 'get_weather'}],
+        },
+    }
+    assert map_event(data) is None
+
+
+def test_map_audio_delta_non_str_delta() -> None:
+    data: dict[str, object] = {'type': 'response.audio.delta', 'delta': 123}
+    assert map_event(data) is None
+
+
+def test_map_transcript_delta_non_str() -> None:
+    data: dict[str, object] = {'type': 'response.audio_transcript.delta', 'delta': 123}
+    assert map_event(data) is None
+
+
+def test_map_transcript_done_non_str() -> None:
+    data: dict[str, object] = {'type': 'response.audio_transcript.done', 'transcript': 123}
+    assert map_event(data) is None
+
+
+def test_map_input_transcript_non_str() -> None:
+    data: dict[str, object] = {'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 123}
+    assert map_event(data) is None
+
+
+def test_map_tool_call_non_str_fields() -> None:
+    data: dict[str, object] = {
+        'type': 'response.function_call_arguments.done',
+        'call_id': 123,
+        'name': 'get_weather',
+        'arguments': '{}',
+    }
+    assert map_event(data) is None
+
+
 def test_map_unknown_event_returns_none() -> None:
     data: dict[str, object] = {'type': 'session.created'}
     assert map_event(data) is None
@@ -208,6 +278,25 @@ async def test_send_tool_result() -> None:
 
 
 @pytest.mark.anyio
+async def test_skips_non_str_messages() -> None:
+    """Non-string WebSocket messages (bytes) are skipped."""
+
+    class BytesWebSocket:
+        def __aiter__(self) -> AsyncIterator[str | bytes]:
+            return self._iter()
+
+        async def _iter(self) -> AsyncIterator[str | bytes]:
+            yield b'\x00\x01'  # binary - should be skipped
+            yield json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'hi'})
+
+    ws = BytesWebSocket()
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    events = [event async for event in conn]
+    assert len(events) == 1
+    assert isinstance(events[0], Transcript)
+
+
+@pytest.mark.anyio
 async def test_iterates_and_maps_events() -> None:
     messages = [
         json.dumps({'type': 'response.audio_transcript.delta', 'delta': 'Hi'}),
@@ -221,6 +310,146 @@ async def test_iterates_and_maps_events() -> None:
     assert len(events) == 2
     assert isinstance(events[0], Transcript)
     assert isinstance(events[1], TurnComplete)
+
+
+# ---------------------------------------------------------------------------
+# _tool_def_to_openai tests
+# ---------------------------------------------------------------------------
+
+
+def test_tool_def_with_description() -> None:
+    tool = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a city',
+        parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}},
+    )
+    result = _tool_def_to_openai(tool)
+    assert result['name'] == 'get_weather'
+    assert result['description'] == 'Get the weather for a city'
+    assert result['type'] == 'function'
+
+
+def test_tool_def_without_description() -> None:
+    tool = ToolDefinition(
+        name='noop',
+        description='',
+        parameters_json_schema={'type': 'object'},
+    )
+    result = _tool_def_to_openai(tool)
+    assert 'description' not in result
+
+
+# ---------------------------------------------------------------------------
+# OpenAIRealtimeModel.connect tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_connect_session_setup() -> None:
+    """Test that connect() sends session.update with the right config."""
+    session_created = json.dumps({'type': 'session.created', 'session': {}})
+    session_updated = json.dumps({'type': 'session.updated', 'session': {}})
+    ws = FakeWebSocket([session_created, session_updated])
+
+    from contextlib import asynccontextmanager
+    from unittest.mock import patch
+
+    @asynccontextmanager
+    async def fake_connect(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        yield ws
+
+    model = OpenAIRealtimeModel(api_key='test-key', voice='alloy')
+
+    with patch('pydantic_ai.realtime.openai.websockets.connect', fake_connect):
+        async with model.connect(instructions='Be helpful') as conn:
+            assert isinstance(conn, OpenAIRealtimeConnection)
+
+    # Verify session.update was sent
+    assert len(ws.sent) == 1
+    update = json.loads(ws.sent[0])
+    assert update['type'] == 'session.update'
+    assert update['session']['instructions'] == 'Be helpful'
+    assert update['session']['voice'] == 'alloy'
+
+
+@pytest.mark.anyio
+async def test_connect_with_tools_and_model_settings() -> None:
+    """Test that connect() applies tools and model_settings."""
+    session_created = json.dumps({'type': 'session.created', 'session': {}})
+    session_updated = json.dumps({'type': 'session.updated', 'session': {}})
+    ws = FakeWebSocket([session_created, session_updated])
+
+    from contextlib import asynccontextmanager
+    from unittest.mock import patch
+
+    @asynccontextmanager
+    async def fake_connect(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        yield ws
+
+    model = OpenAIRealtimeModel(api_key='test-key')
+    tools = [
+        ToolDefinition(
+            name='get_weather',
+            description='Get weather',
+            parameters_json_schema={'type': 'object', 'properties': {'city': {'type': 'string'}}},
+        )
+    ]
+
+    with patch('pydantic_ai.realtime.openai.websockets.connect', fake_connect):
+        async with model.connect(
+            instructions='Be helpful',
+            tools=tools,
+            model_settings=ModelSettings(max_tokens=500),
+        ) as conn:
+            assert isinstance(conn, OpenAIRealtimeConnection)
+
+    update = json.loads(ws.sent[0])
+    assert len(update['session']['tools']) == 1
+    assert update['session']['tools'][0]['name'] == 'get_weather'
+    assert update['session']['max_output_tokens'] == 500
+
+
+@pytest.mark.anyio
+async def test_connect_unexpected_first_message() -> None:
+    """Test that connect() raises on unexpected first message."""
+    ws = FakeWebSocket([json.dumps({'type': 'error', 'error': 'bad'})])
+
+    from contextlib import asynccontextmanager
+    from unittest.mock import patch
+
+    @asynccontextmanager
+    async def fake_connect(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        yield ws
+
+    model = OpenAIRealtimeModel(api_key='test-key')
+
+    with patch('pydantic_ai.realtime.openai.websockets.connect', fake_connect):
+        with pytest.raises(RuntimeError, match='Expected session.created'):
+            async with model.connect(instructions='test'):
+                pass
+
+
+@pytest.mark.anyio
+async def test_connect_unexpected_second_message() -> None:
+    """Test that connect() raises on unexpected second message."""
+    ws = FakeWebSocket([
+        json.dumps({'type': 'session.created', 'session': {}}),
+        json.dumps({'type': 'error', 'error': 'bad'}),
+    ])
+
+    from contextlib import asynccontextmanager
+    from unittest.mock import patch
+
+    @asynccontextmanager
+    async def fake_connect(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        yield ws
+
+    model = OpenAIRealtimeModel(api_key='test-key')
+
+    with patch('pydantic_ai.realtime.openai.websockets.connect', fake_connect):
+        with pytest.raises(RuntimeError, match='Expected session.updated'):
+            async with model.connect(instructions='test'):
+                pass
 
 
 # ---------------------------------------------------------------------------

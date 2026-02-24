@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.realtime import (
     AudioDelta,
     AudioInput,
@@ -315,6 +315,32 @@ async def test_agent_realtime_session_unknown_tool() -> None:
     assert isinstance(completed, ToolCallCompleted)
     assert 'Error' in completed.result
     assert 'nonexistent' in completed.result
+
+
+@pytest.mark.anyio
+async def test_agent_realtime_session_stub_model() -> None:
+    """Verify _RealtimeModelStub properties are accessible via RunContext."""
+    agent: Agent[None, str] = Agent()
+
+    received_model_name: str | None = None
+
+    @agent.tool
+    async def inspect_model(ctx: RunContext[None]) -> str:
+        nonlocal received_model_name
+        received_model_name = ctx.model.model_name
+        return f'system={ctx.model.system}'
+
+    tool_call = ToolCall(tool_call_id='tc_stub', tool_name='inspect_model', args='{}')
+    conn = FakeRealtimeConnection([tool_call, TurnComplete()])
+    fake_model = FakeRealtimeModel(conn)
+
+    async with agent.realtime_session(model=fake_model) as session:
+        events = [e async for e in session]
+
+    assert received_model_name == 'realtime-session-stub'
+    completed = [e for e in events if isinstance(e, ToolCallCompleted)]
+    assert len(completed) == 1
+    assert 'system=realtime' in completed[0].result
 
 
 @pytest.mark.anyio

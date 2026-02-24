@@ -32,7 +32,7 @@ CASSETTES_DIR = Path(__file__).parent / 'ws_cassettes'
 def _get_record_mode(request: pytest.FixtureRequest) -> str | None:
     try:
         return cast(Any, request.config).getoption('record_mode')
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError):  # pragma: no cover - depends on pytest-recording plugin presence
         return None
 
 
@@ -49,7 +49,7 @@ def openai_realtime_model(
 
     plan = realtime_cassette_plan(cassette_exists=cassette_path.exists(), record_mode=record_mode)
 
-    if plan == 'error_missing':
+    if plan == 'error_missing':  # pragma: no cover - only when cassette files are missing
         raise RuntimeError(
             f'Missing realtime cassette: {cassette_path}\n'
             'Record with: OPENAI_API_KEY=... uv run pytest --record-mode=once <test> -v'
@@ -62,7 +62,7 @@ def openai_realtime_model(
         yield ReplayWebSocket(cassette)
 
     @asynccontextmanager
-    async def recording_connect(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+    async def recording_connect(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:  # pragma: no cover
         async with _real_ws_connect(*args, **kwargs) as ws:
             yield RecordingWebSocket(ws, cassette)
 
@@ -71,7 +71,7 @@ def openai_realtime_model(
     with patch('pydantic_ai.realtime.openai.websockets.connect', mock_connect):
         yield OpenAIRealtimeModel(api_key=openai_api_key)
 
-    if plan == 'record' and any(i.direction == 'received' for i in cassette.interactions):
+    if plan == 'record' and any(i.direction == 'received' for i in cassette.interactions):  # pragma: no cover
         cassette.dump(cassette_path)
 
 
@@ -101,7 +101,7 @@ def gemini_realtime_model(
 
     plan = realtime_cassette_plan(cassette_exists=cassette_path.exists(), record_mode=record_mode)
 
-    if plan == 'error_missing':
+    if plan == 'error_missing':  # pragma: no cover - only when cassette files are missing
         raise RuntimeError(
             f'Missing realtime cassette: {cassette_path}\nRecord with: uv run pytest --record-mode=once <test> -v'
         )
@@ -113,7 +113,7 @@ def gemini_realtime_model(
         yield ReplayWebSocket(cassette)
 
     @asynccontextmanager
-    async def recording_ws_connect(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+    async def recording_ws_connect(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:  # pragma: no cover
         async with _real_ws_connect(*args, **kwargs) as ws:
             yield RecordingWebSocket(ws, cassette)
 
@@ -126,5 +126,5 @@ def gemini_realtime_model(
     with patch('google.genai.live.ws_connect', mock_connect):
         yield GeminiRealtimeModel(model=model, project=project, location=location)
 
-    if plan == 'record' and any(i.direction == 'received' for i in cassette.interactions):
+    if plan == 'record' and any(i.direction == 'received' for i in cassette.interactions):  # pragma: no cover
         cassette.dump(cassette_path)

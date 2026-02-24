@@ -50,7 +50,7 @@ class RealtimeCassette:
         ]
         return cls(version=raw.get('version', 1), interactions=interactions)
 
-    def dump(self, path: Path) -> None:
+    def dump(self, path: Path) -> None:  # pragma: no cover - only used during cassette recording
         path.parent.mkdir(parents=True, exist_ok=True)
         data: dict[str, Any] = {
             'version': self.version,
@@ -124,7 +124,7 @@ class ReplayWebSocket:
         pass
 
 
-class RecordingWebSocket:
+class RecordingWebSocket:  # pragma: no cover - only used during live cassette recording
     """Wraps a real WebSocket connection, recording all frames to a cassette."""
 
     def __init__(self, ws: Any, cassette: RealtimeCassette) -> None:
