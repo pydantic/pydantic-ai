@@ -408,7 +408,7 @@ def test_get_client_with_prebuilt_client() -> None:
 
     mock_client = MagicMock()
     model = GeminiRealtimeModel(client=mock_client)
-    assert model._get_client() is mock_client
+    assert model._get_client() is mock_client  # pyright: ignore[reportPrivateUsage]
 
 
 def test_get_client_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -417,7 +417,7 @@ def test_get_client_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with patch('pydantic_ai.realtime.gemini.GenaiClient') as mock_cls:
         model = GeminiRealtimeModel()
-        model._get_client()
+        model._get_client()  # pyright: ignore[reportPrivateUsage]
         mock_cls.assert_called_once_with(api_key='test-key')
 
 

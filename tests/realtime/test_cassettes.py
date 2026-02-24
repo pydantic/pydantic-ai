@@ -7,6 +7,8 @@ import pytest
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from websockets.exceptions import ConnectionClosedOK
+
     from .cassettes import CassetteInteraction, RealtimeCassette, ReplayWebSocket, realtime_cassette_plan
 
 pytestmark = [
@@ -62,9 +64,11 @@ def test_plan_unknown_mode_without_cassette() -> None:
 
 @pytest.mark.anyio
 async def test_replay_recv_decode_false() -> None:
-    cassette = RealtimeCassette(interactions=[
-        CassetteInteraction(direction='received', data={'type': 'session.created'}),
-    ])
+    cassette = RealtimeCassette(
+        interactions=[
+            CassetteInteraction(direction='received', data={'type': 'session.created'}),
+        ]
+    )
     ws = ReplayWebSocket(cassette)
     result = await ws.recv(decode=False)
     assert isinstance(result, bytes)
@@ -72,8 +76,6 @@ async def test_replay_recv_decode_false() -> None:
 
 @pytest.mark.anyio
 async def test_replay_recv_connection_closed() -> None:
-    from websockets.exceptions import ConnectionClosedOK
-
     cassette = RealtimeCassette(interactions=[])
     ws = ReplayWebSocket(cassette)
     with pytest.raises(ConnectionClosedOK):
@@ -83,16 +85,18 @@ async def test_replay_recv_connection_closed() -> None:
 @pytest.mark.anyio
 async def test_replay_aiter_bytes_result() -> None:
     """Cover the bytes decode branch in __anext__."""
-    cassette = RealtimeCassette(interactions=[
-        CassetteInteraction(direction='received', data={'type': 'test'}),
-    ])
+    cassette = RealtimeCassette(
+        interactions=[
+            CassetteInteraction(direction='received', data={'type': 'test'}),
+        ]
+    )
     ws = ReplayWebSocket(cassette)
     # Force recv to return bytes by patching
     original_recv = ws.recv
 
     async def bytes_recv(**kwargs: object) -> str | bytes:
-        return (await original_recv(decode=False))
+        return await original_recv(decode=False)
 
-    ws.recv = bytes_recv  # type: ignore[assignment]
+    ws.recv = bytes_recv
     result = await ws.__anext__()
     assert isinstance(result, str)

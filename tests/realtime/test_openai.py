@@ -31,7 +31,7 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.openai import (
         OpenAIRealtimeConnection,
         OpenAIRealtimeModel,
-        _tool_def_to_openai,
+        _tool_def_to_openai,  # pyright: ignore[reportPrivateUsage]
         map_event,
     )
     from pydantic_ai.settings import ModelSettings
@@ -432,10 +432,12 @@ async def test_connect_unexpected_first_message() -> None:
 @pytest.mark.anyio
 async def test_connect_unexpected_second_message() -> None:
     """Test that connect() raises on unexpected second message."""
-    ws = FakeWebSocket([
-        json.dumps({'type': 'session.created', 'session': {}}),
-        json.dumps({'type': 'error', 'error': 'bad'}),
-    ])
+    ws = FakeWebSocket(
+        [
+            json.dumps({'type': 'session.created', 'session': {}}),
+            json.dumps({'type': 'error', 'error': 'bad'}),
+        ]
+    )
 
     from contextlib import asynccontextmanager
     from unittest.mock import patch
