@@ -243,6 +243,10 @@ class OpenAIRealtimeModel(RealtimeModel):
             if self.voice:
                 session_config['voice'] = self.voice
 
+            if model_settings:
+                if (mt := model_settings.get('max_tokens')) is not None:
+                    session_config['max_output_tokens'] = mt
+
             update_event = {
                 'type': 'session.update',
                 'session': session_config,

@@ -36,6 +36,7 @@ from ._base import (
     RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
+    SessionError,
     TextInput,
     ToolCall,
     ToolResult,
@@ -127,6 +128,13 @@ def map_message(msg: Any) -> list[RealtimeEvent]:
     # Tool call cancellation = interrupted turn
     if msg.tool_call_cancellation:
         events.append(TurnComplete(interrupted=True))
+        return events
+
+    # Server is disconnecting
+    if msg.go_away:
+        time_left = msg.go_away.time_left
+        detail = f' (time remaining: {time_left})' if time_left else ''
+        events.append(SessionError(message=f'Server is disconnecting{detail}'))
         return events
 
     # Server content (audio, text, transcriptions, turn signals)
@@ -238,6 +246,15 @@ class GeminiRealtimeModel(RealtimeModel):
 
         transcription_config = genai_types.AudioTranscriptionConfig() if self.enable_transcription else None
 
+        generation_kwargs: dict[str, Any] = {}
+        if model_settings:
+            if (t := model_settings.get('temperature')) is not None:
+                generation_kwargs['temperature'] = t
+            if (tp := model_settings.get('top_p')) is not None:
+                generation_kwargs['top_p'] = tp
+            if (mt := model_settings.get('max_tokens')) is not None:
+                generation_kwargs['max_output_tokens'] = mt
+
         config = genai_types.LiveConnectConfig(
             response_modalities=modalities,
             system_instruction=instructions,
@@ -245,6 +262,7 @@ class GeminiRealtimeModel(RealtimeModel):
             output_audio_transcription=transcription_config,
             tools=gemini_tools,
             speech_config=speech_config,
+            **generation_kwargs,
         )
 
         async with client.aio.live.connect(model=self.model, config=config) as session:

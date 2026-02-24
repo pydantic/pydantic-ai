@@ -19,6 +19,7 @@ with try_import() as imports_successful:
         ImageInput,
         InputTranscript,
         RealtimeSessionEvent,
+        SessionError,
         TextInput,
         ToolCall,
         ToolCallCompleted,
@@ -95,6 +96,11 @@ class StubToolCallCancellation:
         self.ids = ids
 
 
+class StubGoAway:
+    def __init__(self, time_left: str | None = None) -> None:
+        self.time_left = time_left
+
+
 class StubMessage:
     def __init__(
         self,
@@ -102,10 +108,12 @@ class StubMessage:
         server_content: StubServerContent | None = None,
         tool_call: StubToolCall | None = None,
         tool_call_cancellation: StubToolCallCancellation | None = None,
+        go_away: StubGoAway | None = None,
     ) -> None:
         self.server_content = server_content
         self.tool_call = tool_call
         self.tool_call_cancellation = tool_call_cancellation
+        self.go_away = go_away
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +227,22 @@ def test_map_tool_call_cancellation() -> None:
     assert len(events) == 1
     assert isinstance(events[0], TurnComplete)
     assert events[0].interrupted is True
+
+
+def test_map_go_away() -> None:
+    msg = StubMessage(go_away=StubGoAway(time_left='30s'))
+    events = map_message(msg)
+    assert len(events) == 1
+    assert isinstance(events[0], SessionError)
+    assert events[0].message == 'Server is disconnecting (time remaining: 30s)'
+
+
+def test_map_go_away_no_time() -> None:
+    msg = StubMessage(go_away=StubGoAway())
+    events = map_message(msg)
+    assert len(events) == 1
+    assert isinstance(events[0], SessionError)
+    assert events[0].message == 'Server is disconnecting'
 
 
 def test_map_combined_audio_and_transcription() -> None:
