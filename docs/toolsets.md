@@ -782,9 +782,6 @@ print([t.name for t in test_model.last_model_request_parameters.function_tools])
 
 _(This example is complete, it can be run "as is")_
 
-!!! note "Dynamic toolset instructions are unavailable on the first model request"
-    Because a dynamic toolset is resolved inside [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] — which is called to build each model request — its [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] result is `None` until the toolset has been resolved at least once. This means that on the very first request of a run, any instructions defined on the inner toolset are silently omitted. If you need toolset instructions to be present from the very first request, define them on a `FunctionToolset` registered directly with the agent rather than inside a dynamic toolset factory.
-
 ## Building a Custom Toolset
 
 To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] and implement the [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] and [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] methods.

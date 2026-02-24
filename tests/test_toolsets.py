@@ -1247,6 +1247,26 @@ async def test_toolset_instructions_in_agent():
     assert first_message.instructions == 'Always use my_tool correctly.'  # type: ignore[union-attr]
 
 
+async def test_dynamic_toolset_instructions_on_first_request():
+    """Instructions from a DynamicToolset are present on the very first model request."""
+    from pydantic_ai import Agent
+
+    def make_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+        ts = FunctionToolset[None](instructions='Dynamic tool instructions.')
+
+        @ts.tool
+        def my_dynamic_tool() -> str:
+            """A tool inside the dynamic toolset."""
+            return 'done'
+
+        return ts
+
+    agent = Agent(TestModel(), toolsets=[DynamicToolset(make_toolset)])
+    result = await agent.run('Hello')
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'Dynamic tool instructions.'  # type: ignore[union-attr]
+
+
 async def test_toolset_instructions_combined_with_agent_instructions():
     """Toolset instructions are appended after agent-level instructions."""
     from pydantic_ai import Agent
