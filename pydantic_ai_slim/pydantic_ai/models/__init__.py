@@ -17,7 +17,7 @@ from functools import cache, cached_property
 from typing import Any, Generic, Literal, TypeVar, get_args, overload
 
 import httpx
-from typing_extensions import TypeAliasType, TypedDict
+from typing_extensions import Self, TypeAliasType, TypedDict
 
 from .. import _utils
 from .._json_schema import JsonSchemaTransformer
@@ -654,6 +654,17 @@ class Model(ABC):
         self._settings = settings
         self._profile = profile
 
+    async def __aenter__(self) -> Self:
+        provider = getattr(self, '_provider', None)
+        if provider is not None:
+            await provider.__aenter__()
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        provider = getattr(self, '_provider', None)
+        if provider is not None:
+            await provider.__aexit__(*args)
+
     @property
     def settings(self) -> ModelSettings | None:
         """Get the model settings."""
@@ -1218,41 +1229,33 @@ def infer_model(  # noqa: C901
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def cached_async_http_client(
+def create_async_http_client(
     *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
 ) -> httpx.AsyncClient:
-    """Cached HTTPX async client that creates a separate client for each provider.
+    """Create an HTTPX async client.
 
-    The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
-    requests (like downloading images). Multiple agents and calls can share the same client when they use the same provider.
-
-    Each client will get its own transport with its own connection pool. The default pool size is defined by `httpx.DEFAULT_LIMITS`.
-
-    There are good reasons why in production you should use a `httpx.AsyncClient` as an async context manager as
-    described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
-    examples, it's very useful not to.
+    Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
+    the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
 
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
-    client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    if client.is_closed:  # pragma: no cover
-        # This happens if the context manager is used, so we need to create a new client.
-        # Since there is no API from `functools.cache` to clear the cache for a specific
-        #  key, clear the entire cache here as a workaround.
-        _cached_async_http_client.cache_clear()
-        client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    return client
-
-
-@cache
-def _cached_async_http_client(
-    provider: str | None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
-) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
     )
+
+
+def cached_async_http_client(
+    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
+    """Deprecated. Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
+    warnings.warn(
+        'cached_async_http_client is deprecated, use create_async_http_client instead.',
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return create_async_http_client(provider=provider, timeout=timeout, connect=connect)
 
 
 DataT = TypeVar('DataT', str, bytes)

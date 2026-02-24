@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -22,6 +22,22 @@ from pydantic_ai._ssrf import (
 )
 
 pytestmark = [pytest.mark.anyio]
+
+
+@pytest.fixture
+def mock_dns(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    """Patch DNS resolution in _ssrf to prevent real network calls."""
+    mock = AsyncMock()
+    monkeypatch.setattr('pydantic_ai._ssrf.run_in_executor', mock)
+    return mock
+
+
+@pytest.fixture
+def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Patch HTTP client creation in _ssrf to prevent real network calls."""
+    mock = MagicMock()
+    monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', mock)
+    return mock
 
 
 class TestIsPrivateIp:
@@ -301,136 +317,107 @@ class TestResolveRedirectUrl:
 class TestResolveHostname:
     """Tests for resolve_hostname function."""
 
-    async def test_resolve_success(self) -> None:
-        """Test that hostname resolution returns IP addresses."""
-        with patch('pydantic_ai._ssrf.run_in_executor') as mock_executor:
-            mock_executor.return_value = [
-                (2, 1, 6, '', ('93.184.215.14', 0)),
-                (2, 1, 6, '', ('93.184.215.14', 0)),  # Duplicate should be removed
-            ]
-            ips = await resolve_hostname('example.com')
-            assert ips == ['93.184.215.14']
+    async def test_resolve_success(self, mock_dns: AsyncMock) -> None:
+        mock_dns.return_value = [
+            (2, 1, 6, '', ('93.184.215.14', 0)),
+            (2, 1, 6, '', ('93.184.215.14', 0)),  # Duplicate should be removed
+        ]
+        ips = await resolve_hostname('example.com')
+        assert ips == ['93.184.215.14']
 
-    async def test_resolve_failure(self) -> None:
-        """Test that DNS resolution failure raises ValueError."""
+    async def test_resolve_failure(self, mock_dns: AsyncMock) -> None:
         import socket
 
-        with patch('pydantic_ai._ssrf.run_in_executor', side_effect=socket.gaierror('DNS lookup failed')):
-            with pytest.raises(ValueError, match='DNS resolution failed for hostname'):
-                await resolve_hostname('nonexistent.invalid')
+        mock_dns.side_effect = socket.gaierror('DNS lookup failed')
+        with pytest.raises(ValueError, match='DNS resolution failed for hostname'):
+            await resolve_hostname('nonexistent.invalid')
 
 
 class TestValidateAndResolveUrl:
     """Tests for validate_and_resolve_url function."""
 
-    async def test_public_ip_allowed(self) -> None:
-        """Test that public IPs are allowed."""
-        with patch('pydantic_ai._ssrf.run_in_executor') as mock_executor:
-            mock_executor.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
-            resolved = await validate_and_resolve_url('https://example.com/path', allow_local=False)
-            assert resolved.resolved_ip == '93.184.215.14'
-            assert resolved.hostname == 'example.com'
-            assert resolved.port == 443
-            assert resolved.is_https is True
-            assert resolved.path == '/path'
+    async def test_public_ip_allowed(self, mock_dns: AsyncMock) -> None:
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        resolved = await validate_and_resolve_url('https://example.com/path', allow_local=False)
+        assert resolved.resolved_ip == '93.184.215.14'
+        assert resolved.hostname == 'example.com'
+        assert resolved.port == 443
+        assert resolved.is_https is True
+        assert resolved.path == '/path'
 
-    async def test_private_ip_blocked_by_default(self) -> None:
-        """Test that private IPs are blocked by default."""
-        with patch('pydantic_ai._ssrf.run_in_executor') as mock_executor:
-            mock_executor.return_value = [(2, 1, 6, '', ('192.168.1.1', 0))]
-            with pytest.raises(ValueError, match='Access to private/internal IP address'):
-                await validate_and_resolve_url('http://internal.local/path', allow_local=False)
+    async def test_private_ip_blocked_by_default(self, mock_dns: AsyncMock) -> None:
+        mock_dns.return_value = [(2, 1, 6, '', ('192.168.1.1', 0))]
+        with pytest.raises(ValueError, match='Access to private/internal IP address'):
+            await validate_and_resolve_url('http://internal.local/path', allow_local=False)
 
-    async def test_private_ip_allowed_with_allow_local(self) -> None:
-        """Test that private IPs are allowed with allow_local=True."""
-        with patch('pydantic_ai._ssrf.run_in_executor') as mock_executor:
-            mock_executor.return_value = [(2, 1, 6, '', ('192.168.1.1', 0))]
-            resolved = await validate_and_resolve_url('http://internal.local/path', allow_local=True)
-            assert resolved.resolved_ip == '192.168.1.1'
+    async def test_private_ip_allowed_with_allow_local(self, mock_dns: AsyncMock) -> None:
+        mock_dns.return_value = [(2, 1, 6, '', ('192.168.1.1', 0))]
+        resolved = await validate_and_resolve_url('http://internal.local/path', allow_local=True)
+        assert resolved.resolved_ip == '192.168.1.1'
 
-    async def test_cloud_metadata_always_blocked(self) -> None:
-        """Test that cloud metadata IPs are always blocked, even with allow_local=True."""
-        with patch('pydantic_ai._ssrf.run_in_executor') as mock_executor:
-            mock_executor.return_value = [(2, 1, 6, '', ('169.254.169.254', 0))]
-            with pytest.raises(ValueError, match='Access to cloud metadata service'):
-                await validate_and_resolve_url('http://metadata.google.internal/path', allow_local=True)
+    async def test_cloud_metadata_always_blocked(self, mock_dns: AsyncMock) -> None:
+        mock_dns.return_value = [(2, 1, 6, '', ('169.254.169.254', 0))]
+        with pytest.raises(ValueError, match='Access to cloud metadata service'):
+            await validate_and_resolve_url('http://metadata.google.internal/path', allow_local=True)
 
-    async def test_alibaba_cloud_metadata_always_blocked(self) -> None:
-        """Test that Alibaba Cloud metadata IP is always blocked, even with allow_local=True."""
-        with patch('pydantic_ai._ssrf.run_in_executor') as mock_executor:
-            mock_executor.return_value = [(2, 1, 6, '', ('100.100.100.200', 0))]
-            with pytest.raises(ValueError, match='Access to cloud metadata service'):
-                await validate_and_resolve_url('http://metadata.aliyun.internal/path', allow_local=True)
+    async def test_alibaba_cloud_metadata_always_blocked(self, mock_dns: AsyncMock) -> None:
+        mock_dns.return_value = [(2, 1, 6, '', ('100.100.100.200', 0))]
+        with pytest.raises(ValueError, match='Access to cloud metadata service'):
+            await validate_and_resolve_url('http://metadata.aliyun.internal/path', allow_local=True)
 
     async def test_literal_ip_address_in_url(self) -> None:
-        """Test handling of literal IP addresses in URLs."""
-        # Public IP - should work
         resolved = await validate_and_resolve_url('http://8.8.8.8/path', allow_local=False)
         assert resolved.resolved_ip == '8.8.8.8'
         assert resolved.hostname == '8.8.8.8'
 
     async def test_literal_private_ip_blocked(self) -> None:
-        """Test that literal private IPs in URLs are blocked."""
         with pytest.raises(ValueError, match='Access to private/internal IP address'):
             await validate_and_resolve_url('http://192.168.1.1/path', allow_local=False)
 
-    async def test_any_private_ip_blocks_request(self) -> None:
-        """Test that if any resolved IP is private, the request is blocked."""
-        with patch('pydantic_ai._ssrf.run_in_executor') as mock_executor:
-            # Return both public and private IPs
-            mock_executor.return_value = [
-                (2, 1, 6, '', ('93.184.215.14', 0)),
-                (2, 1, 6, '', ('192.168.1.1', 0)),
-            ]
-            with pytest.raises(ValueError, match='Access to private/internal IP address'):
-                await validate_and_resolve_url('http://example.com/path', allow_local=False)
+    async def test_any_private_ip_blocks_request(self, mock_dns: AsyncMock) -> None:
+        mock_dns.return_value = [
+            (2, 1, 6, '', ('93.184.215.14', 0)),
+            (2, 1, 6, '', ('192.168.1.1', 0)),
+        ]
+        with pytest.raises(ValueError, match='Access to private/internal IP address'):
+            await validate_and_resolve_url('http://example.com/path', allow_local=False)
 
     async def test_6to4_address_blocked(self) -> None:
-        """Test that 6to4 addresses (which can embed private IPv4) are blocked."""
         # 2002:c0a8:0101::1 embeds 192.168.1.1
         with pytest.raises(ValueError, match='Access to private/internal IP address'):
             await validate_and_resolve_url('http://[2002:c0a8:0101::1]/path', allow_local=False)
 
-    async def test_cgnat_range_blocked(self) -> None:
-        """Test that CGNAT range (100.64.0.0/10) is blocked."""
-        with patch('pydantic_ai._ssrf.run_in_executor') as mock_executor:
-            mock_executor.return_value = [(2, 1, 6, '', ('100.64.0.1', 0))]
-            with pytest.raises(ValueError, match='Access to private/internal IP address'):
-                await validate_and_resolve_url('http://cgnat-host.internal/path', allow_local=False)
+    async def test_cgnat_range_blocked(self, mock_dns: AsyncMock) -> None:
+        mock_dns.return_value = [(2, 1, 6, '', ('100.64.0.1', 0))]
+        with pytest.raises(ValueError, match='Access to private/internal IP address'):
+            await validate_and_resolve_url('http://cgnat-host.internal/path', allow_local=False)
 
 
 class TestSafeDownload:
     """Tests for safe_download function."""
 
-    async def test_successful_download(self) -> None:
-        """Test successful download of a public URL."""
+    async def test_successful_download(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         mock_response = AsyncMock()
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
         mock_response.content = b'test content'
 
-        with (
-            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
-            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
-        ):
-            mock_executor.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-            mock_client = AsyncMock()
-            mock_client.get.return_value = mock_response
-            mock_client_fn.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_ssrf_client.return_value = mock_client
 
-            response = await safe_download('https://example.com/file.txt')
-            assert response.content == b'test content'
+        response = await safe_download('https://example.com/file.txt')
+        assert response.content == b'test content'
 
-            # Verify the request was made to the resolved IP with Host header and SNI
-            mock_client.get.assert_called_once()
-            call_args = mock_client.get.call_args
-            assert '93.184.215.14' in call_args[0][0]
-            assert call_args[1]['headers']['Host'] == 'example.com'
-            assert call_args[1]['extensions'] == {'sni_hostname': 'example.com'}
+        mock_client.get.assert_called_once()
+        call_args = mock_client.get.call_args
+        assert '93.184.215.14' in call_args[0][0]
+        assert call_args[1]['headers']['Host'] == 'example.com'
+        assert call_args[1]['extensions'] == {'sni_hostname': 'example.com'}
 
-    async def test_redirect_followed(self) -> None:
-        """Test that redirects are followed with validation."""
+    async def test_redirect_followed(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': 'https://cdn.example.com/file.txt'}
@@ -440,68 +427,51 @@ class TestSafeDownload:
         final_response.raise_for_status = lambda: None
         final_response.content = b'final content'
 
-        with (
-            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
-            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
-        ):
-            # First call for example.com, second for cdn.example.com
-            mock_executor.side_effect = [
-                [(2, 1, 6, '', ('93.184.215.14', 0))],
-                [(2, 1, 6, '', ('203.0.113.50', 0))],
-            ]
+        mock_dns.side_effect = [
+            [(2, 1, 6, '', ('93.184.215.14', 0))],
+            [(2, 1, 6, '', ('203.0.113.50', 0))],
+        ]
 
-            mock_client = AsyncMock()
-            mock_client.get.side_effect = [redirect_response, final_response]
-            mock_client_fn.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = [redirect_response, final_response]
+        mock_ssrf_client.return_value = mock_client
 
-            response = await safe_download('https://example.com/file.txt')
-            assert response.content == b'final content'
-            assert mock_client.get.call_count == 2
+        response = await safe_download('https://example.com/file.txt')
+        assert response.content == b'final content'
+        assert mock_client.get.call_count == 2
 
-    async def test_redirect_to_private_ip_blocked(self) -> None:
-        """Test that redirects to private IPs are blocked."""
+    async def test_redirect_to_private_ip_blocked(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': 'http://internal.local/file.txt'}
 
-        with (
-            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
-            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
-        ):
-            # First call for example.com (public), second for internal.local (private)
-            mock_executor.side_effect = [
-                [(2, 1, 6, '', ('93.184.215.14', 0))],
-                [(2, 1, 6, '', ('192.168.1.1', 0))],
-            ]
+        mock_dns.side_effect = [
+            [(2, 1, 6, '', ('93.184.215.14', 0))],
+            [(2, 1, 6, '', ('192.168.1.1', 0))],
+        ]
 
-            mock_client = AsyncMock()
-            mock_client.get.return_value = redirect_response
-            mock_client_fn.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get.return_value = redirect_response
+        mock_ssrf_client.return_value = mock_client
 
-            with pytest.raises(ValueError, match='Access to private/internal IP address'):
-                await safe_download('https://example.com/file.txt')
+        with pytest.raises(ValueError, match='Access to private/internal IP address'):
+            await safe_download('https://example.com/file.txt')
 
-    async def test_max_redirects_exceeded(self) -> None:
-        """Test that too many redirects raises an error."""
+    async def test_max_redirects_exceeded(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': 'https://example.com/redirect'}
 
-        with (
-            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
-            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
-        ):
-            mock_executor.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-            mock_client = AsyncMock()
-            mock_client.get.return_value = redirect_response
-            mock_client_fn.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get.return_value = redirect_response
+        mock_ssrf_client.return_value = mock_client
 
-            with pytest.raises(ValueError, match=f'Too many redirects \\({_MAX_REDIRECTS + 1}\\)'):
-                await safe_download('https://example.com/file.txt')
+        with pytest.raises(ValueError, match=f'Too many redirects \\({_MAX_REDIRECTS + 1}\\)'):
+            await safe_download('https://example.com/file.txt')
 
-    async def test_relative_redirect_resolved(self) -> None:
-        """Test that relative redirect URLs are resolved correctly."""
+    async def test_relative_redirect_resolved(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': '/new-path/file.txt'}
@@ -511,44 +481,33 @@ class TestSafeDownload:
         final_response.raise_for_status = lambda: None
         final_response.content = b'final content'
 
-        with (
-            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
-            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
-        ):
-            mock_executor.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-            mock_client = AsyncMock()
-            mock_client.get.side_effect = [redirect_response, final_response]
-            mock_client_fn.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = [redirect_response, final_response]
+        mock_ssrf_client.return_value = mock_client
 
-            response = await safe_download('https://example.com/old-path/file.txt')
-            assert response.content == b'final content'
+        response = await safe_download('https://example.com/old-path/file.txt')
+        assert response.content == b'final content'
 
-            # Check that the second request was to the correct path
-            second_call = mock_client.get.call_args_list[1]
-            assert '/new-path/file.txt' in second_call[0][0]
+        second_call = mock_client.get.call_args_list[1]
+        assert '/new-path/file.txt' in second_call[0][0]
 
-    async def test_missing_location_header(self) -> None:
-        """Test that redirect without Location header raises error."""
+    async def test_missing_location_header(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {}
 
-        with (
-            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
-            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
-        ):
-            mock_executor.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-            mock_client = AsyncMock()
-            mock_client.get.return_value = redirect_response
-            mock_client_fn.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get.return_value = redirect_response
+        mock_ssrf_client.return_value = mock_client
 
-            with pytest.raises(ValueError, match='Redirect response missing Location header'):
-                await safe_download('https://example.com/file.txt')
+        with pytest.raises(ValueError, match='Redirect response missing Location header'):
+            await safe_download('https://example.com/file.txt')
 
-    async def test_protocol_relative_redirect(self) -> None:
-        """Test that protocol-relative redirects are handled correctly."""
+    async def test_protocol_relative_redirect(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': '//cdn.example.com/file.txt'}
@@ -558,146 +517,112 @@ class TestSafeDownload:
         final_response.raise_for_status = lambda: None
         final_response.content = b'final content'
 
-        with (
-            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
-            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
-        ):
-            # First call for example.com, second for cdn.example.com
-            mock_executor.side_effect = [
-                [(2, 1, 6, '', ('93.184.215.14', 0))],
-                [(2, 1, 6, '', ('203.0.113.50', 0))],
-            ]
+        mock_dns.side_effect = [
+            [(2, 1, 6, '', ('93.184.215.14', 0))],
+            [(2, 1, 6, '', ('203.0.113.50', 0))],
+        ]
 
-            mock_client = AsyncMock()
-            mock_client.get.side_effect = [redirect_response, final_response]
-            mock_client_fn.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = [redirect_response, final_response]
+        mock_ssrf_client.return_value = mock_client
 
-            response = await safe_download('https://example.com/file.txt')
-            assert response.content == b'final content'
-            assert mock_client.get.call_count == 2
+        response = await safe_download('https://example.com/file.txt')
+        assert response.content == b'final content'
+        assert mock_client.get.call_count == 2
 
-            # Verify second request was to cdn.example.com with https
-            second_call = mock_client.get.call_args_list[1]
-            assert second_call[1]['headers']['Host'] == 'cdn.example.com'
+        second_call = mock_client.get.call_args_list[1]
+        assert second_call[1]['headers']['Host'] == 'cdn.example.com'
 
-    async def test_protocol_relative_redirect_to_private_blocked(self) -> None:
-        """Test that protocol-relative redirects to private IPs are blocked."""
+    async def test_protocol_relative_redirect_to_private_blocked(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': '//internal.local/file.txt'}
 
-        with (
-            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
-            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
-        ):
-            mock_executor.side_effect = [
-                [(2, 1, 6, '', ('93.184.215.14', 0))],
-                [(2, 1, 6, '', ('192.168.1.1', 0))],
-            ]
+        mock_dns.side_effect = [
+            [(2, 1, 6, '', ('93.184.215.14', 0))],
+            [(2, 1, 6, '', ('192.168.1.1', 0))],
+        ]
 
-            mock_client = AsyncMock()
-            mock_client.get.return_value = redirect_response
-            mock_client_fn.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get.return_value = redirect_response
+        mock_ssrf_client.return_value = mock_client
 
-            with pytest.raises(ValueError, match='Access to private/internal IP address'):
-                await safe_download('https://example.com/file.txt')
+        with pytest.raises(ValueError, match='Access to private/internal IP address'):
+            await safe_download('https://example.com/file.txt')
 
-    async def test_http_no_sni_extension(self) -> None:
-        """Test that sni_hostname extension is not set for HTTP requests."""
+    async def test_http_no_sni_extension(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         mock_response = AsyncMock()
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
 
-        with (
-            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
-            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
-        ):
-            mock_executor.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-            mock_client = AsyncMock()
-            mock_client.get.return_value = mock_response
-            mock_client_fn.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_ssrf_client.return_value = mock_client
 
-            await safe_download('http://example.com/file.txt')
+        await safe_download('http://example.com/file.txt')
 
-            call_args = mock_client.get.call_args
-            assert call_args[1]['extensions'] == {}
+        call_args = mock_client.get.call_args
+        assert call_args[1]['extensions'] == {}
 
     async def test_protocol_validation(self) -> None:
-        """Test that non-http(s) protocols are rejected."""
         with pytest.raises(ValueError, match='URL protocol "file" is not allowed'):
             await safe_download('file:///etc/passwd')
 
         with pytest.raises(ValueError, match='URL protocol "ftp" is not allowed'):
             await safe_download('ftp://ftp.example.com/file.txt')
 
-    async def test_timeout_parameter(self) -> None:
-        """Test that timeout parameter is passed to client."""
+    async def test_timeout_parameter(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         mock_response = AsyncMock()
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
 
-        with (
-            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
-            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
-        ):
-            mock_executor.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-            mock_client = AsyncMock()
-            mock_client.get.return_value = mock_response
-            mock_client_fn.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_ssrf_client.return_value = mock_client
 
-            await safe_download('https://example.com/file.txt', timeout=60)
+        await safe_download('https://example.com/file.txt', timeout=60)
 
-            mock_client_fn.assert_called_once_with(timeout=60)
+        mock_ssrf_client.assert_called_once_with(timeout=60)
 
-    async def test_default_timeout(self) -> None:
-        """Test that default timeout is used."""
+    async def test_default_timeout(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         mock_response = AsyncMock()
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
 
-        with (
-            patch('pydantic_ai._ssrf.run_in_executor') as mock_executor,
-            patch('pydantic_ai._ssrf.cached_async_http_client') as mock_client_fn,
-        ):
-            mock_executor.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-            mock_client = AsyncMock()
-            mock_client.get.return_value = mock_response
-            mock_client_fn.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_ssrf_client.return_value = mock_client
 
-            await safe_download('https://example.com/file.txt')
+        await safe_download('https://example.com/file.txt')
 
-            mock_client_fn.assert_called_once_with(timeout=_DEFAULT_TIMEOUT)
+        mock_ssrf_client.assert_called_once_with(timeout=_DEFAULT_TIMEOUT)
 
 
 class TestDnsRebindingPrevention:
     """Tests specifically for DNS rebinding attack prevention."""
 
-    async def test_hostname_resolving_to_private_ip_blocked(self) -> None:
-        """Test that a hostname resolving to a private IP is blocked."""
-        with patch('pydantic_ai._ssrf.run_in_executor') as mock_executor:
-            # Attacker's DNS returns private IP
-            mock_executor.return_value = [(2, 1, 6, '', ('127.0.0.1', 0))]
-            with pytest.raises(ValueError, match='Access to private/internal IP address'):
-                await validate_and_resolve_url('http://attacker.com/path', allow_local=False)
+    async def test_hostname_resolving_to_private_ip_blocked(self, mock_dns: AsyncMock) -> None:
+        mock_dns.return_value = [(2, 1, 6, '', ('127.0.0.1', 0))]
+        with pytest.raises(ValueError, match='Access to private/internal IP address'):
+            await validate_and_resolve_url('http://attacker.com/path', allow_local=False)
 
-    async def test_hostname_resolving_to_cloud_metadata_blocked(self) -> None:
-        """Test that a hostname resolving to cloud metadata IP is blocked."""
-        with patch('pydantic_ai._ssrf.run_in_executor') as mock_executor:
-            # Attacker's DNS returns cloud metadata IP
-            mock_executor.return_value = [(2, 1, 6, '', ('169.254.169.254', 0))]
-            with pytest.raises(ValueError, match='Access to cloud metadata service'):
-                await validate_and_resolve_url('http://attacker.com/path', allow_local=True)
+    async def test_hostname_resolving_to_cloud_metadata_blocked(self, mock_dns: AsyncMock) -> None:
+        mock_dns.return_value = [(2, 1, 6, '', ('169.254.169.254', 0))]
+        with pytest.raises(ValueError, match='Access to cloud metadata service'):
+            await validate_and_resolve_url('http://attacker.com/path', allow_local=True)
 
-    async def test_multiple_ips_with_any_private_blocked(self) -> None:
-        """Test that if any IP in the resolution is private, request is blocked."""
-        with patch('pydantic_ai._ssrf.run_in_executor') as mock_executor:
-            # DNS returns multiple IPs, one of which is private
-            mock_executor.return_value = [
-                (2, 1, 6, '', ('8.8.8.8', 0)),  # Public
-                (10, 1, 6, '', ('::1', 0)),  # Private IPv6 loopback
-            ]
-            with pytest.raises(ValueError, match='Access to private/internal IP address'):
-                await validate_and_resolve_url('http://attacker.com/path', allow_local=False)
+    async def test_multiple_ips_with_any_private_blocked(self, mock_dns: AsyncMock) -> None:
+        mock_dns.return_value = [
+            (2, 1, 6, '', ('8.8.8.8', 0)),  # Public
+            (10, 1, 6, '', ('::1', 0)),  # Private IPv6 loopback
+        ]
+        with pytest.raises(ValueError, match='Access to private/internal IP address'):
+            await validate_and_resolve_url('http://attacker.com/path', allow_local=False)

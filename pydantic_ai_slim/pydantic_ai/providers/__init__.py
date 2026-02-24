@@ -6,7 +6,12 @@ The providers are in charge of providing an authenticated client to the API.
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
+from asyncio import Lock
+from contextlib import AsyncExitStack
 from typing import Any, Generic, TypeVar
+
+import httpx
+from typing_extensions import Self
 
 from ..profiles import ModelProfile
 
@@ -21,9 +26,15 @@ class Provider(ABC, Generic[InterfaceClient]):
     Each provider only supports a specific interface. A interface can be supported by multiple providers.
 
     For example, the `OpenAIChatModel` interface can be supported by the `OpenAIProvider` and the `DeepSeekProvider`.
+
+    When used as an async context manager, providers that create their own HTTP client will close it on exit.
+    This is handled automatically when using [`Agent`][pydantic_ai.Agent] as a context manager.
     """
 
     _client: InterfaceClient
+    _own_http_client: httpx.AsyncClient | None = None
+    _entered_count: int = 0
+    _exit_stack: AsyncExitStack | None = None
 
     @property
     @abstractmethod
@@ -46,6 +57,29 @@ class Provider(ABC, Generic[InterfaceClient]):
     def model_profile(self, model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
+
+    async def __aenter__(self) -> Self:
+        lock = getattr(self, '_enter_lock', None)
+        if lock is None:
+            lock = Lock()
+            self._enter_lock = lock
+        async with lock:
+            if self._entered_count == 0 and self._own_http_client is not None:
+                async with AsyncExitStack() as exit_stack:
+                    await exit_stack.enter_async_context(self._own_http_client)
+                    self._exit_stack = exit_stack.pop_all()
+            self._entered_count += 1
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        lock = getattr(self, '_enter_lock', None)
+        if lock is None:
+            return
+        async with lock:
+            self._entered_count -= 1
+            if self._entered_count == 0 and self._exit_stack is not None:
+                await self._exit_stack.aclose()
+                self._exit_stack = None
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}(name={self.name}, base_url={self.base_url})'  # pragma: lax no cover

@@ -1619,7 +1619,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     async def __aenter__(self) -> Self:
         """Enter the agent context.
 
-        This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used.
+        This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used,
+        and enter the model so the provider's HTTP client will be closed cleanly on exit.
 
         This is a no-op if the agent has already been entered.
         """
@@ -1628,6 +1629,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 async with AsyncExitStack() as exit_stack:
                     toolset = self._get_toolset()
                     await exit_stack.enter_async_context(toolset)
+
+                    if self.model is not None:
+                        model = models.infer_model(self.model)
+                        self.model = model
+                        await exit_stack.enter_async_context(model)
 
                     self._exit_stack = exit_stack.pop_all()
             self._entered_count += 1

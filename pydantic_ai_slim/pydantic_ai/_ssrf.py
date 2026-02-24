@@ -15,7 +15,7 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 
 from ._utils import run_in_executor
-from .models import cached_async_http_client
+from .models import create_async_http_client
 
 __all__ = ['safe_download']
 
@@ -327,7 +327,7 @@ async def safe_download(
     current_url = url
     redirects_followed = 0
 
-    client = cached_async_http_client(timeout=timeout)
+    client = create_async_http_client(timeout=timeout)
     while True:
         # Validate and resolve the current URL
         resolved = await validate_and_resolve_url(current_url, allow_local)

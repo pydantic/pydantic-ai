@@ -6,7 +6,7 @@ from typing import overload
 import httpx
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.providers import Provider
 
@@ -81,5 +81,6 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
         elif http_client is not None:
             self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = cached_async_http_client(provider='openai')
+            http_client = create_async_http_client(provider='openai')
+            self._own_http_client = http_client
             self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)

@@ -8,7 +8,7 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.providers import Provider
 
@@ -89,7 +89,8 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             if http_client is not None:
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
             else:
-                http_client = cached_async_http_client(provider='anthropic')
+                http_client = create_async_http_client(provider='anthropic')
+                self._own_http_client = http_client
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
 
 

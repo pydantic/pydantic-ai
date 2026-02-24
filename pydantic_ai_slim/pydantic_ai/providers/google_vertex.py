@@ -12,7 +12,7 @@ from typing_extensions import deprecated
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider
 
@@ -105,7 +105,10 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
         if service_account_file and service_account_info:
             raise ValueError('Only one of `service_account_file` or `service_account_info` can be provided.')
 
-        self._client = http_client or cached_async_http_client(provider='google-vertex')
+        if http_client is None:
+            http_client = create_async_http_client(provider='google-vertex')
+            self._own_http_client = http_client
+        self._client = http_client
         self.service_account_file = service_account_file
         self.service_account_info = service_account_info
         self.project_id = project_id

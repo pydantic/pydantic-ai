@@ -7,7 +7,7 @@ from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
@@ -107,6 +107,7 @@ class SambaNovaProvider(Provider[AsyncOpenAI]):
             # Set base URL (default to SambaNova API endpoint)
             self._base_url = base_url or os.getenv('SAMBANOVA_BASE_URL', 'https://api.sambanova.ai/v1')
 
-            # Create http client and AsyncOpenAI client
-            http_client = http_client or cached_async_http_client(provider='sambanova')
+            if http_client is None:
+                http_client = create_async_http_client(provider='sambanova')
+                self._own_http_client = http_client
             self._client = AsyncOpenAI(base_url=self._base_url, api_key=api_key, http_client=http_client)
