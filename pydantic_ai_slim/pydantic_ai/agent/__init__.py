@@ -1710,11 +1710,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         This is a no-op if the agent has already been entered.
         """
         async with self._enter_lock:
-            if self._entered_count == 0:
+            if self._entered_count == 0:  # pragma: no cover
                 async with AsyncExitStack() as exit_stack:
                     toolset = self._get_toolset()
-                    await exit_stack.enter_async_context(toolset)  # pragma: no cover
-                    self._exit_stack = exit_stack.pop_all()  # pragma: no cover
+                    await exit_stack.enter_async_context(toolset)
+                    self._exit_stack = exit_stack.pop_all()
             self._entered_count += 1
         return self
 

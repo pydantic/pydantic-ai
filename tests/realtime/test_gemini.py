@@ -8,10 +8,10 @@ from typing import Any
 
 import pytest
 
+from pydantic_ai.settings import ModelSettings
+
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
-
-from pydantic_ai.settings import ModelSettings
 
 with try_import() as imports_successful:
     from pydantic_ai import Agent
