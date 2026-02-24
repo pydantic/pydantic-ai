@@ -189,7 +189,7 @@ class GeminiRealtimeModel(RealtimeModel):
     """
 
     model: str = 'gemini-2.5-flash-native-audio-preview'
-    api_key: str | None = None
+    api_key: str | None = field(default=None, repr=False)
     project: str | None = None
     location: str | None = None
     client: GenaiClient | None = field(default=None, repr=False)

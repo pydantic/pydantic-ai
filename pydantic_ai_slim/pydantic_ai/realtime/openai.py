@@ -15,7 +15,7 @@ import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 try:
@@ -193,7 +193,7 @@ class OpenAIRealtimeModel(RealtimeModel):
     """
 
     model: str = 'gpt-4o-realtime-preview'
-    api_key: str | None = None
+    api_key: str | None = field(default=None, repr=False)
     base_url: str = DEFAULT_REALTIME_URL
     voice: str | None = None
 
@@ -240,6 +240,8 @@ class OpenAIRealtimeModel(RealtimeModel):
                 session_config['voice'] = self.voice
 
             if model_settings:
+                if (t := model_settings.get('temperature')) is not None:
+                    session_config['temperature'] = t
                 if (mt := model_settings.get('max_tokens')) is not None:
                     session_config['max_output_tokens'] = mt
 

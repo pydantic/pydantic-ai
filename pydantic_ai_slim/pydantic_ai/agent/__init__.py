@@ -117,7 +117,12 @@ class _RealtimeModelStub(models.Model):
     def system(self) -> str:
         return 'realtime'
 
-    async def request(self, messages: Any, model_settings: Any, model_request_parameters: Any) -> Any:
+    async def request(
+        self,
+        messages: list[_messages.ModelMessage],
+        model_settings: models.ModelSettings | None,
+        model_request_parameters: models.ModelRequestParameters,
+    ) -> models.ModelResponse:
         raise NotImplementedError('Text model requests are not available in realtime sessions')
 
 
@@ -1668,7 +1673,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps = self._get_deps(deps)
         toolset = self._get_toolset(output_toolset=None)
         async with toolset:
-            # Build a minimal RunContext for tool execution
+            # Build a minimal RunContext for tool execution.
+            # Use the agent's text model if set (for tools that access ctx.model),
+            # otherwise fall back to a stub since realtime sessions don't need one.
             run_context = RunContext[AgentDepsT](
                 deps=deps,
                 model=self._get_model(None) if self._model else _RealtimeModelStub(),

@@ -399,13 +399,14 @@ async def test_connect_with_tools_and_model_settings() -> None:
         async with model.connect(
             instructions='Be helpful',
             tools=tools,
-            model_settings=ModelSettings(max_tokens=500),
+            model_settings=ModelSettings(temperature=0.7, max_tokens=500),
         ) as conn:
             assert isinstance(conn, OpenAIRealtimeConnection)
 
     update = json.loads(ws.sent[0])
     assert len(update['session']['tools']) == 1
     assert update['session']['tools'][0]['name'] == 'get_weather'
+    assert update['session']['temperature'] == 0.7
     assert update['session']['max_output_tokens'] == 500
 
 
