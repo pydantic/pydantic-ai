@@ -493,25 +493,17 @@ class MCPServer(AbstractToolset[Any], ABC):
     async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         """Return instructions to inject into the agent's system prompt.
 
-        If ``include_instructions`` is ``True``, returns the instructions
-        sent by the MCP server during initialization. Otherwise, returns ``None``.
+        If [`include_instructions`][pydantic_ai.mcp.MCPServer.include_instructions] is ``True``, returns
+        the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] sent by the MCP server during
+        initialization. Otherwise, returns ``None``.
 
         Args:
             ctx: The run context for this agent run.
 
         Returns:
-            The server's instructions if ``include_instructions`` is enabled,
-            otherwise ``None``.
-
-        Raises:
-            AttributeError: If ``include_instructions`` is ``True`` but the server
-                has not been initialized yet.
+            The server's instructions if ``include_instructions`` is enabled, otherwise ``None``.
         """
         if self.include_instructions:
-            if not hasattr(self, '_instructions'):
-                raise AttributeError(
-                    f'The `{self.__class__.__name__}.get_instructions` is only instantiated after initialization.'
-                )
             return self.instructions
         return None
 
