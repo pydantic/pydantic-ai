@@ -494,6 +494,43 @@ def test_map_text_part_in_model_turn() -> None:
     assert events[0].is_final is False
 
 
+def test_map_part_with_neither_audio_nor_text() -> None:
+    """Cover the branch where a part has neither inline_data nor text."""
+    msg = StubMessage(server_content=StubServerContent(model_turn=StubModelTurn(parts=[StubPart()])))
+    events = map_message(msg)
+    assert events == []
+
+
+@pytest.mark.anyio
+async def test_connect_with_partial_model_settings() -> None:
+    """Cover branches where individual model_settings fields are None."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from pydantic_ai.settings import ModelSettings
+
+    mock_session = MagicMock()
+    mock_client = MagicMock()
+
+    connect_cm = AsyncMock()
+    connect_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    connect_cm.__aexit__ = AsyncMock(return_value=False)
+    mock_client.aio.live.connect.return_value = connect_cm
+
+    model = GeminiRealtimeModel(client=mock_client)
+
+    async with model.connect(
+        instructions='test',
+        model_settings=ModelSettings(temperature=0.5),
+    ) as conn:
+        assert isinstance(conn, GeminiRealtimeConnection)
+
+    call_kwargs = mock_client.aio.live.connect.call_args[1]
+    config = call_kwargs['config']
+    assert config.temperature == 0.5
+    assert config.top_p is None
+    assert config.max_output_tokens is None
+
+
 # ---------------------------------------------------------------------------
 # Integration tests (WebSocket cassette recording/replay)
 # ---------------------------------------------------------------------------

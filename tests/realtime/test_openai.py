@@ -411,6 +411,34 @@ async def test_connect_with_tools_and_model_settings() -> None:
 
 
 @pytest.mark.anyio
+async def test_connect_model_settings_partial() -> None:
+    """Test that connect() handles model_settings with only some fields set."""
+    session_created = json.dumps({'type': 'session.created', 'session': {}})
+    session_updated = json.dumps({'type': 'session.updated', 'session': {}})
+    ws = FakeWebSocket([session_created, session_updated])
+
+    from contextlib import asynccontextmanager
+    from unittest.mock import patch
+
+    @asynccontextmanager
+    async def fake_connect(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        yield ws
+
+    model = OpenAIRealtimeModel(api_key='test-key')
+
+    with patch('pydantic_ai.realtime.openai.websockets.connect', fake_connect):
+        async with model.connect(
+            instructions='test',
+            model_settings=ModelSettings(max_tokens=200),
+        ) as conn:
+            assert isinstance(conn, OpenAIRealtimeConnection)
+
+    update = json.loads(ws.sent[0])
+    assert 'temperature' not in update['session']
+    assert update['session']['max_output_tokens'] == 200
+
+
+@pytest.mark.anyio
 async def test_connect_unexpected_first_message() -> None:
     """Test that connect() raises on unexpected first message."""
     ws = FakeWebSocket([json.dumps({'type': 'error', 'error': 'bad'})])
