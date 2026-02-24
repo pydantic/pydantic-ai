@@ -285,9 +285,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         next_message.instructions = instructions
 
-        if not messages and not next_message.parts:
-            raise exceptions.UserError('No message history, user prompt, or instructions provided')
-
         return ModelRequestNode[DepsT, NodeRunEndT](
             request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
         )
@@ -529,6 +526,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step
         self.request.instructions = await ctx.deps.get_instructions(run_context)
+
+        # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
+        if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
+            raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
         message_history = await _process_message_history(
             ctx.state.message_history[:], ctx.deps.history_processors, run_context
