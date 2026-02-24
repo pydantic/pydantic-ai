@@ -366,7 +366,7 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
             cache[key] = original(**kwargs)
         return cache[key]
 
-    for mod in sys.modules.values():
+    for mod in list(sys.modules.values()):
         if getattr(mod, 'create_async_http_client', None) is original:
             monkeypatch.setattr(mod, 'create_async_http_client', cached_per_test)
 
