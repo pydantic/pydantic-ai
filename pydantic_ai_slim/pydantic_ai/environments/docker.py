@@ -629,7 +629,7 @@ class DockerEnvironment(ExecutionEnvironment):
         def _glob() -> list[str]:
             recursive = '**' in pattern
             cmd = _build_find_cmd(path=path, recursive=recursive)
-            _, output = self.container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
+            _, output = self._container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
             text = output.decode('utf-8', errors='replace').strip()
             if not text:
                 return []
