@@ -65,6 +65,11 @@ __all__ = (
     'Icon',
     'ResourceLink',
     'EmbeddedResource',
+    'TextContent',
+    'ImageContent',
+    'AudioContent',
+    'ContentBlock',
+    'Role',
 )
 
 
@@ -264,6 +269,7 @@ class PromptArgument:
     description: str | None = None
     """A human-readable description of the argument."""
     required: bool | None = None
+    """Whether the argument is required or optional. If not specified, the server may determine this based on context."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -362,6 +368,7 @@ class TextContent:
     See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
     for notes on _meta usage.
     """
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass(repr=False, kw_only=True)
@@ -803,13 +810,13 @@ class MCPServer(AbstractToolset[Any], ABC):
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
 
-        return PromptResult(
-            description=result.description,
-            messages=[
-                PromptMessage(role=msg.role, content=await self._map_prompt_content(msg.content))
-                for msg in result.messages
-            ],
-        )
+            return PromptResult(
+                description=result.description,
+                messages=[
+                    PromptMessage(role=msg.role, content=await self._map_prompt_content(msg.content))
+                    for msg in result.messages
+                ],
+            )
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
