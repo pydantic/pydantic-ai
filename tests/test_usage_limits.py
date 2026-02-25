@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    ContextOverflowEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -44,6 +45,43 @@ def test_request_token_limit() -> None:
         test_agent.run_sync(
             'Hello, this prompt exceeds the request tokens limit.', usage_limits=UsageLimits(input_tokens_limit=5)
         )
+
+
+def test_usage_limit_exceeded_has_structured_overflow_payload() -> None:
+    test_agent = Agent(TestModel())
+
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        test_agent.run_sync(
+            'Hello, this prompt exceeds the request tokens limit.', usage_limits=UsageLimits(input_tokens_limit=5)
+        )
+
+    assert exc_info.value.overflow_payload == {
+        'reason': 'usage_limit_exceeded',
+        'action': 'fail',
+        'trim_retries': 0,
+        'max_trim_retries': 0,
+    }
+
+
+def test_usage_limit_exceeded_can_be_constructed_with_overflow_event() -> None:
+    exception = UsageLimitExceeded(
+        'boom',
+        overflow_event=ContextOverflowEvent(
+            reason='context_limit_error',
+            action='retry_trim',
+            trim_retries=1,
+            max_trim_retries=2,
+            error='context window exceeded',
+        ),
+    )
+
+    assert exception.overflow_payload == {
+        'reason': 'context_limit_error',
+        'action': 'retry_trim',
+        'trim_retries': 1,
+        'max_trim_retries': 2,
+        'error': 'context window exceeded',
+    }
 
 
 def test_response_token_limit() -> None:

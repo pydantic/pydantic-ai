@@ -603,6 +603,8 @@ try:
 except UsageLimitExceeded as e:
     print(e)
     #> Exceeded the output_tokens_limit of 10 (output_tokens=32)
+    print(e.overflow_payload)
+    #> {'reason': 'usage_limit_exceeded', 'action': 'fail', 'trim_retries': 0, 'max_trim_retries': 0}
 ```
 
 Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:

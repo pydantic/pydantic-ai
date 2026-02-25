@@ -10,7 +10,7 @@ from pydantic import AliasChoices, BeforeValidator, Field
 from typing_extensions import deprecated, overload
 
 from . import _utils
-from .exceptions import UsageLimitExceeded
+from .exceptions import ContextOverflowEvent, UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'Usage', 'UsageLimits'
 
@@ -367,35 +367,47 @@ class UsageLimits:
         """Raises a `UsageLimitExceeded` exception if the next request would exceed any of the limits."""
         request_limit = self.request_limit
         if request_limit is not None and usage.requests >= request_limit:
-            raise UsageLimitExceeded(f'The next request would exceed the request_limit of {request_limit}')
+            raise UsageLimitExceeded(
+                f'The next request would exceed the request_limit of {request_limit}',
+                overflow_event=ContextOverflowEvent(reason='usage_limit_exceeded', action='fail'),
+            )
 
         input_tokens = usage.input_tokens
         if self.input_tokens_limit is not None and input_tokens > self.input_tokens_limit:
             raise UsageLimitExceeded(
-                f'The next request would exceed the input_tokens_limit of {self.input_tokens_limit} ({input_tokens=})'
+                f'The next request would exceed the input_tokens_limit of {self.input_tokens_limit} ({input_tokens=})',
+                overflow_event=ContextOverflowEvent(reason='usage_limit_exceeded', action='fail'),
             )
 
         total_tokens = usage.total_tokens
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(  # pragma: lax no cover
-                f'The next request would exceed the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})'
+                f'The next request would exceed the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})',
+                overflow_event=ContextOverflowEvent(reason='usage_limit_exceeded', action='fail'),
             )
 
     def check_tokens(self, usage: RunUsage) -> None:
         """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits."""
         input_tokens = usage.input_tokens
         if self.input_tokens_limit is not None and input_tokens > self.input_tokens_limit:
-            raise UsageLimitExceeded(f'Exceeded the input_tokens_limit of {self.input_tokens_limit} ({input_tokens=})')
+            raise UsageLimitExceeded(
+                f'Exceeded the input_tokens_limit of {self.input_tokens_limit} ({input_tokens=})',
+                overflow_event=ContextOverflowEvent(reason='usage_limit_exceeded', action='fail'),
+            )
 
         output_tokens = usage.output_tokens
         if self.output_tokens_limit is not None and output_tokens > self.output_tokens_limit:
             raise UsageLimitExceeded(
-                f'Exceeded the output_tokens_limit of {self.output_tokens_limit} ({output_tokens=})'
+                f'Exceeded the output_tokens_limit of {self.output_tokens_limit} ({output_tokens=})',
+                overflow_event=ContextOverflowEvent(reason='usage_limit_exceeded', action='fail'),
             )
 
         total_tokens = usage.total_tokens
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
-            raise UsageLimitExceeded(f'Exceeded the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})')
+            raise UsageLimitExceeded(
+                f'Exceeded the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})',
+                overflow_event=ContextOverflowEvent(reason='usage_limit_exceeded', action='fail'),
+            )
 
     def check_before_tool_call(self, projected_usage: RunUsage) -> None:
         """Raises a `UsageLimitExceeded` exception if the next tool call(s) would exceed the tool call limit."""
@@ -403,7 +415,8 @@ class UsageLimits:
         tool_calls = projected_usage.tool_calls
         if tool_calls_limit is not None and tool_calls > tool_calls_limit:
             raise UsageLimitExceeded(
-                f'The next tool call(s) would exceed the tool_calls_limit of {tool_calls_limit} ({tool_calls=}).'
+                f'The next tool call(s) would exceed the tool_calls_limit of {tool_calls_limit} ({tool_calls=}).',
+                overflow_event=ContextOverflowEvent(reason='usage_limit_exceeded', action='fail'),
             )
 
     __repr__ = _utils.dataclasses_no_defaults_repr

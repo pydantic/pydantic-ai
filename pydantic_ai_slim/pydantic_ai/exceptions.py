@@ -2,7 +2,8 @@ from __future__ import annotations as _annotations
 
 import json
 import sys
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal
 
 import pydantic_core
 from pydantic_core import core_schema
@@ -23,6 +24,7 @@ __all__ = (
     'UserError',
     'AgentRunError',
     'UnexpectedModelBehavior',
+    'ContextOverflowEvent',
     'UsageLimitExceeded',
     'ConcurrencyLimitExceeded',
     'ModelAPIError',
@@ -126,8 +128,52 @@ class AgentRunError(RuntimeError):
         return self.message
 
 
+@dataclass(frozen=True, kw_only=True)
+class ContextOverflowEvent:
+    """Structured payload describing a context/usage overflow outcome."""
+
+    reason: Literal['usage_limit_exceeded', 'context_limit_error']
+    """Why overflow handling was triggered."""
+
+    action: Literal['retry_compacted', 'retry_trim', 'fail']
+    """What action was taken in response to the overflow."""
+
+    trim_retries: int = 0
+    """How many trim retries were attempted before this event."""
+
+    max_trim_retries: int = 0
+    """Configured maximum trim retries."""
+
+    error: str | None = None
+    """Optional error summary for diagnostics."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a stable dictionary contract for instrumentation/tests."""
+        payload: dict[str, Any] = {
+            'reason': self.reason,
+            'action': self.action,
+            'trim_retries': self.trim_retries,
+            'max_trim_retries': self.max_trim_retries,
+        }
+        if self.error is not None:
+            payload['error'] = self.error
+        return payload
+
+
 class UsageLimitExceeded(AgentRunError):
     """Error raised when a Model's usage exceeds the specified limits."""
+
+    overflow_event: ContextOverflowEvent | None
+    """Optional structured overflow payload for instrumentation and tests."""
+
+    def __init__(self, message: str, *, overflow_event: ContextOverflowEvent | None = None):
+        self.overflow_event = overflow_event
+        super().__init__(message)
+
+    @property
+    def overflow_payload(self) -> dict[str, Any] | None:
+        """Dictionary form of [`ContextOverflowEvent`][pydantic_ai.exceptions.ContextOverflowEvent]."""
+        return self.overflow_event.to_dict() if self.overflow_event is not None else None
 
 
 class ConcurrencyLimitExceeded(AgentRunError):
