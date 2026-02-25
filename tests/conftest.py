@@ -373,7 +373,7 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
     yield cache
 
     unclosed = [c for c in cache.values() if not c.is_closed]
-    if unclosed:
+    if unclosed:  # pragma: no cover
 
         async def _close_all() -> None:
             for client in unclosed:

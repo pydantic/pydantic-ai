@@ -59,6 +59,12 @@ def test_wrapper_model_settings_delegation():
     assert wrapper_no_settings.settings is None
 
 
+async def test_wrapper_model_context_manager():
+    wrapper = WrapperModel(TestModel())
+    async with wrapper:
+        pass
+
+
 def test_instrumented_model_settings_delegation():
     """Test that InstrumentedModel correctly delegates settings to wrapped model."""
     # Create a base model with settings

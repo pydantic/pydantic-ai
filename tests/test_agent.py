@@ -5769,6 +5769,46 @@ def test_agent_repr() -> None:
     )
 
 
+async def test_agent_context_manager_no_model():
+    agent = Agent()
+    async with agent:
+        pass
+
+
+def test_cached_async_http_client_deprecated():
+    from pydantic_ai.models import cached_async_http_client
+
+    with pytest.warns(DeprecationWarning, match='cached_async_http_client is deprecated'):
+        cached_async_http_client()
+
+
+async def test_provider_lifecycle_with_owned_client():
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    provider = OpenAIProvider(api_key='test-key')
+    assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+    async with provider:
+        pass
+
+
+async def test_provider_aexit_without_aenter():
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    provider = OpenAIProvider(api_key='test-key')
+    await provider.__aexit__(None, None, None)
+
+
+async def test_azure_provider_owns_http_client():
+    from pydantic_ai.providers.azure import AzureProvider
+
+    provider = AzureProvider(
+        azure_endpoint='https://test.openai.azure.com',
+        api_key='test-key',
+        api_version='2024-02-01',
+    )
+    assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+
+
 def test_tool_call_with_validation_value_error_serializable():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
