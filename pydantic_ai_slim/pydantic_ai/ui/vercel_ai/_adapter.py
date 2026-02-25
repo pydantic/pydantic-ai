@@ -368,7 +368,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         content=output,
                                         provider_name=return_meta.get('provider_name') or provider_name,
                                         provider_details=return_meta.get('provider_details') or provider_details,
-                                        is_denied=denied,
+                                        metadata={'is_denied': True} if denied else None,
                                     )
                                 )
                         else:
@@ -399,7 +399,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
                                         content=_denial_reason(part),
-                                        is_denied=True,
+                                        metadata={'is_denied': True},
                                     )
                                 )
                     elif isinstance(part, DataUIPart):  # pragma: no cover
