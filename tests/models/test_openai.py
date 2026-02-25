@@ -4339,6 +4339,37 @@ def test_transformer_adds_properties_to_object_schemas():
     assert result['properties'] == {}
 
 
+def test_transformer_bare_list_not_strict_compatible():
+    """Bare `list` (no type param) produces `items: {}` which is not strict-compatible.
+
+    See https://github.com/pydantic/pydantic-ai/issues/4425
+    """
+    schema = {
+        'type': 'object',
+        'properties': {
+            'items': {'type': 'array', 'items': {}},
+        },
+        'required': ['items'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is False
+
+
+def test_transformer_typed_list_strict_compatible():
+    """A typed list (e.g. `list[str]`) has a proper `items` schema and is strict-compatible."""
+    schema = {
+        'type': 'object',
+        'properties': {
+            'items': {'type': 'array', 'items': {'type': 'string'}},
+        },
+        'required': ['items'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is True
+
+
 def chunk_with_usage(
     delta: list[ChoiceDelta],
     finish_reason: FinishReason | None = None,
