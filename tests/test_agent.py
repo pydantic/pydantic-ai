@@ -5791,6 +5791,17 @@ async def test_provider_lifecycle_with_owned_client():
         pass
 
 
+async def test_provider_reentrant_lifecycle():
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    provider = OpenAIProvider(api_key='test-key')
+    assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+
+    async with provider:
+        async with provider:
+            pass
+
+
 async def test_provider_aexit_without_aenter():
     from pydantic_ai.providers.openai import OpenAIProvider
 
