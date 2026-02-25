@@ -2514,6 +2514,7 @@ async def test_tool_output_denied_chunk_emission():
                         content='User cancelled the deletion',
                         tool_call_id='delete_1',
                         timestamp=IsDatetime(),
+                        is_denied=True,
                     ),
                 ],
                 timestamp=IsDatetime(),
@@ -5968,6 +5969,7 @@ async def test_adapter_load_messages_output_denied(reason: str | None, expected_
                         content=expected_content,
                         tool_call_id='tc_denied',
                         timestamp=IsDatetime(),
+                        is_denied=True,
                     )
                 ]
             ),
@@ -6009,6 +6011,98 @@ async def test_adapter_load_messages_output_denied_builtin_tool():
                         content='Blocked by policy',
                         tool_call_id='tc_builtin_denied',
                         timestamp=IsDatetime(),
+                        is_denied=True,
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_denied_dynamic_tool_round_trip():
+    """Test that denied dynamic tool state survives a dump/load cycle."""
+    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolOutputDeniedPart
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='delete_file', args={'path': '/tmp/x'}, tool_call_id='tc1')],
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='delete_file', content='Too dangerous', tool_call_id='tc1', is_denied=True)
+            ],
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+
+    # The denied tool should produce a DynamicToolOutputDeniedPart
+    assistant_parts = ui_messages[0].parts
+    assert len(assistant_parts) == 1
+    assert isinstance(assistant_parts[0], DynamicToolOutputDeniedPart)
+    assert assistant_parts[0].state == 'output-denied'
+
+    # Round-trip back: content becomes the default denial message since the UI part
+    # doesn't preserve the original content, only the approval reason
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    assert loaded == snapshot(
+        [
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='delete_file', args={'path': '/tmp/x'}, tool_call_id='tc1')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='delete_file',
+                        content='Tool call was denied.',
+                        tool_call_id='tc1',
+                        timestamp=IsDatetime(),
+                        is_denied=True,
+                    )
+                ]
+            ),
+        ]
+    )
+
+
+async def test_denied_builtin_tool_round_trip():
+    """Test that denied builtin tool state survives a dump/load cycle."""
+    from pydantic_ai.ui.vercel_ai.request_types import ToolOutputDeniedPart
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
+                BuiltinToolReturnPart(
+                    tool_name='web_search', content='Blocked by policy', tool_call_id='tc2', is_denied=True
+                ),
+            ],
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+
+    # The denied builtin tool should produce a ToolOutputDeniedPart
+    assistant_parts = ui_messages[0].parts
+    assert len(assistant_parts) == 1
+    assert isinstance(assistant_parts[0], ToolOutputDeniedPart)
+    assert assistant_parts[0].state == 'output-denied'
+
+    # Round-trip back
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    assert loaded == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content='Tool call was denied.',
+                        tool_call_id='tc2',
+                        timestamp=IsDatetime(),
+                        is_denied=True,
                     ),
                 ],
                 timestamp=IsDatetime(),

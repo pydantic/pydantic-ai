@@ -47,6 +47,10 @@ from ._utils import (
 )
 from .request_types import (
     DataUIPart,
+    DynamicToolInputAvailablePart,
+    DynamicToolOutputAvailablePart,
+    DynamicToolOutputDeniedPart,
+    DynamicToolOutputErrorPart,
     DynamicToolUIPart,
     FileUIPart,
     ProviderMetadata,
@@ -350,11 +354,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
                             if has_tool_output:
                                 output: Any | None = None
+                                denied = isinstance(part, ToolOutputDeniedPart)
                                 if isinstance(part, ToolOutputAvailablePart):
                                     output = part.output
                                 elif isinstance(part, ToolOutputErrorPart):
                                     output = {'error_text': part.error_text, 'is_error': True}
-                                elif isinstance(part, ToolOutputDeniedPart):  # pragma: no branch
+                                elif denied:  # pragma: no branch
                                     output = _denial_reason(part)
                                 builder.add(
                                     BuiltinToolReturnPart(
@@ -363,6 +368,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         content=output,
                                         provider_name=return_meta.get('provider_name') or provider_name,
                                         provider_details=return_meta.get('provider_details') or provider_details,
+                                        is_denied=denied,
                                     )
                                 )
                         else:
@@ -393,6 +399,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
                                         content=_denial_reason(part),
+                                        is_denied=True,
                                     )
                                 )
                     elif isinstance(part, DataUIPart):  # pragma: no cover
@@ -521,36 +528,48 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     )
                     combined_provider_meta = cls._dump_builtin_tool_meta(call_meta, return_meta)
 
-                    response_object = builtin_return.model_response_object()
-                    # These `is_error`/`error_text` fields are only present when the BuiltinToolReturnPart
-                    # was parsed from an incoming VercelAI request. We can't detect errors for other sources
-                    # until BuiltinToolReturnPart has standardized error fields (see https://github.com/pydantic/pydantic-ai/issues/3561).3
-                    if response_object.get('is_error') is True and (
-                        (error_text := response_object.get('error_text')) is not None
-                    ):
+                    if builtin_return.is_denied:
                         ui_parts.append(
-                            ToolOutputErrorPart(
+                            ToolOutputDeniedPart(
                                 type=tool_name,
                                 tool_call_id=part.tool_call_id,
                                 input=_safe_args_as_dict(part),
-                                error_text=error_text,
-                                state='output-error',
+                                state='output-denied',
                                 provider_executed=True,
                                 call_provider_metadata=combined_provider_meta,
                             )
                         )
                     else:
-                        ui_parts.append(
-                            ToolOutputAvailablePart(
-                                type=tool_name,
-                                tool_call_id=part.tool_call_id,
-                                input=_safe_args_as_dict(part),
-                                output=tool_return_output(builtin_return),
-                                state='output-available',
-                                provider_executed=True,
-                                call_provider_metadata=combined_provider_meta,
+                        response_object = builtin_return.model_response_object()
+                        # These `is_error`/`error_text` fields are only present when the BuiltinToolReturnPart
+                        # was parsed from an incoming VercelAI request. We can't detect errors for other sources
+                        # until BuiltinToolReturnPart has standardized error fields (see https://github.com/pydantic/pydantic-ai/issues/3561).
+                        if response_object.get('is_error') is True and (
+                            (error_text := response_object.get('error_text')) is not None
+                        ):
+                            ui_parts.append(
+                                ToolOutputErrorPart(
+                                    type=tool_name,
+                                    tool_call_id=part.tool_call_id,
+                                    input=_safe_args_as_dict(part),
+                                    error_text=error_text,
+                                    state='output-error',
+                                    provider_executed=True,
+                                    call_provider_metadata=combined_provider_meta,
+                                )
                             )
-                        )
+                        else:
+                            ui_parts.append(
+                                ToolOutputAvailablePart(
+                                    type=tool_name,
+                                    tool_call_id=part.tool_call_id,
+                                    input=_safe_args_as_dict(part),
+                                    output=tool_return_output(builtin_return),
+                                    state='output-available',
+                                    provider_executed=True,
+                                    call_provider_metadata=combined_provider_meta,
+                                )
+                            )
                 else:
                     call_provider_metadata = dump_provider_metadata(
                         id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
@@ -573,17 +592,27 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 tool_type = f'tool-{part.tool_name}'
 
                 if isinstance(tool_result, ToolReturnPart):
-                    ui_parts.append(
-                        ToolOutputAvailablePart(
-                            type=tool_type,
-                            tool_call_id=part.tool_call_id,
-                            input=_safe_args_as_dict(part),
-                            output=tool_return_output(tool_result),
-                            state='output-available',
-                            provider_executed=False,
-                            call_provider_metadata=call_provider_metadata,
+                    if tool_result.is_denied:
+                        ui_parts.append(
+                            DynamicToolOutputDeniedPart(
+                                tool_name=part.tool_name,
+                                tool_call_id=part.tool_call_id,
+                                input=_safe_args_as_dict(part),
+                                state='output-denied',
+                                call_provider_metadata=call_provider_metadata,
+                            )
                         )
-                    )
+                    else:
+                        ui_parts.append(
+                            DynamicToolOutputAvailablePart(
+                                tool_name=part.tool_name,
+                                tool_call_id=part.tool_call_id,
+                                input=_safe_args_as_dict(part),
+                                output=tool_return_output(tool_result),
+                                state='output-available',
+                                call_provider_metadata=call_provider_metadata,
+                            )
+                        )
                     # Check for Vercel AI chunks returned by tool calls via metadata.
                     ui_parts.extend(_extract_metadata_ui_parts(tool_result))
                 elif isinstance(tool_result, RetryPromptPart):

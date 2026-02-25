@@ -1340,6 +1340,7 @@ async def _call_tool(
                 tool_name=call.tool_name,
                 content=tool_call_result.message,
                 tool_call_id=call.tool_call_id,
+                is_denied=True,
             ), None
         elif isinstance(tool_call_result, exceptions.ModelRetry):
             m = _messages.RetryPromptPart(

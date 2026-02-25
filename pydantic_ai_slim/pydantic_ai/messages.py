@@ -887,6 +887,9 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
+    is_denied: bool = False
+    """Whether this tool return represents a denied tool call rather than a successful execution."""
+
     def model_response_str(self) -> str:
         """Return a string representation of the content for the model."""
         if isinstance(self.content, str):
