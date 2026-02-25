@@ -1365,7 +1365,7 @@ def _record_prepared_request(
         return
 
     last_message = run_context.messages[-1]
-    if isinstance(last_message, ModelRequest):
+    if isinstance(last_message, ModelRequest):  # pragma: no branch
         last_message.model_settings = model_settings
         last_message.model_request_parameters = model_request_parameters
 
