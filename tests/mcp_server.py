@@ -3,12 +3,15 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP, Image
+from mcp.server.fastmcp.prompts.base import UserMessage
 from mcp.server.session import ServerSession
 from mcp.types import (
     Annotations,
+    AudioContent,
     BlobResourceContents,
     CreateMessageResult,
     EmbeddedResource,
+    ImageContent,
     ResourceLink,
     SamplingMessage,
     TextContent,
@@ -277,6 +280,87 @@ def simple_prompt() -> str:
 def parameterized_prompt(name: str, topic: str) -> str:
     """A prompt template with parameters."""
     return f"Hello {name}, let's talk about {topic}!"
+
+
+@mcp.prompt()
+def annotated_text_prompt() -> list[UserMessage]:
+    """A prompt template with annotated text content."""
+    return [
+        UserMessage(
+            content=TextContent(
+                type='text',
+                text='annotated text',
+                annotations=Annotations(audience=['user'], priority=1.0),
+            )
+        )
+    ]
+
+
+@mcp.prompt()
+def image_prompt() -> list[UserMessage]:
+    """A prompt template with image content."""
+    data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
+    return [
+        UserMessage(
+            content=ImageContent(
+                type='image',
+                data=base64.b64encode(data).decode('utf-8'),
+                mimeType='image/jpeg',
+                annotations=Annotations(audience=['user'], priority=0.8),
+            )
+        )
+    ]
+
+
+@mcp.prompt()
+def audio_prompt() -> list[UserMessage]:
+    """A prompt template with audio content."""
+    data = Path(__file__).parent.joinpath('assets/marcelo.mp3').read_bytes()
+    return [
+        UserMessage(
+            content=AudioContent(
+                type='audio',
+                data=base64.b64encode(data).decode('utf-8'),
+                mimeType='audio/mpeg',
+                annotations=Annotations(audience=['assistant'], priority=0.3),
+            )
+        )
+    ]
+
+
+@mcp.prompt()
+def embedded_resource_prompt() -> list[UserMessage]:
+    """A prompt template with an embedded text resource."""
+    return [
+        UserMessage(
+            content=EmbeddedResource(
+                type='resource',
+                resource=TextResourceContents(
+                    uri=AnyUrl('resource://product_name.txt'),
+                    text='Pydantic AI',
+                    mimeType='text/plain',
+                ),
+                annotations=Annotations(audience=['user'], priority=0.5),
+            )
+        )
+    ]
+
+
+@mcp.prompt()
+def resource_link_prompt() -> list[UserMessage]:
+    """A prompt template with a resource link."""
+    return [
+        UserMessage(
+            content=ResourceLink(
+                type='resource_link',
+                uri=AnyUrl('resource://kiwi.jpg'),
+                name='kiwi-image',
+                title='Kiwi Image',
+                description='A photo of a kiwi fruit',
+                mimeType='image/jpeg',
+            )
+        )
+    ]
 
 
 @mcp._mcp_server.set_logging_level()  # pyright: ignore[reportPrivateUsage]
