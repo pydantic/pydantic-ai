@@ -38,6 +38,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -752,6 +753,8 @@ class GoogleModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append({'text': item})
+                elif isinstance(item, TextContent):
+                    content.append({'text': item.content})
                 elif isinstance(item, BinaryContent):
                     inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
                     part_dict: PartDict = {'inline_data': inline_data_dict}

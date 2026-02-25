@@ -29,6 +29,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -431,6 +432,8 @@ class HuggingFaceModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append(ChatCompletionInputMessageChunk(type='text', text=item))  # type: ignore
+                elif isinstance(item, TextContent):
+                    content.append(ChatCompletionInputMessageChunk(type='text', text=item.content))  # type: ignore
                 elif isinstance(item, ImageUrl):
                     url = ChatCompletionInputURL(url=item.url)
                     content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))  # type: ignore

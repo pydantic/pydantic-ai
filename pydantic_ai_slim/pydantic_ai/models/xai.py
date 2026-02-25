@@ -33,6 +33,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -430,6 +431,8 @@ class XaiModel(Model):
         for item in part.content:
             if isinstance(item, str):
                 content_items.append(item)
+            elif isinstance(item, TextContent):
+                content_items.append(item.content)
             elif isinstance(item, ImageUrl):
                 # Get detail from vendor_metadata if available
                 detail: chat_types.ImageDetail = 'auto'

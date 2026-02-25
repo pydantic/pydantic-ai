@@ -49,6 +49,7 @@ from ..messages import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -1252,11 +1253,13 @@ class OpenAIChatModel(Model):
         raise NotImplementedError('VideoUrl is not supported for OpenAI')
 
     async def _map_content_item(
-        self, item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | CachePoint
+        self, item: str | TextContent | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | CachePoint
     ) -> ChatCompletionContentPartParam | None:
         """Map a single content item to a chat completion content part, or None to filter it out."""
         if isinstance(item, str):
             return ChatCompletionContentPartTextParam(text=item, type='text')
+        elif isinstance(item, TextContent):
+            return ChatCompletionContentPartTextParam(text=item.content, type='text')
         elif isinstance(item, ImageUrl):
             return await self._map_image_url_item(item)
         elif isinstance(item, BinaryContent):
@@ -2155,6 +2158,8 @@ class OpenAIResponsesModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append(responses.ResponseInputTextParam(text=item, type='input_text'))
+                elif isinstance(item, TextContent):
+                    content.append(responses.ResponseInputTextParam(text=item.content, type='input_text'))
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         detail: Literal['auto', 'low', 'high'] = 'auto'

@@ -43,6 +43,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.messages import TextContent
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
@@ -847,6 +848,8 @@ class BedrockConverseModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append({'text': item})
+                elif isinstance(item, TextContent):
+                    content.append({'text': item.content})
                 elif isinstance(item, BinaryContent):
                     format = item.format
                     if item.is_document:

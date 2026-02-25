@@ -54,6 +54,7 @@ from .messages import (
     AudioUrl,
     BaseToolCallPart,
     BaseToolReturnPart,
+    TextContent,
     BinaryContent,
     BinaryImage,
     BuiltinToolCallPart,

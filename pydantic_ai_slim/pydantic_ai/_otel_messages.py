@@ -14,6 +14,7 @@ from typing_extensions import NotRequired, TypedDict
 class TextPart(TypedDict):
     type: Literal['text']
     content: NotRequired[str]
+    metadata: NotRequired[JsonValue]
 
 
 class ToolCallPart(TypedDict):

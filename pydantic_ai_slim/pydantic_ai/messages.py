@@ -20,6 +20,7 @@ from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord
 from opentelemetry.util.types import AnyValue
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic.types import JsonValue
 from typing_extensions import TypeAliasType, deprecated
 
 from . import _otel_messages, _utils
@@ -456,6 +457,20 @@ class DocumentUrl(FileUrl):
             raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+class TextContent:
+    """String content that is tagged with additional metadata.
+
+    This is useful for including metadata that can be accessed programmatically by the application, but is not sent to the LLM.
+    """
+
+    content: str
+    """The content that is sent to the LLM."""
+
+    metadata: JsonValue
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+
 @pydantic_dataclass(
     repr=False,
     config=pydantic.ConfigDict(
@@ -674,7 +689,7 @@ MultiModalContent = Annotated[
 ]
 """Union of all multi-modal content types with a discriminator for Pydantic validation."""
 
-UserContent: TypeAlias = str | MultiModalContent | CachePoint
+UserContent: TypeAlias = str | MultiModalContent | CachePoint | TextContent
 
 
 @dataclass(repr=False)
@@ -800,9 +815,18 @@ class UserPromptPart:
         for part in content:
             if part['kind'] == 'binary' and 'content' in part:
                 part['binary_content'] = part.pop('content')
-        content = [
-            part['content'] if part == {'kind': 'text', 'content': part.get('content')} else part for part in content
-        ]
+
+        # Collapse text-only parts to strings, but preserve metadata if present
+        normalized: Any = []
+        for part in content:
+            if part.get('kind') == 'text':
+                if set(part.keys()) == {'kind', 'content'}:
+                    normalized.append(part.get('content'))
+                else:
+                    normalized.append(part)
+            else:
+                normalized.append(part)
+        content = normalized
         if content in ([{'kind': 'text'}], [self.content]):
             content = content[0]
         return LogRecord(attributes={'event.name': 'gen_ai.user.message'}, body={'content': content, 'role': 'user'})
@@ -815,6 +839,11 @@ class UserPromptPart:
                 parts.append(
                     _otel_messages.TextPart(type='text', **({'content': part} if settings.include_content else {}))
                 )
+            elif isinstance(part, TextContent):
+                tp: _otel_messages.TextPart = {'type': 'text'}
+                if settings.include_content:
+                    tp.update({'content': part.content, 'metadata': part.metadata})
+                parts.append(tp)
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
                 if settings.version >= 4:
                     uri_part = _otel_messages.UriPart(type='uri')
