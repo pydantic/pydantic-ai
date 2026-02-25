@@ -281,6 +281,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] -> [`handle_builtin_tool_call_start()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_start]
         - [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] -> [`handle_builtin_tool_return()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_return]
         - [`FilePart`][pydantic_ai.messages.FilePart] -> [`handle_file()`][pydantic_ai.ui.UIEventStream.handle_file]
+        - [`UploadedFile`][pydantic_ai.messages.UploadedFile] -> [`handle_file()`][pydantic_ai.ui.UIEventStream.handle_file]
 
         Subclasses are encouraged to override the individual `handle_*` methods rather than this one.
         If you need specific behavior for all part start events, make sure you call the super method.
@@ -307,6 +308,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 async for e in self.handle_builtin_tool_return(part):
                     yield e
             case FilePart():  # pragma: no branch
+                async for e in self.handle_file(part):
+                    yield e
+            case UploadedFile():  # pragma: no branch
                 async for e in self.handle_file(part):
                     yield e
 
@@ -545,8 +549,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
-    async def handle_file(self, part: FilePart) -> AsyncIterator[EventT]:
-        """Handle a `FilePart`.
+    async def handle_file(self, part: FilePart | UploadedFile) -> AsyncIterator[EventT]:
+        """Handle a `FilePart` or `UploadedFile`.
 
         Args:
             part: The file part.

@@ -30,6 +30,7 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    UploadedFile,
 )
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -175,8 +176,11 @@ class DummyUIEventStream(UIEventStream[DummyUIRunInput, str, AgentDepsT, OutputD
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[str]:
         yield f'<builtin-tool-return name={part.tool_name!r}>{part.content}</builtin-tool-return>'
 
-    async def handle_file(self, part: FilePart) -> AsyncIterator[str]:
-        yield f'<file media_type={part.content.media_type!r} />'
+    async def handle_file(self, part: FilePart | UploadedFile) -> AsyncIterator[str]:
+        if isinstance(part, UploadedFile):
+            yield f'<file media_type={part.media_type!r} />'
+        else:
+            yield f'<file media_type={part.content.media_type!r} />'
 
     async def handle_final_result(self, event: FinalResultEvent) -> AsyncIterator[str]:
         yield f'<final-result tool_name={event.tool_name!r} />'
@@ -416,6 +420,27 @@ async def test_event_stream_file():
             '<stream>',
             '<response>',
             "<file media_type='image/png' />",
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_event_stream_uploaded_file():
+    async def event_generator():
+        yield PartStartEvent(
+            index=0, part=UploadedFile(file_id='file-123', provider_name='openai', media_type='text/csv')
+        )
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            "<file media_type='text/csv' />",
             '</response>',
             '</stream>',
         ]

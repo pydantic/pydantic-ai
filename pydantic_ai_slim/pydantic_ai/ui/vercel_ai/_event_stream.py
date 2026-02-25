@@ -24,6 +24,7 @@ from ...messages import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UploadedFile,
 )
 from ...output import OutputDataT
 from ...run import AgentRunResultEvent
@@ -263,9 +264,14 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             provider_executed=True,
         )
 
-    async def handle_file(self, part: FilePart) -> AsyncIterator[BaseChunk]:
-        file = part.content
-        yield FileChunk(url=file.data_uri, media_type=file.media_type)
+    async def handle_file(self, part: FilePart | UploadedFile) -> AsyncIterator[BaseChunk]:
+        if isinstance(part, UploadedFile):
+            if part.target == 'container':
+                return
+            yield FileChunk(url=part.file_id, media_type=part.media_type)
+        else:
+            file = part.content
+            yield FileChunk(url=file.data_uri, media_type=file.media_type)
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         part = event.result

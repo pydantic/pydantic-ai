@@ -718,6 +718,14 @@ class UploadedFile:
         compare=False, default=None
     )
 
+    target: UploadedFileTarget = 'message'
+    """Where this file should be sent.
+
+    - `'message'`: send as model-visible message content.
+    - `'container'`: send as code execution container upload.
+    - `'both'`: send both message content and container upload.
+    """
+
     kind: Literal['uploaded-file'] = 'uploaded-file'
     """Type identifier, this is available on all parts as a discriminator."""
 
@@ -731,7 +739,9 @@ class UploadedFile:
         media_type: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         identifier: str | None = None,
+        target: UploadedFileTarget = 'message',
         kind: Literal['uploaded-file'] = 'uploaded-file',
+        part_kind: Literal['uploaded-file'] = 'uploaded-file',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,

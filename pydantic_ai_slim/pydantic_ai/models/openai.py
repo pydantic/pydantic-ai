@@ -54,6 +54,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
 )
@@ -172,6 +173,33 @@ _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x
 
 _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IMAGE_SIZE)
+
+
+def _reorder_uploaded_file_reference_text(items: Sequence[UserContent]) -> list[UserContent]:
+    """Move auto-generated file reference text after UploadedFile for OpenAI providers.
+
+    `_agent_graph._call_tool` generates pairs in the form:
+    `['This is file <identifier>:', UploadedFile(...)]`.
+    OpenAI works better with the file content before the reference text.
+    """
+    reordered: list[UserContent] = []
+    i = 0
+    while i < len(items):
+        item = items[i]
+        if i + 1 < len(items):
+            next_item = items[i + 1]
+            if (
+                isinstance(item, str)
+                and isinstance(next_item, UploadedFile)
+                and item == f'This is file {next_item.identifier}:'
+            ):
+                reordered.extend((next_item, item))
+                i += 2
+                continue
+        reordered.append(item)
+        i += 1
+    return reordered
+
 
 
 class _AzureContentFilterResultDetail(BaseModel):
