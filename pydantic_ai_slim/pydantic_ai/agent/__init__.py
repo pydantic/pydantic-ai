@@ -1711,12 +1711,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         async with self._enter_lock:
             if self._entered_count == 0:  # pragma: lax no cover
-                async with AsyncExitStack() as exit_stack:  # pragma: lax no cover
-                    toolset = self._get_toolset()  # pragma: lax no cover
-                    await exit_stack.enter_async_context(toolset)  # pragma: lax no cover
-                    self._exit_stack = exit_stack.pop_all()  # pragma: lax no cover
+                await self._enter_toolset()  # pragma: lax no cover
             self._entered_count += 1
         return self
+
+    async def _enter_toolset(self) -> None:  # pragma: lax no cover
+        async with AsyncExitStack() as exit_stack:
+            toolset = self._get_toolset()
+            await exit_stack.enter_async_context(toolset)
+            self._exit_stack = exit_stack.pop_all()
 
     async def __aexit__(self, *args: Any) -> bool | None:
         async with self._enter_lock:

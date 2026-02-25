@@ -555,7 +555,7 @@ async def test_openai_tool_call(openai_realtime_model: OpenAIRealtimeModel) -> N
     async with agent.realtime_session(model=openai_realtime_model) as session:
         await session.send_text('What is the weather in London?')
         async for event in session:
-            if not isinstance(event, AudioDelta):
+            if not isinstance(event, AudioDelta):  # pragma: no branch
                 events.append(event)
             if isinstance(event, (ToolCallCompleted, TurnComplete)):
                 break
