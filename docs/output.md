@@ -363,6 +363,12 @@ When the model calls other tools in parallel with an output tool, you can contro
 - `'graceful'`: Output tools are executed first. Once a valid final result is found, remaining output tool calls are skipped, but function tools are still executed
 - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
 
+| Strategy | Function tools | Output tools |
+|---|---|---|
+| `'early'` (default) | Skip remaining | Skip remaining |
+| `'graceful'` | Execute all | Skip remaining |
+| `'exhaustive'` | Execute all | Execute all (first valid result wins) |
+
 The `'graceful'` and `'exhaustive'` strategies are useful when function tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute. Use `'graceful'` over `'exhaustive'` when you want to avoid executing additional output tools unnecessarily — for example, when output tools have side effects that should only fire once.
 
 !!! warning "Priority of output and deferred tools in streaming methods"
