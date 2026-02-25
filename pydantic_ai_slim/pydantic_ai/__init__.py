@@ -90,15 +90,18 @@ from .messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolCallArgsTransformer,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturn,
+    ToolReturnContentTransformer,
     ToolReturnPart,
     UserContent,
     UserPromptPart,
     VideoFormat,
     VideoMediaType,
     VideoUrl,
+    transform_paired_tool_payloads,
 )
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
@@ -206,8 +209,10 @@ __all__ = (
     'TextPartDelta',
     'ThinkingPart',
     'ThinkingPartDelta',
+    'ToolCallArgsTransformer',
     'ToolCallPart',
     'ToolCallPartDelta',
+    'ToolReturnContentTransformer',
     'ToolReturn',
     'ToolReturnPart',
     'UserContent',
@@ -215,6 +220,7 @@ __all__ = (
     'VideoFormat',
     'VideoMediaType',
     'VideoUrl',
+    'transform_paired_tool_payloads',
     # profiles
     'ModelProfile',
     'ModelProfileSpec',

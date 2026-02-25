@@ -418,6 +418,27 @@ long_conversation_history: list[ModelMessage] = []  # Your long conversation his
 !!! warning "Be careful when slicing the message history"
     When slicing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269).
 
+#### Pair-safe tool payload transforms
+
+If you need to redact or truncate tool payloads, use
+[`transform_paired_tool_payloads`][pydantic_ai.messages.transform_paired_tool_payloads].
+It only applies transforms to `tool_call_id`s that have both a tool call and a tool return, so pairing invariants are preserved.
+
+```python {title="pair_safe_tool_payloads.py"}
+from pydantic_ai import Agent, ModelMessage, transform_paired_tool_payloads
+
+
+def redact_tool_payloads(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return transform_paired_tool_payloads(
+        messages,
+        tool_call_args_transformer=lambda _args: '{"redacted": true}',
+        tool_return_content_transformer=lambda _content: '[redacted]',
+    )
+
+
+agent = Agent('openai:gpt-5.2', history_processors=[redact_tool_payloads])
+```
+
 #### `RunContext` parameter
 
 History processors can optionally accept a [`RunContext`][pydantic_ai.tools.RunContext] parameter to access

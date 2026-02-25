@@ -1599,6 +1599,75 @@ ModelMessagesTypeAdapter = pydantic.TypeAdapter(
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
 
+ToolCallArgsTransformer: TypeAlias = Callable[[str | dict[str, Any] | None], str | dict[str, Any] | None]
+"""A callable used to transform function tool call arguments."""
+
+ToolReturnContentTransformer: TypeAlias = Callable[[ToolReturnContent], ToolReturnContent]
+"""A callable used to transform function tool return content."""
+
+
+def transform_paired_tool_payloads(
+    messages: Sequence[ModelMessage],
+    *,
+    tool_call_args_transformer: ToolCallArgsTransformer | None = None,
+    tool_return_content_transformer: ToolReturnContentTransformer | None = None,
+) -> list[ModelMessage]:
+    """Transform function tool payloads while preserving call/return pairing invariants.
+
+    Transforms are only applied to `tool_call_id`s that have both a [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]
+    and a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] in `messages`. Unpaired tool calls or tool returns
+    are left unchanged.
+    """
+    if tool_call_args_transformer is None and tool_return_content_transformer is None:
+        return list(messages)
+
+    tool_call_ids = {
+        part.tool_call_id
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    }
+    tool_return_ids = {
+        part.tool_call_id
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    }
+    paired_tool_call_ids = tool_call_ids & tool_return_ids
+    if not paired_tool_call_ids:
+        return list(messages)
+
+    transformed_messages: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            transformed_parts: list[ModelResponsePart] = []
+            for part in message.parts:
+                if (
+                    tool_call_args_transformer is not None
+                    and isinstance(part, ToolCallPart)
+                    and part.tool_call_id in paired_tool_call_ids
+                ):
+                    transformed_parts.append(replace(part, args=tool_call_args_transformer(part.args)))
+                else:
+                    transformed_parts.append(part)
+            transformed_messages.append(replace(message, parts=transformed_parts))
+        else:
+            transformed_parts: list[ModelRequestPart] = []
+            for part in message.parts:
+                if (
+                    tool_return_content_transformer is not None
+                    and isinstance(part, ToolReturnPart)
+                    and part.tool_call_id in paired_tool_call_ids
+                ):
+                    transformed_parts.append(replace(part, content=tool_return_content_transformer(part.content)))
+                else:
+                    transformed_parts.append(part)
+            transformed_messages.append(replace(message, parts=transformed_parts))
+
+    return transformed_messages
+
 
 @dataclass(repr=False)
 class TextPartDelta:

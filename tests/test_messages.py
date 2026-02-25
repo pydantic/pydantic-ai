@@ -26,6 +26,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    transform_paired_tool_payloads,
 )
 
 from ._inline_snapshot import snapshot
@@ -894,3 +895,61 @@ def test_tool_return_content_nested_multimodal():
     assert isinstance(reloaded_content['images'][0], ImageUrl)
     assert isinstance(reloaded_content['documents'][0], DocumentUrl)
     assert reloaded_content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
+
+
+def test_transform_paired_tool_payloads_only_transforms_paired_tool_call_ids():
+    original_messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='paired', args='{"large":"value"}', tool_call_id='paired-id'),
+                ToolCallPart(tool_name='unpaired-call', args='{"keep":"call"}', tool_call_id='unpaired-call-id'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='paired', content='very large response', tool_call_id='paired-id'),
+                ToolReturnPart(
+                    tool_name='unpaired-return',
+                    content='should stay untouched',
+                    tool_call_id='unpaired-return-id',
+                ),
+            ]
+        ),
+    ]
+
+    transformed_messages = transform_paired_tool_payloads(
+        original_messages,
+        tool_call_args_transformer=lambda _args: '{"redacted":true}',
+        tool_return_content_transformer=lambda _content: '[redacted]',
+    )
+
+    transformed_call_parts = transformed_messages[0].parts
+    assert isinstance(transformed_call_parts[0], ToolCallPart)
+    assert transformed_call_parts[0].args == '{"redacted":true}'
+    assert isinstance(transformed_call_parts[1], ToolCallPart)
+    assert transformed_call_parts[1].args == '{"keep":"call"}'
+
+    transformed_return_parts = transformed_messages[1].parts
+    assert isinstance(transformed_return_parts[0], ToolReturnPart)
+    assert transformed_return_parts[0].content == '[redacted]'
+    assert isinstance(transformed_return_parts[1], ToolReturnPart)
+    assert transformed_return_parts[1].content == 'should stay untouched'
+
+    original_call_parts = original_messages[0].parts
+    assert isinstance(original_call_parts[0], ToolCallPart)
+    assert original_call_parts[0].args == '{"large":"value"}'
+    original_return_parts = original_messages[1].parts
+    assert isinstance(original_return_parts[0], ToolReturnPart)
+    assert original_return_parts[0].content == 'very large response'
+
+
+def test_transform_paired_tool_payloads_returns_shallow_copy_when_no_transformer():
+    original_messages = [
+        ModelResponse(parts=[ToolCallPart(tool_name='a', args='{}', tool_call_id='id-1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='a', content='ok', tool_call_id='id-1')]),
+    ]
+
+    transformed_messages = transform_paired_tool_payloads(original_messages)
+
+    assert transformed_messages == original_messages
+    assert transformed_messages is not original_messages
