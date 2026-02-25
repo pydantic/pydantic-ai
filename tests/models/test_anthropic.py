@@ -8409,3 +8409,95 @@ Instructions content\
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'
+
+
+async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None):
+    """Test that malformed JSON tool args don't crash the Anthropic retry path.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4430.
+
+    When a tool call has malformed JSON arguments, a RetryPromptPart is correctly
+    created. But when the message history is re-sent to Anthropic, the previous
+    tool call's args are parsed via args_as_dict() which raises ValueError on
+    invalid JSON, crashing the retry flow before the model can self-correct.
+    """
+    BAD_ARGS = (
+        '{"query": "bad query", '
+        '"file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    )
+
+    # First response: the model "fixes" the tool call and returns text
+    fixed_response = completion_message(
+        [BetaTextBlock(text='Here is the corrected result.', type='text')],
+        BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(fixed_response)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # Construct message_history with a malformed tool call + retry prompt
+    # exactly as described in the issue
+    message_history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='search_knowledge',
+                    tool_call_id='toolu_123',
+                    args=BAD_ARGS,
+                ),
+            ],
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='search_knowledge',
+                    tool_call_id='toolu_123',
+                    content="Invalid JSON: expected `,` or `}` at line 1 column 99",
+                ),
+            ],
+        ),
+    ]
+
+    # This should NOT raise ValueError — the fix ensures _safe_args_as_dict
+    # returns {} for the malformed tool call, allowing the retry to proceed.
+    result = await agent.run(
+        'Please fix the tool call and try again.',
+        message_history=message_history,
+    )
+    assert result.output == 'Here is the corrected result.'
+
+
+def test_safe_args_as_dict_valid_json():
+    """_safe_args_as_dict should return parsed dict for valid JSON args."""
+    from pydantic_ai.models.anthropic import _safe_args_as_dict  # pyright: ignore[reportPrivateUsage]
+
+    part = ToolCallPart(tool_name='test_tool', args='{"key": "value"}')
+    assert _safe_args_as_dict(part) == {'key': 'value'}
+
+
+def test_safe_args_as_dict_dict_args():
+    """_safe_args_as_dict should return the dict directly when args is already a dict."""
+    from pydantic_ai.models.anthropic import _safe_args_as_dict  # pyright: ignore[reportPrivateUsage]
+
+    part = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
+    assert _safe_args_as_dict(part) == {'key': 'value'}
+
+
+def test_safe_args_as_dict_malformed_json():
+    """_safe_args_as_dict should return {} for malformed JSON instead of raising."""
+    from pydantic_ai.models.anthropic import _safe_args_as_dict  # pyright: ignore[reportPrivateUsage]
+
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    # Should NOT raise ValueError
+    result = _safe_args_as_dict(part)
+    assert result == {}
+
+
+def test_safe_args_as_dict_empty_args():
+    """_safe_args_as_dict should return {} when args is None/empty."""
+    from pydantic_ai.models.anthropic import _safe_args_as_dict  # pyright: ignore[reportPrivateUsage]
+
+    part = ToolCallPart(tool_name='test_tool', args=None)
+    assert _safe_args_as_dict(part) == {}
