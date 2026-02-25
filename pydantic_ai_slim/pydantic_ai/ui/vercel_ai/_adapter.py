@@ -537,6 +537,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 state='output-denied',
                                 provider_executed=True,
                                 call_provider_metadata=combined_provider_meta,
+                                approval=ToolApprovalResponded(
+                                    id=str(uuid.uuid4()),
+                                    approved=False,
+                                    reason=builtin_return.model_response_str(),
+                                ),
                             )
                         )
                     else:
@@ -600,6 +605,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 input=_safe_args_as_dict(part),
                                 state='output-denied',
                                 call_provider_metadata=call_provider_metadata,
+                                approval=ToolApprovalResponded(
+                                    id=str(uuid.uuid4()),
+                                    approved=False,
+                                    reason=tool_result.model_response_str(),
+                                ),
                             )
                         )
                     else:

@@ -6030,21 +6030,24 @@ async def test_denied_dynamic_tool_round_trip():
         ),
         ModelRequest(
             parts=[
-                ToolReturnPart(tool_name='delete_file', content='Too dangerous', tool_call_id='tc1', metadata={'is_denied': True})
+                ToolReturnPart(
+                    tool_name='delete_file', content='Too dangerous', tool_call_id='tc1', metadata={'is_denied': True}
+                )
             ],
         ),
     ]
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
 
-    # The denied tool should produce a DynamicToolOutputDeniedPart
+    # The denied tool should produce a DynamicToolOutputDeniedPart with the reason preserved
     assistant_parts = ui_messages[0].parts
     assert len(assistant_parts) == 1
     assert isinstance(assistant_parts[0], DynamicToolOutputDeniedPart)
     assert assistant_parts[0].state == 'output-denied'
+    assert isinstance(assistant_parts[0].approval, ToolApprovalResponded)
+    assert assistant_parts[0].approval.reason == 'Too dangerous'
 
-    # Round-trip back: content becomes the default denial message since the UI part
-    # doesn't preserve the original content, only the approval reason
+    # Round-trip back: the denial reason is preserved via approval.reason
     loaded = VercelAIAdapter.load_messages(ui_messages)
     assert loaded == snapshot(
         [
@@ -6056,7 +6059,7 @@ async def test_denied_dynamic_tool_round_trip():
                 parts=[
                     ToolReturnPart(
                         tool_name='delete_file',
-                        content='Tool call was denied.',
+                        content='Too dangerous',
                         tool_call_id='tc1',
                         timestamp=IsDatetime(),
                         metadata={'is_denied': True},
@@ -6076,7 +6079,10 @@ async def test_denied_builtin_tool_round_trip():
             parts=[
                 BuiltinToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
                 BuiltinToolReturnPart(
-                    tool_name='web_search', content='Blocked by policy', tool_call_id='tc2', metadata={'is_denied': True}
+                    tool_name='web_search',
+                    content='Blocked by policy',
+                    tool_call_id='tc2',
+                    metadata={'is_denied': True},
                 ),
             ],
         ),
@@ -6084,11 +6090,13 @@ async def test_denied_builtin_tool_round_trip():
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
 
-    # The denied builtin tool should produce a ToolOutputDeniedPart
+    # The denied builtin tool should produce a ToolOutputDeniedPart with the reason preserved
     assistant_parts = ui_messages[0].parts
     assert len(assistant_parts) == 1
     assert isinstance(assistant_parts[0], ToolOutputDeniedPart)
     assert assistant_parts[0].state == 'output-denied'
+    assert isinstance(assistant_parts[0].approval, ToolApprovalResponded)
+    assert assistant_parts[0].approval.reason == 'Blocked by policy'
 
     # Round-trip back
     loaded = VercelAIAdapter.load_messages(ui_messages)
@@ -6099,7 +6107,7 @@ async def test_denied_builtin_tool_round_trip():
                     BuiltinToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content='Tool call was denied.',
+                        content='Blocked by policy',
                         tool_call_id='tc2',
                         timestamp=IsDatetime(),
                         metadata={'is_denied': True},
