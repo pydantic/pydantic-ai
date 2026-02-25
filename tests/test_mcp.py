@@ -2448,6 +2448,21 @@ async def test_list_prompts() -> None:
             result = await server.list_prompts()
             assert result == []
 
+        mcp_error = McpError(
+            error=ErrorData(code=-32603, message='Failed to list prompts', data={'details': 'server overloaded'})
+        )
+        server._cached_prompts = None  # pyright: ignore[reportPrivateUsage]
+        with patch.object(
+            server._client,  # pyright: ignore[reportPrivateUsage]
+            'list_prompts',
+            new=AsyncMock(side_effect=mcp_error),
+        ):
+            with pytest.raises(MCPError, match='Failed to list prompts') as exc_info:
+                await server.list_prompts()
+            assert exc_info.value.code == -32603
+            assert exc_info.value.message == 'Failed to list prompts'
+            assert exc_info.value.data == {'details': 'server overloaded'}
+
 
 async def test_get_prompt() -> None:
     """Test get_prompt() retrieves specific prompts and handles errors."""
