@@ -23,6 +23,7 @@ from pydantic_ai import (
     ModelRetry,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -1117,3 +1118,13 @@ async def test_cache_point_filtering():
     # CachePoint should be filtered out
     assert msg['role'] == 'user'
     assert len(msg['content']) == 1  # pyright: ignore[reportUnknownArgumentType]
+
+
+async def test_map_user_prompt_with_text_content():
+    """Test that UserPromptPart with text content is mapped correctly."""
+    msg = await HuggingFaceModel._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(content=['hello', TextContent(content='there', metadata={'id': 'h01'})])
+    )
+
+    assert msg.content[0].text == snapshot('hello')  # pyright: ignore
+    assert msg.content[1].text == snapshot('there')  # pyright: ignore

@@ -30,6 +30,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     RetryPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -1474,6 +1475,16 @@ async def test_document_as_binary_content_input_with_tool(
     )
 
     assert result.output == snapshot('The main content of the document is "DUMMY PDF FILE" in uppercase.')
+
+
+async def test_text_content_input():
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+    res = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        part=UserPromptPart(content=['hello', TextContent(content='world', metadata={'id': 1})])
+    )
+    assert res == snapshot(
+        {'role': 'user', 'content': [{'text': 'hello', 'type': 'text'}, {'text': 'world', 'type': 'text'}]}
+    )
 
 
 def test_model_status_error(allow_model_requests: None) -> None:

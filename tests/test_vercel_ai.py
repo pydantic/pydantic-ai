@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, TextContent
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     AudioUrl,
@@ -4377,6 +4377,17 @@ async def test_convert_user_prompt_part_only_urls():
             FileUIPart(media_type='image/png', url='https://example.com/img.png'),
             FileUIPart(media_type='video/mp4', url='https://example.com/vid.mp4'),
         ]
+    )
+
+
+async def test_convert_user_prompt_part_text_content():
+    """Test converting a user prompt with only text content."""
+    from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
+
+    part = UserPromptPart(content=['Just some text', TextContent(content='More text', metadata={'key': 'value'})])
+    ui_parts = _convert_user_prompt_part(part)
+    assert ui_parts == snapshot(
+        [TextUIPart(text='Just some text', state='done'), TextUIPart(text='More text', state='done')]
     )
 
 

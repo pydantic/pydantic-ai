@@ -46,6 +46,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -5392,6 +5393,29 @@ async def test_xai_file_part_in_history_skipped(allow_model_requests: None):
             }
         ]
     )
+
+
+async def test_map_user_prompt_with_text_content():
+    response = create_response(content='test response')
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    m = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        part=UserPromptPart(
+            content=['Hi there', TextContent(content='This is a test', metadata={'format': 'markdown'})],
+            timestamp=IsDatetime(),
+        )
+    )
+
+    assert repr(m) == snapshot("""\
+content {
+  text: "Hi there"
+}
+content {
+  text: "This is a test"
+}
+role: ROLE_USER
+""")
 
 
 # End of tests

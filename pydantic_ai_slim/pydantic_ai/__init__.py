@@ -54,7 +54,6 @@ from .messages import (
     AudioUrl,
     BaseToolCallPart,
     BaseToolReturnPart,
-    TextContent,
     BinaryContent,
     BinaryImage,
     BuiltinToolCallPart,
@@ -87,6 +86,7 @@ from .messages import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -271,5 +271,6 @@ __all__ = (
     'AgentRun',
     'AgentRunResult',
     'AgentRunResultEvent',
+    'TextContent',
 )
 __version__ = _metadata_version('pydantic_ai_slim')

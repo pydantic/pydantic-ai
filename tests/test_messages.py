@@ -19,6 +19,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RequestUsage,
+    TextContent,
     TextPart,
     ThinkingPart,
     ThinkingPartDelta,
@@ -26,7 +27,6 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
-    TextContent
 )
 
 from ._inline_snapshot import snapshot
@@ -99,12 +99,11 @@ def test_document_url():
 
 def test_text_content():
     with pytest.raises(ValueError):
-        TextContent(content='Hello, world!')
+        TextContent(content='Hello, world!')  # type: ignore
 
-    text_content = TextContent(content='Pydantic AI!', metadata={"foo": "bar"})
+    text_content = TextContent(content='Pydantic AI!', metadata={'foo': 'bar'})
     assert text_content.content == 'Pydantic AI!'
-    assert text_content.metadata == {"foo": "bar"}
-
+    assert text_content.metadata == {'foo': 'bar'}
 
 
 @pytest.mark.parametrize(
@@ -598,7 +597,7 @@ def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
     serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
 
-    assert deserialized[0].parts[0].content[0].metadata == snapshot({'foo': 'bar'})
+    assert deserialized[0].parts[0].content[0].metadata == snapshot({'foo': 'bar'})  # type: ignore[reportUnknownMemberType]
 
 
 def test_model_response_convenience_methods():
@@ -935,4 +934,4 @@ def test_user_prompt_part_with_text_content():
         ]
     )
     assert part.content[0] == 'Hi there'
-    assert part.content[1].metadata == snapshot({'key': 'value'})
+    assert part.content[1].metadata == snapshot({'key': 'value'})  # type: ignore[reportUnknownMemberType]
