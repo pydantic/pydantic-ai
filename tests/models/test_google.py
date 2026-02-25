@@ -82,13 +82,20 @@ from ..parts_from_messages import part_types_from_messages
 with try_import() as imports_successful:
     from google.genai import errors
     from google.genai.types import (
+        BlockedReason,
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
+        GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
         HarmBlockThreshold,
         HarmCategory,
+        HarmProbability,
+        LogprobsResult,
+        LogprobsResultCandidate,
+        LogprobsResultTopCandidates,
         MediaModality,
         ModalityTokenCount,
+        SafetyRating,
     )
 
     from pydantic_ai.models.google import (
@@ -5419,7 +5426,8 @@ async def test_google_streaming_tool_call_thought_signature(
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
-                )
+                ),
+                args_valid=True,
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -5726,3 +5734,311 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
             },
         ]
     )
+
+
+async def test_google_vertex_logprobs(allow_model_requests: None, vertex_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_logprobs=True, google_top_logprobs=5)
+    result = await agent.run('What is 2+2?', model_settings=settings)
+
+    messages = result.all_messages()
+    response = cast(ModelResponse, messages[-1])
+
+    assert result.output is not None
+    assert response.provider_details is not None
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'STOP',
+            'timestamp': IsDatetime(),
+            'logprobs': {
+                'chosen_candidates': [
+                    {'log_probability': -0.01972555, 'token': '2', 'token_id': 236778},
+                    {'log_probability': -0.006128676, 'token': ' +', 'token_id': 900},
+                    {'log_probability': -2.3844768e-07, 'token': ' ', 'token_id': 236743},
+                    {'log_probability': -2.3844768e-07, 'token': '2', 'token_id': 236778},
+                    {'log_probability': -0.018705286, 'token': ' =', 'token_id': 578},
+                    {'log_probability': -0.024863577, 'token': ' ', 'token_id': 236743},
+                    {'log_probability': -4.649037e-06, 'token': '4', 'token_id': 236812},
+                ],
+                'top_candidates': [
+                    {
+                        'candidates': [
+                            {'log_probability': -0.01972555, 'token': '2', 'token_id': 236778},
+                            {'log_probability': -4.1320033, 'token': '4', 'token_id': 236812},
+                            {'log_probability': -6.808355, 'token': 'Four', 'token_id': 26391},
+                            {'log_probability': -6.889938, 'token': '$', 'token_id': 236795},
+                            {'log_probability': -7.830156, 'token': '**', 'token_id': 1018},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'log_probability': -0.006128676, 'token': ' +', 'token_id': 900},
+                            {'log_probability': -5.1196923, 'token': '+', 'token_id': 236862},
+                            {'log_probability': -9.429066, 'token': ' plus', 'token_id': 2915},
+                            {'log_probability': -12.47383, 'token': ' increased', 'token_id': 4869},
+                            {'log_probability': -12.602639, 'token': ' add', 'token_id': 1138},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'log_probability': -2.3844768e-07, 'token': ' ', 'token_id': 236743},
+                            {'log_probability': -18.285292, 'token': '2', 'token_id': 236778},
+                            {'log_probability': -18.646221, 'token': ' \u200b\u200b', 'token_id': 21297},
+                            {'log_probability': -18.94063, 'token': ' N', 'token_id': 646},
+                            {'log_probability': -19.028633, 'token': ' an', 'token_id': 614},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'log_probability': -2.3844768e-07, 'token': '2', 'token_id': 236778},
+                            {'log_probability': -16.029083, 'token': '3', 'token_id': 236800},
+                            {'log_probability': -16.497353, 'token': '4', 'token_id': 236812},
+                            {'log_probability': -18.473116, 'token': '1', 'token_id': 236770},
+                            {'log_probability': -18.963243, 'token': '\n', 'token_id': 107},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'log_probability': -0.018705286, 'token': ' =', 'token_id': 578},
+                            {'log_probability': -4.2170067, 'token': ' equals', 'token_id': 14339},
+                            {'log_probability': -5.669649, 'token': ' is', 'token_id': 563},
+                            {'log_probability': -8.487247, 'token': ' equal', 'token_id': 4745},
+                            {'log_probability': -10.404134, 'token': ' равно', 'token_id': 59213},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'log_probability': -0.024863577, 'token': ' ', 'token_id': 236743},
+                            {'log_probability': -3.70766, 'token': ' **', 'token_id': 5213},
+                            {'log_probability': -14.454006, 'token': '**', 'token_id': 1018},
+                            {'log_probability': -14.490942, 'token': ' \u202b', 'token_id': 67184},
+                            {'log_probability': -14.820812, 'token': ' chemical', 'token_id': 7395},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'log_probability': -4.649037e-06, 'token': '4', 'token_id': 236812},
+                            {'log_probability': -13.0294285, 'token': '**', 'token_id': 1018},
+                            {'log_probability': -13.835171, 'token': '\n', 'token_id': 107},
+                            {'log_probability': -17.38563, 'token': 'けます', 'token_id': 141784},
+                            {'log_probability': -17.863365, 'token': ' **', 'token_id': 5213},
+                        ]
+                    },
+                ],
+            },
+            'avg_logprobs': -1.0858495576041085,
+        }
+    )
+
+
+async def test_google_vertex_logprobs_without_top_logprobs(allow_model_requests: None, vertex_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_logprobs=True)
+    result = await agent.run('What is 2+2?', model_settings=settings)
+
+    response = result.response
+
+    assert result.output is not None
+    assert response.provider_details is not None
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'STOP',
+            'timestamp': IsDatetime(),
+            'logprobs': {
+                'chosen_candidates': [
+                    {'log_probability': -0.0066939937, 'token': '2', 'token_id': 236778},
+                    {'log_probability': -0.0026399216, 'token': ' +', 'token_id': 900},
+                    {'log_probability': -3.5760596e-07, 'token': ' ', 'token_id': 236743},
+                    {'log_probability': -1.1922384e-07, 'token': '2', 'token_id': 236778},
+                    {'log_probability': -0.009400622, 'token': ' =', 'token_id': 578},
+                    {'log_probability': -0.03711015, 'token': ' ', 'token_id': 236743},
+                    {'log_probability': -4.529893e-06, 'token': '4', 'token_id': 236812},
+                ],
+                'top_candidates': None,
+            },
+            'avg_logprobs': -0.7161864553179059,
+        }
+    )
+
+
+async def test_google_vertex_logprobs_structure(
+    allow_model_requests: None,
+    vertex_provider: GoogleProvider,
+):
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_logprobs=True, google_top_logprobs=2)
+    result = await agent.run('Answer only with "Hello"', model_settings=settings)
+
+    response = result.response
+
+    assert result.output == snapshot('Hello')
+
+    assert response.provider_details is not None
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'STOP',
+            'timestamp': IsDatetime(),
+            'logprobs': {
+                'chosen_candidates': [{'log_probability': -1.0489701e-05, 'token': 'Hello', 'token_id': 9259}],
+                'top_candidates': [
+                    {
+                        'candidates': [
+                            {'log_probability': -1.0489701e-05, 'token': 'Hello', 'token_id': 9259},
+                            {'log_probability': -11.782881, 'token': '"', 'token_id': 236775},
+                        ]
+                    }
+                ],
+            },
+            'avg_logprobs': -11.512689590454102,
+        }
+    )
+
+
+async def test_google_vertex_logprobs_from_provider_details(
+    allow_model_requests: None,
+    vertex_provider: GoogleProvider,
+):
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_logprobs=True, google_top_logprobs=2)
+    result = await agent.run('Answer only with "Hello"', model_settings=settings)
+
+    messages = result.all_messages()
+    response = cast(ModelResponse, messages[-1])
+
+    assert response.provider_details is not None
+    logprobs = LogprobsResult(**response.provider_details['logprobs'])
+    assert logprobs == snapshot(
+        LogprobsResult(
+            chosen_candidates=[LogprobsResultCandidate(log_probability=-6.7947026e-06, token='Hello', token_id=9259)],
+            top_candidates=[
+                LogprobsResultTopCandidates(
+                    candidates=[
+                        LogprobsResultCandidate(log_probability=-6.7947026e-06, token='Hello', token_id=9259),
+                        LogprobsResultCandidate(log_probability=-12.196156, token='"', token_id=236775),
+                    ]
+                )
+            ],
+        )
+    )
+
+
+def _make_prompt_feedback(*, with_details: bool) -> GenerateContentResponsePromptFeedback:
+    """Create a prompt_feedback with block_reason, optionally with message and safety_ratings."""
+    if with_details:
+        return GenerateContentResponsePromptFeedback(
+            block_reason=BlockedReason.PROHIBITED_CONTENT,
+            block_reason_message='The prompt was blocked.',
+            safety_ratings=[
+                SafetyRating(
+                    category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    probability=HarmProbability.HIGH,
+                    blocked=True,
+                )
+            ],
+        )
+    return GenerateContentResponsePromptFeedback(
+        block_reason=BlockedReason.PROHIBITED_CONTENT,
+    )
+
+
+@pytest.mark.parametrize('with_details', [True, False])
+async def test_google_prompt_feedback_non_streaming(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture, with_details: bool
+):
+    """Test that prompt_feedback with block_reason raises ContentFilterError when candidates are empty."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    response = GenerateContentResponse(
+        candidates=[],
+        prompt_feedback=_make_prompt_feedback(with_details=with_details),
+        response_id='resp_123',
+        model_version=model_name,
+        create_time=datetime.datetime.now(),
+    )
+
+    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        ContentFilterError, match="Content filter triggered. Block reason: 'PROHIBITED_CONTENT'"
+    ) as exc_info:
+        await agent.run('prohibited content')
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['block_reason'] == 'PROHIBITED_CONTENT'
+    if with_details:
+        assert response_msg['provider_details']['block_reason_message'] == 'The prompt was blocked.'
+        assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
+        assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
+        assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True
+
+
+@pytest.mark.parametrize('with_details', [True, False])
+async def test_google_prompt_feedback_streaming(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture, with_details: bool
+):
+    """Test that prompt_feedback with block_reason raises ContentFilterError in streaming mode."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    chunks: list[GenerateContentResponse] = []
+
+    if not with_details:
+        # Include a chunk with no candidates and no block_reason to cover that branch
+        chunks.append(
+            GenerateContentResponse(
+                candidates=[],
+                model_version=model_name,
+                response_id='resp_123',
+                prompt_feedback=GenerateContentResponsePromptFeedback(),
+            )
+        )
+
+    chunks.append(
+        GenerateContentResponse(
+            candidates=[],
+            model_version=model_name,
+            response_id='resp_123',
+            prompt_feedback=_make_prompt_feedback(with_details=with_details),
+        )
+    )
+
+    async def stream_iterator():
+        for c in chunks:
+            yield c
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
+
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        ContentFilterError, match="Content filter triggered. Block reason: 'PROHIBITED_CONTENT'"
+    ) as exc_info:
+        async with agent.run_stream('prohibited content'):
+            pass
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['block_reason'] == 'PROHIBITED_CONTENT'
+    if with_details:
+        assert response_msg['provider_details']['block_reason_message'] == 'The prompt was blocked.'
+        assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
+        assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
+        assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True

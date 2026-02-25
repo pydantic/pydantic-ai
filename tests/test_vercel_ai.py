@@ -46,30 +46,6 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
-from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
-from pydantic_ai.ui.vercel_ai._utils import dump_provider_metadata, load_provider_metadata
-from pydantic_ai.ui.vercel_ai.request_types import (
-    DynamicToolInputAvailablePart,
-    DynamicToolOutputAvailablePart,
-    FileUIPart,
-    ReasoningUIPart,
-    SubmitMessage,
-    TextUIPart,
-    ToolApprovalRequested,
-    ToolApprovalResponded,
-    ToolInputAvailablePart,
-    ToolOutputAvailablePart,
-    ToolOutputErrorPart,
-    UIMessage,
-)
-from pydantic_ai.ui.vercel_ai.response_types import (
-    BaseChunk,
-    DataChunk,
-    FileChunk,
-    SourceDocumentChunk,
-    SourceUrlChunk,
-    ToolInputStartChunk,
-)
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
@@ -79,12 +55,38 @@ with try_import() as starlette_import_successful:
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
+    from pydantic_ai.ui.vercel_ai._utils import dump_provider_metadata, load_provider_metadata
+    from pydantic_ai.ui.vercel_ai.request_types import (
+        DynamicToolInputAvailablePart,
+        DynamicToolOutputAvailablePart,
+        FileUIPart,
+        ReasoningUIPart,
+        SubmitMessage,
+        TextUIPart,
+        ToolApprovalRequested,
+        ToolApprovalResponded,
+        ToolInputAvailablePart,
+        ToolOutputAvailablePart,
+        ToolOutputErrorPart,
+        UIMessage,
+    )
+    from pydantic_ai.ui.vercel_ai.response_types import (
+        BaseChunk,
+        DataChunk,
+        FileChunk,
+        SourceDocumentChunk,
+        SourceUrlChunk,
+        ToolInputStartChunk,
+    )
+
 with try_import() as openai_import_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
 
 pytestmark = [
+    pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
@@ -326,7 +328,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolCallId': IsStr(),
                 'toolName': 'web_search',
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e647f909248191bfe8d05eeed67645',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-input-delta',
@@ -342,7 +349,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'type': 'search',
                 },
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e647f909248191bfe8d05eeed67645',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-output-available',
@@ -377,7 +389,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolCallId': IsStr(),
                 'toolName': 'web_search',
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e647fb73c48191b0bdb147c3a0d22c',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-input-delta',
@@ -390,7 +407,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolName': 'web_search',
                 'input': {'query': 'OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY Python', 'type': 'search'},
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e647fb73c48191b0bdb147c3a0d22c',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-output-available',
@@ -425,7 +447,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolCallId': IsStr(),
                 'toolName': 'web_search',
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e647fee97c8191919865e0c0a78bba',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-input-delta',
@@ -438,7 +465,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolName': 'web_search',
                 'input': {'query': 'OTEL_INSTRUMENTATION_HTTP_CAPTURE_BODY opentelemetry python', 'type': 'search'},
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e647fee97c8191919865e0c0a78bba',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-output-available',
@@ -473,7 +505,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolCallId': IsStr(),
                 'toolName': 'web_search',
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e64803f27c81918a39ce50cb8dfbc2',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-input-delta',
@@ -489,7 +526,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'type': 'search',
                 },
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e64803f27c81918a39ce50cb8dfbc2',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-output-available',
@@ -524,7 +566,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolCallId': IsStr(),
                 'toolName': 'web_search',
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-input-delta',
@@ -537,7 +584,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolName': 'web_search',
                 'input': {'type': 'search'},
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-output-available',
@@ -572,7 +624,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolCallId': IsStr(),
                 'toolName': 'web_search',
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e6480e11208191834104e1aaab1148',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-input-delta',
@@ -585,7 +642,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolName': 'web_search',
                 'input': {'type': 'search'},
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e6480e11208191834104e1aaab1148',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-output-available',
@@ -620,7 +682,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolCallId': IsStr(),
                 'toolName': 'web_search',
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e648118bf88191aa7f804637c45b32',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-input-delta',
@@ -633,7 +700,12 @@ I'd be happy to help you use a tool! However, I need more information about what
                 'toolName': 'web_search',
                 'input': {'query': 'OTEL_PYTHON_LOG_CORRELATION environment variable', 'type': 'search'},
                 'providerExecuted': True,
-                'providerMetadata': {'pydantic_ai': {'provider_name': 'openai'}},
+                'providerMetadata': {
+                    'pydantic_ai': {
+                        'id': 'ws_00e767404995b9950068e648118bf88191aa7f804637c45b32',
+                        'provider_name': 'openai',
+                    }
+                },
             },
             {
                 'type': 'tool-output-available',
@@ -2252,7 +2324,6 @@ async def test_tool_approval_request_emission():
                     )
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='delete_file', args='{"path": "test.txt"}', tool_call_id='delete_1')],
