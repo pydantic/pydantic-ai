@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
+import logging
 import mimetypes
 import os
 from abc import ABC, abstractmethod
@@ -29,6 +30,8 @@ from .usage import RequestUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
+
+_logger = logging.getLogger(__name__)
 
 _mime_types = MimeTypes()
 # Replicate what is being done in `mimetypes.init()`
@@ -1285,6 +1288,26 @@ class BaseToolCallPart:
         args = pydantic_core.from_json(self.args)
         assert isinstance(args, dict), 'args should be a dict'
         return cast(dict[str, Any], args)
+
+    def safe_args_as_dict(self) -> dict[str, Any]:
+        """Return the arguments as a Python dictionary, returning ``{}`` on malformed JSON.
+
+        Unlike :meth:`args_as_dict`, this method catches ``ValueError`` and
+        ``AssertionError`` raised when ``args`` contains an invalid JSON string
+        and falls back to an empty dict.  This is intended for model providers
+        that need to re-send a previous ``ToolCallPart`` in the conversation
+        history even when the original tool call had malformed arguments
+        (which already triggered a ``RetryPromptPart``).
+        """
+        try:
+            return self.args_as_dict()
+        except (ValueError, AssertionError):
+            _logger.debug(
+                'Malformed tool call args for %r, falling back to empty dict: %s',
+                self.tool_name,
+                self.args,
+            )
+            return {}
 
     def args_as_json_str(self) -> str:
         """Return the arguments as a JSON string.

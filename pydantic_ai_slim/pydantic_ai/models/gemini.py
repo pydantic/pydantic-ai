@@ -721,7 +721,9 @@ class _GeminiFunctionCallPart(_BasePart):
 
 
 def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart:
-    return _GeminiFunctionCallPart(function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.args_as_dict()))
+    return _GeminiFunctionCallPart(
+        function_call=_GeminiFunctionCall(name=tool.tool_name, args=tool.safe_args_as_dict())
+    )
 
 
 def _process_response_from_parts(

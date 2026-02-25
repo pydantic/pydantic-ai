@@ -8421,10 +8421,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
     tool call's args are parsed via args_as_dict() which raises ValueError on
     invalid JSON, crashing the retry flow before the model can self-correct.
     """
-    BAD_ARGS = (
-        '{"query": "bad query", '
-        '"file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
-    )
+    BAD_ARGS = '{"query": "bad query", "file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
 
     # First response: the model "fixes" the tool call and returns text
     fixed_response = completion_message(
@@ -8453,7 +8450,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                 RetryPromptPart(
                     tool_name='search_knowledge',
                     tool_call_id='toolu_123',
-                    content="Invalid JSON: expected `,` or `}` at line 1 column 99",
+                    content='Invalid JSON: expected `,` or `}` at line 1 column 99',
                 ),
             ],
         ),
@@ -8469,35 +8466,27 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
 
 
 def test_safe_args_as_dict_valid_json():
-    """_safe_args_as_dict should return parsed dict for valid JSON args."""
-    from pydantic_ai.models.anthropic import _safe_args_as_dict  # pyright: ignore[reportPrivateUsage]
-
+    """safe_args_as_dict should return parsed dict for valid JSON args."""
     part = ToolCallPart(tool_name='test_tool', args='{"key": "value"}')
-    assert _safe_args_as_dict(part) == {'key': 'value'}
+    assert part.safe_args_as_dict() == {'key': 'value'}
 
 
 def test_safe_args_as_dict_dict_args():
-    """_safe_args_as_dict should return the dict directly when args is already a dict."""
-    from pydantic_ai.models.anthropic import _safe_args_as_dict  # pyright: ignore[reportPrivateUsage]
-
+    """safe_args_as_dict should return the dict directly when args is already a dict."""
     part = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
-    assert _safe_args_as_dict(part) == {'key': 'value'}
+    assert part.safe_args_as_dict() == {'key': 'value'}
 
 
 def test_safe_args_as_dict_malformed_json():
-    """_safe_args_as_dict should return {} for malformed JSON instead of raising."""
-    from pydantic_ai.models.anthropic import _safe_args_as_dict  # pyright: ignore[reportPrivateUsage]
-
+    """safe_args_as_dict should return {} for malformed JSON instead of raising."""
     malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
     part = ToolCallPart(tool_name='test_tool', args=malformed)
     # Should NOT raise ValueError
-    result = _safe_args_as_dict(part)
+    result = part.safe_args_as_dict()
     assert result == {}
 
 
 def test_safe_args_as_dict_empty_args():
-    """_safe_args_as_dict should return {} when args is None/empty."""
-    from pydantic_ai.models.anthropic import _safe_args_as_dict  # pyright: ignore[reportPrivateUsage]
-
+    """safe_args_as_dict should return {} when args is None/empty."""
     part = ToolCallPart(tool_name='test_tool', args=None)
-    assert _safe_args_as_dict(part) == {}
+    assert part.safe_args_as_dict() == {}

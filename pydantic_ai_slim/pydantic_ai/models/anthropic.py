@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import io
-import logging
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -24,7 +23,6 @@ from ..builtin_tools import (
 )
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
-    BaseToolCallPart,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -786,7 +784,7 @@ class AnthropicModel(Model):
                             id=_guard_tool_call_id(t=response_part),
                             type='tool_use',
                             name=response_part.tool_name,
-                            input=_safe_args_as_dict(response_part),
+                            input=response_part.safe_args_as_dict(),
                         )
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
@@ -1409,32 +1407,6 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     else:
         assert_never(item.name)
-
-
-_logger = logging.getLogger(__name__)
-
-
-def _safe_args_as_dict(part: BaseToolCallPart) -> dict[str, Any]:
-    """Safely convert tool call args to a dict, returning ``{}`` on malformed JSON.
-
-    The Anthropic API requires ``input`` to be a dict when sending ``tool_use``
-    blocks.  If a previous model response contained malformed JSON arguments
-    (which already triggered a ``RetryPromptPart``), calling ``args_as_dict()``
-    would raise a ``ValueError`` and crash the retry flow *before* the model
-    could self-correct.
-
-    This helper catches that error so the conversation history can still be
-    sent to the API, allowing the retry to proceed normally.
-    """
-    try:
-        return part.args_as_dict()
-    except (ValueError, AssertionError):
-        _logger.debug(
-            'Malformed tool call args for %r, falling back to empty dict: %s',
-            part.tool_name,
-            part.args,
-        )
-        return {}
 
 
 web_search_tool_result_content_ta: TypeAdapter[BetaWebSearchToolResultBlockContent] = TypeAdapter(
