@@ -2249,8 +2249,16 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
-                        'y': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'string'}], 'type': 'array'},
+                        'x': {
+                            'prefixItems': [{'type': 'integer'}],
+                            'type': 'array',
+                            'description': 'minItems=1, maxItems=1',
+                        },
+                        'y': {
+                            'prefixItems': [{'type': 'string'}],
+                            'type': 'array',
+                            'description': 'minItems=1, maxItems=1',
+                        },
                     },
                     'required': ['x', 'y'],
                     'type': 'object',
@@ -2346,10 +2354,9 @@ def test_strict_schema():
                         },
                         'my_recursive': {'anyOf': [{'$ref': '#'}, {'type': 'null'}]},
                         'my_tuple': {
-                            'maxItems': 1,
-                            'minItems': 1,
                             'prefixItems': [{'type': 'integer'}],
                             'type': 'array',
+                            'description': 'minItems=1, maxItems=1',
                         },
                     },
                     'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
@@ -2365,7 +2372,11 @@ def test_strict_schema():
                     'properties': {},
                     'required': [],
                 },
-                'my_tuple': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                'my_tuple': {
+                    'prefixItems': [{'type': 'integer'}],
+                    'type': 'array',
+                    'description': 'minItems=1, maxItems=1',
+                },
                 'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                 'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
             },
@@ -4337,6 +4348,43 @@ def test_transformer_adds_properties_to_object_schemas():
     result = OpenAIJsonSchemaTransformer(schema, strict=None).walk()
 
     assert result['properties'] == {}
+
+
+@pytest.mark.parametrize(
+    'key,value',
+    [
+        ('pattern', r'^[\w.]+@[\w.]+$'),
+        ('minimum', 0),
+        ('maximum', 120),
+        ('exclusiveMinimum', 0),
+        ('exclusiveMaximum', 100),
+        ('multipleOf', 5),
+        ('minItems', 1),
+        ('maxItems', 10),
+    ],
+)
+def test_transformer_detects_strict_incompatible_numeric_and_string_keys(key: str, value: Any):
+    """Keys like pattern, minimum, maximum, minItems, maxItems are not supported in OpenAI strict mode."""
+    prop_schema: dict[str, Any] = {'type': 'string' if key == 'pattern' else 'integer', key: value}
+    if key in ('minItems', 'maxItems'):
+        prop_schema = {'type': 'array', 'items': {'type': 'string'}, key: value}
+
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'field': prop_schema},
+        'required': ['field'],
+        'additionalProperties': False,
+    }
+
+    # strict=None should detect as NOT strict-compatible
+    t1 = OpenAIJsonSchemaTransformer(schema.copy(), strict=None)
+    t1.walk()
+    assert not t1.is_strict_compatible, f'{key} should be detected as strict-incompatible'
+
+    # strict=True should strip the incompatible key
+    t2 = OpenAIJsonSchemaTransformer(schema.copy(), strict=True)
+    result = t2.walk()
+    assert key not in result['properties']['field'], f'{key} should be stripped in strict mode'
 
 
 def chunk_with_usage(
