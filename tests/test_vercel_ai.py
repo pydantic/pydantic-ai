@@ -4112,7 +4112,8 @@ async def test_adapter_dump_load_roundtrip_without_timestamps():
     ui_messages = VercelAIAdapter.dump_messages(original_messages)
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
 
-    assert len(reloaded_messages) == len(original_messages)
+    _sync_timestamps(original_messages, reloaded_messages)
+    assert reloaded_messages == original_messages
 
 
 async def test_adapter_dump_messages_deterministic_ids():
