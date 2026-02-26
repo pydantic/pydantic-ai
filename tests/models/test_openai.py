@@ -4344,7 +4344,7 @@ def test_transformer_bare_list_not_strict_compatible():
 
     See https://github.com/pydantic/pydantic-ai/issues/4425
     """
-    schema = {
+    schema: dict[str, Any] = {
         'type': 'object',
         'properties': {
             'items': {'type': 'array', 'items': {}},
