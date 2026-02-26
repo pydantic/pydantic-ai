@@ -1662,7 +1662,9 @@ def transform_paired_tool_payloads(
                     and isinstance(part, ToolReturnPart)
                     and part.tool_call_id in paired_tool_call_ids
                 ):
-                    transformed_request_parts.append(replace(part, content=tool_return_content_transformer(part.content)))
+                    transformed_request_parts.append(
+                        replace(part, content=tool_return_content_transformer(part.content))
+                    )
                 else:
                     transformed_request_parts.append(part)
             transformed_messages.append(replace(message, parts=transformed_request_parts))
