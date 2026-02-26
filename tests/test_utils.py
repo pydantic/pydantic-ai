@@ -528,10 +528,7 @@ def test_strip_markdown_fences():
     )
     assert strip_markdown_fences('No JSON to be found') == 'No JSON to be found'
     # Greedy regex bug: should not consume past closing fence into trailing text with braces
-    assert (
-        strip_markdown_fences('```json\n{"foo": "bar"}\n```\nSome text with a } here')
-        == '{"foo": "bar"}'
-    )
+    assert strip_markdown_fences('```json\n{"foo": "bar"}\n```\nSome text with a } here') == '{"foo": "bar"}'
     # Nested JSON objects should be preserved
     assert strip_markdown_fences('```json\n{"a": {"b": "c"}}\n```') == '{"a": {"b": "c"}}'
 
