@@ -35,6 +35,7 @@ class Provider(ABC, Generic[InterfaceClient]):
     _own_http_client: httpx.AsyncClient | None = None
     _entered_count: int = 0
     _exit_stack: AsyncExitStack | None = None
+    _enter_lock: Lock | None = None
 
     @property
     @abstractmethod
@@ -59,11 +60,9 @@ class Provider(ABC, Generic[InterfaceClient]):
         return None  # pragma: no cover
 
     async def __aenter__(self) -> Self:
-        lock = getattr(self, '_enter_lock', None)
-        if lock is None:
-            lock = Lock()
-            self._enter_lock = lock
-        async with lock:
+        if self._enter_lock is None:
+            self._enter_lock = Lock()
+        async with self._enter_lock:
             if self._entered_count == 0 and self._own_http_client is not None:
                 async with AsyncExitStack() as exit_stack:
                     await exit_stack.enter_async_context(self._own_http_client)
@@ -72,10 +71,9 @@ class Provider(ABC, Generic[InterfaceClient]):
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        lock = getattr(self, '_enter_lock', None)
-        if lock is None:
+        if self._enter_lock is None:
             return
-        async with lock:
+        async with self._enter_lock:
             self._entered_count -= 1
             if self._entered_count == 0 and self._exit_stack is not None:
                 await self._exit_stack.aclose()

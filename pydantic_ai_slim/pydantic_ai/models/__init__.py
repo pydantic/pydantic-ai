@@ -1256,7 +1256,8 @@ def cached_async_http_client(
 ) -> httpx.AsyncClient:
     """Deprecated. Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
     warnings.warn(
-        'cached_async_http_client is deprecated, use create_async_http_client instead.',
+        'cached_async_http_client is deprecated, use create_async_http_client instead. '
+        'Note: the new function creates a new client per call instead of returning a cached one.',
         DeprecationWarning,
         stacklevel=2,
     )

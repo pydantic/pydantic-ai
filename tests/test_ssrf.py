@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from pydantic_ai._ssrf import (
@@ -34,9 +36,21 @@ def mock_dns(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
 
 @pytest.fixture
 def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Patch HTTP client creation in _ssrf to prevent real network calls."""
+    """Patch HTTP client creation in _ssrf to prevent real network calls.
+
+    The wrapper configures the returned mock as an async context manager that yields
+    itself (matching ``httpx.AsyncClient`` behavior), so tests work regardless of
+    whether ``safe_download`` uses the client directly or via ``async with``.
+    """
     mock = MagicMock()
-    monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', mock)
+
+    def factory_wrapper(**kwargs: Any) -> Any:
+        client = mock(**kwargs)
+        if hasattr(client, '__aenter__'):
+            client.__aenter__.return_value = client
+        return client
+
+    monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', factory_wrapper)
     return mock
 
 
@@ -604,6 +618,39 @@ class TestSafeDownload:
         await safe_download('https://example.com/file.txt')
 
         mock_ssrf_client.assert_called_once_with(timeout=_DEFAULT_TIMEOUT)
+
+    async def test_safe_download_closes_http_client(self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`safe_download` closes the HTTP client it creates, even on success.
+
+        Without proper cleanup, each call to `safe_download` leaks an unclosed
+        `httpx.AsyncClient`. After switching from cached_async_http_client (which
+        reused a global) to `create_async_http_client` (new client per call),
+        the client must be explicitly closed.
+
+        Regression test for PR #4421 auto-review feedback.
+        https://github.com/pydantic/pydantic-ai/pull/4421
+        """
+        mock_response = AsyncMock()
+        mock_response.is_redirect = False
+        mock_response.raise_for_status = lambda: None
+        mock_response.content = b'test content'
+
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        created_clients: list[httpx.AsyncClient] = []
+
+        def tracking_create(**kwargs: Any) -> httpx.AsyncClient:
+            client = httpx.AsyncClient()
+            client.get = AsyncMock(return_value=mock_response)
+            created_clients.append(client)
+            return client
+
+        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', tracking_create)
+
+        response = await safe_download('https://example.com/file.txt')
+        assert response.content == b'test content'
+        assert len(created_clients) == 1
+        assert created_clients[0].is_closed
 
 
 class TestDnsRebindingPrevention:

@@ -327,42 +327,42 @@ async def safe_download(
     current_url = url
     redirects_followed = 0
 
-    client = create_async_http_client(timeout=timeout)
-    while True:
-        # Validate and resolve the current URL
-        resolved = await validate_and_resolve_url(current_url, allow_local)
+    async with create_async_http_client(timeout=timeout) as client:
+        while True:
+            # Validate and resolve the current URL
+            resolved = await validate_and_resolve_url(current_url, allow_local)
 
-        # Build URL with resolved IP
-        request_url = build_url_with_ip(resolved)
+            # Build URL with resolved IP
+            request_url = build_url_with_ip(resolved)
 
-        # For HTTPS, set sni_hostname so TLS uses the original hostname for SNI
-        # and certificate validation, even though we're connecting to the resolved IP.
-        extensions: dict[str, str] = {}
-        if resolved.is_https:
-            extensions['sni_hostname'] = resolved.hostname
+            # For HTTPS, set sni_hostname so TLS uses the original hostname for SNI
+            # and certificate validation, even though we're connecting to the resolved IP.
+            extensions: dict[str, str] = {}
+            if resolved.is_https:
+                extensions['sni_hostname'] = resolved.hostname
 
-        # Make request with Host header set to original hostname
-        response = await client.get(
-            request_url,
-            headers={'Host': resolved.hostname},
-            extensions=extensions,
-            follow_redirects=False,
-        )
+            # Make request with Host header set to original hostname
+            response = await client.get(
+                request_url,
+                headers={'Host': resolved.hostname},
+                extensions=extensions,
+                follow_redirects=False,
+            )
 
-        # Check if we need to follow a redirect
-        if response.is_redirect:
-            redirects_followed += 1
-            if redirects_followed > max_redirects:
-                raise ValueError(f'Too many redirects ({redirects_followed}). Maximum allowed: {max_redirects}')
+            # Check if we need to follow a redirect
+            if response.is_redirect:
+                redirects_followed += 1
+                if redirects_followed > max_redirects:
+                    raise ValueError(f'Too many redirects ({redirects_followed}). Maximum allowed: {max_redirects}')
 
-            # Get redirect location
-            location = response.headers.get('location')
-            if not location:
-                raise ValueError('Redirect response missing Location header')
+                # Get redirect location
+                location = response.headers.get('location')
+                if not location:
+                    raise ValueError('Redirect response missing Location header')
 
-            current_url = resolve_redirect_url(current_url, location)
-            continue
+                current_url = resolve_redirect_url(current_url, location)
+                continue
 
-        # Not a redirect, we're done
-        response.raise_for_status()
-        return response
+            # Not a redirect, we're done
+            response.raise_for_status()
+            return response

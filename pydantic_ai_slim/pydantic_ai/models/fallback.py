@@ -7,6 +7,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 from opentelemetry.trace import get_current_span
+from typing_extensions import Self
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.instrumented import InstrumentedModel
@@ -52,6 +53,17 @@ class FallbackModel(Model):
             self._fallback_on = _default_fallback_condition_factory(fallback_on)  # pyright: ignore[reportUnknownArgumentType]
         else:
             self._fallback_on = fallback_on
+
+    async def __aenter__(self) -> Self:
+        """Enter the context for all wrapped models, managing their provider lifecycles."""
+        for model in self.models:
+            await model.__aenter__()
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        """Exit the context for all wrapped models, closing their providers' HTTP clients."""
+        for model in self.models:
+            await model.__aexit__(*args)
 
     @property
     def model_name(self) -> str:

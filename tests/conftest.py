@@ -24,7 +24,7 @@ from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
-from pydantic_ai.models import Model
+from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
 
 from ._inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
 
@@ -361,8 +361,8 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
     original = pydantic_ai.models.create_async_http_client
 
     def cached_per_test(**kwargs: Any) -> httpx.AsyncClient:
-        key = (kwargs.get('provider'), kwargs.get('timeout', 600), kwargs.get('connect', 5))
-        if key not in cache:
+        key = (kwargs.get('provider'), kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
+        if key not in cache or cache[key].is_closed:
             cache[key] = original(**kwargs)
         return cache[key]
 

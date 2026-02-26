@@ -33,11 +33,11 @@ interactions:
         object: model
         owned_by: Cerebras
       - created: 0
-        id: llama3.1-8b
+        id: gpt-oss-120b
         object: model
         owned_by: Cerebras
       - created: 0
-        id: gpt-oss-120b
+        id: llama3.1-8b
         object: model
         owned_by: Cerebras
       object: list
@@ -77,23 +77,32 @@ interactions:
       state: active
       type:
       - text-to-score
-    - model_id: claude-3-5-haiku
+    - deprecation_date: '2026-05-12T00:00:00Z'
+      eol_date: '2026-06-12T00:00:00Z'
+      model_id: claude-3-5-haiku
       regions:
       - us
-      state: active
+      replacement_model: claude-4-5-haiku
+      state: deprecated
       type:
       - text-to-text
-    - model_id: claude-3-5-sonnet-latest
+    - deprecation_date: '2026-01-22T00:00:00Z'
+      eol_date: '2026-02-22T00:00:00Z'
+      model_id: claude-3-5-sonnet-latest
       regions:
       - us
-      state: active
+      replacement_model: claude-4-6-sonnet
+      state: deprecated
       type:
       - text-to-text
-    - model_id: claude-3-7-sonnet
+    - deprecation_date: '2026-03-21T00:00:00Z'
+      eol_date: '2026-04-21T00:00:00Z'
+      model_id: claude-3-7-sonnet
       regions:
       - eu
       - us
-      state: active
+      replacement_model: claude-4-6-sonnet
+      state: deprecated
       type:
       - text-to-text
     - model_id: claude-3-haiku
