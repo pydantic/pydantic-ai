@@ -953,3 +953,19 @@ def test_transform_paired_tool_payloads_returns_shallow_copy_when_no_transformer
 
     assert transformed_messages == original_messages
     assert transformed_messages is not original_messages
+
+
+def test_transform_paired_tool_payloads_returns_copy_when_no_paired_tool_call_ids():
+    original_messages = [
+        ModelResponse(parts=[ToolCallPart(tool_name='call-only', args='{}', tool_call_id='call-only-id')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='return-only', content='ok', tool_call_id='return-only-id')]),
+    ]
+
+    transformed_messages = transform_paired_tool_payloads(
+        original_messages,
+        tool_call_args_transformer=lambda _args: '{"redacted":true}',
+        tool_return_content_transformer=lambda _content: '[redacted]',
+    )
+
+    assert transformed_messages == original_messages
+    assert transformed_messages is not original_messages

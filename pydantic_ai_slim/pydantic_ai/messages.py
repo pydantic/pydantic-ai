@@ -1642,29 +1642,30 @@ def transform_paired_tool_payloads(
     transformed_messages: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelResponse):
-            transformed_parts: list[ModelResponsePart] = []
+            transformed_response_parts: list[ModelResponsePart] = []
             for part in message.parts:
                 if (
                     tool_call_args_transformer is not None
                     and isinstance(part, ToolCallPart)
                     and part.tool_call_id in paired_tool_call_ids
                 ):
-                    transformed_parts.append(replace(part, args=tool_call_args_transformer(part.args)))
+                    transformed_response_parts.append(replace(part, args=tool_call_args_transformer(part.args)))
                 else:
-                    transformed_parts.append(part)
-            transformed_messages.append(replace(message, parts=transformed_parts))
-        else:
-            transformed_parts: list[ModelRequestPart] = []
+                    transformed_response_parts.append(part)
+            transformed_messages.append(replace(message, parts=transformed_response_parts))
+            continue
+        if isinstance(message, ModelRequest):
+            transformed_request_parts: list[ModelRequestPart] = []
             for part in message.parts:
                 if (
                     tool_return_content_transformer is not None
                     and isinstance(part, ToolReturnPart)
                     and part.tool_call_id in paired_tool_call_ids
                 ):
-                    transformed_parts.append(replace(part, content=tool_return_content_transformer(part.content)))
+                    transformed_request_parts.append(replace(part, content=tool_return_content_transformer(part.content)))
                 else:
-                    transformed_parts.append(part)
-            transformed_messages.append(replace(message, parts=transformed_parts))
+                    transformed_request_parts.append(part)
+            transformed_messages.append(replace(message, parts=transformed_request_parts))
 
     return transformed_messages
 
