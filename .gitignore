@@ -21,7 +21,10 @@ node_modules/
 /test_tmp/
 .mcp.json
 .claude/*
-!.claude/skills/address-pr-review
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/address-feedback
+!.claude/skills/pre-push-review
 .github/.review-context/
 /.cursor/
 /.devcontainer/

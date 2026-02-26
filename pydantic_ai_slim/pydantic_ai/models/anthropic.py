@@ -137,10 +137,10 @@ try:
         BetaWebSearchToolResultBlockParam,
         BetaWebSearchToolResultBlockParamContentParam,
     )
+    from anthropic.types.beta.beta_user_location_param import BetaUserLocationParam
     from anthropic.types.beta.beta_web_fetch_tool_result_block_param import (
         Content as WebFetchToolResultBlockParamContent,
     )
-    from anthropic.types.beta.beta_web_search_tool_20250305_param import UserLocation
     from anthropic.types.model_param import ModelParam
 
 except ImportError as _import_error:
@@ -640,7 +640,9 @@ class AnthropicModel(Model):
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
-                user_location = UserLocation(type='approximate', **tool.user_location) if tool.user_location else None
+                user_location = (
+                    BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
+                )
                 tools.append(
                     BetaWebSearchTool20250305Param(
                         name='web_search',

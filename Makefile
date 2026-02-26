@@ -51,11 +51,9 @@ typecheck: typecheck-pyright ## Run static type checking
 typecheck-both: typecheck-pyright typecheck-mypy
 
 .PHONY: test
-test: ## Run tests and collect coverage data
+test: ## Run tests without coverage (fast, for local dev)
 	@# To test using a specific version of python, run 'make install-all-python' then set environment variable PYTEST_PYTHON=3.10 or similar
-	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run -m pytest -n auto --dist=loadgroup --durations=20
-	@uv run coverage combine
-	@uv run coverage report
+	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) pytest -n auto --dist=loadgroup --durations=20
 
 .PHONY: test-all-python
 test-all-python: ## Run tests on Python 3.10 to 3.13
@@ -67,7 +65,11 @@ test-all-python: ## Run tests on Python 3.10 to 3.13
 	@uv run coverage report
 
 .PHONY: testcov
-testcov: test ## Run tests and generate an HTML coverage report
+testcov: ## Run tests with coverage and generate an HTML report
+	@# To test using a specific version of python, run 'make install-all-python' then set environment variable PYTEST_PYTHON=3.10 or similar
+	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) coverage run -m pytest -n auto --dist=loadgroup --durations=20
+	@uv run coverage combine
+	@uv run coverage report
 	@echo "building coverage html"
 	@uv run coverage html
 
