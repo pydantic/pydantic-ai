@@ -147,23 +147,51 @@ async def test_aexit_called_more_times_than_aenter():
 
 
 async def test_aexit_concurrent_does_not_corrupt_running_count():
-    """Concurrent __aexit__ calls must not leave _running_count negative.
+    """Regression test: concurrent __aexit__ calls must not corrupt _running_count.
 
-    Regression test for the TOCTOU race where the guard check happened outside
-    the lock, allowing two concurrent exits to both pass the guard and decrement
-    _running_count to -1.
+    Injects a yield point before real lock acquisition so both tasks pass the
+    pre-lock guard simultaneously — the exact interleaving the TOCTOU race required.
+
+    Old code (guard outside lock):
+      Task A reads _running_count == 1, passes guard, yields.
+      Task B reads _running_count == 1, passes guard, yields.
+      Task A acquires lock, decrements to 0.
+      Task B acquires lock, decrements to -1.  ← bug: count corrupted, no ValueError
+
+    New code (guard inside lock):
+      Task A acquires lock, reads 1, decrements to 0, releases.
+      Task B acquires lock, reads 0, raises ValueError correctly.  ← fix verified
     """
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
 
-    # Simulate two active context entries without starting the server process.
-    server._running_count = 2  # pyright: ignore[reportPrivateUsage]
+    # One active entry — the race only matters when both tasks see count > 0.
+    server._running_count = 1  # pyright: ignore[reportPrivateUsage]
 
-    # Both exits must complete without corrupting the count.
-    await asyncio.gather(
+    # Replace the real lock with one that yields before acquiring,
+    # opening the interleaving window the old code left unprotected.
+    real_lock = server._enter_lock  # pyright: ignore[reportPrivateUsage]
+
+    class InterleavingLock:
+        async def __aenter__(self) -> InterleavingLock:
+            await asyncio.sleep(0)  # yield — lets the other task reach the same point
+            await real_lock.acquire()
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            real_lock.release()
+
+    server._enter_lock = InterleavingLock()  # pyright: ignore[reportPrivateUsage]
+
+    results = await asyncio.gather(
         server.__aexit__(None, None, None),
         server.__aexit__(None, None, None),
+        return_exceptions=True,
     )
 
+    # Exactly one exit must succeed and one must raise ValueError (not silently
+    # corrupt the count). With the old code both would succeed and count == -1.
+    errors = [r for r in results if isinstance(r, ValueError)]
+    assert len(errors) == 1, f'Expected 1 ValueError, got {len(errors)}: {results}'
     assert server._running_count == 0  # pyright: ignore[reportPrivateUsage]
 
 
