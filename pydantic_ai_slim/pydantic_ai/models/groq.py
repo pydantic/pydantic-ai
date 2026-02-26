@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
@@ -191,7 +191,7 @@ class GroqModel(Model):
                 )
             elif model_request_parameters.output_mode == 'auto':
                 if self.profile.default_structured_output_mode == 'native':
-                    model_request_parameters = replace(model_request_parameters, output_mode='tool')
+                    model_request_parameters = model_request_parameters.resolve_auto_output_mode('tool')
 
         return super().prepare_request(model_settings, model_request_parameters)
 
@@ -222,6 +222,19 @@ class GroqModel(Model):
                     )
                     return ModelResponse(
                         parts=[tool_call_part],
+                        model_name=e.model_name,
+                        provider_name=self._provider.name,
+                        provider_url=self.base_url,
+                        finish_reason='error',
+                    )
+                except ValidationError:
+                    pass
+                # Handle tool_use_failed when the model generated text instead of calling a tool
+                # (e.g. with tool_choice='required', Groq rejects responses without tool calls)
+                try:
+                    text_error = _GroqToolUseFailedTextError.model_validate(e.body)  # pyright: ignore[reportUnknownMemberType]
+                    return ModelResponse(
+                        parts=[TextPart(content=text_error.error.failed_generation)],
                         model_name=e.model_name,
                         provider_name=self._provider.name,
                         provider_url=self.base_url,
@@ -632,7 +645,17 @@ class GroqStreamedResponse(StreamedResponse):
                         args=error.failed_generation.arguments,
                     )
                     return
-                except ValidationError as e:  # pragma: no cover
+                except ValidationError:
+                    pass
+                # Handle tool_use_failed when the model generated text instead of calling a tool
+                try:
+                    text_error = _GroqToolUseFailedTextInnerError.model_validate(e.body)  # pyright: ignore[reportUnknownMemberType]
+                    for event in self._parts_manager.handle_text_delta(
+                        vendor_part_id='tool_use_failed_text', content=text_error.failed_generation
+                    ):
+                        yield event
+                    return
+                except ValidationError:  # pragma: no cover
                     pass
             raise  # pragma: no cover
 
@@ -691,7 +714,7 @@ class _GroqToolUseFailedError(BaseModel):
     # Example payload from `exception.body`:
     # {
     #     'error': {
-    #         'message': "Tool call validation failed: tool call validation failed: parameters for tool get_something_by_name did not match schema: errors: [missing properties: 'name', additionalProperties 'foo' not allowed]",
+    #         'message': "Tool call validation failed: ...",
     #         'type': 'invalid_request_error',
     #         'code': 'tool_use_failed',
     #         'failed_generation': '{"name": "get_something_by_name", "arguments": {\n  "foo": "bar"\n}}',
@@ -699,6 +722,26 @@ class _GroqToolUseFailedError(BaseModel):
     # }
 
     error: _GroqToolUseFailedInnerError
+
+
+class _GroqToolUseFailedTextInnerError(BaseModel):
+    code: Literal['tool_use_failed']
+    failed_generation: str
+
+
+class _GroqToolUseFailedTextError(BaseModel):
+    # Variant of _GroqToolUseFailedError for when the model generated plain text instead of a tool call.
+    # Example payload from `exception.body`:
+    # {
+    #     'error': {
+    #         'message': 'Tool choice is required, but model did not call a tool',
+    #         'type': 'invalid_request_error',
+    #         'code': 'tool_use_failed',
+    #         'failed_generation': 'The capital of France is Paris.',
+    #     }
+    # }
+
+    error: _GroqToolUseFailedTextInnerError
 
 
 def _map_executed_tool(

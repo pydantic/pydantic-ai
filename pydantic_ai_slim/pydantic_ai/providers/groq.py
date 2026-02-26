@@ -43,7 +43,7 @@ Native output is preferred because some models (e.g. Llama 4) don't reliably
 produce tool-based structured output on Groq."""
 
 
-def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
+def groq_moonshotai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an MoonshotAI model used with the Groq provider."""
     base = moonshotai_model_profile(model_name) or ModelProfile()
     return base.update(_GROQ_NATIVE_OUTPUT_PROFILE)
