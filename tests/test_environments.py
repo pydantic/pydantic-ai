@@ -1751,8 +1751,8 @@ class MockContainer:
 
             find_part = cmd_str.split('|')[0].strip()
             # Remove the 'sh -c' wrapper if present
-            if find_part.startswith('sh -c '):
-                find_part = find_part[len('sh -c '):]
+            if find_part.startswith('sh -c '):  # pragma: no branch
+                find_part = find_part[len('sh -c ') :]
             tokens = _shlex.split(find_part)
             # tokens[0] is 'find', tokens[1] is the path
             search_path = tokens[1] if len(tokens) > 1 else '.'
@@ -1762,7 +1762,7 @@ class MockContainer:
                 # Make path relative to workdir
                 if not fpath.startswith(wd + '/'):
                     continue
-                rel = fpath[len(wd) + 1:]
+                rel = fpath[len(wd) + 1 :]
                 if search_path == '.':
                     matches.append(f'./{rel}')
                 elif rel.startswith(search_path + '/') or rel == search_path:
@@ -1935,6 +1935,20 @@ class TestDocker:
         matches = await mock_docker_sandbox.glob('*.py')
         assert matches == []
 
+    async def test_docker_glob_empty_workspace(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+        """Returns empty list when workspace has no files."""
+        matches = await mock_docker_sandbox.glob('*.py')
+        assert matches == []
+
+    async def test_docker_glob_ignores_files_outside_workspace(
+        self, mock_docker_sandbox: Any, mock_container: MockContainer
+    ) -> None:
+        """Files outside the workspace directory are not included."""
+        mock_container._files['/other/place/top.py'] = b''
+        mock_container._files['/workspace/found.py'] = b''
+        matches = await mock_docker_sandbox.glob('**/*.py')
+        assert matches == ['found.py']
+
     async def test_docker_glob_zero_dir_match(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
         """**/*.py matches top-level .py files (zero-directory case)."""
         mock_container._files['/workspace/top.py'] = b''
@@ -1942,6 +1956,25 @@ class TestDocker:
         matches = await mock_docker_sandbox.glob('**/*.py')
         assert 'top.py' in matches
         assert 'deep/nested.py' in matches
+
+    async def test_docker_glob_skips_blank_lines(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+        """Blank lines in find output are skipped."""
+        mock_container._files['/workspace/a.py'] = b''
+        mock_container._files['/workspace/b.py'] = b''
+        # Patch exec_run to return output with embedded blank lines
+        original_exec_run = mock_container.exec_run
+
+        def exec_run_with_blanks(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
+            exit_code, output = original_exec_run(cmd, **kwargs)
+            # Insert blank lines between entries
+            if output:
+                lines = output.decode().splitlines()
+                output = '\n\n'.join(lines).encode()
+            return exit_code, output
+
+        mock_container.exec_run = exec_run_with_blanks  # type: ignore[assignment]
+        matches = await mock_docker_sandbox.glob('**/*.py')
+        assert matches == ['a.py', 'b.py']
 
     async def test_docker_grep(self, mock_docker_sandbox: Any) -> None:
         """DockerEnvironment.grep returns matches."""
