@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import re
 from datetime import timezone
@@ -143,6 +144,27 @@ async def test_aexit_called_more_times_than_aenter():
 
     with pytest.raises(ValueError, match='MCPServer.__aexit__ called more times than __aenter__'):
         await server.__aexit__(None, None, None)
+
+
+async def test_aexit_concurrent_does_not_corrupt_running_count():
+    """Concurrent __aexit__ calls must not leave _running_count negative.
+
+    Regression test for the TOCTOU race where the guard check happened outside
+    the lock, allowing two concurrent exits to both pass the guard and decrement
+    _running_count to -1.
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    # Simulate two active context entries without starting the server process.
+    server._running_count = 2  # pyright: ignore[reportPrivateUsage]
+
+    # Both exits must complete without corrupting the count.
+    await asyncio.gather(
+        server.__aexit__(None, None, None),
+        server.__aexit__(None, None, None),
+    )
+
+    assert server._running_count == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
