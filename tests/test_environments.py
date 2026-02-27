@@ -3137,7 +3137,3 @@ async def test_toolset_factory_ls_only_calls_ls():
         tools = await toolset.get_tools(ctx)
         result = await toolset.call_tool('ls', {}, ctx, tools['ls'])
         assert 'test.txt' in str(result)
-
-
-
-
