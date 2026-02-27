@@ -1897,7 +1897,7 @@ class TestDocker:
 
         mock_container.exec_run = big_output  # type: ignore[assignment]
         result = await mock_docker_sandbox.shell('echo big')
-        assert len(result.output) == snapshot()
+        assert len(result.output) == snapshot(200000)
 
     async def test_docker_execute_timeout_exit_code(
         self, mock_docker_sandbox: Any, mock_container: MockContainer
@@ -2168,8 +2168,8 @@ async def test_local_execute_output_truncation(tmp_path: Path):
     script = tmp_path / 'big.py'
     script.write_text("print('x' * 200000)")
     env = LocalEnvironment(tmp_path)
-    result = await env.shell(f'python {scr200001ipt}')
-    assert len(result.output) == snapshot()
+    result = await env.shell(f'python {script}')
+    assert len(result.output) == snapshot(200001)
 
 
 # --- Additional coverage: memory.py ---
