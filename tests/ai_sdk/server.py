@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import AsyncIterator
+from typing import Any
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -91,7 +92,7 @@ def lookup_time(timezone: str) -> str:
     return f'12:00 {timezone}'
 
 
-AGENTS: dict[str, Agent[None, ...]] = {
+AGENTS = {
     'text': text_agent,
     'thinking': thinking_agent,
     'tool': tool_agent,
@@ -100,7 +101,7 @@ AGENTS: dict[str, Agent[None, ...]] = {
 }
 
 
-def create_app(agent: Agent[None, ...]) -> Starlette:
+def create_app(agent: Agent[None, Any]) -> Starlette:
     async def chat_endpoint(request: Request) -> Response:
         return await VercelAIAdapter.dispatch_request(request, agent=agent, sdk_version=6)
 
