@@ -1798,6 +1798,87 @@ class TestDocker:
         assert entered is proc
         assert proc._exec_id == 'exec-aenter'
 
+    async def test_docker_process_poll_exit_code_no_exec_id(
+        self,
+    ) -> None:
+        """_DockerEnvironmentProcess._poll_exit_code returns None when _exec_id is None."""
+        container = MockContainer()
+        proc = _DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+
+        # _exec_id is None by default (process not started)
+        assert proc._exec_id is None
+        assert await proc._poll_exit_code() is None
+
+    async def test_docker_process_aexit_kills_running(
+        self,
+    ) -> None:
+        """_DockerEnvironmentProcess.__aexit__ kills the process if still running."""
+        container = MockContainer()
+        proc = _DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+        mock_socket = MagicMock()
+        proc._socket = mock_socket
+        # Process is "still running" — _exec_id set but inspect says Running=True
+        proc._exec_id = 'exec-aexit'
+        container.client.api.exec_inspect.return_value = {'Running': True, 'ExitCode': None}
+
+        await proc.__aexit__(None, None, None)
+
+        # Should have called kill (socket.close)
+        mock_socket.close.assert_called_once()
+        assert proc._returncode is None
+
+    async def test_docker_process_aexit_already_exited(
+        self,
+    ) -> None:
+        """_DockerEnvironmentProcess.__aexit__ does not kill if process already exited."""
+        container = MockContainer()
+        proc = _DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
+        mock_socket = MagicMock()
+        proc._socket = mock_socket
+        proc._exec_id = 'exec-aexit'
+        container.client.api.exec_inspect.return_value = {'Running': False, 'ExitCode': 0}
+
+        await proc.__aexit__(None, None, None)
+
+        # Should NOT have called kill
+        mock_socket.close.assert_not_called()
+        assert proc._returncode == 0
+
+    async def test_mock_container_find_command(
+        self,
+    ) -> None:
+        """MockContainer.exec_run handles find commands for glob operations."""
+        container = MockContainer()
+        container._files['/workspace/src/main.py'] = b'print("hello")'
+        container._files['/workspace/src/utils.py'] = b'# utils'
+        container._files['/workspace/README.md'] = b'# readme'
+
+        # find with '.' searches all files relative to workdir
+        exit_code, output = container.exec_run(
+            ['sh', '-c', "find '.' -type f"], workdir='/workspace'
+        )
+        output_str = output.decode()
+        assert exit_code == 0
+        assert './src/main.py' in output_str
+        assert './src/utils.py' in output_str
+        assert './README.md' in output_str
+
+    async def test_mock_container_find_command_subpath(
+        self,
+    ) -> None:
+        """MockContainer.exec_run handles find commands with a specific subdirectory."""
+        container = MockContainer()
+        container._files['/workspace/src/main.py'] = b'print("hello")'
+        container._files['/workspace/docs/guide.md'] = b'# guide'
+
+        exit_code, output = container.exec_run(
+            ['sh', '-c', "find 'src' -type f"], workdir='/workspace'
+        )
+        output_str = output.decode()
+        assert exit_code == 0
+        assert 'src/main.py' in output_str
+        assert 'guide.md' not in output_str
+
     async def test_docker_read_file_image_not_found(
         self, mock_docker_sandbox: Any, mock_container: MockContainer
     ) -> None:
