@@ -20,7 +20,6 @@ from ._base import (
     apply_edit,
     collect_grep_matches,
     format_lines,
-    glob_match,
 )
 
 if TYPE_CHECKING:
@@ -71,7 +70,7 @@ class MemoryEnvironment(ExecutionEnvironment):
 
     @property
     def capabilities(self) -> frozenset[EnvToolName]:
-        caps: set[EnvToolName] = {'ls', 'read_file', 'write_file', 'edit_file', 'glob', 'grep'}
+        caps: set[EnvToolName] = {'ls', 'read_file', 'write_file', 'edit_file', 'grep'}
         if self._command_handler is not None:
             caps.add('shell')
         return frozenset(caps)
@@ -216,22 +215,6 @@ class MemoryEnvironment(ExecutionEnvironment):
             raise NotADirectoryError(f'Not a directory: {path}')
 
         return list(entries.values())
-
-    async def glob(self, pattern: str, *, path: str = '.') -> list[str]:
-        normalized = self._normalize(path)
-        matches: list[str] = []
-        for file_path in sorted(self._files):
-            if normalized != '.':
-                if not file_path.startswith(normalized + '/'):
-                    continue
-                rel = file_path[len(normalized) + 1 :]
-            else:
-                rel = file_path
-
-            if glob_match(rel, pattern):
-                matches.append(file_path)
-
-        return matches
 
     async def grep(
         self,

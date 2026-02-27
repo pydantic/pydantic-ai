@@ -26,7 +26,6 @@ from ._base import (
     ExecutionResult,
     FileInfo,
     apply_edit,
-    glob_match,
 )
 
 try:
@@ -85,17 +84,6 @@ def _build_grep_cmd(
 def _filter_grep_count_output(text: str) -> str:
     """Filter `grep -c` output to remove files with 0 matches."""
     return '\n'.join(line for line in text.splitlines() if not line.endswith(':0'))
-
-
-def _build_find_cmd(*, path: str = '.', recursive: bool = True) -> str:
-    """Build a shell `find` command that lists all files under *path*.
-
-    When *recursive* is False, ``-maxdepth 1`` is added so that only files
-    directly in *path* are returned (matching ``pathlib.glob`` semantics for
-    patterns without ``**``).
-    """
-    depth_flag = '' if recursive else ' -maxdepth 1'
-    return f'find {_shell_escape(path)}{depth_flag} -type f 2>/dev/null'
 
 
 def _put_file(container: Container, path: str, data: bytes) -> None:
@@ -402,7 +390,6 @@ class DockerEnvironment(ExecutionEnvironment):
                 'read_file',
                 'write_file',
                 'edit_file',
-                'glob',
                 'grep',
             }
         )
@@ -624,27 +611,6 @@ class DockerEnvironment(ExecutionEnvironment):
             return entries
 
         return await anyio.to_thread.run_sync(_ls)
-
-    async def glob(self, pattern: str, *, path: str = '.') -> list[str]:
-        def _glob() -> list[str]:
-            recursive = '**' in pattern
-            cmd = _build_find_cmd(path=path, recursive=recursive)
-            _, output = self._container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
-            text = output.decode('utf-8', errors='replace').strip()
-            if not text:
-                return []
-            # Strip leading ./ and path prefix to get relative paths, then filter
-            results: list[str] = []
-            prefix = path.rstrip('/') + '/' if path != '.' else './'
-            for line in text.splitlines():
-                if not line:
-                    continue
-                rel = line.removeprefix(prefix).removeprefix('./')
-                if glob_match(rel, pattern):
-                    results.append(line.removeprefix('./'))
-            return sorted(results)
-
-        return await anyio.to_thread.run_sync(_glob)
 
     async def grep(
         self,

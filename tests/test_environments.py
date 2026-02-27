@@ -26,7 +26,6 @@ from pydantic_ai.environments import (
 from pydantic_ai.environments._base import (
     apply_edit,
     format_lines,
-    glob_match,
 )
 from pydantic_ai.environments.local import LocalEnvironment, _LocalEnvironmentProcess
 from pydantic_ai.environments.memory import MemoryEnvironment
@@ -359,38 +358,6 @@ async def test_local_ls_not_a_directory(tmp_path: Path):
             await env.ls('file.txt')
 
 
-# --- LocalEnvironment: glob ---
-
-
-async def test_local_glob(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('src/main.py', '# main')
-        await env.write_file('src/utils.py', '# utils')
-        await env.write_file('src/data.json', '{}')
-
-        matches = await env.glob('**/*.py')
-        assert len(matches) == 2
-        assert any('main.py' in m for m in matches)
-        assert any('utils.py' in m for m in matches)
-        assert not any('data.json' in m for m in matches)
-
-
-async def test_local_glob_non_recursive(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('top.py', '# top')
-        await env.write_file('sub/nested.py', '# nested')
-
-        # Non-recursive pattern should only match in the target directory
-        matches = await env.glob('*.py')
-        assert matches == ['top.py']
-
-
-async def test_local_glob_no_matches(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        matches = await env.glob('**/*.rs')
-        assert matches == []
-
-
 # --- LocalEnvironment: grep ---
 
 
@@ -532,7 +499,7 @@ async def test_toolset_tool_names():
     ctx = build_run_context()
     tools = await toolset.get_tools(ctx)
     tool_names = sorted(tools.keys())
-    assert tool_names == snapshot(['edit_file', 'glob', 'grep', 'ls', 'read_file', 'shell', 'write_file'])
+    assert tool_names == snapshot(['edit_file', 'grep', 'ls', 'read_file', 'shell', 'write_file'])
 
 
 async def test_toolset_include_flags():
@@ -625,23 +592,6 @@ async def test_toolset_edit_retry_on_permission_error(tmp_path: Path):
             )
 
 
-async def test_toolset_glob_tool(tmp_path: Path):
-    env = LocalEnvironment(tmp_path)
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context(None)
-    manager = await ToolManager[None](toolset).for_run_step(ctx)
-
-    async with env:
-        await env.write_file('a.py', '# a')
-        await env.write_file('b.py', '# b')
-
-        result = await manager.handle_call(ToolCallPart(tool_name='glob', args={'pattern': '*.py'}))
-        assert result == snapshot("""\
-a.py
-b.py\
-""")
-
-
 async def test_toolset_grep_tool(tmp_path: Path):
     env = LocalEnvironment(tmp_path)
     toolset = ExecutionEnvironmentToolset(env)
@@ -692,20 +642,6 @@ async def test_toolset_write_path_traversal_returns_error(tmp_path: Path):
     async with env:
         result = await manager.handle_call(
             ToolCallPart(tool_name='write_file', args={'path': '../../tmp/evil.txt', 'content': 'bad'})
-        )
-        assert 'Error:' in str(result)
-
-
-async def test_toolset_glob_path_traversal_returns_error(tmp_path: Path):
-    """glob with path traversal returns an error string."""
-    env = LocalEnvironment(tmp_path)
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context(None)
-    manager = await ToolManager[None](toolset).for_run_step(ctx)
-
-    async with env:
-        result = await manager.handle_call(
-            ToolCallPart(tool_name='glob', args={'pattern': '*.py', 'path': '../../etc'})
         )
         assert 'Error:' in str(result)
 
@@ -788,7 +724,6 @@ async def test_toolset_require_write_approval():
     assert tools['edit_file'].tool_def.kind == 'unapproved'
     # read_file and search tools should NOT require approval
     assert tools['read_file'].tool_def.kind == 'function'
-    assert tools['glob'].tool_def.kind == 'function'
     assert tools['grep'].tool_def.kind == 'function'
 
 
@@ -1117,34 +1052,6 @@ async def test_memory_ls_not_a_directory():
             await env.ls('nonexistent')
 
 
-async def test_memory_glob():
-    env = MemoryEnvironment(
-        files={
-            'src/main.py': '# main',
-            'src/utils.py': '# utils',
-            'src/data.json': '{}',
-        }
-    )
-    async with env:
-        matches = await env.glob('*.py', path='src')
-        assert sorted(matches) == ['src/main.py', 'src/utils.py']
-
-
-async def test_memory_glob_non_recursive():
-    env = MemoryEnvironment(files={'top.py': '# top', 'sub/nested.py': '# nested'})
-    async with env:
-        # Non-recursive pattern should only match in the target directory
-        matches = await env.glob('*.py')
-        assert matches == ['top.py']
-
-
-async def test_memory_glob_no_matches():
-    env = MemoryEnvironment(files={'a.py': ''})
-    async with env:
-        matches = await env.glob('*.rs')
-        assert matches == []
-
-
 async def test_memory_grep_content():
     env = MemoryEnvironment(
         files={
@@ -1296,13 +1203,6 @@ async def test_memory_toolset_integration():
         )
         assert result == snapshot('File written: new.py')
 
-        # glob
-        result = await manager.handle_call(ToolCallPart(tool_name='glob', args={'pattern': '*.py'}))
-        assert result == snapshot("""\
-main.py
-new.py\
-""")
-
         # grep
         result = await manager.handle_call(ToolCallPart(tool_name='grep', args={'pattern': 'hello'}))
         assert result == snapshot('main.py:1:print("hello")')
@@ -1345,38 +1245,6 @@ def test_format_lines_trailing_newline():
     result = format_lines('no trailing newline', 0, 2000)
     assert result.endswith('\n')
     assert '1\tno trailing newline' in result
-
-
-def test_glob_match_simple():
-    assert glob_match('foo.py', '*.py') is True
-    assert glob_match('foo.txt', '*.py') is False
-
-
-def test_glob_match_double_star():
-    """glob_match with ** patterns for recursive matching."""
-    assert glob_match('src/main.py', '**/*.py') is True
-    assert glob_match('deep/nested/dir/file.py', '**/*.py') is True
-    assert glob_match('file.py', '**/*.py') is True
-    assert glob_match('src/main.txt', '**/*.py') is False
-
-
-def test_glob_match_double_star_prefix():
-    """glob_match with **/ prefix."""
-    assert glob_match('a/b/c.txt', '**/c.txt') is True
-    assert glob_match('c.txt', '**/c.txt') is True
-
-
-def test_glob_match_double_star_suffix():
-    """glob_match with ** at end."""
-    assert glob_match('src/foo/bar', 'src/**') is True
-
-
-def test_glob_match_question_mark():
-    """glob_match with ? wildcard."""
-    assert glob_match('test.py', 'tes?.py') is True
-    assert glob_match('test.py', 'te??.py') is True
-    assert glob_match('test.py', 't???.py') is True  # t + 3 chars (est) + .py
-    assert glob_match('test.py', 't????.py') is False  # needs 4 chars between t and .py
 
 
 def test_apply_edit_basic():
@@ -1505,36 +1373,6 @@ async def test_memory_grep_no_text_content():
         assert 'data.txt' in result
 
 
-async def test_memory_glob_recursive():
-    """glob with ** pattern."""
-    env = MemoryEnvironment(
-        files={
-            'src/a.py': '',
-            'src/sub/b.py': '',
-            'other.txt': '',
-        }
-    )
-    async with env:
-        matches = await env.glob('**/*.py')
-        assert 'src/a.py' in matches
-        assert 'src/sub/b.py' in matches
-        assert 'other.txt' not in matches
-
-
-async def test_memory_glob_in_subdirectory():
-    """glob with path= restricts to subdirectory."""
-    env = MemoryEnvironment(
-        files={
-            'src/a.py': '',
-            'lib/b.py': '',
-        }
-    )
-    async with env:
-        matches = await env.glob('*.py', path='src')
-        assert 'src/a.py' in matches
-        assert 'lib/b.py' not in matches
-
-
 async def test_memory_ls_with_bytes():
     """ls reports size correctly for bytes content."""
     env = MemoryEnvironment(files={'data.bin': b'\x00\x01\x02'})
@@ -1622,18 +1460,6 @@ async def test_toolset_grep_no_matches(tmp_path: Path):
         await env.write_file('test.txt', 'nothing relevant\n')
         result = await manager.handle_call(ToolCallPart(tool_name='grep', args={'pattern': 'nonexistent_xyz'}))
         assert result == snapshot('No matches found.')
-
-
-async def test_toolset_glob_no_matches(tmp_path: Path):
-    """glob with no matches returns 'No files found.'."""
-    env = LocalEnvironment(tmp_path)
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context(None)
-    manager = await ToolManager[None](toolset).for_run_step(ctx)
-
-    async with env:
-        result = await manager.handle_call(ToolCallPart(tool_name='glob', args={'pattern': '*.nonexistent'}))
-        assert result == snapshot('No files found.')
 
 
 async def test_toolset_edit_success(tmp_path: Path):
@@ -1904,77 +1730,6 @@ class TestDocker:
         mock_container._files['test.txt'] = b'hello'
         entries = await mock_docker_sandbox.ls('.')
         assert isinstance(entries, list)
-
-    async def test_docker_glob_recursive(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-        """**/*.py matches files in subdirs and root."""
-        mock_container._files['/workspace/top.py'] = b''
-        mock_container._files['/workspace/src/main.py'] = b''
-        mock_container._files['/workspace/src/lib/util.py'] = b''
-        mock_container._files['/workspace/readme.md'] = b''
-        matches = await mock_docker_sandbox.glob('**/*.py')
-        assert sorted(matches) == ['src/lib/util.py', 'src/main.py', 'top.py']
-
-    async def test_docker_glob_non_recursive(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-        """*.py matches only in target dir, not subdirs."""
-        mock_container._files['/workspace/top.py'] = b''
-        mock_container._files['/workspace/src/nested.py'] = b''
-        matches = await mock_docker_sandbox.glob('*.py')
-        assert matches == ['top.py']
-
-    async def test_docker_glob_with_path(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-        """*.py with path='src' restricts scope."""
-        mock_container._files['/workspace/top.py'] = b''
-        mock_container._files['/workspace/src/main.py'] = b''
-        mock_container._files['/workspace/src/other.txt'] = b''
-        matches = await mock_docker_sandbox.glob('*.py', path='src')
-        assert matches == ['src/main.py']
-
-    async def test_docker_glob_no_matches(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-        """Returns empty list when nothing matches."""
-        mock_container._files['/workspace/readme.md'] = b''
-        matches = await mock_docker_sandbox.glob('*.py')
-        assert matches == []
-
-    async def test_docker_glob_empty_workspace(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-        """Returns empty list when workspace has no files."""
-        matches = await mock_docker_sandbox.glob('*.py')
-        assert matches == []
-
-    async def test_docker_glob_ignores_files_outside_workspace(
-        self, mock_docker_sandbox: Any, mock_container: MockContainer
-    ) -> None:
-        """Files outside the workspace directory are not included."""
-        mock_container._files['/other/place/top.py'] = b''
-        mock_container._files['/workspace/found.py'] = b''
-        matches = await mock_docker_sandbox.glob('**/*.py')
-        assert matches == ['found.py']
-
-    async def test_docker_glob_zero_dir_match(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-        """**/*.py matches top-level .py files (zero-directory case)."""
-        mock_container._files['/workspace/top.py'] = b''
-        mock_container._files['/workspace/deep/nested.py'] = b''
-        matches = await mock_docker_sandbox.glob('**/*.py')
-        assert 'top.py' in matches
-        assert 'deep/nested.py' in matches
-
-    async def test_docker_glob_skips_blank_lines(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-        """Blank lines in find output are skipped."""
-        mock_container._files['/workspace/a.py'] = b''
-        mock_container._files['/workspace/b.py'] = b''
-        # Patch exec_run to return output with embedded blank lines
-        original_exec_run = mock_container.exec_run
-
-        def exec_run_with_blanks(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
-            exit_code, output = original_exec_run(cmd, **kwargs)
-            # Insert blank lines between entries
-            if output:
-                lines = output.decode().splitlines()
-                output = '\n\n'.join(lines).encode()
-            return exit_code, output
-
-        mock_container.exec_run = exec_run_with_blanks  # type: ignore[assignment]
-        matches = await mock_docker_sandbox.glob('**/*.py')
-        assert matches == ['a.py', 'b.py']
 
     async def test_docker_grep(self, mock_docker_sandbox: Any) -> None:
         """DockerEnvironment.grep returns matches."""
@@ -2760,12 +2515,6 @@ class TestDocker:
 # --- Additional coverage: _base.py ---
 
 
-async def test_glob_match_question_mark_in_doublestar_pattern():
-    """glob_match with ? inside a ** pattern."""
-    assert glob_match('a/b/test.py', '**/?est.py') is True
-    assert glob_match('test.py', '?est.py') is True
-
-
 async def test_execution_environment_aenter_aexit():
     """ExecutionEnvironment base __aenter__/__aexit__ are exercised by subclasses."""
     # MemoryEnvironment exercises the base class path
@@ -2787,22 +2536,6 @@ async def test_toolset_bash_empty_output(tmp_path: Path):
     async with env:
         result = await manager.handle_call(ToolCallPart(tool_name='shell', args={'command': 'true'}))
         assert 'Exit code: 0' in str(result)
-
-
-async def test_toolset_glob_truncation(tmp_path: Path):
-    """ExecutionEnvironmentToolset glob truncates after 100 matches."""
-    env = LocalEnvironment(tmp_path)
-    # Create 110 files
-    for i in range(110):
-        (tmp_path / f'file_{i:03d}.txt').write_text(f'content {i}')
-
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context()
-    manager = await ToolManager[None](toolset).for_run_step(ctx)
-
-    async with env:
-        result = await manager.handle_call(ToolCallPart(tool_name='glob', args={'pattern': '*.txt'}))
-        assert 'truncated' in str(result)
 
 
 async def test_toolset_grep_no_matches_returns_message(tmp_path: Path):
@@ -3023,14 +2756,6 @@ async def test_memory_grep_path_filter():
     result = await env.grep('match_here', path='sub')
     assert 'sub/target.py' in result
     assert 'other.py' not in result
-
-
-async def test_memory_glob_in_subdirectory_with_path_filter():
-    """MemoryEnvironment.glob works with path parameter."""
-    env = MemoryEnvironment(files={'src/a.py': 'a', 'src/b.txt': 'b', 'other.py': 'c'})
-    matches = await env.glob('*.py', path='src')
-    assert 'src/a.py' in matches
-    assert 'other.py' not in matches
 
 
 async def test_local_process_wait_no_timeout(tmp_path: Path):
@@ -3412,3 +3137,7 @@ async def test_toolset_factory_ls_only_calls_ls():
         tools = await toolset.get_tools(ctx)
         result = await toolset.call_tool('ls', {}, ctx, tools['ls'])
         assert 'test.txt' in str(result)
+
+
+
+

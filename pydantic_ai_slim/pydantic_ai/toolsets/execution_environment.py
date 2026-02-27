@@ -153,7 +153,6 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         self._register_read_file()
         self._register_write_file()
         self._register_edit_file()
-        self._register_glob()
         self._register_grep()
 
     def _register_ls(self) -> None:
@@ -276,32 +275,6 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                 raise ModelRetry(str(e))
 
         self.tool(requires_approval=self._require_write_approval)(edit_file)
-
-    def _register_glob(self) -> None:
-        async def glob_tool(pattern: str, path: str = '.') -> str:
-            """Find files matching a glob pattern.
-
-            Supports patterns like `**/*.py`, `src/**/*.ts`.
-            Returns up to 100 matching file paths.
-
-            Args:
-                pattern: The glob pattern to match files against.
-                path: The directory to search in. Defaults to the working directory.
-            """
-            try:
-                matches = await self.required_environment.glob(pattern, path=path)
-            except (PermissionError, OSError) as e:
-                return f'Error: {e}'
-            if not matches:
-                return 'No files found.'
-            truncated = len(matches) > 100
-            matches = matches[:100]
-            result = '\n'.join(matches)
-            if truncated:
-                result += '\n[... truncated, showing first 100 matches]'
-            return result
-
-        self.tool(name='glob')(glob_tool)
 
     def _register_grep(self) -> None:
         async def grep_tool(

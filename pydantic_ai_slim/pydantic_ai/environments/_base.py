@@ -21,7 +21,6 @@ EnvToolName = Literal[
     'read_file',
     'write_file',
     'edit_file',
-    'glob',
     'grep',
 ]
 """Tool name for an environment capability.
@@ -287,18 +286,6 @@ class ExecutionEnvironment(ABC):
         """
         raise NotImplementedError(f'{type(self).__name__} does not support replace_str.')
 
-    async def glob(self, pattern: str, *, path: str = '.') -> list[str]:
-        """Find files matching a glob pattern.
-
-        Args:
-            pattern: The glob pattern (e.g. `'**/*.py'`).
-            path: The directory to search in.
-
-        Returns:
-            A list of matching file paths.
-        """
-        raise NotImplementedError(f'{type(self).__name__} does not support glob.')
-
     async def grep(
         self,
         pattern: str,
@@ -404,34 +391,6 @@ def collect_grep_matches(
         for line_num, line in enumerate(text.splitlines(), start=1):
             if compiled.search(line):
                 results.append(f'{rel_path}:{line_num}:{line}')
-
-
-def glob_match(path: str, pattern: str) -> bool:
-    """Match a path against a glob pattern with `**` support.
-
-    This helper converts glob patterns to regex where `*` matches
-    within a single path segment and `**` matches zero or more
-    path segments (including `/`).
-    """
-    regex = ''
-    i = 0
-    while i < len(pattern):
-        if pattern[i : i + 3] == '**/':
-            regex += '(.*/)?'
-            i += 3
-        elif pattern[i : i + 2] == '**':
-            regex += '.*'
-            i += 2
-        elif pattern[i] == '*':
-            regex += '[^/]*'
-            i += 1
-        elif pattern[i] == '?':
-            regex += '[^/]'
-            i += 1
-        else:
-            regex += re.escape(pattern[i])
-            i += 1
-    return bool(re.fullmatch(regex, path))
 
 
 def apply_edit(text: str, old_string: str, new_string: str, path: str, *, replace_all: bool) -> tuple[str, int]:

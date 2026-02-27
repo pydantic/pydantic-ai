@@ -6,6 +6,7 @@ Runs commands directly on the host machine within a specified root directory.
 
 from __future__ import annotations
 
+import fnmatch
 import re
 import subprocess
 from pathlib import Path
@@ -136,7 +137,7 @@ class LocalEnvironment(ExecutionEnvironment):
 
     @property
     def capabilities(self) -> frozenset[EnvToolName]:
-        return frozenset({'ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep'})
+        return frozenset({'ls', 'shell', 'read_file', 'write_file', 'edit_file', 'grep'})
 
     async def __aenter__(self) -> Self:
         self._root_dir.mkdir(parents=True, exist_ok=True)
@@ -289,17 +290,6 @@ class LocalEnvironment(ExecutionEnvironment):
                 continue
         return entries
 
-    async def glob(self, pattern: str, *, path: str = '.') -> list[str]:
-        resolved = self._resolve_path(path)
-        matches: list[str] = []
-        for match in sorted(resolved.glob(pattern)):
-            try:
-                rel = str(match.relative_to(self._root_dir))
-                matches.append(rel)
-            except ValueError:  # pragma: no cover
-                continue
-        return matches
-
     async def grep(
         self,
         pattern: str,
@@ -315,10 +305,13 @@ class LocalEnvironment(ExecutionEnvironment):
         is_explicit_file = search_dir.is_file()
         if is_explicit_file:
             files = [search_dir]
-        elif glob_pattern:
-            files = sorted(search_dir.rglob(glob_pattern))
         else:
-            files = sorted(search_dir.rglob('*'))
+            # Use rglob with the glob_pattern when available for efficient
+            # filesystem traversal, but apply fnmatch on the basename as the
+            # authoritative filter below — this keeps semantics filename-only
+            # (consistent with Docker's grep --include and Memory's fnmatch)
+            # while letting pathlib narrow the search.
+            files = sorted(search_dir.rglob(glob_pattern or '*'))
 
         results: list[str] = []
         for file_path in files:
@@ -328,6 +321,10 @@ class LocalEnvironment(ExecutionEnvironment):
             if not is_explicit_file and any(
                 part.startswith('.') for part in file_path.relative_to(self._root_dir).parts
             ):
+                continue
+            # Filename-only glob filtering, consistent with Docker's grep --include
+            # and MemoryEnvironment's fnmatch-on-basename approach.
+            if not is_explicit_file and glob_pattern and not fnmatch.fnmatch(file_path.name, glob_pattern):
                 continue
             try:
                 raw = file_path.read_bytes()
