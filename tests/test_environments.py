@@ -926,6 +926,15 @@ async def test_local_execute_no_timeout(tmp_path: Path):
         assert 'no_timeout' in result.output
 
 
+async def test_local_execute_invalid_timeout(tmp_path: Path):
+    """execute() with non-positive timeout raises ValueError."""
+    async with LocalEnvironment(tmp_path) as env:
+        with pytest.raises(ValueError, match='timeout must be positive or None'):
+            await env.shell('echo test', timeout=0)
+        with pytest.raises(ValueError, match='timeout must be positive or None'):
+            await env.shell('echo test', timeout=-1)
+
+
 async def test_local_read_file_bytes_directory(tmp_path: Path):
     """read_file_bytes on a directory raises FileNotFoundError."""
     async with LocalEnvironment(tmp_path) as env:
@@ -1251,6 +1260,13 @@ class TestDocker:
         """DockerEnvironment.execute with timeout=None."""
         result = await mock_docker_sandbox.shell('echo test', timeout=None)
         assert result.exit_code == 0
+
+    async def test_docker_execute_invalid_timeout(self, mock_docker_sandbox: Any) -> None:
+        """DockerEnvironment.execute with non-positive timeout raises ValueError."""
+        with pytest.raises(ValueError, match='timeout must be positive or None'):
+            await mock_docker_sandbox.shell('echo test', timeout=0)
+        with pytest.raises(ValueError, match='timeout must be positive or None'):
+            await mock_docker_sandbox.shell('echo test', timeout=-1)
 
     async def test_docker_execute_with_env(self, mock_docker_sandbox: Any) -> None:
         """DockerEnvironment.execute passes env vars."""
