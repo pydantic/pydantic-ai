@@ -12,6 +12,7 @@ from typing import Any
 
 import anyio
 import anyio.abc
+import anyio.to_thread
 from typing_extensions import Self
 
 from ._base import (
@@ -136,7 +137,7 @@ class LocalEnvironment(ExecutionEnvironment):
         return frozenset({'shell', 'read_file', 'write_file', 'edit_file'})
 
     async def __aenter__(self) -> Self:
-        self._root_dir.mkdir(parents=True, exist_ok=True)
+        await anyio.to_thread.run_sync(lambda: self._root_dir.mkdir(parents=True, exist_ok=True))
         return self
 
     async def __aexit__(self, *_args: Any) -> None:
@@ -225,28 +226,36 @@ class LocalEnvironment(ExecutionEnvironment):
 
     async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str | bytes:
         resolved = self._resolve_path(path)
-        if not resolved.is_file():
-            if resolved.is_dir():
-                raise FileNotFoundError(f"'{path}' is a directory, not a file.")
-            raise FileNotFoundError(f'File not found: {path}')
 
-        if resolved.suffix.lower() in IMAGE_EXTENSIONS:
-            return resolved.read_bytes()
+        def _read() -> str | bytes:
+            if not resolved.is_file():
+                if resolved.is_dir():
+                    raise FileNotFoundError(f"'{path}' is a directory, not a file.")
+                raise FileNotFoundError(f'File not found: {path}')
 
-        raw = resolved.read_bytes()
-        try:
-            text = raw.decode('utf-8')
-        except UnicodeDecodeError:
-            return raw
-        return format_lines(text, offset, limit)
+            if resolved.suffix.lower() in IMAGE_EXTENSIONS:
+                return resolved.read_bytes()
+
+            raw = resolved.read_bytes()
+            try:
+                text = raw.decode('utf-8')
+            except UnicodeDecodeError:
+                return raw
+            return format_lines(text, offset, limit)
+
+        return await anyio.to_thread.run_sync(_read)
 
     async def write_file(self, path: str, content: str | bytes) -> None:
         resolved = self._resolve_path(path)
-        resolved.parent.mkdir(parents=True, exist_ok=True)
-        if isinstance(content, bytes):
-            resolved.write_bytes(content)
-        else:
-            resolved.write_text(content, encoding='utf-8')
+
+        def _write() -> None:
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(content, bytes):
+                resolved.write_bytes(content)
+            else:
+                resolved.write_text(content, encoding='utf-8')
+
+        await anyio.to_thread.run_sync(_write)
 
     async def replace_str(
         self,
@@ -257,10 +266,14 @@ class LocalEnvironment(ExecutionEnvironment):
         replace_all: bool = False,
     ) -> int:
         resolved = self._resolve_path(path)
-        if not resolved.is_file():
-            raise FileNotFoundError(f'File not found: {path}')
 
-        text = resolved.read_text(encoding='utf-8')
-        new_text, count = apply_edit(text, old, new, path, replace_all=replace_all)
-        resolved.write_text(new_text, encoding='utf-8')
-        return count
+        def _edit() -> int:
+            if not resolved.is_file():
+                raise FileNotFoundError(f'File not found: {path}')
+
+            text = resolved.read_text(encoding='utf-8')
+            new_text, count = apply_edit(text, old, new, path, replace_all=replace_all)
+            resolved.write_text(new_text, encoding='utf-8')
+            return count
+
+        return await anyio.to_thread.run_sync(_edit)

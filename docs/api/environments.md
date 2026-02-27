@@ -8,7 +8,6 @@
         - ExecutionEnvironmentToolset
         - ExecutionProcess
         - ExecutionResult
-        - FileInfo
 
 ## `pydantic_ai.environments.local`
 
