@@ -5796,6 +5796,48 @@ async def test_event_stream_thinking_delta_with_provider_metadata():
     )
 
 
+async def test_event_stream_builtin_tool_return_denied():
+    """Test that ToolOutputDeniedChunk is emitted for a denied BuiltinToolReturnPart."""
+
+    async def event_generator():
+        yield PartStartEvent(
+            index=0,
+            part=BuiltinToolReturnPart(
+                tool_name='web_search',
+                tool_call_id='tc_denied',
+                content='Blocked by policy',
+                metadata={'is_denied': True},
+            ),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Search')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-output-denied', 'toolCallId': 'tc_denied'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 def _sync_timestamps(original: list[ModelMessage], new: list[ModelMessage]) -> None:
     """Utility function to sync timestamps between original and new messages."""
     for orig_msg, new_msg in zip(original, new):
