@@ -68,12 +68,6 @@ def test_execute_result():
     result = ExecutionResult(output='hello\n', exit_code=0)
     assert result.output == 'hello\n'
     assert result.exit_code == 0
-    assert result.truncated is False
-
-
-def test_execute_result_truncated():
-    result = ExecutionResult(output='data', exit_code=1, truncated=True)
-    assert result.truncated is True
 
 
 # --- LocalEnvironment: execute ---
@@ -998,22 +992,6 @@ async def test_memory_edit_binary():
 # --- ExecutionEnvironmentToolset: additional coverage ---
 
 
-async def test_toolset_bash_truncated(tmp_path: Path):
-    """bash tool truncation message when output exceeds limit."""
-    env = LocalEnvironment(tmp_path)
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context(None)
-    manager = await ToolManager[None](toolset).for_run_step(ctx)
-
-    async with env:
-        # Generate output longer than MAX_OUTPUT_CHARS (100_000)
-        result = await manager.handle_call(
-            ToolCallPart(tool_name='shell', args={'command': 'python3 -c "print(\'x\' * 200000)"'})
-        )
-        assert '[output truncated]' in str(result)
-        assert 'Exit code: 0' in str(result)
-
-
 async def test_toolset_image_too_large(tmp_path: Path):
     """read_file on an image that's too large returns error string."""
     env = LocalEnvironment(tmp_path)
@@ -1919,8 +1897,7 @@ class TestDocker:
 
         mock_container.exec_run = big_output  # type: ignore[assignment]
         result = await mock_docker_sandbox.shell('echo big')
-        assert result.truncated is True
-        assert len(result.output) == 100_000
+        assert len(result.output) == snapshot()
 
     async def test_docker_execute_timeout_exit_code(
         self, mock_docker_sandbox: Any, mock_container: MockContainer
@@ -2191,9 +2168,8 @@ async def test_local_execute_output_truncation(tmp_path: Path):
     script = tmp_path / 'big.py'
     script.write_text("print('x' * 200000)")
     env = LocalEnvironment(tmp_path)
-    result = await env.shell(f'python {script}')
-    assert result.truncated is True
-    assert len(result.output) == 100_000
+    result = await env.shell(f'python {scr200001ipt}')
+    assert len(result.output) == snapshot()
 
 
 # --- Additional coverage: memory.py ---

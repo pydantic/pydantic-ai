@@ -166,8 +166,6 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             parts: list[str] = []
             if result.output:
                 parts.append(result.output)
-            if result.truncated:
-                parts.append('[output truncated]')
             parts.append(f'Exit code: {result.exit_code}')
             return '\n'.join(parts)
 

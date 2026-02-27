@@ -135,8 +135,6 @@ IMAGE_MEDIA_TYPES: dict[str, str] = {
     '.svg': 'image/svg+xml',
 }
 
-MAX_OUTPUT_CHARS = 100_000
-
 
 # --- ExecutionEnvironment ---
 
