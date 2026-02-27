@@ -394,7 +394,7 @@ async def test_simple_state_persistence_snapshot_state_stability():
     state = CountDownState(counter=3)
     count_down_graph = Graph(nodes=[CountDown])
 
-    await count_down_graph.initialize(CountDown(), state=state, persistence=persistence)
+    await count_down_graph.initialize(CountDown(), state=state, persistence=persistence, infer_name=False)
 
     last_snapshot = persistence.last_snapshot
     async with count_down_graph.iter_from_persistence(persistence) as run:
