@@ -170,4 +170,3 @@ class MemoryEnvironment(ExecutionEnvironment):
         new_text, count = apply_edit(text, old, new, path, replace_all=replace_all)
         self._files[normalized] = new_text
         return count
-

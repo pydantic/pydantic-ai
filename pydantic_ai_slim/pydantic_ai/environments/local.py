@@ -264,4 +264,3 @@ class LocalEnvironment(ExecutionEnvironment):
         new_text, count = apply_edit(text, old, new, path, replace_all=replace_all)
         resolved.write_text(new_text, encoding='utf-8')
         return count
-

@@ -1968,7 +1968,6 @@ class TestDocker:
         assert 'offset=10' in cmd
 
 
-
 # --- Additional coverage: _base.py ---
 
 
@@ -2301,7 +2300,9 @@ async def test_toolset_factory_filters_tools_by_capabilities():
         def capabilities(self) -> frozenset[EnvToolName]:
             return frozenset({'shell'})
 
-        async def shell(self, command: str, *, timeout: float | None = None, env: dict[str, str] | None = None) -> ExecutionResult:
+        async def shell(
+            self, command: str, *, timeout: float | None = None, env: dict[str, str] | None = None
+        ) -> ExecutionResult:
             return ExecutionResult(output='', exit_code=0)  # pragma: no cover
 
     toolset = ExecutionEnvironmentToolset(environment_factory=_ShellOnlyEnv)
@@ -2374,5 +2375,3 @@ async def test_local_read_file_binary_non_image(tmp_path: Path):
         result = await env.read_file('data.bin')
         assert isinstance(result, bytes)
         assert result == b'\x80\x81\x82\xff'
-
-
