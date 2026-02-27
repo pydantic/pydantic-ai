@@ -209,6 +209,15 @@ nav:
 extra:
   # hide the "Made with Material for MkDocs" message
   generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/pydantic/pydantic-ai
+    - icon: fontawesome/brands/bluesky
+      link: https://bsky.app/profile/pydantic.dev
+    - icon: fontawesome/brands/x-twitter
+      link: https://x.com/pydantic
+    - icon: fontawesome/brands/linkedin
+      link: https://www.linkedin.com/company/pydantic
 
 theme:
   name: "material"
