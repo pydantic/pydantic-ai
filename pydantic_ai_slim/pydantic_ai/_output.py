@@ -219,7 +219,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     object_def: OutputObjectDefinition | None = None
     allows_deferred_tools: bool = False
     allows_image: bool = False
-    allows_none: bool = False
+    allows_none: bool
 
     @property
     def mode(self) -> OutputMode:
@@ -241,9 +241,11 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         """Build an OutputSchema dataclass from an output type."""
         outputs = _flatten_output_spec(output_spec)
 
-        allows_none = NoneType in outputs
+        allows_none = NoneType in outputs or None in outputs
         if allows_none:
-            outputs = [output for output in outputs if output is not NoneType]
+            outputs = [output for output in outputs if output is not NoneType and output is not None]
+            if len(outputs) == 0:
+                raise UserError('At least one output type must be provided other than `None`.')
 
         allows_deferred_tools = DeferredToolRequests in outputs
         if allows_deferred_tools:
