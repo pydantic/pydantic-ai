@@ -482,9 +482,13 @@ class DockerEnvironment(ExecutionEnvironment):
         env: dict[str, str] | None = None,
     ) -> ExecutionResult:
         """Execute a command in the container."""
+        if timeout is not None and timeout <= 0:
+            raise ValueError(f'timeout must be positive or None, got {timeout}')
 
         def _exec() -> tuple[int, bytes]:
             if timeout is not None:
+                # Note: GNU coreutils `timeout 0` means "no timeout" (wait forever),
+                # so we validate timeout > 0 above to prevent surprising behavior.
                 wrapped = f'timeout {math.ceil(timeout)} sh -c {_shell_escape(command)}'
             else:
                 wrapped = command

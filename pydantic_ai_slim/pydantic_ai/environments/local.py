@@ -186,6 +186,8 @@ class LocalEnvironment(ExecutionEnvironment):
         env: dict[str, str] | None = None,
     ) -> ExecutionResult:
         """Execute a command using subprocess for simplicity and reliability."""
+        if timeout is not None and timeout <= 0:
+            raise ValueError(f'timeout must be positive or None, got {timeout}')
         proc = await anyio.open_process(
             command,
             stdout=subprocess.PIPE,
