@@ -21,7 +21,6 @@ from pydantic_ai.environments import (
     ExecutionEnvironment as BaseEnv,
     ExecutionEnvironmentToolset,
     ExecutionResult,
-    FileInfo,
 )
 from pydantic_ai.environments._base import (
     apply_edit,
@@ -38,10 +37,8 @@ try:
 
     from pydantic_ai.environments.docker import (
         DockerEnvironment,
-        _build_grep_cmd,
         _build_read_file_cmd,
         _DockerEnvironmentProcess,
-        _filter_grep_count_output,
         _put_file,
         _shell_escape,
     )
@@ -77,19 +74,6 @@ def test_execute_result():
 def test_execute_result_truncated():
     result = ExecutionResult(output='data', exit_code=1, truncated=True)
     assert result.truncated is True
-
-
-def test_file_info():
-    info = FileInfo(name='test.py', path='src/test.py', is_dir=False, size=42)
-    assert info.name == 'test.py'
-    assert info.is_dir is False
-    assert info.size == 42
-
-
-def test_file_info_directory():
-    info = FileInfo(name='src', path='src', is_dir=True)
-    assert info.is_dir is True
-    assert info.size is None
 
 
 # --- LocalEnvironment: execute ---
@@ -330,95 +314,6 @@ async def test_local_edit_multiline(tmp_path: Path):
         assert 'print("test")' in content
 
 
-# --- LocalEnvironment: ls ---
-
-
-async def test_local_ls(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('a.txt', 'a')
-        await env.write_file('b.txt', 'b')
-        (tmp_path / 'subdir').mkdir()
-
-        entries = await env.ls('.')
-        names = {e.name for e in entries}
-        assert 'a.txt' in names
-        assert 'b.txt' in names
-        assert 'subdir' in names
-
-        dirs = [e for e in entries if e.is_dir]
-        files = [e for e in entries if not e.is_dir]
-        assert any(d.name == 'subdir' for d in dirs)
-        assert all(f.size is not None and f.size > 0 for f in files)
-
-
-async def test_local_ls_not_a_directory(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('file.txt', 'content')
-        with pytest.raises(NotADirectoryError):
-            await env.ls('file.txt')
-
-
-# --- LocalEnvironment: grep ---
-
-
-async def test_local_grep(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('a.py', 'def hello():\n    pass\n')
-        await env.write_file('b.py', 'x = 1\n')
-
-        result = await env.grep('hello')
-        assert 'a.py' in result
-        assert 'hello' in result
-        assert 'b.py' not in result
-
-
-async def test_local_grep_with_glob_pattern(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('code.py', 'target = 1\n')
-        await env.write_file('code.js', 'target = 2\n')
-
-        result = await env.grep('target', glob_pattern='*.py')
-        assert 'code.py' in result
-        assert 'code.js' not in result
-
-
-async def test_local_grep_line_numbers(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('test.txt', 'alpha\nbeta\ngamma\nbeta\n')
-
-        result = await env.grep('beta')
-        assert result == snapshot('test.txt:2:beta\ntest.txt:4:beta')
-
-
-async def test_local_grep_no_matches(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('test.txt', 'nothing interesting')
-        result = await env.grep('nonexistent_pattern')
-        assert result == ''
-
-
-async def test_local_grep_skips_hidden_files(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('visible.py', 'target_string\n')
-        (tmp_path / '.hidden').mkdir()
-        (tmp_path / '.hidden' / 'secret.py').write_text('target_string\n')
-        (tmp_path / '.dotfile').write_text('target_string\n')
-
-        result = await env.grep('target_string')
-        assert 'visible.py' in result
-        assert '.hidden' not in result
-        assert '.dotfile' not in result
-
-
-async def test_local_grep_explicit_hidden_file(tmp_path: Path):
-    """Explicitly-specified hidden files should be searchable."""
-    async with LocalEnvironment(tmp_path) as env:
-        (tmp_path / '.env').write_text('SECRET=hunter2\n')
-
-        result = await env.grep('SECRET', path='.env')
-        assert 'SECRET=hunter2' in result
-
-
 # --- LocalEnvironment: create_process ---
 
 
@@ -499,7 +394,7 @@ async def test_toolset_tool_names():
     ctx = build_run_context()
     tools = await toolset.get_tools(ctx)
     tool_names = sorted(tools.keys())
-    assert tool_names == snapshot(['edit_file', 'grep', 'ls', 'read_file', 'shell', 'write_file'])
+    assert tool_names == snapshot(['edit_file', 'read_file', 'shell', 'write_file'])
 
 
 async def test_toolset_include_flags():
@@ -592,19 +487,6 @@ async def test_toolset_edit_retry_on_permission_error(tmp_path: Path):
             )
 
 
-async def test_toolset_grep_tool(tmp_path: Path):
-    env = LocalEnvironment(tmp_path)
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context(None)
-    manager = await ToolManager[None](toolset).for_run_step(ctx)
-
-    async with env:
-        await env.write_file('search.py', 'def find_me():\n    pass\n')
-
-        result = await manager.handle_call(ToolCallPart(tool_name='grep', args={'pattern': 'find_me'}))
-        assert result == snapshot('search.py:1:def find_me():')
-
-
 # --- ExecutionEnvironmentToolset: error handling ---
 
 
@@ -643,20 +525,6 @@ async def test_toolset_write_path_traversal_returns_error(tmp_path: Path):
         result = await manager.handle_call(
             ToolCallPart(tool_name='write_file', args={'path': '../../tmp/evil.txt', 'content': 'bad'})
         )
-        assert 'Error:' in str(result)
-
-
-async def test_toolset_grep_invalid_regex_returns_error(tmp_path: Path):
-    """grep with invalid regex returns an error string."""
-    env = LocalEnvironment(tmp_path)
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context(None)
-    manager = await ToolManager[None](toolset).for_run_step(ctx)
-
-    async with env:
-        await env.write_file('test.txt', 'content')
-
-        result = await manager.handle_call(ToolCallPart(tool_name='grep', args={'pattern': '[invalid'}))
         assert 'Error:' in str(result)
 
 
@@ -722,9 +590,8 @@ async def test_toolset_require_write_approval():
     tools = await toolset.get_tools(ctx)
     assert tools['write_file'].tool_def.kind == 'unapproved'
     assert tools['edit_file'].tool_def.kind == 'unapproved'
-    # read_file and search tools should NOT require approval
+    # read_file should NOT require approval
     assert tools['read_file'].tool_def.kind == 'function'
-    assert tools['grep'].tool_def.kind == 'function'
 
 
 async def test_toolset_default_no_approval():
@@ -817,98 +684,6 @@ async def test_toolset_image_support_disabled(tmp_path: Path):
         await env.write_file('photo.png', b'\x89PNG\r\n\x1a\n')
         result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'photo.png'}))
         assert result == snapshot('[Image file: photo.png — image_support is disabled on this toolset]')
-
-
-# --- LocalEnvironment: grep output modes ---
-
-
-async def test_local_grep_files_with_matches(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('a.py', 'target = 1\nother = 2\n')
-        await env.write_file('b.py', 'target = 3\ntarget = 4\n')
-        await env.write_file('c.py', 'nothing here\n')
-
-        result = await env.grep('target', output_mode='files_with_matches')
-        lines = result.strip().splitlines()
-        assert sorted(lines) == ['a.py', 'b.py']
-
-
-async def test_local_grep_count(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('a.py', 'target = 1\nother = 2\n')
-        await env.write_file('b.py', 'target = 3\ntarget = 4\n')
-        await env.write_file('c.py', 'nothing here\n')
-
-        result = await env.grep('target', output_mode='count')
-        lines = sorted(result.strip().splitlines())
-        assert lines == ['a.py:1', 'b.py:2']
-
-
-async def test_local_grep_content_default(tmp_path: Path):
-    """Default output_mode is 'content' with file:line:text format."""
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('test.py', 'hello\nworld\n')
-
-        result = await env.grep('hello')
-        assert result == snapshot('test.py:1:hello')
-
-
-# --- LocalEnvironment: binary file detection ---
-
-
-async def test_local_grep_skips_binary_files(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('text.py', 'findme = True\n')
-        await env.write_file('binary.pyc', b'\x00\x01\x02findme\x03\x04')
-
-        result = await env.grep('findme')
-        assert 'text.py' in result
-        assert 'binary.pyc' not in result
-
-
-async def test_local_grep_binary_detection_first_8kb(tmp_path: Path):
-    """Binary detection checks only the first 8KB."""
-    async with LocalEnvironment(tmp_path) as env:
-        # File with null byte after 8KB — should be treated as text
-        content = 'findme\n' + ('x' * 8200) + '\x00'
-        await env.write_file('mostly_text.txt', content)
-
-        result = await env.grep('findme')
-        assert 'mostly_text.txt' in result
-
-
-# --- Toolset: grep output_mode ---
-
-
-async def test_toolset_grep_files_with_matches(tmp_path: Path):
-    env = LocalEnvironment(tmp_path)
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context(None)
-    manager = await ToolManager[None](toolset).for_run_step(ctx)
-
-    async with env:
-        await env.write_file('a.py', 'target = 1\n')
-        await env.write_file('b.py', 'other = 2\n')
-
-        result = await manager.handle_call(
-            ToolCallPart(tool_name='grep', args={'pattern': 'target', 'output_mode': 'files_with_matches'})
-        )
-        assert result == snapshot('a.py')
-
-
-async def test_toolset_grep_count(tmp_path: Path):
-    env = LocalEnvironment(tmp_path)
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context(None)
-    manager = await ToolManager[None](toolset).for_run_step(ctx)
-
-    async with env:
-        await env.write_file('a.py', 'x = 1\nx = 2\nx = 3\n')
-
-        result = await manager.handle_call(
-            ToolCallPart(tool_name='grep', args={'pattern': 'x', 'output_mode': 'count'})
-        )
-        assert result == snapshot('a.py:3')
 
 
 # --- MemoryEnvironment ---
@@ -1018,131 +793,6 @@ async def test_memory_edit_replace_all():
         assert 'xxx bbb xxx' in content
 
 
-async def test_memory_ls():
-    env = MemoryEnvironment(
-        files={
-            'a.txt': 'a',
-            'b.txt': 'bb',
-            'sub/c.txt': 'ccc',
-        }
-    )
-    async with env:
-        entries = await env.ls('.')
-        names = {e.name for e in entries}
-        assert names == {'a.txt', 'b.txt', 'sub'}
-
-        dirs = [e for e in entries if e.is_dir]
-        files = [e for e in entries if not e.is_dir]
-        assert len(dirs) == 1
-        assert dirs[0].name == 'sub'
-        assert all(f.size is not None for f in files)
-
-
-async def test_memory_ls_subdirectory():
-    env = MemoryEnvironment(files={'sub/a.txt': 'a', 'sub/b.txt': 'b'})
-    async with env:
-        entries = await env.ls('sub')
-        names = {e.name for e in entries}
-        assert names == {'a.txt', 'b.txt'}
-
-
-async def test_memory_ls_not_a_directory():
-    async with MemoryEnvironment() as env:
-        with pytest.raises(NotADirectoryError):
-            await env.ls('nonexistent')
-
-
-async def test_memory_grep_content():
-    env = MemoryEnvironment(
-        files={
-            'a.py': 'def hello():\n    pass\n',
-            'b.py': 'x = 1\n',
-        }
-    )
-    async with env:
-        result = await env.grep('hello')
-        assert result == snapshot('a.py:1:def hello():')
-
-
-async def test_memory_grep_files_with_matches():
-    env = MemoryEnvironment(
-        files={
-            'a.py': 'target = 1\n',
-            'b.py': 'target = 2\ntarget = 3\n',
-            'c.py': 'nothing\n',
-        }
-    )
-    async with env:
-        result = await env.grep('target', output_mode='files_with_matches')
-        lines = sorted(result.strip().splitlines())
-        assert lines == ['a.py', 'b.py']
-
-
-async def test_memory_grep_count():
-    env = MemoryEnvironment(
-        files={
-            'a.py': 'x = 1\n',
-            'b.py': 'x = 2\nx = 3\n',
-        }
-    )
-    async with env:
-        result = await env.grep('x', output_mode='count')
-        lines = sorted(result.strip().splitlines())
-        assert lines == ['a.py:1', 'b.py:2']
-
-
-async def test_memory_grep_skips_binary():
-    env = MemoryEnvironment(
-        files={
-            'text.py': 'findme = True\n',
-            'binary.dat': b'\x00\x01findme\x02',
-        }
-    )
-    async with env:
-        result = await env.grep('findme')
-        assert 'text.py' in result
-        assert 'binary.dat' not in result
-
-
-async def test_memory_grep_skips_hidden():
-    env = MemoryEnvironment(
-        files={
-            'visible.py': 'target\n',
-            '.hidden/secret.py': 'target\n',
-        }
-    )
-    async with env:
-        result = await env.grep('target')
-        assert 'visible.py' in result
-        assert '.hidden' not in result
-
-
-async def test_memory_grep_explicit_hidden_file():
-    """Explicitly-specified hidden files should be searchable."""
-    env = MemoryEnvironment(
-        files={
-            '.env': 'SECRET=hunter2\n',
-            'visible.py': 'hello\n',
-        }
-    )
-    async with env:
-        result = await env.grep('SECRET', path='.env')
-        assert 'SECRET=hunter2' in result
-
-
-async def test_memory_grep_with_glob_pattern():
-    env = MemoryEnvironment(
-        files={
-            'code.py': 'target\n',
-            'code.js': 'target\n',
-        }
-    )
-    async with env:
-        result = await env.grep('target', glob_pattern='*.py')
-        assert 'code.py' in result
-        assert 'code.js' not in result
-
-
 async def test_memory_execute_with_handler():
     def handler(cmd: str) -> ExecutionResult:
         return ExecutionResult(output=f'ran: {cmd}\n', exit_code=0)
@@ -1202,10 +852,6 @@ async def test_memory_toolset_integration():
             ToolCallPart(tool_name='write_file', args={'path': 'new.py', 'content': 'x = 1'})
         )
         assert result == snapshot('File written: new.py')
-
-        # grep
-        result = await manager.handle_call(ToolCallPart(tool_name='grep', args={'pattern': 'hello'}))
-        assert result == snapshot('main.py:1:print("hello")')
 
 
 # --- Agent-level integration test ---
@@ -1295,17 +941,6 @@ async def test_local_read_file_bytes_nonexistent(tmp_path: Path):
             await env.read_file('nope.bin')
 
 
-async def test_local_grep_specific_file(tmp_path: Path):
-    """grep targeting a specific file works."""
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('target.py', 'findme = True\n')
-        await env.write_file('other.py', 'findme = False\n')
-
-        result = await env.grep('findme', path='target.py')
-        assert 'target.py' in result
-        assert 'other.py' not in result
-
-
 # --- MemoryEnvironment: additional edge cases ---
 
 
@@ -1349,38 +984,6 @@ async def test_memory_edit_binary():
     async with env:
         count = await env.replace_str('data.txt', 'world', 'earth')
         assert count == 1
-
-
-async def test_memory_grep_exact_path():
-    """grep with path= targeting an exact file."""
-    env = MemoryEnvironment(
-        files={
-            'src/a.py': 'target\n',
-            'src/b.py': 'target\n',
-        }
-    )
-    async with env:
-        result = await env.grep('target', path='src/a.py')
-        assert 'src/a.py' in result
-        assert 'src/b.py' not in result
-
-
-async def test_memory_grep_no_text_content():
-    """grep with text bytes (non-binary) works."""
-    env = MemoryEnvironment(files={'data.txt': b'findme in bytes'})
-    async with env:
-        result = await env.grep('findme')
-        assert 'data.txt' in result
-
-
-async def test_memory_ls_with_bytes():
-    """ls reports size correctly for bytes content."""
-    env = MemoryEnvironment(files={'data.bin': b'\x00\x01\x02'})
-    async with env:
-        entries = await env.ls('.')
-        assert len(entries) == 1
-        assert entries[0].size == 3
-        assert entries[0].is_dir is False
 
 
 # --- ExecutionEnvironmentToolset: additional coverage ---
@@ -1447,19 +1050,6 @@ async def test_toolset_read_binary_non_image():
     async with env:
         result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'data.bin'}))
     assert result == '[Binary file: data.bin — cannot display as text]'
-
-
-async def test_toolset_grep_no_matches(tmp_path: Path):
-    """grep with no matches returns 'No matches found.'."""
-    env = LocalEnvironment(tmp_path)
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context(None)
-    manager = await ToolManager[None](toolset).for_run_step(ctx)
-
-    async with env:
-        await env.write_file('test.txt', 'nothing relevant\n')
-        result = await manager.handle_call(ToolCallPart(tool_name='grep', args={'pattern': 'nonexistent_xyz'}))
-        assert result == snapshot('No matches found.')
 
 
 async def test_toolset_edit_success(tmp_path: Path):
@@ -1562,14 +1152,6 @@ class MockContainer:
                     return 0, result.encode('utf-8')
             return 1, b'File not found'
 
-        # Handle ls -la
-        if 'ls -la' in cmd_str:
-            output_lines = ['total 0']
-            for path, data in sorted(self._files.items()):
-                name = path.rsplit('/', 1)[-1] if '/' in path else path
-                output_lines.append(f'-rw-r--r-- 1 root root {len(data)} Jan  1 00:00 {name}')
-            return 0, '\n'.join(output_lines).encode('utf-8')
-
         # Handle find (glob)
         if 'find' in cmd_str:
             # Extract the search path from: find '<path>' ...
@@ -1594,10 +1176,6 @@ class MockContainer:
                 elif rel.startswith(search_path + '/') or rel == search_path:
                     matches.append(rel)
             return 0, '\n'.join(matches).encode('utf-8')
-
-        # Handle grep
-        if 'grep' in cmd_str:
-            return 0, b'match:1:result'
 
         # Handle general commands
         if 'echo' in cmd_str:
@@ -1724,38 +1302,6 @@ class TestDocker:
         mock_container._files['/workspace/code.py'] = b'old_value = 1'
         count = await mock_docker_sandbox.replace_str('code.py', 'old_value', 'new_value')
         assert count == 1
-
-    async def test_docker_ls(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-        """DockerEnvironment.ls returns file entries."""
-        mock_container._files['test.txt'] = b'hello'
-        entries = await mock_docker_sandbox.ls('.')
-        assert isinstance(entries, list)
-
-    async def test_docker_grep(self, mock_docker_sandbox: Any) -> None:
-        """DockerEnvironment.grep returns matches."""
-        result = await mock_docker_sandbox.grep('pattern')
-        assert isinstance(result, str)
-
-    async def test_docker_grep_with_options(self, mock_docker_sandbox: Any) -> None:
-        """DockerEnvironment.grep with output_mode and glob_pattern."""
-        result = await mock_docker_sandbox.grep('pattern', glob_pattern='*.py', output_mode='files_with_matches')
-        assert isinstance(result, str)
-
-    async def test_docker_grep_count(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-        """DockerEnvironment.grep count mode filters zero-count results."""
-        # Override exec_run to return count-style output
-        original_exec_run = mock_container.exec_run
-
-        def count_exec_run(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
-            if isinstance(cmd, list) and 'sh' in cmd[0]:
-                cmd_str = cmd[-1] if len(cmd) > 1 else ''
-                if 'grep' in cmd_str and '-c' in cmd_str:
-                    return 0, b'a.py:3\nb.py:0\nc.py:1'
-            return original_exec_run(cmd, **kwargs)  # pragma: no cover
-
-        mock_container.exec_run = count_exec_run  # type: ignore[assignment]
-        result = await mock_docker_sandbox.grep('pattern', output_mode='count')
-        assert 'b.py:0' not in result
 
     async def test_docker_container_property(self, mock_docker_sandbox: Any) -> None:
         """DockerEnvironment._required_container raises when not started."""
@@ -1985,37 +1531,6 @@ class TestDocker:
         mock_container.exec_run = exec_with_binary  # type: ignore[assignment]
         result = await mock_docker_sandbox.read_file('data.bin')
         assert isinstance(result, bytes)
-
-    async def test_docker_ls_size_value_error(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-        """DockerEnvironment.ls handles non-numeric size fields gracefully."""
-        original = mock_container.exec_run
-
-        def exec_with_bad_size(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
-            cmd_str = ' '.join(cmd) if isinstance(cmd, list) else cmd
-            if 'ls -la' in cmd_str:
-                return 0, b'total 0\n-rw-r--r-- 1 root root NaN Jan  1 00:00 file.txt'
-            return original(cmd, **kwargs)  # pragma: no cover
-
-        mock_container.exec_run = exec_with_bad_size  # type: ignore[assignment]
-        entries = await mock_docker_sandbox.ls()
-        assert len(entries) == 1
-        assert entries[0].name == 'file.txt'
-        assert entries[0].size is None
-
-    async def test_docker_ls_short_line(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-        """DockerEnvironment.ls skips lines with fewer than 9 fields."""
-        original = mock_container.exec_run
-
-        def exec_with_short_lines(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
-            cmd_str = ' '.join(cmd) if isinstance(cmd, list) else cmd
-            if 'ls -la' in cmd_str:
-                return 0, b'total 0\nshort line\n-rw-r--r-- 1 root root 42 Jan  1 00:00 real.txt'
-            return original(cmd, **kwargs)  # pragma: no cover
-
-        mock_container.exec_run = exec_with_short_lines  # type: ignore[assignment]
-        entries = await mock_docker_sandbox.ls()
-        assert len(entries) == 1
-        assert entries[0].name == 'real.txt'
 
     async def test_docker_is_alive_exception(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
         """DockerEnvironment.is_alive returns False when reload raises."""
@@ -2276,19 +1791,6 @@ class TestDocker:
         assert entered is proc
         assert proc._exec_id == 'exec-aenter'
 
-    async def test_docker_ls_not_found(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-        """DockerEnvironment.ls raises NotADirectoryError on missing dirs."""
-        original = mock_container.exec_run
-
-        def fail_ls(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
-            if isinstance(cmd, list) and 'ls -la' in ' '.join(cmd):
-                return 1, b'ls: cannot access: No such file or directory'
-            return original(cmd, **kwargs)  # pragma: no cover
-
-        mock_container.exec_run = fail_ls  # type: ignore[assignment]
-        with pytest.raises(NotADirectoryError):
-            await mock_docker_sandbox.ls('nonexistent')
-
     async def test_docker_read_file_image_not_found(
         self, mock_docker_sandbox: Any, mock_container: MockContainer
     ) -> None:
@@ -2465,51 +1967,6 @@ class TestDocker:
         assert 'more lines' in cmd
         assert 'offset=10' in cmd
 
-    def test_build_grep_cmd_content(self):
-        cmd = _build_grep_cmd('pattern')
-        assert 'grep -rIE' in cmd
-        assert '-n' in cmd
-        assert "'pattern'" in cmd
-        assert "'.'" in cmd
-
-    def test_build_grep_cmd_files_with_matches(self):
-        cmd = _build_grep_cmd('pat', output_mode='files_with_matches')
-        assert '-l' in cmd
-        assert '-n' not in cmd
-
-    def test_build_grep_cmd_count(self):
-        cmd = _build_grep_cmd('pat', output_mode='count')
-        assert '-c' in cmd
-
-    def test_build_grep_cmd_with_path(self):
-        cmd = _build_grep_cmd('pat', path='src')
-        assert "'src'" in cmd
-
-    def test_build_grep_cmd_with_glob_pattern(self):
-        """glob_pattern is shell-escaped to prevent injection."""
-        cmd = _build_grep_cmd('pat', glob_pattern='*.py')
-        assert '--include' in cmd
-        assert "'*.py'" in cmd
-
-    def test_build_grep_cmd_glob_pattern_escaping(self):
-        """Verify glob_pattern with special chars is properly shell-escaped."""
-        cmd = _build_grep_cmd('pat', glob_pattern='*.py')
-        # The glob pattern should be shell-escaped (wrapped in single quotes)
-        assert "--include '*.py'" in cmd
-
-        # Even a malicious glob_pattern gets safely escaped
-        cmd2 = _build_grep_cmd('pat', glob_pattern='$(evil)')
-        assert '$(evil)' not in cmd2.replace("'$(evil)'", '')  # Only appears inside quotes
-
-    def test_filter_grep_count_output(self):
-        text = 'a.py:3\nb.py:0\nc.py:1'
-        result = _filter_grep_count_output(text)
-        assert result == 'a.py:3\nc.py:1'
-
-    def test_filter_grep_count_output_all_zero(self):
-        text = 'a.py:0\nb.py:0'
-        result = _filter_grep_count_output(text)
-        assert result == ''
 
 
 # --- Additional coverage: _base.py ---
@@ -2536,19 +1993,6 @@ async def test_toolset_bash_empty_output(tmp_path: Path):
     async with env:
         result = await manager.handle_call(ToolCallPart(tool_name='shell', args={'command': 'true'}))
         assert 'Exit code: 0' in str(result)
-
-
-async def test_toolset_grep_no_matches_returns_message(tmp_path: Path):
-    """ExecutionEnvironmentToolset grep returns message when no matches."""
-    (tmp_path / 'test.txt').write_text('hello world')
-    env = LocalEnvironment(tmp_path)
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context()
-    manager = await ToolManager[None](toolset).for_run_step(ctx)
-
-    async with env:
-        result = await manager.handle_call(ToolCallPart(tool_name='grep', args={'pattern': 'zzz_nonexistent'}))
-        assert 'No matches' in str(result)
 
 
 async def test_toolset_lifecycle_error(tmp_path: Path):
@@ -2639,47 +2083,6 @@ async def test_local_read_file_bytes_not_found(tmp_path: Path):
         await env.read_file('nonexistent.txt')
 
 
-async def test_local_grep_on_file(tmp_path: Path):
-    """LocalEnvironment.grep on a specific file path."""
-    (tmp_path / 'target.py').write_text('found = True\nmissed = False\n')
-    env = LocalEnvironment(tmp_path)
-    result = await env.grep('found', path='target.py')
-    assert 'found' in result
-    assert 'missed' not in result
-
-
-async def test_local_grep_with_glob_pattern_filters_by_extension(tmp_path: Path):
-    """LocalEnvironment.grep with glob filtering."""
-    (tmp_path / 'a.py').write_text('match_here\n')
-    (tmp_path / 'b.txt').write_text('match_here\n')
-    env = LocalEnvironment(tmp_path)
-    result = await env.grep('match_here', glob_pattern='*.py')
-    assert 'a.py' in result
-    assert 'b.txt' not in result
-
-
-async def test_local_grep_skips_binary_files_with_null_bytes(tmp_path: Path):
-    """LocalEnvironment.grep skips files with null bytes."""
-    (tmp_path / 'binary.bin').write_bytes(b'\x00binary content')
-    (tmp_path / 'text.txt').write_text('searchable\n')
-    env = LocalEnvironment(tmp_path)
-    result = await env.grep('searchable')
-    assert 'text.txt' in result
-    assert 'binary' not in result
-
-
-async def test_local_grep_skips_hidden_files_in_hidden_dirs(tmp_path: Path):
-    """LocalEnvironment.grep skips hidden files/dirs."""
-    hidden_dir = tmp_path / '.hidden'
-    hidden_dir.mkdir()
-    (hidden_dir / 'secret.txt').write_text('findme\n')
-    (tmp_path / 'visible.txt').write_text('findme\n')
-    env = LocalEnvironment(tmp_path)
-    result = await env.grep('findme')
-    assert 'visible.txt' in result
-    assert '.hidden' not in result
-
-
 async def test_local_execute_output_truncation(tmp_path: Path):
     """LocalEnvironment.execute truncates long output."""
     # Write a script that outputs lots of text
@@ -2716,48 +2119,6 @@ async def test_memory_read_file_bytes_not_found_raises_error():
         await env.read_file('missing.txt')
 
 
-async def test_memory_ls_non_root_directory():
-    """MemoryEnvironment.ls lists files in a subdirectory."""
-    env = MemoryEnvironment(files={'sub/a.txt': 'a', 'sub/b.txt': 'b', 'other.txt': 'c'})
-    entries = await env.ls('sub')
-    assert len(entries) == 2
-    names = {e.name for e in entries}
-    assert names == {'a.txt', 'b.txt'}
-
-
-async def test_memory_ls_with_subdirs():
-    """MemoryEnvironment.ls shows directories in listing."""
-    env = MemoryEnvironment(files={'dir/sub/file.txt': 'content'})
-    entries = await env.ls('dir')
-    assert len(entries) == 1
-    assert entries[0].name == 'sub'
-    assert entries[0].is_dir is True
-
-
-async def test_memory_ls_skips_non_children():
-    """MemoryEnvironment.ls skips files not under the directory."""
-    env = MemoryEnvironment(files={'a/b.txt': 'x', 'c/d.txt': 'y'})
-    entries = await env.ls('a')
-    assert len(entries) == 1
-    assert entries[0].name == 'b.txt'
-
-
-async def test_memory_grep_binary_skip():
-    """MemoryEnvironment.grep skips binary files."""
-    env = MemoryEnvironment(files={'binary.bin': b'\x00binary data', 'text.txt': 'findme'})
-    result = await env.grep('findme')
-    assert 'text.txt' in result
-    assert 'binary' not in result
-
-
-async def test_memory_grep_path_filter():
-    """MemoryEnvironment.grep filters by exact file path."""
-    env = MemoryEnvironment(files={'sub/target.py': 'match_here', 'other.py': 'match_here'})
-    result = await env.grep('match_here', path='sub')
-    assert 'sub/target.py' in result
-    assert 'other.py' not in result
-
-
 async def test_local_process_wait_no_timeout(tmp_path: Path):
     """_LocalEnvironmentProcess.wait without timeout (line 74)."""
     env = LocalEnvironment(tmp_path)
@@ -2783,80 +2144,6 @@ async def test_memory_read_file_that_is_also_directory_prefix():
         content = await env.read_file('dir')
         assert isinstance(content, str)
         assert 'I am a file' in content
-
-
-# --- ExecutionEnvironmentToolset: capability and edit strategy resolution ---
-
-
-# --- ExecutionEnvironmentToolset: ls formatting through toolset ---
-
-
-async def test_toolset_ls_error_handling():
-    """Toolset ls returns error string when environment raises."""
-
-    class _ErrorLsEnv(BaseEnv):
-        @property
-        def capabilities(self) -> frozenset[EnvToolName]:
-            return frozenset({'ls'})
-
-        async def ls(self, path: str = '.') -> list[FileInfo]:
-            raise NotADirectoryError(f'Not a directory: {path}')
-
-    env = _ErrorLsEnv()
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context()
-    tools = await toolset.get_tools(ctx)
-    result = await toolset.call_tool('ls', {'path': '/bad'}, ctx, tools['ls'])
-    assert 'Error:' in str(result)
-
-
-async def test_toolset_ls_formats_dirs():
-    """Toolset ls formats directory entries with trailing /."""
-    env = MemoryEnvironment(files={'sub/a.txt': 'hello'})
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context()
-    tools = await toolset.get_tools(ctx)
-    async with env:
-        result = await toolset.call_tool('ls', {'path': '.'}, ctx, tools['ls'])
-    assert 'sub/' in str(result)
-
-
-async def test_toolset_ls_formats_files_without_size():
-    """Toolset ls formats file entries without size (just the name)."""
-
-    class _NoSizeEnv(BaseEnv):
-        @property
-        def capabilities(self) -> frozenset[EnvToolName]:
-            return frozenset({'ls'})
-
-        async def ls(self, path: str = '.') -> list[FileInfo]:
-            return [FileInfo(name='readme.txt', path='readme.txt', is_dir=False, size=None)]
-
-    env = _NoSizeEnv()
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context()
-    tools = await toolset.get_tools(ctx)
-    result = await toolset.call_tool('ls', {'path': '.'}, ctx, tools['ls'])
-    assert str(result) == 'readme.txt'
-
-
-async def test_toolset_ls_empty_directory():
-    """Toolset ls returns 'Empty directory.' for empty listings."""
-
-    class _EmptyLsEnv(BaseEnv):
-        @property
-        def capabilities(self) -> frozenset[EnvToolName]:
-            return frozenset({'ls'})
-
-        async def ls(self, path: str = '.') -> list[FileInfo]:
-            return []
-
-    env = _EmptyLsEnv()
-    toolset = ExecutionEnvironmentToolset(env)
-    ctx = build_run_context()
-    tools = await toolset.get_tools(ctx)
-    result = await toolset.call_tool('ls', {'path': '.'}, ctx, tools['ls'])
-    assert str(result) == 'Empty directory.'
 
 
 # --- ExecutionEnvironmentToolset: environment_factory ---
@@ -3009,32 +2296,32 @@ async def test_memory_read_image_stored_as_string():
 async def test_toolset_factory_filters_tools_by_capabilities():
     """When using environment_factory, get_tools() only returns tools supported by the runtime environment."""
 
-    class _LsOnlyEnv(BaseEnv):
+    class _ShellOnlyEnv(BaseEnv):
         @property
         def capabilities(self) -> frozenset[EnvToolName]:
-            return frozenset({'ls'})
+            return frozenset({'shell'})
 
-        async def ls(self, path: str = '.') -> list[FileInfo]:
-            return []  # pragma: no cover
+        async def shell(self, command: str, *, timeout: float | None = None, env: dict[str, str] | None = None) -> ExecutionResult:
+            return ExecutionResult(output='', exit_code=0)  # pragma: no cover
 
-    toolset = ExecutionEnvironmentToolset(environment_factory=_LsOnlyEnv)
+    toolset = ExecutionEnvironmentToolset(environment_factory=_ShellOnlyEnv)
     # Before entering, all tools are registered (no env to check)
     ctx = build_run_context()
 
     async with toolset:
         tools = await toolset.get_tools(ctx)
 
-    # Only ls should be exposed — the runtime env only supports ls
-    assert set(tools.keys()) == {'ls'}
+    # Only shell should be exposed — the runtime env only supports shell
+    assert set(tools.keys()) == {'shell'}
 
 
 async def test_toolset_use_environment_filters_tools():
     """use_environment() with a limited env filters tools from get_tools()."""
 
-    class _LsOnlyEnv(BaseEnv):
+    class _ShellOnlyEnv(BaseEnv):
         @property
         def capabilities(self) -> frozenset[EnvToolName]:
-            return frozenset({'ls'})
+            return frozenset({'shell'})
 
     # Full-capability shared env registers all tools
     full_env = MemoryEnvironment()
@@ -3043,14 +2330,13 @@ async def test_toolset_use_environment_filters_tools():
 
     async with full_env:
         all_tools = await toolset.get_tools(ctx)
-        assert 'ls' in all_tools
         assert 'read_file' in all_tools
         assert 'write_file' in all_tools
 
-        # Override with a limited env — only ls should remain
-        with toolset.use_environment(_LsOnlyEnv()):
+        # Override with a limited env — only shell should remain
+        with toolset.use_environment(_ShellOnlyEnv()):
             limited_tools = await toolset.get_tools(ctx)
-            assert set(limited_tools.keys()) == {'ls'}
+            assert set(limited_tools.keys()) == {'shell'}
 
         # After exiting use_environment, all tools are back
         restored_tools = await toolset.get_tools(ctx)
@@ -3090,50 +2376,3 @@ async def test_local_read_file_binary_non_image(tmp_path: Path):
         assert result == b'\x80\x81\x82\xff'
 
 
-async def test_local_grep_truncation(tmp_path: Path):
-    """LocalEnvironment.grep truncates at 1000+ matches."""
-    async with LocalEnvironment(tmp_path) as env:
-        # Create a file with 1002 matching lines
-        lines = '\n'.join(f'match_{i}' for i in range(1002))
-        await env.write_file('big.txt', lines)
-        result = await env.grep('match_')
-        assert '[... truncated at 1000 matches]' in result
-
-
-async def test_memory_ls_duplicate_entry():
-    """MemoryEnvironment.ls deduplicates entries at the same directory level."""
-    # 'sub/a.txt' and 'sub/b.txt' both create a 'sub' directory entry
-    env = MemoryEnvironment(files={'sub/a.txt': 'a', 'sub/b.txt': 'b'})
-    async with env:
-        entries = await env.ls()
-        names = [e.name for e in entries]
-        assert names.count('sub') == 1
-
-
-async def test_memory_grep_truncation():
-    """MemoryEnvironment.grep truncates at 1000+ matches."""
-    lines = '\n'.join(f'match_{i}' for i in range(1002))
-    env = MemoryEnvironment(files={'big.txt': lines})
-    async with env:
-        result = await env.grep('match_')
-        assert '[... truncated at 1000 matches]' in result
-
-
-async def test_toolset_factory_ls_only_calls_ls():
-    """Test that _LsOnlyEnv.ls is actually callable (covers line 3071)."""
-
-    class _LsOnlyEnv(BaseEnv):
-        @property
-        def capabilities(self) -> frozenset[EnvToolName]:
-            return frozenset({'ls'})
-
-        async def ls(self, path: str = '.') -> list[FileInfo]:
-            return [FileInfo(name='test.txt', path='test.txt', is_dir=False, size=10)]
-
-    toolset = ExecutionEnvironmentToolset(environment_factory=_LsOnlyEnv)
-    ctx = build_run_context()
-
-    async with toolset:
-        tools = await toolset.get_tools(ctx)
-        result = await toolset.call_tool('ls', {}, ctx, tools['ls'])
-        assert 'test.txt' in str(result)

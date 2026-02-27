@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import inspect
 import posixpath
-import re
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AsyncExitStack, contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import anyio
 from typing_extensions import Self
@@ -148,37 +147,10 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         is deferred to ``get_tools()``, which runs at request time when the
         active environment is known.
         """
-        self._register_ls()
         self._register_shell()
         self._register_read_file()
         self._register_write_file()
         self._register_edit_file()
-        self._register_grep()
-
-    def _register_ls(self) -> None:
-        async def ls(path: str = '.') -> str:
-            """List directory contents.
-
-            Args:
-                path: The directory path to list. Defaults to the working directory.
-            """
-            try:
-                entries = await self.required_environment.ls(path)
-            except (NotADirectoryError, PermissionError, OSError) as e:
-                return f'Error: {e}'
-            if not entries:
-                return 'Empty directory.'
-            lines: list[str] = []
-            for entry in entries:
-                if entry.is_dir:
-                    lines.append(f'{entry.name}/')
-                elif entry.size is not None:
-                    lines.append(f'{entry.name} ({entry.size} bytes)')
-                else:
-                    lines.append(entry.name)
-            return '\n'.join(lines)
-
-        self.tool(ls)
 
     def _register_shell(self) -> None:
         async def shell(command: str, timeout: int = 120) -> str:
@@ -275,36 +247,6 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                 raise ModelRetry(str(e))
 
         self.tool(requires_approval=self._require_write_approval)(edit_file)
-
-    def _register_grep(self) -> None:
-        async def grep_tool(
-            pattern: str,
-            path: str | None = None,
-            glob: str | None = None,
-            output_mode: Literal['content', 'files_with_matches', 'count'] = 'content',
-        ) -> str:
-            """Search file contents with a regex pattern.
-
-            Args:
-                pattern: The regex pattern to search for.
-                path: The file or directory to search in.
-                glob: Glob pattern to filter which files are searched (e.g. `*.py`).
-                output_mode: Controls output format:
-                    `content` (default) shows matching lines with file paths and line numbers,
-                    `files_with_matches` shows only file paths,
-                    `count` shows match counts per file.
-            """
-            try:
-                result = await self.required_environment.grep(
-                    pattern, path=path, glob_pattern=glob, output_mode=output_mode
-                )
-            except (PermissionError, OSError, re.error) as e:
-                return f'Error: {e}'
-            if not result.strip():
-                return 'No matches found.'
-            return result
-
-        self.tool(name='grep')(grep_tool)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await super().get_tools(ctx)

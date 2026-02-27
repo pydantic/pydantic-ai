@@ -6,19 +6,15 @@ by an optional callback — if not provided, `shell()` raises `RuntimeError`.
 
 from __future__ import annotations
 
-import fnmatch
 import posixpath
-import re
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from ._base import (
     IMAGE_EXTENSIONS,
     ExecutionEnvironment,
     ExecutionResult,
-    FileInfo,
     apply_edit,
-    collect_grep_matches,
     format_lines,
 )
 
@@ -70,7 +66,7 @@ class MemoryEnvironment(ExecutionEnvironment):
 
     @property
     def capabilities(self) -> frozenset[EnvToolName]:
-        caps: set[EnvToolName] = {'ls', 'read_file', 'write_file', 'edit_file', 'grep'}
+        caps: set[EnvToolName] = {'read_file', 'write_file', 'edit_file'}
         if self._command_handler is not None:
             caps.add('shell')
         return frozenset(caps)
@@ -175,92 +171,3 @@ class MemoryEnvironment(ExecutionEnvironment):
         self._files[normalized] = new_text
         return count
 
-    async def ls(self, path: str = '.') -> list[FileInfo]:
-        normalized = self._normalize(path)
-
-        # Collect direct children
-        entries: dict[str, FileInfo] = {}
-        for file_path in sorted(self._files):
-            if normalized == '.':
-                rel = file_path
-            elif file_path.startswith(normalized + '/'):
-                rel = file_path[len(normalized) + 1 :]
-            else:
-                continue
-
-            # Get the first component (direct child)
-            parts = rel.split('/', 1)
-            name = parts[0]
-            if name in entries:
-                continue
-
-            is_dir = len(parts) > 1
-            if is_dir:
-                entries[name] = FileInfo(
-                    name=name,
-                    path=f'{normalized}/{name}' if normalized != '.' else name,
-                    is_dir=True,
-                )
-            else:
-                content = self._files[file_path]
-                size = len(content) if isinstance(content, bytes) else len(content.encode('utf-8'))
-                entries[name] = FileInfo(
-                    name=name,
-                    path=f'{normalized}/{name}' if normalized != '.' else name,
-                    is_dir=False,
-                    size=size,
-                )
-
-        if not entries and normalized != '.':
-            raise NotADirectoryError(f'Not a directory: {path}')
-
-        return list(entries.values())
-
-    async def grep(
-        self,
-        pattern: str,
-        *,
-        path: str | None = None,
-        glob_pattern: str | None = None,
-        output_mode: Literal['content', 'files_with_matches', 'count'] = 'content',
-    ) -> str:
-        """Search file contents using a regex pattern (Python `re` module syntax)."""
-        normalized = self._normalize(path or '.')
-        compiled = re.compile(pattern)
-
-        is_exact_file = normalized != '.' and normalized in self._files
-
-        results: list[str] = []
-        for file_path in sorted(self._files):
-            # Path filtering
-            if normalized != '.':
-                if normalized == file_path:
-                    pass  # exact file match
-                elif not file_path.startswith(normalized + '/'):
-                    continue
-
-            # Glob filtering (skip for exact file matches, matching LocalEnvironment behavior)
-            if not is_exact_file and glob_pattern and not fnmatch.fnmatch(posixpath.basename(file_path), glob_pattern):
-                continue
-
-            # Skip hidden files unless explicitly specified
-            if not is_exact_file and any(part.startswith('.') for part in file_path.split('/')):
-                continue
-
-            content = self._files[file_path]
-
-            # Skip binary files
-            if isinstance(content, bytes):
-                if b'\x00' in content[:8192]:
-                    continue
-                text = content.decode('utf-8', errors='replace')
-            else:
-                text = content
-
-            collect_grep_matches(file_path, text, compiled, output_mode, results)
-
-            if len(results) > 1000:
-                results.append('[... truncated at 1000 matches]')
-                break
-
-        return '\n'.join(results)

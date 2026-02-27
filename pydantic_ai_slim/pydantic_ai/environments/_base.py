@@ -6,7 +6,6 @@ This module defines the core types, the `ExecutionEnvironment` ABC, and the
 
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -16,12 +15,10 @@ from typing_extensions import Self
 # --- Type aliases ---
 
 EnvToolName = Literal[
-    'ls',
     'shell',
     'read_file',
     'write_file',
     'edit_file',
-    'grep',
 ]
 """Tool name for an environment capability.
 
@@ -45,23 +42,6 @@ class ExecutionResult:
 
     truncated: bool = False
     """Whether the output was truncated due to length limits."""
-
-
-@dataclass
-class FileInfo:
-    """Metadata about a file or directory."""
-
-    name: str
-    """The file or directory name."""
-
-    path: str
-    """The full path."""
-
-    is_dir: bool
-    """Whether this entry is a directory."""
-
-    size: int | None = None
-    """The file size in bytes, or None for directories."""
 
 
 class ExecutionProcess(ABC):
@@ -194,17 +174,6 @@ class ExecutionEnvironment(ABC):
     # All raise NotImplementedError by default. Concrete subclasses override
     # the methods that match their declared capabilities.
 
-    async def ls(self, path: str = '.') -> list[FileInfo]:
-        """List directory contents.
-
-        Args:
-            path: The directory path within the environment.
-
-        Returns:
-            A list of `FileInfo` entries.
-        """
-        raise NotImplementedError(f'{type(self).__name__} does not support ls.')
-
     async def shell(
         self,
         command: str,
@@ -286,30 +255,6 @@ class ExecutionEnvironment(ABC):
         """
         raise NotImplementedError(f'{type(self).__name__} does not support replace_str.')
 
-    async def grep(
-        self,
-        pattern: str,
-        *,
-        path: str | None = None,
-        glob_pattern: str | None = None,
-        output_mode: Literal['content', 'files_with_matches', 'count'] = 'content',
-    ) -> str:
-        """Search file contents with a regex pattern.
-
-        Args:
-            pattern: The regex pattern to search for.
-            path: The file or directory to search in.
-            glob_pattern: Optional glob to filter which files are searched.
-            output_mode: Controls output format:
-                - `'content'` (default): matching lines as `file:line_number:text`
-                - `'files_with_matches'`: only file paths containing matches
-                - `'count'`: `file:count` pairs
-
-        Returns:
-            Matching lines formatted as text.
-        """
-        raise NotImplementedError(f'{type(self).__name__} does not support grep.')
-
     # --- Internal helpers (not tools) ---
 
     async def create_process(
@@ -367,30 +312,6 @@ def format_lines(text: str, offset: int, limit: int) -> str:
         result += f'... ({remaining} more lines. Use offset={next_offset} to continue reading.)\n'
 
     return result
-
-
-def collect_grep_matches(
-    rel_path: str,
-    text: str,
-    compiled: re.Pattern[str],
-    output_mode: Literal['content', 'files_with_matches', 'count'],
-    results: list[str],
-) -> None:
-    """Collect grep matches from a single file into `results`.
-
-    Shared helper used by `LocalEnvironment` and `MemoryEnvironment`.
-    """
-    if output_mode == 'files_with_matches':
-        if any(compiled.search(line) for line in text.splitlines()):
-            results.append(rel_path)
-    elif output_mode == 'count':
-        match_count = sum(1 for line in text.splitlines() if compiled.search(line))
-        if match_count > 0:
-            results.append(f'{rel_path}:{match_count}')
-    else:
-        for line_num, line in enumerate(text.splitlines(), start=1):
-            if compiled.search(line):
-                results.append(f'{rel_path}:{line_num}:{line}')
 
 
 def apply_edit(text: str, old_string: str, new_string: str, path: str, *, replace_all: bool) -> tuple[str, int]:

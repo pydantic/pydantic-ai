@@ -64,7 +64,7 @@ env = LocalEnvironment(
 )
 ```
 
-File operations (read, write, edit, ls, glob, grep) are confined to the root directory — path traversal attempts raise `PermissionError`.
+File operations (read, write, edit) are confined to the root directory — path traversal attempts raise `PermissionError`.
 
 !!! info "Environment variable inheritance"
     By default, `LocalEnvironment` inherits the host's environment variables. Set `inherit_env=False` for a clean environment where only explicitly provided `env_vars` (and per-call `env` overrides) are available. This is useful for reproducibility and testing.
@@ -163,13 +163,10 @@ env = DockerEnvironment.hardened(
 
 | Tool | Description |
 |---|---|
-| `ls` | List directory contents |
 | `shell` | Execute shell commands |
 | `read_file` | Read files with line numbers (renders images for multimodal models) |
 | `write_file` | Create or overwrite files |
 | `edit_file` | Edit files by exact string replacement |
-| `glob` | Find files by pattern |
-| `grep` | Search file contents with regex |
 
 Tools are dynamically registered based on the environment's capabilities. You can selectively include or exclude capabilities:
 
@@ -321,14 +318,12 @@ Filesystem changes (created files, installed packages) persist for the lifetime 
 You can implement [`ExecutionEnvironment`][pydantic_ai.environments.ExecutionEnvironment] to integrate with any execution backend. The only abstract member is `capabilities`; override the methods that match your declared capabilities. Override [`create_process()`][pydantic_ai.environments.ExecutionEnvironment.create_process] if you need interactive process support.
 
 ```python {title="environments_custom.py" test="skip" lint="skip"}
-from typing import Literal
-
-from pydantic_ai.environments import EnvToolName, ExecutionEnvironment, ExecutionProcess, ExecutionResult, FileInfo
+from pydantic_ai.environments import EnvToolName, ExecutionEnvironment, ExecutionProcess, ExecutionResult
 
 class MyCloudEnvironment(ExecutionEnvironment):
     @property
     def capabilities(self) -> frozenset[EnvToolName]:
-        return frozenset({'shell', 'read_file', 'write_file', 'edit_file', 'ls', 'glob', 'grep'})
+        return frozenset({'shell', 'read_file', 'write_file', 'edit_file'})
 
     async def shell(
         self, command: str, *, timeout: float | None = 120, env: dict[str, str] | None = None
@@ -347,21 +342,5 @@ class MyCloudEnvironment(ExecutionEnvironment):
     async def replace_str(
         self, path: str, old: str, new: str, *, replace_all: bool = False
     ) -> int:
-        ...
-
-    async def ls(self, path: str = '.') -> list[FileInfo]:
-        ...
-
-    async def glob(self, pattern: str, *, path: str = '.') -> list[str]:
-        ...
-
-    async def grep(
-        self,
-        pattern: str,
-        *,
-        path: str | None = None,
-        glob_pattern: str | None = None,
-        output_mode: Literal['content', 'files_with_matches', 'count'] = 'content',
-    ) -> str:
         ...
 ```

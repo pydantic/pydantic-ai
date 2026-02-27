@@ -6,11 +6,9 @@ Runs commands directly on the host machine within a specified root directory.
 
 from __future__ import annotations
 
-import fnmatch
-import re
 import subprocess
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import anyio
 import anyio.abc
@@ -23,9 +21,7 @@ from ._base import (
     ExecutionEnvironment,
     ExecutionProcess,
     ExecutionResult,
-    FileInfo,
     apply_edit,
-    collect_grep_matches,
     format_lines,
 )
 
@@ -137,7 +133,7 @@ class LocalEnvironment(ExecutionEnvironment):
 
     @property
     def capabilities(self) -> frozenset[EnvToolName]:
-        return frozenset({'ls', 'shell', 'read_file', 'write_file', 'edit_file', 'grep'})
+        return frozenset({'shell', 'read_file', 'write_file', 'edit_file'})
 
     async def __aenter__(self) -> Self:
         self._root_dir.mkdir(parents=True, exist_ok=True)
@@ -269,78 +265,3 @@ class LocalEnvironment(ExecutionEnvironment):
         resolved.write_text(new_text, encoding='utf-8')
         return count
 
-    async def ls(self, path: str = '.') -> list[FileInfo]:
-        resolved = self._resolve_path(path)
-        if not resolved.is_dir():
-            raise NotADirectoryError(f'Not a directory: {path}')
-
-        entries: list[FileInfo] = []
-        for entry in sorted(resolved.iterdir()):
-            try:
-                stat = entry.stat()
-                entries.append(
-                    FileInfo(
-                        name=entry.name,
-                        path=str(entry.relative_to(self._root_dir)),
-                        is_dir=entry.is_dir(),
-                        size=stat.st_size if not entry.is_dir() else None,
-                    )
-                )
-            except OSError:  # pragma: no cover
-                continue
-        return entries
-
-    async def grep(
-        self,
-        pattern: str,
-        *,
-        path: str | None = None,
-        glob_pattern: str | None = None,
-        output_mode: Literal['content', 'files_with_matches', 'count'] = 'content',
-    ) -> str:
-        """Search file contents using a regex pattern (Python `re` module syntax)."""
-        search_dir = self._resolve_path(path or '.')
-        compiled = re.compile(pattern)
-
-        is_explicit_file = search_dir.is_file()
-        if is_explicit_file:
-            files = [search_dir]
-        else:
-            # Use rglob with the glob_pattern when available for efficient
-            # filesystem traversal, but apply fnmatch on the basename as the
-            # authoritative filter below — this keeps semantics filename-only
-            # (consistent with Docker's grep --include and Memory's fnmatch)
-            # while letting pathlib narrow the search.
-            files = sorted(search_dir.rglob(glob_pattern or '*'))
-
-        results: list[str] = []
-        for file_path in files:
-            if not file_path.is_file():
-                continue
-            # Skip hidden files/directories (e.g. .git/, .venv/) unless explicitly specified
-            if not is_explicit_file and any(
-                part.startswith('.') for part in file_path.relative_to(self._root_dir).parts
-            ):
-                continue
-            # Filename-only glob filtering, consistent with Docker's grep --include
-            # and MemoryEnvironment's fnmatch-on-basename approach.
-            if not is_explicit_file and glob_pattern and not fnmatch.fnmatch(file_path.name, glob_pattern):
-                continue
-            try:
-                raw = file_path.read_bytes()
-            except OSError:  # pragma: no cover
-                continue
-
-            # Skip binary files (null byte in first 8KB)
-            if b'\x00' in raw[:8192]:
-                continue
-
-            text = raw.decode('utf-8', errors='replace')
-            rel_path = str(file_path.relative_to(self._root_dir))
-            collect_grep_matches(rel_path, text, compiled, output_mode, results)
-
-            if len(results) > 1000:
-                results.append('[... truncated at 1000 matches]')
-                break
-
-        return '\n'.join(results)

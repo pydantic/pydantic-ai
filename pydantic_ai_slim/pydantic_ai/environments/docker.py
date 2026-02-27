@@ -11,7 +11,7 @@ import posixpath
 import struct
 import tarfile
 from pathlib import PurePosixPath
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import anyio
 import anyio.to_thread
@@ -24,7 +24,6 @@ from ._base import (
     ExecutionEnvironment,
     ExecutionProcess,
     ExecutionResult,
-    FileInfo,
     apply_edit,
 )
 
@@ -57,33 +56,6 @@ def _build_read_file_cmd(path: str, *, offset: int = 0, limit: int = 2000) -> st
         f"}}'"
         f' {escaped}'
     )
-
-
-def _build_grep_cmd(
-    pattern: str,
-    *,
-    path: str | None = None,
-    glob_pattern: str | None = None,
-    output_mode: Literal['content', 'files_with_matches', 'count'] = 'content',
-) -> str:
-    """Build a shell `grep` command from structured arguments."""
-    parts = ['grep', '-rIE']  # -I skips binary files, -E uses extended regex
-    if output_mode == 'files_with_matches':
-        parts.append('-l')
-    elif output_mode == 'count':
-        parts.append('-c')
-    else:
-        parts.append('-n')
-    if glob_pattern:
-        parts.extend(['--include', _shell_escape(glob_pattern)])
-    parts.append(_shell_escape(pattern))
-    parts.append(_shell_escape(path or '.'))
-    return ' '.join(parts)
-
-
-def _filter_grep_count_output(text: str) -> str:
-    """Filter `grep -c` output to remove files with 0 matches."""
-    return '\n'.join(line for line in text.splitlines() if not line.endswith(':0'))
 
 
 def _put_file(container: Container, path: str, data: bytes) -> None:
@@ -385,12 +357,10 @@ class DockerEnvironment(ExecutionEnvironment):
     def capabilities(self) -> frozenset[EnvToolName]:  # pragma: lax no cover
         return frozenset(
             {
-                'ls',
                 'shell',
                 'read_file',
                 'write_file',
                 'edit_file',
-                'grep',
             }
         )
 
@@ -584,60 +554,6 @@ class DockerEnvironment(ExecutionEnvironment):
             return count
 
         return await anyio.to_thread.run_sync(_edit)
-
-    async def ls(self, path: str = '.') -> list[FileInfo]:
-        def _ls() -> list[FileInfo]:
-            cmd = f'ls -la {_shell_escape(path)}'
-            exit_code, output = self._required_container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
-            if exit_code != 0:
-                raise NotADirectoryError(f'Not a directory or not found: {path}')
-
-            entries: list[FileInfo] = []
-            for line in output.decode('utf-8', errors='replace').splitlines():
-                # Skip total line and empty lines
-                if not line or line.startswith('total'):
-                    continue
-                parts = line.split(None, 8)
-                if len(parts) < 9:
-                    continue
-                perms, _, _, _, size_str, _, _, _, name = parts
-                is_dir = perms.startswith('d')
-                try:
-                    size = int(size_str) if not is_dir else None
-                except ValueError:
-                    size = None
-                entry_path = f'{path}/{name}' if path != '.' else name
-                entries.append(FileInfo(name=name, path=entry_path, is_dir=is_dir, size=size))
-            return entries
-
-        return await anyio.to_thread.run_sync(_ls)
-
-    async def grep(
-        self,
-        pattern: str,
-        *,
-        path: str | None = None,
-        glob_pattern: str | None = None,
-        output_mode: Literal['content', 'files_with_matches', 'count'] = 'content',
-    ) -> str:
-        r"""Search file contents using a regex pattern.
-
-        Patterns use POSIX Extended Regular Expression (ERE) syntax, as interpreted by `grep -E`.
-        Supported: `|`, `+`, `?`, `()`, `{}`, character classes like `[[:digit:]]`.
-        Not available: lookaheads/lookbehinds, `\d`, `\w`, `\b`, non-greedy quantifiers (`*?`, `+?`).
-        """
-
-        def _grep() -> str:
-            cmd = _build_grep_cmd(pattern, path=path, glob_pattern=glob_pattern, output_mode=output_mode)
-            _, output = self._required_container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
-            text = output.decode('utf-8', errors='replace').strip()
-            # Strip `./` prefix from paths to match Local/Memory environment output
-            text = '\n'.join(line.removeprefix('./') for line in text.splitlines())
-            if output_mode == 'count':
-                text = _filter_grep_count_output(text)
-            return text
-
-        return await anyio.to_thread.run_sync(_grep)
 
     async def is_alive(self) -> bool:
         """Check if the container is running.
