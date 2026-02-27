@@ -1692,7 +1692,7 @@ class MockContainer:
         self.status = 'running'
         self.client = MagicMock()
 
-    def exec_run(
+    def exec_run(  # noqa: C901
         self,
         cmd: list[str] | str,
         workdir: str | None = None,
