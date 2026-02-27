@@ -159,7 +159,9 @@ def test_has_matching_span_round_trip():
     # Deserialize back
     deserialized_spec = EvaluatorSpec.model_validate(short_form)
     assert deserialized_spec.name == 'HasMatchingSpan'
-    assert deserialized_spec.kwargs == {'query': {'some_descendant_has': {'has_attributes': {'gen_ai.tool.name': 'calculator'}}}}
+    assert deserialized_spec.kwargs == {
+        'query': {'some_descendant_has': {'has_attributes': {'gen_ai.tool.name': 'calculator'}}}
+    }
 
     # Reconstruct the evaluator from the deserialized spec
     reconstructed = HasMatchingSpan(**deserialized_spec.kwargs)
