@@ -1856,9 +1856,7 @@ class TestDocker:
         container._files['/other/secret.txt'] = b'secret'
 
         # find with '.' searches all files relative to workdir
-        exit_code, output = container.exec_run(
-            ['sh', '-c', "find '.' -type f"], workdir='/workspace'
-        )
+        exit_code, output = container.exec_run(['sh', '-c', "find '.' -type f"], workdir='/workspace')
         output_str = output.decode()
         assert exit_code == 0
         assert './src/main.py' in output_str
@@ -1874,9 +1872,7 @@ class TestDocker:
         container._files['/workspace/src/main.py'] = b'print("hello")'
         container._files['/workspace/docs/guide.md'] = b'# guide'
 
-        exit_code, output = container.exec_run(
-            ['sh', '-c', "find 'src' -type f"], workdir='/workspace'
-        )
+        exit_code, output = container.exec_run(['sh', '-c', "find 'src' -type f"], workdir='/workspace')
         output_str = output.decode()
         assert exit_code == 0
         assert 'src/main.py' in output_str
