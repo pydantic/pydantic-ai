@@ -1852,6 +1852,8 @@ class TestDocker:
         container._files['/workspace/src/main.py'] = b'print("hello")'
         container._files['/workspace/src/utils.py'] = b'# utils'
         container._files['/workspace/README.md'] = b'# readme'
+        # File outside workdir should be skipped
+        container._files['/other/secret.txt'] = b'secret'
 
         # find with '.' searches all files relative to workdir
         exit_code, output = container.exec_run(
@@ -1862,6 +1864,7 @@ class TestDocker:
         assert './src/main.py' in output_str
         assert './src/utils.py' in output_str
         assert './README.md' in output_str
+        assert 'secret' not in output_str
 
     async def test_mock_container_find_command_subpath(
         self,
