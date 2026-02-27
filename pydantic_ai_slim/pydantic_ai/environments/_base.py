@@ -40,9 +40,6 @@ class ExecutionResult:
     exit_code: int
     """The exit code of the command."""
 
-    truncated: bool = False
-    """Whether the output was truncated due to length limits."""
-
 
 class ExecutionProcess(ABC):
     """Handle to a running process with bidirectional streaming I/O.

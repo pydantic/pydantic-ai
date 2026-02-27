@@ -17,7 +17,6 @@ from typing_extensions import Self
 
 from ._base import (
     IMAGE_EXTENSIONS,
-    MAX_OUTPUT_CHARS,
     EnvToolName,
     ExecutionEnvironment,
     ExecutionProcess,
@@ -217,13 +216,9 @@ class LocalEnvironment(ExecutionEnvironment):
         _close_subprocess_transport(proc)
         stdout = b''.join(chunks)
         output = stdout.decode('utf-8', errors='replace')
-        truncated = len(output) > MAX_OUTPUT_CHARS
-        if truncated:
-            output = output[:MAX_OUTPUT_CHARS]
         return ExecutionResult(
             output=output,
             exit_code=proc.returncode if proc.returncode is not None else 0,
-            truncated=truncated,
         )
 
     async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str | bytes:

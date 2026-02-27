@@ -19,7 +19,6 @@ from typing_extensions import Self
 
 from ._base import (
     IMAGE_EXTENSIONS,
-    MAX_OUTPUT_CHARS,
     EnvToolName,
     ExecutionEnvironment,
     ExecutionProcess,
@@ -68,6 +67,7 @@ def _put_file(container: Container, path: str, data: bytes) -> None:
         info.size = len(data)
         tar.addfile(info, io.BytesIO(data))
     f.seek(0)
+    # Unfortunately no types on docker put_archive
     container.put_archive(parent, f)  # pyright: ignore[reportUnknownMemberType]
 
 
@@ -503,13 +503,10 @@ class DockerEnvironment(ExecutionEnvironment):
 
         exit_code, output_bytes = await anyio.to_thread.run_sync(_exec)
         output = output_bytes.decode('utf-8', errors='replace')
-        truncated = len(output) > MAX_OUTPUT_CHARS
-        if truncated:
-            output = output[:MAX_OUTPUT_CHARS]
         # timeout command returns 124 on timeout
         if exit_code == 124 and timeout is not None:
             output += '\n[Command timed out]'
-        return ExecutionResult(output=output, exit_code=exit_code, truncated=truncated)
+        return ExecutionResult(output=output, exit_code=exit_code)
 
     async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str | bytes:
         ext = posixpath.splitext(path)[1].lower()
