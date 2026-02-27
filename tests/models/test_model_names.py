@@ -22,6 +22,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import OpenAIModelName
     from pydantic_ai.models.xai import XaiModelName
+    from pydantic_ai.providers.avian import AvianModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
     from pydantic_ai.providers.grok import GrokModelName
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
@@ -30,7 +31,7 @@ if not imports_successful():  # pragma: lax no cover
     # Define placeholders so the module can be loaded for test collection
     AnthropicModelName = BedrockModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
-    DeepSeekModelName = GrokModelName = XaiModelName = MoonshotAIModelName = None
+    AvianModelName = DeepSeekModelName = GrokModelName = XaiModelName = MoonshotAIModelName = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -60,6 +61,7 @@ def vcr_config():  # pragma: lax no cover
 
 _PROVIDER_TO_MODEL_NAMES = {
     'anthropic': AnthropicModelName,
+    'avian': AvianModelName,
     'bedrock': BedrockModelName,
     'cohere': CohereModelName,
     'deepseek': DeepSeekModelName,

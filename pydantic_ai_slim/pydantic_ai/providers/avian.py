@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import Literal, overload
 
 import httpx
 from openai import AsyncOpenAI
@@ -11,6 +11,13 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.providers import Provider
+
+AvianModelName = Literal[
+    'deepseek/deepseek-v3.2',
+    'minimax/minimax-m2.5',
+    'moonshotai/kimi-k2.5',
+    'z-ai/glm-5',
+]
 
 try:
     from openai import AsyncOpenAI

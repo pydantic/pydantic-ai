@@ -148,6 +148,7 @@ def test_list_models(capfd: CaptureFixture[str]):
     providers = (
         'openai',
         'anthropic',
+        'avian',
         'bedrock',
         'cerebras',
         'google-vertex',
