@@ -440,7 +440,7 @@ Azure AI Foundry also supports the OpenAI Responses API through [`OpenAIResponse
     pdf_bytes = b'%PDF-1.4 ...'  # Your PDF content
 
     model = OpenAIResponsesModel(
-        'gpt-5',
+        'gpt-5.2',
         provider=AzureProvider(
             azure_endpoint='your-azure-endpoint',
             api_version='your-api-version',

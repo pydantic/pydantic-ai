@@ -110,7 +110,7 @@ Support for file URLs varies depending on type and provider:
 
 | Model | Send URL directly | Download and send bytes | Unsupported |
 |-------|-------------------|-------------------------|-------------|
-| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl`* | `VideoUrl` |
+| [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] | `ImageUrl` | `AudioUrl`, `DocumentUrl` | `VideoUrl`. `AudioUrl` and `DocumentUrl` [not supported with `AzureProvider`](models/openai.md#using-azure-with-the-responses-api) |
 | [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | `ImageUrl`, `AudioUrl`, `DocumentUrl` | — | `VideoUrl` |
 | [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | `ImageUrl`, `DocumentUrl` (PDF) | `DocumentUrl` (`text/plain`) | `AudioUrl`, `VideoUrl` |
 | [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (Vertex) | All URL types | — | — |
@@ -119,8 +119,6 @@ Support for file URLs varies depending on type and provider:
 | [`MistralModel`][pydantic_ai.models.mistral.MistralModel] | `ImageUrl`, `DocumentUrl` (PDF) | — | `AudioUrl`, `VideoUrl`, `DocumentUrl` (non-PDF) |
 | [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel] | S3 URLs (`s3://`) | `ImageUrl`, `DocumentUrl`, `VideoUrl` | `AudioUrl` |
 | [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] | `ImageUrl`, `DocumentUrl` | `AudioUrl` | `VideoUrl` |
-
-*Not supported with `AzureProvider`. Use [`OpenAIResponsesModel` with `AzureProvider`](models/openai.md#using-azure-with-the-responses-api) instead.
 
 A model API may be unable to download a file (e.g., because of crawling or access restrictions) even if it supports file URLs. For example, [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI limits YouTube video URLs to one URL per request.
 
