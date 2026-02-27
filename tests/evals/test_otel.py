@@ -15,7 +15,7 @@ with try_import() as imports_successful:
     from pydantic_evals.otel._context_subtree import (
         context_subtree,
     )
-    from pydantic_evals.otel.span_tree import SpanNode, SpanQuery, SpanTree, _attribute_value_matches
+    from pydantic_evals.otel.span_tree import SpanNode, SpanQuery, SpanTree
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
@@ -270,30 +270,6 @@ async def test_attribute_value_matches_json_serialized_dicts():
     # Missing key fails
     assert not node.matches(SpanQuery(has_attributes={'missing': 'anything'}))
 
-
-def test_attribute_value_matches_helper():
-    """Unit tests for the _attribute_value_matches helper function."""
-    # Exact match
-    assert _attribute_value_matches('hello', 'hello')
-    assert _attribute_value_matches(42, 42)
-    assert _attribute_value_matches(True, True)
-
-    # JSON string vs dict
-    assert _attribute_value_matches('{"a":1}', {'a': 1})
-    assert not _attribute_value_matches('{"a":1}', {'a': 2})
-
-    # JSON string vs list
-    assert _attribute_value_matches('[1,2,3]', [1, 2, 3])
-
-    # Non-JSON string vs dict
-    assert not _attribute_value_matches('not json', {'a': 1})
-
-    # None stored value
-    assert not _attribute_value_matches(None, 'anything')
-
-    # Both strings, no JSON fallback needed
-    assert _attribute_value_matches('same', 'same')
-    assert not _attribute_value_matches('different', 'other')
 
 
 async def test_span_tree_repr(span_tree: SpanTree):
