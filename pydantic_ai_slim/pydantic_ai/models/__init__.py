@@ -84,6 +84,10 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-sonnet-4-5-20250929',
         'anthropic:claude-sonnet-4-5',
         'anthropic:claude-sonnet-4-6',
+        'avian:deepseek/deepseek-v3.2',
+        'avian:minimax/minimax-m2.5',
+        'avian:moonshotai/kimi-k2.5',
+        'avian:z-ai/glm-5',
         'bedrock:amazon.titan-text-express-v1',
         'bedrock:amazon.titan-text-lite-v1',
         'bedrock:amazon.titan-tg1-large',
@@ -572,6 +576,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
     'OpenAIChatCompatibleProvider',
     Literal[
         'alibaba',
+        'avian',
         'azure',
         'cerebras',
         'deepseek',

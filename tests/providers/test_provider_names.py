@@ -16,6 +16,7 @@ with try_import() as imports_successful:
     from openai import OpenAIError
 
     from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.avian import AvianProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.cohere import CohereProvider
@@ -40,6 +41,7 @@ with try_import() as imports_successful:
 
     test_infer_provider_params = [
         ('anthropic', AnthropicProvider, 'ANTHROPIC_API_KEY'),
+        ('avian', AvianProvider, 'AVIAN_API_KEY'),
         ('cohere', CohereProvider, 'CO_API_KEY'),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
         ('openrouter', OpenRouterProvider, 'OPENROUTER_API_KEY'),
