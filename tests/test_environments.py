@@ -1653,20 +1653,25 @@ class TestDocker:
     async def test_docker_process_returncode_from_inspect(
         self,
     ) -> None:
-        """_DockerEnvironmentProcess.returncode polls Docker API."""
+        """_DockerEnvironmentProcess._poll_exit_code polls Docker API."""
 
         container = MockContainer()
         container.client.api.exec_inspect.return_value = {'ExitCode': 42, 'Running': False}
         proc = _DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
         proc._exec_id = 'exec-123'
 
+        # returncode only returns cached value — no I/O
+        assert proc.returncode is None
+
+        # _poll_exit_code offloads the HTTP call and caches the result
+        rc = await proc._poll_exit_code()
+        assert rc == 42
         assert proc.returncode == 42
-        assert proc._returncode == 42
 
     async def test_docker_process_returncode_still_running(
         self,
     ) -> None:
-        """_DockerEnvironmentProcess.returncode returns None when process is running (ExitCode=0, Running=True)."""
+        """_DockerEnvironmentProcess._poll_exit_code returns None when process is running."""
 
         container = MockContainer()
         # Docker returns ExitCode=0 + Running=True for still-running processes
@@ -1674,18 +1679,20 @@ class TestDocker:
         proc = _DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
         proc._exec_id = 'exec-123'
 
+        assert await proc._poll_exit_code() is None
         assert proc.returncode is None
 
     async def test_docker_process_returncode_inspect_error(
         self,
     ) -> None:
-        """_DockerEnvironmentProcess.returncode handles API errors."""
+        """_DockerEnvironmentProcess._poll_exit_code handles API errors."""
 
         container = MockContainer()
         container.client.api.exec_inspect.side_effect = OSError('connection failed')
         proc = _DockerEnvironmentProcess(container, 'echo test', '/workspace')  # type: ignore[arg-type]
         proc._exec_id = 'exec-123'
 
+        assert await proc._poll_exit_code() is None
         assert proc.returncode is None
 
     async def test_docker_process_send(

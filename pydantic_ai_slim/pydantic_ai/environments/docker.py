@@ -198,6 +198,10 @@ class _DockerEnvironmentProcess(ExecutionProcess):
 
     @property
     def returncode(self) -> int | None:
+        return self._returncode
+
+    def _inspect_exit_code(self) -> int | None:
+        """Synchronously inspect the Docker exec state and cache the exit code."""
         if self._returncode is not None:
             return self._returncode
         if self._exec_id is None:
@@ -215,10 +219,14 @@ class _DockerEnvironmentProcess(ExecutionProcess):
             pass
         return None
 
+    async def _poll_exit_code(self) -> int | None:
+        """Check the Docker exec state without blocking the event loop."""
+        return await anyio.to_thread.run_sync(self._inspect_exit_code)
+
     async def wait(self, timeout: float | None = None) -> int:
         async def _poll() -> int:
             while True:
-                rc = self.returncode
+                rc = await self._poll_exit_code()
                 if rc is not None:
                     return rc
                 await anyio.sleep(0.1)
@@ -234,6 +242,11 @@ class _DockerEnvironmentProcess(ExecutionProcess):
             self._socket.close()
         except OSError:
             pass
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self._poll_exit_code()
+        if self._returncode is None:
+            await self.kill()
 
 
 class DockerEnvironment(ExecutionEnvironment):
@@ -429,6 +442,12 @@ class DockerEnvironment(ExecutionEnvironment):
                 # Best-effort cleanup: container may already be removed
                 pass
             self._container = None
+        if self._client is not None:
+            try:
+                self._client.close()
+            except (DockerException, OSError):
+                pass
+            self._client = None
 
     @property
     def _required_container(self) -> Container:
