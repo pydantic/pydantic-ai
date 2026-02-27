@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import AsyncIterator
 from copy import deepcopy
 from typing import Any
@@ -1418,6 +1419,67 @@ async def test_resuming_without_prompt_with_tool_calls_includes_resumed_request_
     )
 
     assert result.new_messages() == result.all_messages()
+
+
+async def test_resuming_without_prompt_excludes_request_with_different_run_id(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    When running without a user prompt and the resumed request already has a
+    run_id from a *previous* run, new_messages() should exclude it — only
+    messages stamped with the current run_id should be returned.
+    """
+    previous_run_id = str(uuid.uuid4())
+
+    agent = Agent(function_model)
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Earlier question')]),
+        ModelResponse(parts=[TextPart(content='Earlier answer')]),
+        ModelRequest(
+            parts=[UserPromptPart(content='Previous run prompt')],
+            run_id=previous_run_id,
+        ),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=message_history)
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Earlier question', timestamp=IsDatetime())]),
+            ModelResponse(parts=[TextPart(content='Earlier answer')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[UserPromptPart(content='Previous run prompt', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=previous_run_id,
+            ),
+        ]
+    )
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Earlier question', timestamp=IsDatetime())]),
+            ModelResponse(parts=[TextPart(content='Earlier answer')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[UserPromptPart(content='Previous run prompt', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=previous_run_id,
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=55, output_tokens=4),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # The resumed request has a run_id from a different run: excluded from new_messages().
+    assert result.new_messages() == result.all_messages()[-1:]
+    assert result.new_messages()[0].run_id != previous_run_id
 
 
 async def test_history_processor_deepcopy_resuming_without_prompt(
