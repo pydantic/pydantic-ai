@@ -4,7 +4,6 @@ import os
 from typing import Literal, overload
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
