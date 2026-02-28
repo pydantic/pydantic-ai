@@ -855,9 +855,8 @@ class AnthropicModel(Model):
                                     input=_safe_args_as_dict(response_part),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
-                            elif (
-                                response_part.tool_name.startswith(MCPServerTool.kind)
-                                and (server_id := response_part.tool_name.split(':', 1)[1])
+                            elif response_part.tool_name.startswith(MCPServerTool.kind) and (
+                                server_id := response_part.tool_name.split(':', 1)[1]
                             ):  # pragma: no branch
                                 args = _safe_args_as_dict(response_part)
                                 tool_name = args.get('tool_name')
