@@ -63,6 +63,21 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
 }
 
 
+def _safe_args_as_dict(part: ToolCallPart | BuiltinToolCallPart) -> dict[str, Any]:
+    """Return tool call arguments as a dict, falling back to ``{}`` on malformed JSON.
+
+    Anthropic's API requires ``input`` to be a dict.  When a previous model
+    response contained syntactically broken JSON (e.g. during a retry flow),
+    ``args_as_dict()`` raises ``ValueError``.  Falling back to an empty dict
+    allows the retry prompt that follows to reach the model so it can self-
+    correct.
+    """
+    try:
+        return part.args_as_dict()
+    except (ValueError, AssertionError):
+        return {}
+
+
 try:
     from anthropic import (
         NOT_GIVEN,
@@ -784,7 +799,7 @@ class AnthropicModel(Model):
                             id=_guard_tool_call_id(t=response_part),
                             type='tool_use',
                             name=response_part.tool_name,
-                            input=response_part.args_as_dict(),
+                            input=_safe_args_as_dict(response_part),
                         )
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
@@ -821,7 +836,7 @@ class AnthropicModel(Model):
                                     id=tool_use_id,
                                     type='server_tool_use',
                                     name='web_search',
-                                    input=response_part.args_as_dict(),
+                                    input=_safe_args_as_dict(response_part),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == CodeExecutionTool.kind:
@@ -829,7 +844,7 @@ class AnthropicModel(Model):
                                     id=tool_use_id,
                                     type='server_tool_use',
                                     name='code_execution',
-                                    input=response_part.args_as_dict(),
+                                    input=_safe_args_as_dict(response_part),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == WebFetchTool.kind:
@@ -837,13 +852,13 @@ class AnthropicModel(Model):
                                     id=tool_use_id,
                                     type='server_tool_use',
                                     name='web_fetch',
-                                    input=response_part.args_as_dict(),
+                                    input=_safe_args_as_dict(response_part),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif (
                                 response_part.tool_name.startswith(MCPServerTool.kind)
                                 and (server_id := response_part.tool_name.split(':', 1)[1])
-                                and (args := response_part.args_as_dict())
+                                and (args := _safe_args_as_dict(response_part))
                                 and (tool_name := args.get('tool_name'))
                                 and (tool_args := args.get('tool_args'))
                             ):  # pragma: no branch

@@ -8409,3 +8409,55 @@ Instructions content\
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'
+
+
+async def test_anthropic_malformed_tool_args_does_not_crash(allow_model_requests: None):
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/4430.
+
+    When a previous model response contains syntactically broken JSON in tool
+    call arguments, the Anthropic message remapping should not crash with a raw
+    ``ValueError``.  Instead, it should substitute ``{}`` so the retry prompt
+    that follows can still reach the model.
+    """
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+
+    bad_args = '{"query": "bad query", "file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Search for docs')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='search_knowledge',
+                    tool_call_id='toolu_123',
+                    args=bad_args,
+                )
+            ],
+            timestamp=datetime.now(timezone.utc),
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='search_knowledge',
+                    tool_call_id='toolu_123',
+                    content='Error: invalid JSON arguments',
+                ),
+                RetryPromptPart(
+                    tool_name='search_knowledge',
+                    tool_call_id='toolu_123',
+                    content='Fix the JSON in your tool call arguments',
+                ),
+            ]
+        ),
+    ]
+
+    # _map_message should not raise; malformed args should be replaced with {}
+    _system_prompt, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
+
+    # The assistant message should contain the tool_use block with empty input
+    assistant_msg = anthropic_messages[1]
+    assert assistant_msg['role'] == 'assistant'
+    tool_use_block = assistant_msg['content'][0]  # type: ignore
+    assert tool_use_block['type'] == 'tool_use'
+    assert tool_use_block['input'] == {}
+    assert tool_use_block['name'] == 'search_knowledge'
