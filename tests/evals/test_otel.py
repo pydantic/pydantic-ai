@@ -244,6 +244,13 @@ async def test_span_node_matches_json_serialized_attributes():
     assert not info_node.matches(SpanQuery(has_attributes={'data': {'foo': 999}}))
 
 
+def test_attribute_value_matches_invalid_json_returns_false():
+    """When stored string is not valid JSON and query is non-string, return False."""
+    from pydantic_evals.otel.span_tree import _attribute_value_matches
+
+    assert _attribute_value_matches('not-valid-json{', {'key': 'value'}) is False
+
+
 async def test_span_tree_repr(span_tree: SpanTree):
     assert repr(SpanTree()) == snapshot('<SpanTree />')
     assert str(span_tree) == snapshot('<SpanTree num_roots=1 total_spans=6 />')
