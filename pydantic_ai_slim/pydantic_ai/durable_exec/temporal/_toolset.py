@@ -130,7 +130,7 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
 
         `args_validator_func` is also called here (not in the workflow) so that it can safely perform I/O.
         """
-        args_dict = tool.args_validator.validate_python(tool_args)
+        args_dict = tool.args_validator.validate_python(tool_args, context=ctx.validation_context)
         if tool.args_validator_func is not None:
             try:
                 result = tool.args_validator_func(ctx, **args_dict)
