@@ -511,7 +511,9 @@ def test_has_matching_span_yaml_roundtrip():
     """
     from pydantic_evals.evaluators.spec import EvaluatorSpec
 
-    evaluator = HasMatchingSpan(query=SpanQuery(some_descendant_has=SpanQuery(has_attributes={'gen_ai.tool.name': 'calculator'})))
+    evaluator = HasMatchingSpan(
+        query=SpanQuery(some_descendant_has=SpanQuery(has_attributes={'gen_ai.tool.name': 'calculator'}))
+    )
     spec = evaluator.as_spec()
 
     # The spec must use kwargs form, NOT the compact tuple form
