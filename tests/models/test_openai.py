@@ -4342,7 +4342,7 @@ def test_transformer_adds_properties_to_object_schemas():
 def test_transformer_detects_empty_items_as_strict_incompatible():
     """Empty items: {} (bare list) must be detected as strict-incompatible."""
 
-    schema = {
+    schema: dict[str, Any] = {
         'type': 'object',
         'properties': {
             'items_param': {'type': 'array', 'items': {}},
@@ -4360,7 +4360,7 @@ def test_transformer_detects_empty_items_as_strict_incompatible():
 def test_transformer_strips_empty_items_when_strict_true():
     """When strict=True, empty items: {} should be stripped and noted in description."""
 
-    schema = {
+    schema: dict[str, Any] = {
         'type': 'object',
         'properties': {
             'items_param': {'type': 'array', 'items': {}},
