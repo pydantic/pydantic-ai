@@ -5102,6 +5102,58 @@ async def test_google_api_non_http_error(
     assert exc_info.value.model_name == 'gemini-1.5-flash'
 
 
+async def test_google_stream_api_error_wrapped_as_model_http_error(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+):
+    """API errors during stream iteration should be wrapped as ModelHTTPError."""
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+
+    async def failing_stream():
+        raise errors.APIError(
+            429, {'error': {'code': 429, 'message': 'Rate limit exceeded', 'status': 'RESOURCE_EXHAUSTED'}}
+        )
+        yield
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=failing_stream())
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with agent.run_stream('test') as result:
+            async for _chunk in result.stream_text():
+                pass
+
+    assert exc_info.value.status_code == 429
+
+
+async def test_google_stream_peek_api_error_wrapped(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+):
+    """API errors during stream peek (first chunk) should be wrapped as ModelHTTPError."""
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+
+    api_error = errors.APIError(
+        503, {'error': {'code': 503, 'message': 'Service unavailable', 'status': 'UNAVAILABLE'}}
+    )
+
+    async def failing_stream():
+        raise api_error
+        yield
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', side_effect=lambda **kw: failing_stream())
+    mocker.patch.object(model.client.aio.models, 'generate_content', side_effect=api_error)
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with agent.run_stream('test'):
+            pass
+
+    assert exc_info.value.status_code == 503
+
+
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=IsDatetime()),

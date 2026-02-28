@@ -650,7 +650,16 @@ class GoogleModel(Model):
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
+        try:
+            first_chunk = await peekable_response.peek()
+        except errors.APIError as e:
+            if (status_code := e.code) >= 400:
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self._model_name,
+                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+                ) from e
+            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
@@ -832,7 +841,7 @@ class GeminiStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
             self.provider_details = {'timestamp': self._provider_timestamp}
-        async for chunk in self._response:
+        async for chunk in self._wrap_stream_errors(self._response):
             self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
 
             if not chunk.candidates:
@@ -974,6 +983,23 @@ class GeminiStreamedResponse(StreamedResponse):
             file_search_part = self._handle_file_search_grounding_metadata_streaming(candidate.grounding_metadata)
             if file_search_part is not None:
                 yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
+
+    async def _wrap_stream_errors(
+        self,
+        response: AsyncIterator[GenerateContentResponse],
+    ) -> AsyncIterator[GenerateContentResponse]:
+        """Wrap stream iteration to convert Google API errors into ModelHTTPError/ModelAPIError."""
+        try:
+            async for chunk in response:
+                yield chunk
+        except errors.APIError as e:
+            if (status_code := e.code) >= 400:
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self._model_name,
+                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+                ) from e
+            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
 
     def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None
