@@ -4373,6 +4373,22 @@ def test_transformer_strips_empty_items_when_strict_true():
     assert 'items={} (any type)' in result['properties']['items_param'].get('description', '')
 
 
+def test_transformer_strips_empty_items_preserves_description():
+    """When strict=True and the array already has a description, empty items note is appended."""
+
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {
+            'items_param': {'type': 'array', 'items': {}, 'description': 'A list of values'},
+        },
+        'required': ['items_param'],
+    }
+    result = OpenAIJsonSchemaTransformer(schema, strict=True).walk()
+
+    assert 'items' not in result['properties']['items_param']
+    assert result['properties']['items_param']['description'] == 'A list of values (items={} (any type))'
+
+
 def chunk_with_usage(
     delta: list[ChoiceDelta],
     finish_reason: FinishReason | None = None,
