@@ -2376,6 +2376,20 @@ def test_strict_schema():
     )
 
 
+def test_strict_schema_empty_array_items():
+    """Test that `items: {}` (bare list) is detected as not strict-compatible."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {
+            'items': {'type': 'array', 'items': {}},
+        },
+        'required': ['items'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is False
+
+
 def test_native_output_strict_mode(allow_model_requests: None):
     class CityLocation(BaseModel):
         city: str

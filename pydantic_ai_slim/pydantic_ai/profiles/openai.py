@@ -313,4 +313,11 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                     for k in schema['properties'].keys():
                         if k not in required:
                             self.is_strict_compatible = False
+
+        if schema_type == 'array':
+            items = schema.get('items')
+            if isinstance(items, dict) and not items:
+                # Empty `items: {}` is not valid in strict mode — OpenAI requires a `type` key
+                self.is_strict_compatible = False
+
         return schema
