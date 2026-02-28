@@ -626,9 +626,15 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     """Synchronous wrapper for [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] that only exposes sync methods."""
 
     _streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT]
+    _cleanup_gen: AsyncGenerator[Any, None] | None
 
-    def __init__(self, streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT]) -> None:
+    def __init__(
+        self,
+        streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT],
+        _cleanup_gen: AsyncGenerator[Any, None] | None = None,
+    ) -> None:
         self._streamed_run_result = streamed_run_result
+        self._cleanup_gen = _cleanup_gen
 
     def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of messages.
@@ -735,7 +741,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
     def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
-        return _utils.get_event_loop().run_until_complete(self._streamed_run_result.get_output())
+        loop = _utils.get_event_loop()
+        try:
+            return loop.run_until_complete(self._streamed_run_result.get_output())
+        finally:
+            self._close_cleanup_gen()
 
     @property
     def response(self) -> _messages.ModelResponse:
@@ -781,6 +791,29 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         [`get_output`][pydantic_ai.result.StreamedRunResultSync.get_output] completes.
         """
         return self._streamed_run_result.is_complete
+
+    def _close_cleanup_gen(self) -> None:
+        """Close the underlying async generator so that the ``run_stream`` context
+        manager exits deterministically, allowing OTel spans to be finalized with
+        the correct attributes (usage, final_result, etc.)."""
+        if self._cleanup_gen is not None:
+            try:
+                _utils.get_event_loop().run_until_complete(self._cleanup_gen.aclose())
+            except Exception:
+                pass
+            finally:
+                self._cleanup_gen = None
+
+    def close(self) -> None:
+        """Explicitly close the stream and release underlying resources.
+
+        This is called automatically by :meth:`get_output`, but can also be
+        called manually if you want to abort early.
+        """
+        self._close_cleanup_gen()
+
+    def __del__(self) -> None:
+        self._close_cleanup_gen()
 
 
 @dataclass(repr=False)
