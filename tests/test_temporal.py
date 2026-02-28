@@ -2001,6 +2001,73 @@ async def test_args_validator_outside_workflow():
     assert _args_validator_call_in_workflow == [False]
 
 
+# --- args_validator raising ModelRetry inside an activity ---
+
+# Tracks sequential call numbers so the validator can fail on the first call and pass on retry.
+# Activities run in the same process as the test worker, so module-level state is visible.
+_model_retry_validator_calls: list[int] = []
+
+
+async def _args_validator_retry_once(ctx: RunContext[None], city: str) -> None:
+    """Validator that raises ModelRetry on the first call and succeeds on subsequent calls."""
+    call_num = len(_model_retry_validator_calls) + 1
+    _model_retry_validator_calls.append(call_num)
+    if call_num == 1:
+        raise ModelRetry('city not validated, please retry')
+
+
+args_validator_model_retry_toolset = FunctionToolset[None](id='args_validator_model_retry_toolset')
+
+
+@args_validator_model_retry_toolset.tool(args_validator=_args_validator_retry_once)
+async def get_weather_model_retry_validated(ctx: RunContext[None], city: str) -> str:
+    """Get the weather, with a validator that fails on the first attempt."""
+    return f'sunny in {city}'
+
+
+args_validator_model_retry_agent = Agent(
+    TestModel(), toolsets=[args_validator_model_retry_toolset], name='args_validator_model_retry_agent'
+)
+
+args_validator_model_retry_temporal_agent = TemporalAgent(
+    args_validator_model_retry_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class ArgsValidatorModelRetryWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await args_validator_model_retry_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_args_validator_model_retry_in_activity(client: Client):
+    """ModelRetry raised by args_validator inside an activity triggers correct retry machinery.
+
+    Covers the `except ModelRetry` branch in `_call_tool_in_activity` which returns `_ModelRetry`
+    so the agent loop sees the retry prompt and re-invokes the tool.
+    """
+    _model_retry_validator_calls.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ArgsValidatorModelRetryWorkflow],
+        plugins=[AgentPlugin(args_validator_model_retry_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            ArgsValidatorModelRetryWorkflow.run,
+            args=['What is the weather in Mexico City?'],
+            id='test_args_validator_model_retry_in_activity',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == snapshot('{"get_weather_model_retry_validated":"sunny in a"}')
+    # Called twice: first call raises ModelRetry (returned as _ModelRetry from the activity),
+    # TestModel retries the tool, and the second call succeeds.
+    assert _model_retry_validator_calls == [1, 2]
+
+
 # --- args_validator with activity_config=False ---
 
 args_validator_inline_toolset = FunctionToolset[None](id='args_validator_inline_toolset')
@@ -2049,8 +2116,14 @@ async def test_args_validator_inline_tool_in_workflow(client: Client):
             id='test_args_validator_inline_tool_in_workflow',
             task_queue=TASK_QUEUE,
         )
-    # The workflow completes successfully, confirming the validator was invoked without error
-    # and the tool ran correctly in the workflow context.
+    # The workflow completes successfully, which is only possible if the validator ran without
+    # raising an error and the tool executed correctly.
+    #
+    # Note: we cannot assert on `_args_validator_call_in_workflow` here as we do in the
+    # activity tests. When `tool_activity_config=False`, both the validator and the tool run
+    # inside the Temporal workflow sandbox, which executes in an isolated copy of the module's
+    # globals. Any mutations to module-level state (like appending to a list) happen inside
+    # that sandbox copy and are NOT visible to the test process.
     assert output == snapshot('{"get_weather_validated_inline":"sunny in a"}')
 
 
