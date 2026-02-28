@@ -580,7 +580,7 @@ class TestIsSameRequest:
     """Tests for _is_same_request identity and content matching."""
 
     def test_identity_match(self):
-        from pydantic_ai._agent_graph import _is_same_request
+        from pydantic_ai._agent_graph import _is_same_request  # pyright: ignore[reportPrivateUsage]
         from pydantic_ai.messages import ModelRequest, UserPromptPart
 
         request = ModelRequest(parts=[UserPromptPart(content='hello')])
@@ -589,7 +589,7 @@ class TestIsSameRequest:
     def test_content_match(self):
         from datetime import timezone
 
-        from pydantic_ai._agent_graph import _is_same_request
+        from pydantic_ai._agent_graph import _is_same_request  # pyright: ignore[reportPrivateUsage]
         from pydantic_ai.messages import ModelRequest, UserPromptPart
 
         ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -598,7 +598,7 @@ class TestIsSameRequest:
         assert _is_same_request(r1, r2) is True
 
     def test_non_request_message(self):
-        from pydantic_ai._agent_graph import _is_same_request
+        from pydantic_ai._agent_graph import _is_same_request  # pyright: ignore[reportPrivateUsage]
         from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
         request = ModelRequest(parts=[UserPromptPart(content='hello')])
@@ -608,7 +608,7 @@ class TestIsSameRequest:
     def test_different_content(self):
         from datetime import timezone
 
-        from pydantic_ai._agent_graph import _is_same_request
+        from pydantic_ai._agent_graph import _is_same_request  # pyright: ignore[reportPrivateUsage]
         from pydantic_ai.messages import ModelRequest, UserPromptPart
 
         ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
