@@ -27,7 +27,7 @@ _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar
     'parallel_execution_mode', default='parallel'
 )
 
-_skip_args_validator_func: ContextVar[bool] = ContextVar('_skip_args_validator_func', default=False)
+skip_args_validator_func: ContextVar[bool] = ContextVar('skip_args_validator_func', default=False)
 """Context variable used by durable execution environments (e.g. Temporal) to skip calling
 `args_validator_func` during workflow-context validation. The function will instead be called
 inside the activity where I/O is permitted.
@@ -216,7 +216,7 @@ class ToolManager(Generic[AgentDepsT]):
                 call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
             )
 
-        if tool.args_validator_func is not None and not _skip_args_validator_func.get():
+        if tool.args_validator_func is not None and not skip_args_validator_func.get():
             result = tool.args_validator_func(ctx, **args_dict)
             if inspect.isawaitable(result):
                 await result
