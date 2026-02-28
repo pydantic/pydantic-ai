@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -17,6 +18,25 @@ if TYPE_CHECKING:  # pragma: no cover
 
 # Should match opentelemetry.util.types.AttributeValue
 AttributeValue = str | bool | int | float | Sequence[str] | Sequence[bool] | Sequence[int] | Sequence[float]
+
+
+def _attribute_matches(stored: AttributeValue | None, expected: Any) -> bool:
+    """Compare a stored span attribute value against an expected query value.
+
+    OTel attributes only support primitive types and sequences thereof. Complex
+    values such as dicts are typically JSON-serialized to strings by logfire. To
+    let callers pass the original (non-serialized) value in *has_attributes*
+    queries, we fall back to comparing the JSON representation when a direct
+    equality check fails.
+    """
+    if stored == expected:
+        return True
+    if isinstance(stored, str) and not isinstance(expected, str):
+        try:
+            return stored == json.dumps(expected, separators=(',', ':'))
+        except (TypeError, ValueError):
+            return False
+    return False
 
 
 __all__ = 'SpanNode', 'SpanTree', 'SpanQuery'
@@ -267,7 +287,7 @@ class SpanNode:
 
         # Attribute conditions
         if (has_attributes := query.get('has_attributes')) and not all(
-            self.attributes.get(key) == value for key, value in has_attributes.items()
+            _attribute_matches(self.attributes.get(key), value) for key, value in has_attributes.items()
         ):
             return False
         if (has_attributes_keys := query.get('has_attribute_keys')) and not all(

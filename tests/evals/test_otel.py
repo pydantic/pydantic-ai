@@ -897,3 +897,20 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
         'refer to the documentation at '
         'https://ai.pydantic.dev/evals/#opentelemetry-integration.'
     )
+
+
+async def test_span_query_matches_dict_attributes():
+    """Test that SpanQuery has_attributes can match dict values stored as JSON strings."""
+    with context_subtree() as tree:
+        with logfire.span('task'):
+            data = {'foo': 1, 'bar': True}
+            logfire.info('some data', data=data)
+
+    # Direct string match still works
+    assert tree.first(SpanQuery(has_attributes={'data': '{"foo":1,"bar":true}'})) is not None
+
+    # Dict value should also match (the fix)
+    assert tree.first(SpanQuery(has_attributes={'data': {'foo': 1, 'bar': True}})) is not None
+
+    # Non-matching dict should not match
+    assert tree.first(SpanQuery(has_attributes={'data': {'foo': 999}})) is None
