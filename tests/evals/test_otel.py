@@ -920,7 +920,7 @@ async def test_span_query_matches_dict_attributes():
 
 def test_attribute_value_matches_non_serializable_returns_false():
     """When expected value is not JSON-serializable, return False gracefully."""
-    from pydantic_evals.otel.span_tree import _attribute_matches
+    from pydantic_evals.otel.span_tree import _attribute_matches  # pyright: ignore[reportPrivateUsage]
 
     # set is not JSON-serializable, so json.dumps raises TypeError
     assert _attribute_matches('{"a":1}', {1, 2, 3}) is False
