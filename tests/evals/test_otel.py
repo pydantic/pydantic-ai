@@ -223,6 +223,43 @@ async def test_span_node_matches(span_tree: SpanTree):
     assert not child1_node.matches(SpanQuery(name_equals='child1', has_attributes={'type': 'normal'}))
 
 
+async def test_span_query_dict_attribute_matching():
+    """Test that has_attributes matches dict values against their JSON-serialized form.
+
+    Logfire stores complex types (dicts, lists) as JSON strings.
+    SpanQuery should allow querying with the original Python object.
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4448
+    """
+    data = {'foo': 1, 'bar': True}
+
+    with context_subtree() as tree:
+        with logfire.span('task'):
+            logfire.info('some data', data=data)
+
+    assert isinstance(tree, SpanTree)
+
+    # String query (existing behavior) should still work
+    assert tree.first(SpanQuery(has_attributes={'data': '{"foo":1,"bar":true}'})) is not None
+
+    # Dict query (new behavior) should also match
+    assert tree.first(SpanQuery(has_attributes={'data': data})) is not None
+
+    # Dict with reversed key order should also match
+    assert tree.first(SpanQuery(has_attributes={'data': {'bar': True, 'foo': 1}})) is not None
+
+    # Non-matching dict should NOT match
+    assert tree.first(SpanQuery(has_attributes={'data': {'foo': 2, 'bar': True}})) is None
+
+    # List values should also work
+    with context_subtree() as tree2:
+        with logfire.span('task2'):
+            logfire.info('list data', items=[1, 2, 3])
+
+    assert isinstance(tree2, SpanTree)
+    assert tree2.first(SpanQuery(has_attributes={'items': [1, 2, 3]})) is not None
+    assert tree2.first(SpanQuery(has_attributes={'items': [1, 2, 4]})) is None
+
+
 async def test_span_tree_repr(span_tree: SpanTree):
     assert repr(SpanTree()) == snapshot('<SpanTree />')
     assert str(span_tree) == snapshot('<SpanTree num_roots=1 total_spans=6 />')

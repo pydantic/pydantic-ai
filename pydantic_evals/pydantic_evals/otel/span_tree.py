@@ -267,7 +267,7 @@ class SpanNode:
 
         # Attribute conditions
         if (has_attributes := query.get('has_attributes')) and not all(
-            self.attributes.get(key) == value for key, value in has_attributes.items()
+            _attribute_matches(self.attributes.get(key), value) for key, value in has_attributes.items()
         ):
             return False
         if (has_attributes_keys := query.get('has_attribute_keys')) and not all(
@@ -539,3 +539,23 @@ class SpanTree:
 
 SPAN_TREE_ADAPTER = TypeAdapter(SpanTree)
 """This adapter can be used to serialize and deserialize `SpanTree` objects to and from JSON."""
+
+
+def _attribute_matches(stored: AttributeValue | None, query_value: Any) -> bool:
+    """Match an attribute value, handling JSON-serialized complex types.
+
+    Logfire stores complex types (dicts, nested lists) as JSON strings.
+    This allows querying with the original Python object by parsing
+    the stored JSON and comparing objects directly.
+    """
+    if stored == query_value:
+        return True
+    if stored is not None and not isinstance(query_value, (str, bool, int, float)):
+        if isinstance(stored, str):
+            try:
+                import json
+
+                return json.loads(stored) == query_value
+            except (json.JSONDecodeError, ValueError):
+                return False
+    return False
