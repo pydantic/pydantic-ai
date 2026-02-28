@@ -858,18 +858,19 @@ class AnthropicModel(Model):
                             elif (
                                 response_part.tool_name.startswith(MCPServerTool.kind)
                                 and (server_id := response_part.tool_name.split(':', 1)[1])
-                                and (args := _safe_args_as_dict(response_part))
-                                and (tool_name := args.get('tool_name'))
-                                and (tool_args := args.get('tool_args'))
                             ):  # pragma: no branch
-                                mcp_tool_use_block_param = BetaMCPToolUseBlockParam(
-                                    id=tool_use_id,
-                                    type='mcp_tool_use',
-                                    server_name=server_id,
-                                    name=tool_name,
-                                    input=tool_args,
-                                )
-                                assistant_content_params.append(mcp_tool_use_block_param)
+                                args = _safe_args_as_dict(response_part)
+                                tool_name = args.get('tool_name')
+                                tool_args = args.get('tool_args')
+                                if tool_name is not None and tool_args is not None:
+                                    mcp_tool_use_block_param = BetaMCPToolUseBlockParam(
+                                        id=tool_use_id,
+                                        type='mcp_tool_use',
+                                        server_name=server_id,
+                                        name=tool_name,
+                                        input=tool_args,
+                                    )
+                                    assistant_content_params.append(mcp_tool_use_block_param)
                     elif isinstance(response_part, BuiltinToolReturnPart):
                         if response_part.provider_name == self.system:
                             tool_use_id = _guard_tool_call_id(t=response_part)
