@@ -6096,6 +6096,38 @@ def test_google_content_model_response_no_tool_support():
     )
 
 
+async def test_google_map_messages_tool_return_no_tool_support(google_provider: GoogleProvider):
+    """When supports_tools=False, ToolReturnPart in _map_messages should be converted to text."""
+    m = GoogleModel('gemini-2.5-flash-image', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_weather', content='Sunny, 25°C', tool_call_id='call_123'),
+                UserPromptPart(content='Describe the weather'),
+            ]
+        )
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'text': '-----BEGIN TOOL_RETURN id="call_123" name="get_weather"-----\nSunny, 25°C\n-----END TOOL_RETURN-----'
+                    },
+                    {
+                        'text': 'Describe the weather',
+                    },
+                ],
+            },
+        ]
+    )
+
+
 def test_google_content_model_response_no_tool_support_with_thinking():
     """When supports_tools=False, thinking signatures should be omitted and thinking parts become plain text."""
     signature = base64.b64encode(b'signature').decode('utf-8')
