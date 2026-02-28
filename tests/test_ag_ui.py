@@ -1509,6 +1509,37 @@ async def test_to_ag_ui() -> None:
     assert deps.state.value == 0
 
 
+async def test_model_request_run_id_set_via_agui() -> None:
+    """Test that ModelRequest.run_id is populated when running through the AG-UI adapter.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4415.
+    """
+
+    captured_results: list[AgentRunResult[Any]] = []
+
+    def on_complete(run_result: AgentRunResult[Any]) -> None:
+        captured_results.append(run_result)
+
+    agent = Agent(TestModel())
+    run_input = create_input(
+        UserMessage(
+            id='msg1',
+            content='Hello, agent!',
+        )
+    )
+
+    await run_and_collect_events(agent, run_input, on_complete=on_complete)
+
+    assert len(captured_results) == 1
+    messages = captured_results[0].all_messages()
+
+    # Every ModelRequest should have a non-None run_id
+    model_requests = [m for m in messages if isinstance(m, ModelRequest)]
+    assert model_requests, 'Expected at least one ModelRequest in the result'
+    for req in model_requests:
+        assert req.run_id is not None, f'ModelRequest.run_id should not be None, got: {req!r}'
+
+
 async def test_callback_sync() -> None:
     """Test that sync callbacks work correctly."""
 

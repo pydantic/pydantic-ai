@@ -517,8 +517,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
         self.request.timestamp = now_utc()
-        if not self.is_resuming_without_prompt:
-            self.request.run_id = self.request.run_id or ctx.state.run_id
+        self.request.run_id = self.request.run_id or ctx.state.run_id
         ctx.state.message_history.append(self.request)
 
         ctx.state.run_step += 1
