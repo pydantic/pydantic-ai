@@ -133,7 +133,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
-        examples: list[dict[str, Any]] | None = None,
+        examples: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
@@ -154,7 +154,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
-        examples: list[dict[str, Any]] | None = None,
+        examples: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Any:
@@ -219,7 +219,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             examples: Example inputs demonstrating correct tool usage. Defaults to None.
                 See [`ToolDefinition.examples`][pydantic_ai.tools.ToolDefinition.examples] for more info.
-                If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
@@ -267,7 +266,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
-        examples: list[dict[str, Any]] | None = None,
+        examples: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> None:
@@ -310,7 +309,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             examples: Example inputs demonstrating correct tool usage. Defaults to None.
                 See [`ToolDefinition.examples`][pydantic_ai.tools.ToolDefinition.examples] for more info.
-                If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.

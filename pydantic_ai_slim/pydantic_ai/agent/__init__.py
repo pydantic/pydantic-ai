@@ -1176,7 +1176,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
-        examples: list[dict[str, Any]] | None = None,
+        examples: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
@@ -1197,7 +1197,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
-        examples: list[dict[str, Any]] | None = None,
+        examples: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Any:
@@ -1306,7 +1306,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
-        examples: list[dict[str, Any]] | None = None,
+        examples: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
@@ -1327,7 +1327,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
-        examples: list[dict[str, Any]] | None = None,
+        examples: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> Any:

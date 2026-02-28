@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 import pydantic_core
 import pytest
 from griffe import DocstringSectionKind
-from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema

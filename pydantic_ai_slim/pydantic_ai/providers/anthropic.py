@@ -43,17 +43,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         profile = anthropic_model_profile(model_name)
-
-        # Determine tool examples beta header based on client type
-        beta_header = 'advanced-tool-use-2025-11-20'
-        if isinstance(self._client, (AsyncAnthropicBedrock, AsyncAnthropicVertex)):
-            beta_header = 'tool-examples-2025-10-29'
-
-        extra_profile = ModelProfile(tool_examples_beta_header=beta_header)
-
-        return (
-            ModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile).update(extra_profile)
-        )
+        return ModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...

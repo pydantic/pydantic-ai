@@ -32,7 +32,7 @@ from .output import (
     ToolOutput,
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
-from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
+from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition, process_examples
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
@@ -912,26 +912,17 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 strict = default_strict
 
             processor = ObjectOutputProcessor(
-                output=cast('OutputTypeOrFunction[OutputDataT]', output),
+                output=output,  # pyright: ignore[reportUnknownArgumentType]
                 description=description,
                 strict=strict,
             )
 
             if examples:
-                # Flatten examples if the output function has a single argument that gets flattened in the schema
-                if processor.single_arg_name:
-                    arg_name = processor.single_arg_name
-                    examples = [ex[arg_name] if isinstance(ex, dict) and arg_name in ex else ex for ex in examples]
-
-                # Serialize examples to JSON-compatible dicts
-                examples = [
-                    TypeAdapter(Any).dump_python(ex, mode='json')  # pyright: ignore[reportUnknownMemberType]
-                    for ex in examples
-                ]
-
-                # Wrap examples if the output type is wrapped in a TypedDict
-                if processor.outer_typed_dict_key:
-                    examples = [{processor.outer_typed_dict_key: ex} for ex in examples]
+                examples = process_examples(
+                    examples,
+                    single_arg_name=processor.single_arg_name,
+                    outer_typed_dict_key=processor.outer_typed_dict_key,
+                )
 
             object_def = processor.object_def
 
@@ -953,11 +944,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 description = DEFAULT_OUTPUT_TOOL_DESCRIPTION
                 if multiple:
                     description = f'{object_def.name}: {description}'
-
-            # Append examples to description so they are visible to models that don't support input_examples
-            if examples:
-                examples_str = json.dumps(examples, indent=2)
-                description = f'{description}\n\nExamples:\n{examples_str}'
 
             tool_def = ToolDefinition(
                 name=name,

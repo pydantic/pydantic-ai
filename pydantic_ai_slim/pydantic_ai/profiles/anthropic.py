@@ -17,8 +17,13 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # TODO update when new models are released that support structured outputs
     # https://docs.claude.com/en/docs/build-with-claude/structured-outputs#example-usage
 
+    models_that_support_tool_examples = ('claude-opus-4-6',)
+
     supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
+    supports_tool_examples = model_name.startswith(models_that_support_tool_examples)
+
     return ModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
+        supports_tool_examples=supports_tool_examples,
     )

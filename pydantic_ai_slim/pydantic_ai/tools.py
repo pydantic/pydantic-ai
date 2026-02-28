@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
@@ -197,6 +196,27 @@ class ToolDenied:
     _: KW_ONLY
 
     kind: Literal['tool-denied'] = 'tool-denied'
+
+
+def process_examples(
+    examples: list[Any],
+    single_arg_name: str | None = None,
+    outer_typed_dict_key: str | None = None,
+) -> list[dict[str, Any]]:
+    """Process tool examples by flattening, serializing, and optionally wrapping them."""
+    if single_arg_name:
+        examples = [ex[single_arg_name] if isinstance(ex, dict) and single_arg_name in ex else ex for ex in examples]
+
+    # Serialize examples to JSON-compatible dicts
+    examples = [
+        TypeAdapter(Any).dump_python(ex, mode='json')  # pyright: ignore[reportUnknownMemberType]
+        for ex in examples
+    ]
+
+    if outer_typed_dict_key:
+        examples = [{outer_typed_dict_key: ex} for ex in examples]
+
+    return examples
 
 
 def _deferred_tool_call_result_discriminator(x: Any) -> str | None:
@@ -458,30 +478,12 @@ class Tool(Generic[ToolAgentDepsT]):
     @property
     def tool_def(self):
         examples = self.examples
-        description = self.description
         if examples:
-            if self.function_schema.single_arg_name:
-                arg_name = self.function_schema.single_arg_name
-                examples = [  # pyright: ignore[reportUnknownVariableType]
-                    ex[arg_name] if isinstance(ex, dict) and arg_name in ex else ex for ex in examples
-                ]
-
-            # Serialize examples to JSON-compatible dicts
-            examples = [
-                TypeAdapter(Any).dump_python(ex, mode='json')  # pyright: ignore[reportUnknownMemberType]
-                for ex in examples  # pyright: ignore[reportUnknownVariableType]
-            ]
-
-            # Append examples to description so they are visible to models that don't support input_examples
-            examples_str = json.dumps(examples, indent=2)
-            if description:
-                description = f'{description}\n\nExamples:\n{examples_str}'
-            else:
-                description = f'Examples:\n{examples_str}'
+            examples = process_examples(examples, single_arg_name=self.function_schema.single_arg_name)
 
         return ToolDefinition(
             name=self.name,
-            description=description,
+            description=self.description,
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
             sequential=self.sequential,

@@ -116,7 +116,7 @@ class ToolOutput(Generic[OutputDataT]):
     """The maximum number of retries for the tool."""
     strict: bool | None
     """Whether to use strict mode for the tool."""
-    examples: list[dict[str, Any]] | None
+    examples: list[Any] | None
     """Example inputs demonstrating correct tool usage."""
 
     def __init__(
