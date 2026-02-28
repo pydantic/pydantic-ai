@@ -2466,7 +2466,7 @@ def test_streamed_run_result_sync_exposes_metadata() -> None:
 
 
 def test_streamed_run_result_sync_close() -> None:
-    run_result = _make_run_result()
+    run_result = _make_run_result(metadata=None)
     streamed = StreamedRunResult(
         all_messages=run_result.all_messages(),
         new_message_index=0,
