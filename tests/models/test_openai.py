@@ -2376,6 +2376,34 @@ def test_strict_schema():
     )
 
 
+def test_strict_schema_strips_numeric_and_pattern_constraints():
+    """Test that pattern, minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf are stripped in strict mode."""
+
+    class ConstrainedModel(BaseModel):
+        email: Annotated[str, Field(pattern=r'^[\w.-]+@[\w.-]+\.\w+$')]
+        age: Annotated[int, Field(ge=0, le=150)]
+        score: Annotated[float, Field(gt=0.0, lt=100.0)]
+        step: Annotated[int, Field(multiple_of=5)]
+
+    result = OpenAIJsonSchemaTransformer(ConstrainedModel.model_json_schema(), strict=True).walk()
+    props = result['properties']
+
+    # pattern should be stripped and moved to description
+    assert 'pattern' not in props['email']
+    assert 'pattern' in props['email'].get('description', '')
+
+    # minimum/maximum (from ge/le) should be stripped
+    assert 'minimum' not in props['age']
+    assert 'maximum' not in props['age']
+
+    # exclusiveMinimum/exclusiveMaximum (from gt/lt) should be stripped
+    assert 'exclusiveMinimum' not in props['score']
+    assert 'exclusiveMaximum' not in props['score']
+
+    # multipleOf should be stripped
+    assert 'multipleOf' not in props['step']
+
+
 def test_native_output_strict_mode(allow_model_requests: None):
     class CityLocation(BaseModel):
         city: str
