@@ -1083,7 +1083,7 @@ def _extract_usage(
     # doesn't map them (e.g. for newer xAI models not yet in the pricing DB).
     if not extracted.cache_read_tokens and details.get('cache_read_tokens'):
         extracted.cache_read_tokens = details['cache_read_tokens']
-    if not extracted.cache_write_tokens and details.get('cache_write_tokens'):
+    if not extracted.cache_write_tokens and details.get('cache_write_tokens'):  # pragma: no cover
         extracted.cache_write_tokens = details['cache_write_tokens']
 
     return extracted
