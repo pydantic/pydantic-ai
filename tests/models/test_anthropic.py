@@ -8458,6 +8458,7 @@ async def test_anthropic_malformed_tool_args_does_not_crash(allow_model_requests
     assistant_msg = anthropic_messages[1]
     assert assistant_msg['role'] == 'assistant'
     tool_use_block = assistant_msg['content'][0]  # type: ignore
+    assert isinstance(tool_use_block, dict)
     assert tool_use_block['type'] == 'tool_use'
     assert tool_use_block['input'] == {}
     assert tool_use_block['name'] == 'search_knowledge'
