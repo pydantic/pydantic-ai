@@ -906,6 +906,8 @@ async def test_span_query_matches_dict_attributes():
             data = {'foo': 1, 'bar': True}
             logfire.info('some data', data=data)
 
+    assert isinstance(tree, SpanTree)
+
     # Direct string match still works
     assert tree.first(SpanQuery(has_attributes={'data': '{"foo":1,"bar":true}'})) is not None
 
