@@ -100,6 +100,36 @@ toolset = ACIToolset(
 agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
 
+## Security Scanning Tools {#security-tools}
+
+### Inkog
+
+[Inkog](https://github.com/inkog-io/inkog) is an open-source static analysis tool for AI agents. It scans agent code for security vulnerabilities including prompt injection, infinite loops, missing guardrails, and tainted data flows. It works with Pydantic AI and other agent frameworks.
+
+You can scan your Pydantic AI agent from the command line:
+
+```bash
+npx -y @inkog-io/cli scan .
+```
+
+Or use the [Inkog MCP server](https://www.npmjs.com/package/@inkog-io/mcp) to scan directly from Claude Desktop or Cursor while developing:
+
+```json
+{
+  "mcpServers": {
+    "inkog": {
+      "command": "npx",
+      "args": ["-y", "@inkog-io/mcp"],
+      "env": {
+        "INKOG_API_KEY": "sk_live_your_api_key"
+      }
+    }
+  }
+}
+```
+
+Get a free API key at [app.inkog.io](https://app.inkog.io).
+
 ## See Also
 
 - [Function Tools](tools.md) - Basic tool concepts and registration
