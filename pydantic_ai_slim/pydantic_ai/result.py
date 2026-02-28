@@ -793,9 +793,10 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         return self._streamed_run_result.is_complete
 
     def _close_cleanup_gen(self) -> None:
-        """Close the underlying async generator so that the ``run_stream`` context
-        manager exits deterministically, allowing OTel spans to be finalized with
-        the correct attributes (usage, final_result, etc.).
+        """Close the underlying async generator for deterministic ``run_stream`` exit.
+
+        This ensures the context manager exits deterministically, allowing OTel
+        spans to be finalized with the correct attributes (usage, final_result, etc.).
         """
         if self._cleanup_gen is not None:
             gen = self._cleanup_gen
