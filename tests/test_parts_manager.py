@@ -222,7 +222,7 @@ def test_handle_tool_call_deltas():
                 args_delta=None,
                 provider_name='updated_provider',
                 tool_call_id='call',
-                part_delta_kind='tool_call',
+                part_delta_kind='tool-call',
                 provider_details={'baz': 'qux'},
             ),
             event_kind='part_delta',
@@ -246,7 +246,7 @@ def test_handle_tool_call_deltas():
         PartDeltaEvent(
             index=0,
             delta=ToolCallPartDelta(
-                tool_name_delta=None, args_delta='"value1"}', tool_call_id='call', part_delta_kind='tool_call'
+                tool_name_delta=None, args_delta='"value1"}', tool_call_id='call', part_delta_kind='tool-call'
             ),
             event_kind='part_delta',
         )
@@ -377,7 +377,7 @@ def test_handle_tool_call_part():
         PartDeltaEvent(
             index=0,
             delta=ToolCallPartDelta(
-                tool_name_delta=None, args_delta='"value1"}', tool_call_id=IsStr(), part_delta_kind='tool_call'
+                tool_name_delta=None, args_delta='"value1"}', tool_call_id=IsStr(), part_delta_kind='tool-call'
             ),
             event_kind='part_delta',
         )
