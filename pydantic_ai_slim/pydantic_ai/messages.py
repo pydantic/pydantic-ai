@@ -1793,7 +1793,7 @@ class ToolCallPartDelta:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
-    part_delta_kind: Literal['tool_call'] = 'tool_call'
+    part_delta_kind: Literal['tool-call'] = 'tool-call'
     """Part delta type identifier, used as a discriminator."""
 
     def as_part(self) -> ToolCallPart | None:
