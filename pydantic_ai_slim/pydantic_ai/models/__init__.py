@@ -745,7 +745,7 @@ class Model(ABC):
                 examples_str = json.dumps(tool_def.examples, indent=2)
                 desc = tool_def.description or ''
                 new_desc = f'{desc}\n\nExamples:\n{examples_str}' if desc else f'Examples:\n{examples_str}'
-                return replace(tool_def, description=new_desc)
+                return replace(tool_def, description=new_desc, examples=None)
 
             params = replace(
                 params,
