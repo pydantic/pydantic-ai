@@ -5,6 +5,7 @@ import contextvars
 import functools
 import os
 from collections.abc import AsyncIterator
+from datetime import datetime
 from importlib.metadata import distributions
 
 import pytest
@@ -573,3 +574,44 @@ def test_validate_empty_kwargs_preserves_order():
     assert '`first`' in error_msg
     assert '`second`' in error_msg
     assert '`third`' in error_msg
+
+
+class TestIsSameRequest:
+    """Tests for _is_same_request identity and content matching."""
+
+    def test_identity_match(self):
+        from pydantic_ai._agent_graph import _is_same_request
+        from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+        request = ModelRequest(parts=[UserPromptPart(content='hello')])
+        assert _is_same_request(request, request) is True
+
+    def test_content_match(self):
+        from datetime import timezone
+
+        from pydantic_ai._agent_graph import _is_same_request
+        from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+        ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        r1 = ModelRequest(parts=[UserPromptPart(content='hello', timestamp=ts)], timestamp=ts)
+        r2 = ModelRequest(parts=[UserPromptPart(content='hello', timestamp=ts)], timestamp=ts)
+        assert _is_same_request(r1, r2) is True
+
+    def test_non_request_message(self):
+        from pydantic_ai._agent_graph import _is_same_request
+        from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+
+        request = ModelRequest(parts=[UserPromptPart(content='hello')])
+        response = ModelResponse(parts=[TextPart(content='world')])
+        assert _is_same_request(response, request) is False
+
+    def test_different_content(self):
+        from datetime import timezone
+
+        from pydantic_ai._agent_graph import _is_same_request
+        from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+        ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        r1 = ModelRequest(parts=[UserPromptPart(content='hello', timestamp=ts)], timestamp=ts)
+        r2 = ModelRequest(parts=[UserPromptPart(content='world', timestamp=ts)], timestamp=ts)
+        assert _is_same_request(r1, r2) is False

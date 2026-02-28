@@ -531,9 +531,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.message_history[:], ctx.deps.history_processors, run_context
         )
         if message_history and message_history[-1].run_id is None:
-            is_resumed_tail = self.is_resuming_without_prompt and _is_same_request(message_history[-1], self.request)
-            if not is_resumed_tail:
-                message_history[-1].run_id = ctx.state.run_id
+            message_history[-1].run_id = ctx.state.run_id
 
         if self.is_resuming_without_prompt:
             ctx.deps.resumed_request = self.request
