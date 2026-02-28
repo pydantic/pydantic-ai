@@ -177,18 +177,30 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 
 
 _STRICT_INCOMPATIBLE_KEYS = [
+    # String constraints
+    'pattern',
     'minLength',
     'maxLength',
-    'patternProperties',
-    'unevaluatedProperties',
-    'propertyNames',
-    'minProperties',
-    'maxProperties',
+    # Number constraints
+    'minimum',
+    'maximum',
+    'exclusiveMinimum',
+    'exclusiveMaximum',
+    'multipleOf',
+    # Array constraints
+    'minItems',
+    'maxItems',
     'unevaluatedItems',
     'contains',
     'minContains',
     'maxContains',
     'uniqueItems',
+    # Object constraints
+    'patternProperties',
+    'unevaluatedProperties',
+    'propertyNames',
+    'minProperties',
+    'maxProperties',
 ]
 
 _STRICT_COMPATIBLE_STRING_FORMATS = [
