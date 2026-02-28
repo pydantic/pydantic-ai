@@ -709,7 +709,9 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of the response data.
         """
-        return _utils.sync_async_iterator(self._streamed_run_result.stream_output(debounce_by=debounce_by))
+        return self._stream_with_cleanup(
+            _utils.sync_async_iterator(self._streamed_run_result.stream_output(debounce_by=debounce_by))
+        )
 
     def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> Iterator[str]:
         """Stream the text result as an iterable.
@@ -724,7 +726,9 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
-        return _utils.sync_async_iterator(self._streamed_run_result.stream_text(delta=delta, debounce_by=debounce_by))
+        return self._stream_with_cleanup(
+            _utils.sync_async_iterator(self._streamed_run_result.stream_text(delta=delta, debounce_by=debounce_by))
+        )
 
     def stream_responses(self, *, debounce_by: float | None = 0.1) -> Iterator[tuple[_messages.ModelResponse, bool]]:
         """Stream the response as an iterable of Structured LLM Messages.
@@ -737,7 +741,9 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of the structured response message and whether that is the last message.
         """
-        return _utils.sync_async_iterator(self._streamed_run_result.stream_responses(debounce_by=debounce_by))
+        return self._stream_with_cleanup(
+            _utils.sync_async_iterator(self._streamed_run_result.stream_responses(debounce_by=debounce_by))
+        )
 
     def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
@@ -791,6 +797,13 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         [`get_output`][pydantic_ai.result.StreamedRunResultSync.get_output] completes.
         """
         return self._streamed_run_result.is_complete
+
+    def _stream_with_cleanup(self, iterator: Iterator[T]) -> Iterator[T]:
+        """Wrap an iterator so ``_close_cleanup_gen`` runs after exhaustion."""
+        try:
+            yield from iterator
+        finally:
+            self._close_cleanup_gen()
 
     def _close_cleanup_gen(self) -> None:
         """Close the underlying async generator for deterministic ``run_stream`` exit.
