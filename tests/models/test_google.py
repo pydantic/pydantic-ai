@@ -6042,3 +6042,82 @@ async def test_google_prompt_feedback_streaming(
         assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
         assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
         assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True
+
+
+def test_tool_call_part_as_text():
+    part = ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call_123')
+    assert part.as_text() == snapshot(
+        '-----BEGIN TOOL_CALL id="call_123" name="get_weather"-----\n{"city":"Paris"}\n-----END TOOL_CALL-----'
+    )
+
+
+def test_tool_call_part_as_text_no_args():
+    part = ToolCallPart(tool_name='get_time', args=None, tool_call_id='call_456')
+    assert part.as_text() == snapshot(
+        '-----BEGIN TOOL_CALL id="call_456" name="get_time"-----\n{}\n-----END TOOL_CALL-----'
+    )
+
+
+def test_tool_return_part_as_text():
+    part = ToolReturnPart(tool_name='get_weather', content='Sunny, 25°C', tool_call_id='call_123')
+    assert part.as_text() == snapshot(
+        '-----BEGIN TOOL_RETURN id="call_123" name="get_weather"-----\nSunny, 25°C\n-----END TOOL_RETURN-----'
+    )
+
+
+def test_tool_return_part_as_text_dict_content():
+    part = ToolReturnPart(tool_name='get_weather', content={'temp': 25, 'condition': 'sunny'}, tool_call_id='call_789')
+    assert part.as_text() == snapshot(
+        '-----BEGIN TOOL_RETURN id="call_789" name="get_weather"-----\n{"temp":25,"condition":"sunny"}\n-----END TOOL_RETURN-----'
+    )
+
+
+def test_google_content_model_response_no_tool_support():
+    """When supports_tools=False, ToolCallPart should be converted to text."""
+    response = _content_model_response(
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call_123'),
+            ],
+            provider_name='google-gla',
+        ),
+        'google-gla',
+        supports_tools=False,
+    )
+    assert response == snapshot(
+        {
+            'role': 'model',
+            'parts': [
+                {
+                    'text': '-----BEGIN TOOL_CALL id="call_123" name="get_weather"-----\n{"city":"Paris"}\n-----END TOOL_CALL-----'
+                }
+            ],
+        }
+    )
+
+
+def test_google_content_model_response_no_tool_support_with_thinking():
+    """When supports_tools=False, thinking signatures should be omitted and thinking parts become plain text."""
+    signature = base64.b64encode(b'signature').decode('utf-8')
+    response = _content_model_response(
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Let me think about this...', signature=signature, provider_name='google-gla'),
+                ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call_123'),
+            ],
+            provider_name='google-gla',
+        ),
+        'google-gla',
+        supports_tools=False,
+    )
+    assert response == snapshot(
+        {
+            'role': 'model',
+            'parts': [
+                {'text': 'Let me think about this...'},
+                {
+                    'text': '-----BEGIN TOOL_CALL id="call_123" name="get_weather"-----\n{"city":"Paris"}\n-----END TOOL_CALL-----'
+                },
+            ],
+        }
+    )

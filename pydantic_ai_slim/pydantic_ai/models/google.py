@@ -679,17 +679,20 @@ class GoogleModel(Model):
                     elif isinstance(part, UserPromptPart):
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        message_parts.append(
-                            {
-                                'function_response': {
-                                    'name': part.tool_name,
-                                    'response': part.model_response_object(),
-                                    'id': part.tool_call_id,
+                        if self.profile.supports_tools:
+                            message_parts.append(
+                                {
+                                    'function_response': {
+                                        'name': part.tool_name,
+                                        'response': part.model_response_object(),
+                                        'id': part.tool_call_id,
+                                    }
                                 }
-                            }
-                        )
+                            )
+                        else:
+                            message_parts.append({'text': part.as_text()})
                     elif isinstance(part, RetryPromptPart):
-                        if part.tool_name is None:
+                        if part.tool_name is None or not self.profile.supports_tools:
                             message_parts.append({'text': part.model_response()})
                         else:
                             message_parts.append(
@@ -727,7 +730,7 @@ class GoogleModel(Model):
 
                     contents.append({'role': 'user', 'parts': content_parts})
             elif isinstance(m, ModelResponse):
-                maybe_content = _content_model_response(m, self.system)
+                maybe_content = _content_model_response(m, self.system, supports_tools=self.profile.supports_tools)
                 if maybe_content:
                     contents.append(maybe_content)
             else:
@@ -1062,45 +1065,50 @@ class GeminiStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict | None:  # noqa: C901
+def _content_model_response(m: ModelResponse, provider_name: str, *, supports_tools: bool = True) -> ContentDict | None:  # noqa: C901
     parts: list[PartDict] = []
     thinking_part_signature: str | None = None
     function_call_requires_signature: bool = True
     for item in m.parts:
         part: PartDict = {}
-        if (
-            item.provider_details
-            and (thought_signature := item.provider_details.get('thought_signature'))
-            and (m.provider_name == provider_name or item.provider_name == provider_name)
-        ):
-            part['thought_signature'] = base64.b64decode(thought_signature)
-        elif thinking_part_signature:
-            part['thought_signature'] = base64.b64decode(thinking_part_signature)
+        if supports_tools:
+            if (
+                item.provider_details
+                and (thought_signature := item.provider_details.get('thought_signature'))
+                and (m.provider_name == provider_name or item.provider_name == provider_name)
+            ):
+                part['thought_signature'] = base64.b64decode(thought_signature)
+            elif thinking_part_signature:
+                part['thought_signature'] = base64.b64decode(thinking_part_signature)
         thinking_part_signature = None
 
         if isinstance(item, ToolCallPart):
-            function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
-            part['function_call'] = function_call
-            if function_call_requires_signature and not part.get('thought_signature'):
-                # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs:
-                # > You can set the following dummy signatures of either "context_engineering_is_the_way_to_go"
-                # > or "skip_thought_signature_validator"
-                # Per https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures#using-rest-or-manual-handling:
-                # > You can set thought_signature to skip_thought_signature_validator
-                # We use "skip_thought_signature_validator" as it works for both Gemini API and Vertex AI.
-                part['thought_signature'] = b'skip_thought_signature_validator'
-            # Only the first function call requires a signature
-            function_call_requires_signature = False
+            if supports_tools:
+                function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
+                part['function_call'] = function_call
+                if function_call_requires_signature and not part.get('thought_signature'):
+                    # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs:
+                    # > You can set the following dummy signatures of either "context_engineering_is_the_way_to_go"
+                    # > or "skip_thought_signature_validator"
+                    # Per https://cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures#using-rest-or-manual-handling:
+                    # > You can set thought_signature to skip_thought_signature_validator
+                    # We use "skip_thought_signature_validator" as it works for both Gemini API and Vertex AI.
+                    part['thought_signature'] = b'skip_thought_signature_validator'
+                # Only the first function call requires a signature
+                function_call_requires_signature = False
+            else:
+                part['text'] = item.as_text()
         elif isinstance(item, TextPart):
             part['text'] = item.content
         elif isinstance(item, ThinkingPart):
-            if item.provider_name == provider_name and item.signature:
+            if supports_tools and item.provider_name == provider_name and item.signature:
                 # The thought signature is to be included on the _next_ part, not the thinking part itself
                 thinking_part_signature = item.signature
 
             if item.content:
                 part['text'] = item.content
-                part['thought'] = True
+                if supports_tools:
+                    part['thought'] = True
         elif isinstance(item, BuiltinToolCallPart):
             if item.provider_name == provider_name:
                 if item.tool_name == CodeExecutionTool.kind:

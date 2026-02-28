@@ -935,6 +935,20 @@ class BaseToolReturnPart:
         """Return `True` if the tool return has content."""
         return self.content is not None  # pragma: no cover
 
+    def as_text(self) -> str:
+        """Convert this tool return to a text representation.
+
+        This is used when sending message history to models that don't support tool calls,
+        such as image generation models.
+        """
+        return '\n'.join(
+            [
+                f'-----BEGIN TOOL_RETURN id="{self.tool_call_id}" name="{self.tool_name}"-----',
+                self.model_response_str(),
+                '-----END TOOL_RETURN-----',
+            ]
+        )
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -1305,6 +1319,20 @@ class BaseToolCallPart:
             return any(self.args.values())
         else:
             return bool(self.args)
+
+    def as_text(self) -> str:
+        """Convert this tool call to a text representation.
+
+        This is used when sending message history to models that don't support tool calls,
+        such as image generation models.
+        """
+        return '\n'.join(
+            [
+                f'-----BEGIN TOOL_CALL id="{self.tool_call_id}" name="{self.tool_name}"-----',
+                self.args_as_json_str(),
+                '-----END TOOL_CALL-----',
+            ]
+        )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
