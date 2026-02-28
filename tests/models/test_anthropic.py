@@ -8445,6 +8445,8 @@ async def test_anthropic_map_message_malformed_tool_args():
     # The tool_use block should have empty input (malformed args gracefully handled)
     assistant_msg = anthropic_messages[1]
     assistant_content = assistant_msg['content']
-    tool_use = next(item for item in assistant_content if isinstance(item, dict) and item.get('type') == 'tool_use')
-    assert tool_use['input'] == {}  # pyright: ignore[reportTypedDictNotRequiredAccess]
-    assert tool_use['name'] == 'my_tool'  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    tool_use: Any = next(
+        item for item in assistant_content if isinstance(item, dict) and item.get('type') == 'tool_use'
+    )
+    assert tool_use['input'] == {}
+    assert tool_use['name'] == 'my_tool'
