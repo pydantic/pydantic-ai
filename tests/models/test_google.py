@@ -5143,7 +5143,7 @@ async def test_google_stream_peek_api_error_wrapped(
         raise api_error
         yield
 
-    mocker.patch.object(model.client.aio.models, 'generate_content_stream', side_effect=lambda **kw: failing_stream())
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', side_effect=lambda **kw: failing_stream())  # pyright: ignore[reportUnknownLambdaType]
     mocker.patch.object(model.client.aio.models, 'generate_content', side_effect=api_error)
     agent = Agent(model=model)
 
