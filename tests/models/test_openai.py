@@ -2249,8 +2249,16 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {'prefixItems': [{'type': 'integer'}], 'type': 'array', 'description': 'minItems=1, maxItems=1'},
-                        'y': {'prefixItems': [{'type': 'string'}], 'type': 'array', 'description': 'minItems=1, maxItems=1'},
+                        'x': {
+                            'prefixItems': [{'type': 'integer'}],
+                            'type': 'array',
+                            'description': 'minItems=1, maxItems=1',
+                        },
+                        'y': {
+                            'prefixItems': [{'type': 'string'}],
+                            'type': 'array',
+                            'description': 'minItems=1, maxItems=1',
+                        },
                     },
                     'required': ['x', 'y'],
                     'type': 'object',
@@ -2364,7 +2372,11 @@ def test_strict_schema():
                     'properties': {},
                     'required': [],
                 },
-                'my_tuple': {'prefixItems': [{'type': 'integer'}], 'type': 'array', 'description': 'minItems=1, maxItems=1'},
+                'my_tuple': {
+                    'prefixItems': [{'type': 'integer'}],
+                    'type': 'array',
+                    'description': 'minItems=1, maxItems=1',
+                },
                 'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                 'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
             },
