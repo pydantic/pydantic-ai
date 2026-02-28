@@ -817,7 +817,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
             try:
                 coro = gen.aclose()
                 _utils.get_event_loop().run_until_complete(coro)
-            except BaseException:
+            except Exception:
                 # Suppress RuntimeWarning for unawaited coroutine by
                 # explicitly closing the coroutine object when
                 # run_until_complete cannot execute it.
@@ -835,7 +835,10 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         self._close_cleanup_gen()
 
     def __del__(self) -> None:
-        self._close_cleanup_gen()
+        try:
+            self._close_cleanup_gen()
+        except BaseException:
+            pass
 
 
 @dataclass(repr=False)
