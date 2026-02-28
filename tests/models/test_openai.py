@@ -4339,6 +4339,40 @@ def test_transformer_adds_properties_to_object_schemas():
     assert result['properties'] == {}
 
 
+def test_transformer_detects_empty_items_as_strict_incompatible():
+    """Empty items: {} (bare list) must be detected as strict-incompatible."""
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'items_param': {'type': 'array', 'items': {}},
+        },
+        'required': ['items_param'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    result = transformer.walk()
+
+    assert transformer.is_strict_compatible is False
+    # items should remain untouched when strict is None
+    assert result['properties']['items_param']['items'] == {}
+
+
+def test_transformer_strips_empty_items_when_strict_true():
+    """When strict=True, empty items: {} should be stripped and noted in description."""
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'items_param': {'type': 'array', 'items': {}},
+        },
+        'required': ['items_param'],
+    }
+    result = OpenAIJsonSchemaTransformer(schema, strict=True).walk()
+
+    assert 'items' not in result['properties']['items_param']
+    assert 'items={} (any type)' in result['properties']['items_param'].get('description', '')
+
+
 def chunk_with_usage(
     delta: list[ChoiceDelta],
     finish_reason: FinishReason | None = None,
