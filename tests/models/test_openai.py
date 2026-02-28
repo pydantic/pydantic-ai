@@ -2385,9 +2385,36 @@ def test_strict_schema_empty_array_items():
         },
         'required': ['items'],
     }
+    # strict=None → auto-detect: should mark as not compatible
     transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
     transformer.walk()
     assert transformer.is_strict_compatible is False
+
+    # strict=True → should remove empty items and add description
+    schema_strict: dict[str, Any] = {
+        'type': 'object',
+        'properties': {
+            'items': {'type': 'array', 'items': {}},
+        },
+        'required': ['items'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema_strict, strict=True)
+    result = transformer.walk()
+    arr_schema = result['properties']['items']
+    assert 'items' not in arr_schema
+    assert 'items={} (any type)' in arr_schema.get('description', '')
+
+    # strict=False → no changes needed
+    schema_lenient: dict[str, Any] = {
+        'type': 'object',
+        'properties': {
+            'items': {'type': 'array', 'items': {}},
+        },
+        'required': ['items'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema_lenient, strict=False)
+    result = transformer.walk()
+    assert result['properties']['items']['items'] == {}
 
 
 def test_native_output_strict_mode(allow_model_requests: None):

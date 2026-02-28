@@ -318,6 +318,12 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
             items = schema.get('items')
             if isinstance(items, dict) and not items:
                 # Empty `items: {}` is not valid in strict mode — OpenAI requires a `type` key
-                self.is_strict_compatible = False
+                if self.strict is True:
+                    schema.pop('items', None)
+                    description = schema.get('description')
+                    note = 'items={} (any type)'
+                    schema['description'] = note if not description else f'{description} ({note})'
+                else:
+                    self.is_strict_compatible = False
 
         return schema
