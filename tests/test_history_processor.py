@@ -1339,6 +1339,7 @@ async def test_history_processor_resuming_without_prompt(
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1449,6 +1450,7 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1522,6 +1524,7 @@ async def test_history_processor_rebuild_resuming_without_prompt(
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
