@@ -8487,11 +8487,10 @@ async def test_anthropic_mcp_missing_tool_name_or_args_skips_block(allow_model_r
         ),
         ModelRequest(
             parts=[
-                BuiltinToolReturnPart(
+                ToolReturnPart(
                     tool_name='mcp_server:deepwiki',
                     tool_call_id='mcptoolu_missing',
                     content='Error: missing tool_name',
-                    provider_name='anthropic',
                 )
             ]
         ),
