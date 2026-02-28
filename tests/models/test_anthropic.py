@@ -8438,12 +8438,13 @@ async def test_anthropic_map_message_malformed_tool_args():
         ),
     ]
 
-    system_prompt, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
+    _system_prompt, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
 
     # Should produce 3 messages: user, assistant (with tool_use), user (with tool_result)
     assert len(anthropic_messages) == 3
     # The tool_use block should have empty input (malformed args gracefully handled)
-    assistant_content = anthropic_messages[1]['content']
-    tool_use = next(item for item in assistant_content if isinstance(item, dict) and item.get('type') == 'tool_use')
+    assistant_msg = anthropic_messages[1]
+    assistant_content = assistant_msg['content']  # type: ignore[typeddict-item]
+    tool_use = next(item for item in assistant_content if isinstance(item, dict) and item.get('type') == 'tool_use')  # type: ignore[union-attr]
     assert tool_use['input'] == {}
     assert tool_use['name'] == 'my_tool'
