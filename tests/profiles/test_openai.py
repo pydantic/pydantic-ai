@@ -80,3 +80,99 @@ class TestEncryptedReasoningContent:
             profile = openai_model_profile(model)
             assert isinstance(profile, OpenAIModelProfile)
             assert profile.openai_supports_encrypted_reasoning_content is False
+
+
+class TestStrictIncompatibleKeys:
+    """Regression tests for strict-incompatible JSON Schema keys.
+
+    See https://github.com/pydantic/pydantic-ai/issues/4438
+    """
+
+    def test_numeric_constraints_detected_as_incompatible(self):
+        """Schema with minimum/maximum must be detected as strict-incompatible."""
+        from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+        schema = {
+            'type': 'object',
+            'properties': {
+                'age': {'type': 'integer', 'minimum': 0, 'maximum': 120},
+            },
+            'required': ['age'],
+            'additionalProperties': False,
+        }
+        t = OpenAIJsonSchemaTransformer(schema.copy(), strict=None)
+        t.walk()
+        assert not t.is_strict_compatible
+
+    def test_numeric_constraints_stripped_in_strict_mode(self):
+        """strict=True must strip minimum/maximum from the schema."""
+        from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+        schema = {
+            'type': 'object',
+            'properties': {
+                'age': {'type': 'integer', 'minimum': 0, 'maximum': 120},
+            },
+            'required': ['age'],
+            'additionalProperties': False,
+        }
+        t = OpenAIJsonSchemaTransformer(schema.copy(), strict=True)
+        result = t.walk()
+        age_schema = result['properties']['age']
+        assert 'minimum' not in age_schema
+        assert 'maximum' not in age_schema
+
+    def test_pattern_detected_as_incompatible(self):
+        """Schema with pattern must be detected as strict-incompatible."""
+        from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+        schema = {
+            'type': 'object',
+            'properties': {
+                'email': {'type': 'string', 'pattern': r'^[\w.-]+@[\w.-]+\.\w+$'},
+            },
+            'required': ['email'],
+            'additionalProperties': False,
+        }
+        t = OpenAIJsonSchemaTransformer(schema.copy(), strict=None)
+        t.walk()
+        assert not t.is_strict_compatible
+
+    def test_all_new_keys_stripped_in_strict_mode(self):
+        """All newly added strict-incompatible keys must be stripped."""
+        from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+        schema = {
+            'type': 'object',
+            'properties': {
+                'value': {
+                    'type': 'number',
+                    'minimum': 0,
+                    'maximum': 100,
+                    'exclusiveMinimum': 0,
+                    'exclusiveMaximum': 100,
+                    'multipleOf': 5,
+                },
+                'name': {
+                    'type': 'string',
+                    'pattern': r'^\w+$',
+                },
+                'tags': {
+                    'type': 'array',
+                    'items': {'type': 'string'},
+                    'minItems': 1,
+                    'maxItems': 10,
+                },
+            },
+            'required': ['value', 'name', 'tags'],
+            'additionalProperties': False,
+        }
+        t = OpenAIJsonSchemaTransformer(schema.copy(), strict=True)
+        result = t.walk()
+        value_schema = result['properties']['value']
+        for key in ('minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'):
+            assert key not in value_schema, f'{key} should have been stripped'
+        assert 'pattern' not in result['properties']['name']
+        tags_schema = result['properties']['tags']
+        assert 'minItems' not in tags_schema
+        assert 'maxItems' not in tags_schema
