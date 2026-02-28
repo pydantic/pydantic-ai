@@ -8462,3 +8462,45 @@ async def test_anthropic_malformed_tool_args_does_not_crash(allow_model_requests
     assert tool_use_block['type'] == 'tool_use'
     assert tool_use_block['input'] == {}
     assert tool_use_block['name'] == 'search_knowledge'
+
+
+async def test_anthropic_mcp_missing_tool_name_or_args_skips_block(allow_model_requests: None):
+    """Coverage for the branch where _safe_args_as_dict returns a dict
+    without the expected 'tool_name' or 'tool_args' keys for MCP tool calls.
+
+    The assistant block should be omitted (not crash) when these keys are missing.
+    """
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Use MCP tool')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='mcp_server:deepwiki',
+                    tool_call_id='mcptoolu_missing',
+                    args={'action': 'call_tool'},  # missing tool_name and tool_args
+                    provider_name='anthropic',
+                )
+            ],
+            timestamp=datetime.now(timezone.utc),
+        ),
+        ModelRequest(
+            parts=[
+                BuiltinToolReturnPart(
+                    tool_name='mcp_server:deepwiki',
+                    tool_call_id='mcptoolu_missing',
+                    content='Error: missing tool_name',
+                    provider_name='anthropic',
+                )
+            ]
+        ),
+    ]
+
+    _system_prompt, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
+
+    # The assistant message should have no mcp_tool_use block because tool_name/tool_args were missing
+    assistant_msg = anthropic_messages[1]
+    assert assistant_msg['role'] == 'assistant'
+    # content should be empty since the MCP block was skipped
+    assert len(assistant_msg['content']) == 0  # type: ignore
