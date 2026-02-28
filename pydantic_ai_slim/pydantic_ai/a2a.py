@@ -34,12 +34,6 @@ from .agent import AbstractAgent, AgentDepsT, OutputDataT
 # AgentWorker output type needs to be invariant for use in both parameter and return positions
 WorkerOutputT = TypeVar('WorkerOutputT')
 
-# Context variables to hold the current A2A execution context
-a2a_task_id: ContextVar[str] = ContextVar('a2a_task_id')
-a2a_task: ContextVar[Any] = ContextVar('a2a_task')
-a2a_storage: ContextVar[Storage] = ContextVar('a2a_storage')
-a2a_broker: ContextVar[Broker] = ContextVar('a2a_broker')
-
 try:
     from fasta2a.applications import FastA2A
     from fasta2a.broker import Broker, InMemoryBroker
@@ -64,6 +58,12 @@ except ImportError as _import_error:
         'Please install the `fasta2a` package to use `Agent.to_a2a()` method, '
         'you can use the `a2a` optional group — `pip install "pydantic-ai-slim[a2a]"`'
     ) from _import_error
+
+# Context variables to hold the current A2A execution context
+a2a_task_id: ContextVar[str] = ContextVar('a2a_task_id')
+a2a_task: ContextVar[Any] = ContextVar('a2a_task')
+a2a_storage: ContextVar[Storage] = ContextVar('a2a_storage')
+a2a_broker: ContextVar[Broker] = ContextVar('a2a_broker')
 
 
 @asynccontextmanager
@@ -147,6 +147,8 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
         updated_task = await self.storage.load_task(task['id'])
         if updated_task is not None:
             task = updated_task
+        else:
+            raise ValueError(f'Task {task["id"]} not found after update')  # pragma: no cover
 
         # Load context - contains pydantic-ai message history from previous tasks in this conversation
         message_history = await self.storage.load_context(task['context_id']) or []
