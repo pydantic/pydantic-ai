@@ -246,7 +246,7 @@ async def test_span_node_matches_json_serialized_attributes():
 
 def test_attribute_value_matches_invalid_json_returns_false():
     """When stored string is not valid JSON and query is non-string, return False."""
-    from pydantic_evals.otel.span_tree import _attribute_value_matches
+    from pydantic_evals.otel.span_tree import _attribute_value_matches  # pyright: ignore[reportPrivateUsage]
 
     assert _attribute_value_matches('not-valid-json{', {'key': 'value'}) is False
 
