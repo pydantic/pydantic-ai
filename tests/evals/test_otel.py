@@ -916,3 +916,11 @@ async def test_span_query_matches_dict_attributes():
 
     # Non-matching dict should not match
     assert tree.first(SpanQuery(has_attributes={'data': {'foo': 999}})) is None
+
+
+def test_attribute_value_matches_non_serializable_returns_false():
+    """When expected value is not JSON-serializable, return False gracefully."""
+    from pydantic_evals.otel.span_tree import _attribute_matches
+
+    # set is not JSON-serializable, so json.dumps raises TypeError
+    assert _attribute_matches('{"a":1}', {1, 2, 3}) is False
