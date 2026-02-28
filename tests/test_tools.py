@@ -711,6 +711,15 @@ def test_tool_call_part_args_as_dict(args: str | dict[str, Any], expected: dict[
     assert result == expected
 
 
+def test_tool_call_part_args_as_dict_malformed_json():
+    """args_as_dict raises ValueError for malformed JSON (callers handle this)."""
+    part = ToolCallPart(tool_name='foo', args='{"key": "value",}')
+    with pytest.raises(ValueError):
+        part.args_as_dict()
+    # Raw args are still accessible
+    assert part.args == '{"key": "value",}'
+
+
 def test_return_pydantic_model():
     agent = Agent('test')
 

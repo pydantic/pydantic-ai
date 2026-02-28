@@ -8409,3 +8409,41 @@ Instructions content\
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'
+
+
+async def test_anthropic_map_message_malformed_tool_args():
+    """_map_message should not crash when a ToolCallPart has malformed JSON args."""
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+
+    messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='my_tool',
+                    args='{"key": "value",}',
+                    tool_call_id='call_123',
+                ),
+            ],
+            model_name='claude-sonnet-4-5',
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='my_tool',
+                    content='Invalid JSON in tool call arguments',
+                    tool_call_id='call_123',
+                ),
+            ],
+        ),
+    ]
+
+    system_prompt, anthropic_messages = await m._map_message(messages, ModelRequestParameters(), {})  # pyright: ignore[reportPrivateUsage]
+
+    # Should produce 3 messages: user, assistant (with tool_use), user (with tool_result)
+    assert len(anthropic_messages) == 3
+    # The tool_use block should have empty input (malformed args gracefully handled)
+    assistant_content = anthropic_messages[1]['content']
+    tool_use = next(item for item in assistant_content if isinstance(item, dict) and item.get('type') == 'tool_use')
+    assert tool_use['input'] == {}
+    assert tool_use['name'] == 'my_tool'

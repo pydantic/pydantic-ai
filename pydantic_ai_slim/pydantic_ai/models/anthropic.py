@@ -51,6 +51,21 @@ from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
+
+def _safe_args_as_dict(part: ToolCallPart | BuiltinToolCallPart) -> dict[str, Any]:
+    """Return tool call args as dict, falling back to {} on malformed JSON.
+
+    When a model returns malformed JSON in tool call arguments, args_as_dict()
+    raises ValueError. During message reconstruction for retries, we need to
+    provide a valid dict to the API even if the original args were invalid.
+    The retry prompt separately communicates the parsing error to the model.
+    """
+    try:
+        return part.args_as_dict()
+    except (ValueError, AssertionError):
+        return {}
+
+
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'compaction': 'stop',
     'end_turn': 'stop',
@@ -784,7 +799,7 @@ class AnthropicModel(Model):
                             id=_guard_tool_call_id(t=response_part),
                             type='tool_use',
                             name=response_part.tool_name,
-                            input=response_part.args_as_dict(),
+                            input=_safe_args_as_dict(response_part),
                         )
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
@@ -821,7 +836,7 @@ class AnthropicModel(Model):
                                     id=tool_use_id,
                                     type='server_tool_use',
                                     name='web_search',
-                                    input=response_part.args_as_dict(),
+                                    input=_safe_args_as_dict(response_part),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == CodeExecutionTool.kind:
@@ -829,7 +844,7 @@ class AnthropicModel(Model):
                                     id=tool_use_id,
                                     type='server_tool_use',
                                     name='code_execution',
-                                    input=response_part.args_as_dict(),
+                                    input=_safe_args_as_dict(response_part),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == WebFetchTool.kind:
@@ -837,13 +852,13 @@ class AnthropicModel(Model):
                                     id=tool_use_id,
                                     type='server_tool_use',
                                     name='web_fetch',
-                                    input=response_part.args_as_dict(),
+                                    input=_safe_args_as_dict(response_part),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif (
                                 response_part.tool_name.startswith(MCPServerTool.kind)
                                 and (server_id := response_part.tool_name.split(':', 1)[1])
-                                and (args := response_part.args_as_dict())
+                                and (args := _safe_args_as_dict(response_part))
                                 and (tool_name := args.get('tool_name'))
                                 and (tool_args := args.get('tool_args'))
                             ):  # pragma: no branch
