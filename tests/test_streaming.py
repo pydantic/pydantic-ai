@@ -2465,6 +2465,18 @@ def test_streamed_run_result_sync_exposes_metadata() -> None:
     assert sync_result.metadata == {'sync': 'metadata'}
 
 
+def test_streamed_run_result_sync_close() -> None:
+    run_result = _make_run_result()
+    streamed = StreamedRunResult(
+        all_messages=run_result.all_messages(),
+        new_message_index=0,
+        run_result=run_result,
+    )
+    sync_result = StreamedRunResultSync(streamed)
+    # calling close() directly should not raise
+    sync_result.close()
+
+
 async def test_iter_stream_responses():
     m = TestModel(custom_output_text='The cat sat on the mat.')
 
