@@ -4339,6 +4339,35 @@ def test_transformer_adds_properties_to_object_schemas():
     assert result['properties'] == {}
 
 
+def test_strict_schema_detects_empty_items_as_incompatible():
+    """Empty items schema (from bare `list` type) is not strict-compatible because it lacks a 'type' key."""
+    schema = {
+        'type': 'object',
+        'properties': {
+            'values': {'type': 'array', 'items': {}},
+        },
+        'required': ['values'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    result = transformer.walk()
+    # Empty items should mark schema as not strict-compatible
+    assert not transformer.is_strict_compatible
+    # The items dict should still be present (not stripped)
+    assert result['properties']['values']['items'] == {}
+
+    # Non-empty items remain strict-compatible
+    typed_schema = {
+        'type': 'object',
+        'properties': {
+            'values': {'type': 'array', 'items': {'type': 'string'}},
+        },
+        'required': ['values'],
+    }
+    typed_transformer = OpenAIJsonSchemaTransformer(typed_schema, strict=None)
+    typed_transformer.walk()
+    assert typed_transformer.is_strict_compatible
+
+
 def chunk_with_usage(
     delta: list[ChoiceDelta],
     finish_reason: FinishReason | None = None,
