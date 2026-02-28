@@ -68,6 +68,7 @@ try:
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError
+    from temporalio.plugin import SimplePlugin
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Worker
     from temporalio.workflow import ActivityConfig
@@ -2037,6 +2038,23 @@ async def test_logfire_plugin(client: Client):
     plugin = LogfirePlugin(lambda: setup_logfire(metrics=False))
     new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
     assert new_client.service_client.config.runtime is None
+
+
+def test_logfire_plugin_uses_inspect_for_interceptor_param():
+    """LogfirePlugin detects whether SimplePlugin accepts 'interceptors' or 'client_interceptors'."""
+    import inspect
+
+    from pydantic_ai.durable_exec.temporal._logfire import LogfirePlugin
+
+    sig = inspect.signature(SimplePlugin.__init__)
+    # The installed temporalio version must have one of the two parameter names
+    has_new = 'interceptors' in sig.parameters
+    has_old = 'client_interceptors' in sig.parameters
+    assert has_new or has_old, 'SimplePlugin.__init__ must accept interceptors or client_interceptors'
+
+    # LogfirePlugin must instantiate without error regardless of which param is present
+    plugin = LogfirePlugin()
+    assert plugin is not None
 
 
 hitl_agent = Agent(

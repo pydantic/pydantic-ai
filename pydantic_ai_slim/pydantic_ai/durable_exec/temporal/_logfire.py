@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -36,10 +37,19 @@ class LogfirePlugin(SimplePlugin):
         self.setup_logfire = setup_logfire
         self.metrics = metrics
 
-        super().__init__(  # type: ignore[reportUnknownMemberType]
-            name='LogfirePlugin',
-            client_interceptors=[TracingInterceptor(get_tracer('temporalio'))],
-        )
+        tracing_interceptors = [TracingInterceptor(get_tracer('temporalio'))]
+        # temporalio >= 1.23.0 renamed 'client_interceptors' to 'interceptors'
+        sig = inspect.signature(SimplePlugin.__init__)
+        if 'interceptors' in sig.parameters:
+            super().__init__(  # type: ignore[reportUnknownMemberType]
+                name='LogfirePlugin',
+                interceptors=tracing_interceptors,
+            )
+        else:
+            super().__init__(  # type: ignore[reportUnknownMemberType]
+                name='LogfirePlugin',
+                client_interceptors=tracing_interceptors,
+            )
 
     async def connect_service_client(
         self, config: ConnectConfig, next: Callable[[ConnectConfig], Awaitable[ServiceClient]]
