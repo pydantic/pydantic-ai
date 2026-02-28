@@ -33,8 +33,8 @@ def _attribute_matches(stored: AttributeValue | None, expected: Any) -> bool:
         return True
     if isinstance(stored, str) and not isinstance(expected, str):
         try:
-            return stored == json.dumps(expected, separators=(',', ':'))
-        except (TypeError, ValueError):
+            return json.loads(stored) == expected
+        except (TypeError, ValueError, json.JSONDecodeError):
             return False
     return False
 

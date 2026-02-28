@@ -924,3 +924,16 @@ def test_attribute_value_matches_non_serializable_returns_false():
 
     # set is not JSON-serializable, so json.dumps raises TypeError
     assert _attribute_matches('{"a":1}', {1, 2, 3}) is False
+
+
+def test_attribute_value_matches_order_independent():
+    """Dict matching should be key-order independent."""
+    from pydantic_evals.otel.span_tree import _attribute_matches  # pyright: ignore[reportPrivateUsage]
+
+    # Stored with keys in one order, expected with keys in another
+    assert _attribute_matches('{"b":2,"a":1}', {'a': 1, 'b': 2}) is True
+    assert _attribute_matches('{"a":1,"b":2}', {'b': 2, 'a': 1}) is True
+    # Non-matching
+    assert _attribute_matches('{"a":1}', {'a': 2}) is False
+    # Invalid stored JSON
+    assert _attribute_matches('not json', {'a': 1}) is False
