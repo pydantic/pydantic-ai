@@ -795,14 +795,22 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     def _close_cleanup_gen(self) -> None:
         """Close the underlying async generator so that the ``run_stream`` context
         manager exits deterministically, allowing OTel spans to be finalized with
-        the correct attributes (usage, final_result, etc.)."""
+        the correct attributes (usage, final_result, etc.).
+        """
         if self._cleanup_gen is not None:
+            gen = self._cleanup_gen
+            self._cleanup_gen = None
             try:
-                _utils.get_event_loop().run_until_complete(self._cleanup_gen.aclose())
-            except Exception:
-                pass
-            finally:
-                self._cleanup_gen = None
+                coro = gen.aclose()
+                _utils.get_event_loop().run_until_complete(coro)
+            except BaseException:
+                # Suppress RuntimeWarning for unawaited coroutine by
+                # explicitly closing the coroutine object when
+                # run_until_complete cannot execute it.
+                try:
+                    coro.close()  # type: ignore[union-attr]
+                except Exception:
+                    pass
 
     def close(self) -> None:
         """Explicitly close the stream and release underlying resources.
