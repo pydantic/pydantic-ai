@@ -1509,6 +1509,38 @@ async def test_to_ag_ui() -> None:
     assert deps.state.value == 0
 
 
+async def test_model_request_run_id_set_in_adapter() -> None:
+    """Test that ModelRequest.run_id is populated when running through AGUIAdapter.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4415
+    """
+    captured_results: list[AgentRunResult[Any]] = []
+
+    def capture_callback(run_result: AgentRunResult[Any]) -> None:
+        captured_results.append(run_result)
+
+    agent = Agent(
+        model=FunctionModel(stream_function=simple_stream),
+    )
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello, agent!',
+        )
+    )
+
+    await run_and_collect_events(agent, run_input, on_complete=capture_callback)
+
+    assert len(captured_results) == 1
+    messages = captured_results[0].all_messages()
+    # The first message is the ModelRequest; it must have a non-empty run_id
+    request_msg = messages[0]
+    assert isinstance(request_msg, ModelRequest)
+    assert request_msg.run_id is not None, 'ModelRequest.run_id should not be None in AGUIAdapter'
+    assert request_msg.run_id != '', 'ModelRequest.run_id should not be empty in AGUIAdapter'
+
+
 async def test_callback_sync() -> None:
     """Test that sync callbacks work correctly."""
 
