@@ -168,6 +168,7 @@ class ToolManager(Generic[AgentDepsT]):
         allow_partial: bool,
         approved: bool = False,
         metadata: Any = None,
+        retry_override: int | None = None,
     ) -> RunContext[AgentDepsT]:
         """Build the execution context for a tool call."""
         assert self.ctx is not None
@@ -175,7 +176,7 @@ class ToolManager(Generic[AgentDepsT]):
             self.ctx,
             tool_name=call.tool_name,
             tool_call_id=call.tool_call_id,
-            retry=self.ctx.retries.get(call.tool_name, 0),
+            retry=retry_override if retry_override is not None else self.ctx.retries.get(call.tool_name, 0),
             max_retries=tool.max_retries,
             tool_call_approved=approved,
             tool_call_metadata=metadata,
@@ -225,6 +226,7 @@ class ToolManager(Generic[AgentDepsT]):
         wrap_validation_errors: bool = True,
         approved: bool = False,
         metadata: Any = None,
+        retry_override: int | None = None,
     ) -> ValidatedToolCall[AgentDepsT]:
         """Validate tool arguments without executing the tool.
 
@@ -239,6 +241,10 @@ class ToolManager(Generic[AgentDepsT]):
             wrap_validation_errors: Whether to wrap validation errors in ToolRetryError.
             approved: Whether the tool call has been approved.
             metadata: Additional metadata from DeferredToolResults.metadata.
+            retry_override: When set, use this value for ``ctx.retry`` instead of
+                the per-tool retry count.  Used for output tools so that
+                ``@agent.output_validator`` sees the global output-validation
+                retry counter.
 
         Returns:
             ValidatedToolCall with validation results, ready for execution via execute_tool_call().
@@ -259,7 +265,12 @@ class ToolManager(Generic[AgentDepsT]):
                 raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
 
             ctx = self._build_tool_context(
-                call, tool, allow_partial=allow_partial, approved=approved, metadata=metadata
+                call,
+                tool,
+                allow_partial=allow_partial,
+                approved=approved,
+                metadata=metadata,
+                retry_override=retry_override,
             )
             validated_args = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial)
             return ValidatedToolCall(

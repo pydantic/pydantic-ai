@@ -970,7 +970,10 @@ async def process_tool_calls(  # noqa: C901
             # Validate and execute the output tool call — unlike deferred tools,
             # output tools track retries and can be skipped if a final_result exists.
             try:
-                validated = await tool_manager.validate_tool_call(call)
+                validated = await tool_manager.validate_tool_call(
+                    call,
+                    retry_override=ctx.state.retries,
+                )
             except exceptions.UnexpectedModelBehavior as e:
                 # If we already have a valid final result, don't fail the entire run
                 # This allows exhaustive strategy to complete successfully when at least one output tool is valid
