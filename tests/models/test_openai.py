@@ -4341,7 +4341,7 @@ def test_transformer_adds_properties_to_object_schemas():
 
 def test_strict_schema_detects_empty_items_as_incompatible():
     """Empty items schema (from bare `list` type) is not strict-compatible because it lacks a 'type' key."""
-    schema = {
+    schema: dict[str, Any] = {
         'type': 'object',
         'properties': {
             'values': {'type': 'array', 'items': {}},
@@ -4356,7 +4356,7 @@ def test_strict_schema_detects_empty_items_as_incompatible():
     assert result['properties']['values']['items'] == {}
 
     # Non-empty items remain strict-compatible
-    typed_schema = {
+    typed_schema: dict[str, Any] = {
         'type': 'object',
         'properties': {
             'values': {'type': 'array', 'items': {'type': 'string'}},
