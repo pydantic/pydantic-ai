@@ -498,3 +498,31 @@ async def test_span_query_evaluator(capfire: CaptureLogfire):
     # Test non-matching attributes
     evaluator = HasMatchingSpan(query=SpanQuery(name_equals='child1', has_attributes={'wrong': 'value'}))
     assert evaluator.evaluate(ctx) is False
+
+
+def test_has_matching_span_yaml_roundtrip():
+    """Test that HasMatchingSpan serializes and deserializes correctly via YAML short-form.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4447:
+    When query (a SpanQuery/BaseModel) was the only non-default field, `as_spec()`
+    used the compact tuple form, which on deserialization was misinterpreted as
+    kwargs instead of a single positional argument (because SpanQuery serializes
+    as a dict with string keys).
+    """
+    from pydantic_evals.evaluators.spec import EvaluatorSpec
+
+    evaluator = HasMatchingSpan(query=SpanQuery(some_descendant_has=SpanQuery(has_attributes={'gen_ai.tool.name': 'calculator'})))
+    spec = evaluator.as_spec()
+
+    # The spec must use kwargs form, NOT the compact tuple form
+    assert isinstance(spec.arguments, dict), (
+        f'Expected kwargs form (dict) for dict-like value, got {type(spec.arguments)}'
+    )
+    assert 'query' in spec.arguments
+
+    # Full roundtrip via JSON serialization (same path as YAML export/import)
+    context: dict[str, Any] = {'use_short_form': True}
+    serialized = to_jsonable_python(spec, context=context, serialize_unknown=True)
+    deserialized = EvaluatorSpec.model_validate(serialized)
+    assert deserialized.kwargs == spec.kwargs
+    assert deserialized.name == 'HasMatchingSpan'

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from abc import ABCMeta
-from dataclasses import MISSING, dataclass, fields
+from dataclasses import MISSING, dataclass, fields, is_dataclass
 from typing import Any
 
-from pydantic import ConfigDict, model_serializer
+from pydantic import BaseModel, ConfigDict, model_serializer
 from pydantic_core import to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo
 
@@ -75,9 +75,13 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
         elif len(raw_arguments) == 1:
             # Only use the compact tuple form if the single non-default field is the first
             # dataclass field, since the tuple form passes the value as the first positional arg.
+            # However, if the value would serialize as a dict (BaseModel, dataclass, or plain
+            # dict), use the kwargs form instead to avoid ambiguity during deserialization —
+            # dict values would be mistakenly interpreted as keyword arguments.
             first_field_name = fields(self)[0].name
             key = next(iter(raw_arguments))
-            if key == first_field_name:
+            value = raw_arguments[key]
+            if key == first_field_name and not _serializes_as_dict(value):
                 arguments = (raw_arguments[key],)
             else:
                 arguments = raw_arguments
@@ -108,3 +112,8 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
         return raw_arguments
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _serializes_as_dict(value: Any) -> bool:
+    """Check if a value would serialize as a dict, which is ambiguous with kwargs."""
+    return isinstance(value, (dict, BaseModel)) or (is_dataclass(value) and not isinstance(value, type))
