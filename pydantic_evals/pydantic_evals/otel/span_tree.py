@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -20,6 +21,26 @@ AttributeValue = str | bool | int | float | Sequence[str] | Sequence[bool] | Seq
 
 
 __all__ = 'SpanNode', 'SpanTree', 'SpanQuery'
+
+
+def _attribute_value_matches(stored: Any, query_value: Any) -> bool:
+    """Compare a stored OTel attribute value against a query value.
+
+    OTel attributes only support scalar types and homogeneous sequences.
+    Instrumentation libraries (e.g. logfire) serialize complex values such as
+    dicts to JSON strings before storing them.  When the query value is not a
+    native ``AttributeValue`` type (e.g. a dict), we attempt to JSON-decode the
+    stored string so that the comparison works transparently.
+    """
+    if stored == query_value:
+        return True
+    if isinstance(stored, str) and not isinstance(query_value, str):
+        try:
+            decoded = json.loads(stored)
+            return decoded == query_value and type(decoded) is type(query_value)
+        except (json.JSONDecodeError, TypeError):
+            return False
+    return False
 
 
 class SpanQuery(TypedDict, total=False):
@@ -267,7 +288,7 @@ class SpanNode:
 
         # Attribute conditions
         if (has_attributes := query.get('has_attributes')) and not all(
-            self.attributes.get(key) == value for key, value in has_attributes.items()
+            _attribute_value_matches(self.attributes.get(key), value) for key, value in has_attributes.items()
         ):
             return False
         if (has_attributes_keys := query.get('has_attribute_keys')) and not all(

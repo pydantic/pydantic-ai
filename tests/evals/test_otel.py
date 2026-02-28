@@ -223,6 +223,27 @@ async def test_span_node_matches(span_tree: SpanTree):
     assert not child1_node.matches(SpanQuery(name_equals='child1', has_attributes={'type': 'normal'}))
 
 
+async def test_span_node_matches_json_serialized_attributes():
+    """Test that has_attributes comparison works for dict values stored as JSON strings."""
+    data = {'foo': 1, 'bar': True}
+    with context_subtree() as tree:
+        with logfire.span('task'):
+            logfire.info('some data', data=data)
+
+    assert isinstance(tree, SpanTree)
+    info_node = tree.first(SpanQuery(name_equals='some data'))
+    assert info_node is not None
+
+    # String-to-string comparison still works
+    assert info_node.matches(SpanQuery(has_attribute_keys=['data']))
+
+    # Dict query value should match JSON-serialized string attribute
+    assert info_node.matches(SpanQuery(has_attributes={'data': data}))
+
+    # Non-matching dict should not match
+    assert not info_node.matches(SpanQuery(has_attributes={'data': {'foo': 999}}))
+
+
 async def test_span_tree_repr(span_tree: SpanTree):
     assert repr(SpanTree()) == snapshot('<SpanTree />')
     assert str(span_tree) == snapshot('<SpanTree num_roots=1 total_spans=6 />')
