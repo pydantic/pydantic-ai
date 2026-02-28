@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -73,6 +74,12 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
                     f'Temporal activity config for tool {name!r} has been explicitly set to `False` (activity disabled), '
                     'but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead.'
                 )
+            # args_validator_func was skipped in the workflow validation phase; call it here since
+            # this tool runs directly in the workflow (no activity dispatch).
+            if tool.args_validator_func is not None:
+                result = tool.args_validator_func(ctx, **tool_args)
+                if inspect.isawaitable(result):
+                    await result
             return await super().call_tool(name, tool_args, ctx, tool)
 
         activity_config: ActivityConfig = {

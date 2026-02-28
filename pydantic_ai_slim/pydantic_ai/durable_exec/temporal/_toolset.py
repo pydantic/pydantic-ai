@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -126,8 +127,17 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
 
         The tool args will already have been validated into their proper types in the `ToolManager`,
         but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
+
+        `args_validator_func` is also called here (not in the workflow) so that it can safely perform I/O.
         """
         args_dict = tool.args_validator.validate_python(tool_args)
+        if tool.args_validator_func is not None:
+            try:
+                result = tool.args_validator_func(ctx, **args_dict)
+                if inspect.isawaitable(result):
+                    await result
+            except ModelRetry as e:
+                return _ModelRetry(message=e.message)
         return await self._wrap_call_tool_result(self.wrapped.call_tool(name, args_dict, ctx, tool))
 
 

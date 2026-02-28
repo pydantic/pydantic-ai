@@ -1927,6 +1927,133 @@ async def test_temporal_agent_mcp_server_activity_disabled(client: Client):
         )
 
 
+# --- args_validator in Temporal tests ---
+
+# Tracks whether the validator was called in workflow context (True) or activity context (False).
+# Activities run in the same process as the test, so module-level state is visible.
+_args_validator_call_in_workflow: list[bool] = []
+
+
+async def _args_validator_with_io(ctx: RunContext[None], city: str) -> None:
+    """Simulate an args_validator that performs I/O (e.g. a database lookup).
+
+    Before the fix this would be called in the workflow context, causing Temporal's
+    sandbox to raise an error for any non-deterministic operation.  After the fix it
+    runs inside the activity, so I/O is perfectly fine.
+    """
+    # Record whether we're inside a Temporal workflow.  After the fix this must be
+    # False (activity context).  `workflow.in_workflow()` is safe to call from
+    # anywhere in the SDK.
+    _args_validator_call_in_workflow.append(workflow.in_workflow())
+
+
+args_validator_toolset = FunctionToolset[None](id='args_validator_toolset')
+
+
+@args_validator_toolset.tool(args_validator=_args_validator_with_io)
+async def get_weather_validated(ctx: RunContext[None], city: str) -> str:
+    """Get the weather, with an args_validator that simulates I/O."""
+    return f'sunny in {city}'
+
+
+args_validator_agent = Agent(TestModel(), toolsets=[args_validator_toolset], name='args_validator_agent')
+
+args_validator_temporal_agent = TemporalAgent(
+    args_validator_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class ArgsValidatorWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await args_validator_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_args_validator_runs_in_activity_context(client: Client):
+    """args_validator with I/O runs in the activity context (not the workflow)."""
+    _args_validator_call_in_workflow.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ArgsValidatorWorkflow],
+        plugins=[AgentPlugin(args_validator_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            ArgsValidatorWorkflow.run,
+            args=['What is the weather in Mexico City?'],
+            id='test_args_validator_runs_in_activity_context',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == snapshot('{"get_weather_validated":"sunny in a"}')
+    # The validator must have been called exactly once, and NOT from inside the workflow.
+    assert _args_validator_call_in_workflow == [False]
+
+
+async def test_args_validator_outside_workflow():
+    """args_validator runs normally when TemporalAgent is used outside a Temporal workflow."""
+    _args_validator_call_in_workflow.clear()
+    result = await args_validator_temporal_agent.run('What is the weather in Mexico City?')
+    assert result.output == snapshot('{"get_weather_validated":"sunny in a"}')
+    # The validator must have been called once, and not from a workflow (there is none).
+    assert _args_validator_call_in_workflow == [False]
+
+
+# --- args_validator with activity_config=False ---
+
+args_validator_inline_toolset = FunctionToolset[None](id='args_validator_inline_toolset')
+
+
+@args_validator_inline_toolset.tool(args_validator=_args_validator_with_io)
+async def get_weather_validated_inline(ctx: RunContext[None], city: str) -> str:
+    """Get the weather, run inline in the workflow (activity disabled)."""
+    return f'sunny in {city}'
+
+
+args_validator_inline_agent = Agent(
+    TestModel(), toolsets=[args_validator_inline_toolset], name='args_validator_inline_agent'
+)
+
+args_validator_inline_temporal_agent = TemporalAgent(
+    args_validator_inline_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+    tool_activity_config={
+        'args_validator_inline_toolset': {
+            'get_weather_validated_inline': False,
+        },
+    },
+)
+
+
+@workflow.defn
+class ArgsValidatorInlineWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await args_validator_inline_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_args_validator_inline_tool_in_workflow(client: Client):
+    """args_validator is called for tools with activity_config=False (inline in the workflow)."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ArgsValidatorInlineWorkflow],
+        plugins=[AgentPlugin(args_validator_inline_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            ArgsValidatorInlineWorkflow.run,
+            args=['What is the weather in Mexico City?'],
+            id='test_args_validator_inline_tool_in_workflow',
+            task_queue=TASK_QUEUE,
+        )
+    # The workflow completes successfully, confirming the validator was invoked without error
+    # and the tool ran correctly in the workflow context.
+    assert output == snapshot('{"get_weather_validated_inline":"sunny in a"}')
+
+
 @workflow.defn
 class DirectStreamWorkflow:
     @workflow.run

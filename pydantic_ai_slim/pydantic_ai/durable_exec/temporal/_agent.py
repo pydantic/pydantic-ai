@@ -23,6 +23,7 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
+from pydantic_ai._tool_manager import _skip_args_validator_func
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.agent.abstract import AgentMetadata, Instructions, RunOutputDataT
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
@@ -274,6 +275,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             _utils.disable_threads(),
         ):
             temporal_active_token = self._temporal_overrides_active.set(True)
+            skip_args_validator_token = _skip_args_validator_func.set(True)
             try:
                 yield
             except PydanticSerializationError as e:
@@ -282,6 +284,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 ) from e
             finally:
                 self._temporal_overrides_active.reset(temporal_active_token)
+                _skip_args_validator_func.reset(skip_args_validator_token)
 
     @overload
     async def run(
