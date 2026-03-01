@@ -40,9 +40,9 @@ class LogfirePlugin(SimplePlugin):
         tracing_interceptors = [TracingInterceptor(get_tracer('temporalio'))]
         # temporalio >= 1.23.0 renamed 'client_interceptors' to 'interceptors'
         sig = inspect.signature(SimplePlugin.__init__)  # type: ignore[reportUnknownMemberType]
-        if 'interceptors' in sig.parameters:
+        if 'interceptors' in sig.parameters:  # pragma: lax no cover
             interceptor_kwarg = {'interceptors': tracing_interceptors}
-        else:  # pragma: no cover
+        else:  # pragma: lax no cover
             interceptor_kwarg = {'client_interceptors': tracing_interceptors}
         super().__init__(name='LogfirePlugin', **interceptor_kwarg)  # type: ignore[reportUnknownMemberType]
 
