@@ -2479,8 +2479,9 @@ def test_streamed_run_result_sync_close() -> None:
 
 def test_streamed_run_result_sync_close_cleanup_gen_aclose_raises() -> None:
     """Cover the branch where gen.aclose() itself raises before coro is assigned."""
-    from typing import cast
     from collections.abc import AsyncGenerator
+
+    from typing import cast
 
     class BadAsyncGen:
         """Mimics an async generator whose aclose() raises immediately."""
@@ -2494,9 +2495,7 @@ def test_streamed_run_result_sync_close_cleanup_gen_aclose_raises() -> None:
         new_message_index=0,
         run_result=run_result,
     )
-    sync_result = StreamedRunResultSync(
-        streamed, _cleanup_gen=cast(AsyncGenerator[None, None], BadAsyncGen())
-    )
+    sync_result = StreamedRunResultSync(streamed, _cleanup_gen=cast(AsyncGenerator[None, None], BadAsyncGen()))
     # close() should swallow the error and not raise
     sync_result.close()
 
