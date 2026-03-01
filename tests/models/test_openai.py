@@ -1856,7 +1856,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(
                 {
                     'additionalProperties': False,
-                    'properties': {'x': {'type': 'string', 'description': 'minLength=1, format=uri'}},
+                    'properties': {'x': {'minLength': 1, 'type': 'string', 'description': 'format=uri'}},
                     'required': ['x'],
                     'type': 'object',
                 }
