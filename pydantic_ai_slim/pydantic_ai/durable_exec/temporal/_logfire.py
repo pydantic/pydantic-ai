@@ -39,17 +39,12 @@ class LogfirePlugin(SimplePlugin):
 
         tracing_interceptors = [TracingInterceptor(get_tracer('temporalio'))]
         # temporalio >= 1.23.0 renamed 'client_interceptors' to 'interceptors'
-        sig = inspect.signature(SimplePlugin.__init__)
+        sig = inspect.signature(SimplePlugin.__init__)  # type: ignore[reportUnknownMemberType]
         if 'interceptors' in sig.parameters:
-            super().__init__(  # type: ignore[reportUnknownMemberType,reportCallIssue]
-                name='LogfirePlugin',
-                interceptors=tracing_interceptors,
-            )
-        else:
-            super().__init__(  # type: ignore[reportUnknownMemberType,reportCallIssue]
-                name='LogfirePlugin',
-                client_interceptors=tracing_interceptors,
-            )
+            interceptor_kwarg = {'interceptors': tracing_interceptors}
+        else:  # pragma: no cover
+            interceptor_kwarg = {'client_interceptors': tracing_interceptors}
+        super().__init__(name='LogfirePlugin', **interceptor_kwarg)  # type: ignore[reportUnknownMemberType]
 
     async def connect_service_client(
         self, config: ConnectConfig, next: Callable[[ConnectConfig], Awaitable[ServiceClient]]
