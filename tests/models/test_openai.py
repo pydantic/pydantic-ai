@@ -1731,6 +1731,10 @@ def tool_with_url(x: AnyUrl) -> str:
     return f'{x}'  # pragma: no cover
 
 
+def tool_with_max_length(x: Annotated[str, Field(max_length=100)]) -> str:
+    return x  # pragma: no cover
+
+
 def tool_with_recursion(x: MyRecursiveDc, y: MyDefaultRecursiveDc):
     return f'{x} {y}'  # pragma: no cover
 
@@ -1857,6 +1861,32 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {'x': {'minLength': 1, 'type': 'string', 'description': 'format=uri'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_max_length,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'maxLength': 100, 'type': 'string'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_max_length,
+            True,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'maxLength': 100, 'type': 'string'}},
                     'required': ['x'],
                     'type': 'object',
                 }
