@@ -1478,12 +1478,13 @@ def _safe_args_as_dict(part: ToolCallPart | BuiltinToolCallPart) -> dict[str, An
 
     When a model produces malformed JSON arguments and the framework adds a retry
     prompt, the next Anthropic request must re-map the original (malformed) tool call.
-    ``args_as_dict()`` raises ``ValueError`` on invalid JSON, which would crash the
-    retry flow before the model gets a chance to self-correct.
+    ``args_as_dict()`` raises ``ValueError`` on invalid JSON or ``AssertionError``
+    when parsed JSON is not a dict, either of which would crash the retry flow
+    before the model gets a chance to self-correct.
 
     See: https://github.com/pydantic/pydantic-ai/issues/4430
     """
     try:
         return part.args_as_dict()
-    except ValueError:
+    except (ValueError, AssertionError):
         return {}
