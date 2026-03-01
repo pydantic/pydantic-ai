@@ -48,7 +48,6 @@ from . import (
 )
 
 try:
-    import aiohttp
     from huggingface_hub import (
         AsyncInferenceClient,
         ChatCompletionInputMessage,
@@ -96,10 +95,14 @@ HuggingFaceModelName = str | LatestHuggingFaceModelNames
 You can browse available models [here](https://huggingface.co/models?pipeline_tag=text-generation&inference_provider=all&sort=trending).
 """
 
-_FINISH_REASON_MAP: dict[TextGenerationOutputFinishReason, FinishReason] = {
+HuggingFaceFinishReason = Literal['stop', 'tool_calls'] | TextGenerationOutputFinishReason
+
+_FINISH_REASON_MAP: dict[HuggingFaceFinishReason, FinishReason] = {
     'length': 'length',
     'eos_token': 'stop',
     'stop_sequence': 'stop',
+    'stop': 'stop',
+    'tool_calls': 'tool_call',
 }
 
 
@@ -242,6 +245,7 @@ class HuggingFaceModel(Model):
                 tools=tools,
                 tool_choice=tool_choice or None,
                 stream=stream,
+                max_tokens=model_settings.get('max_tokens', None),
                 stop=model_settings.get('stop_sequences', None),
                 temperature=model_settings.get('temperature', None),
                 top_p=model_settings.get('top_p', None),
@@ -253,12 +257,6 @@ class HuggingFaceModel(Model):
                 top_logprobs=model_settings.get('top_logprobs', None),
                 extra_body=model_settings.get('extra_body'),  # type: ignore
             )
-        except aiohttp.ClientResponseError as e:
-            raise ModelHTTPError(
-                status_code=e.status,
-                model_name=self.model_name,
-                body=e.message,
-            ) from e
         except HfHubHTTPError as e:
             raise ModelHTTPError(
                 status_code=e.response.status_code,
@@ -284,7 +282,7 @@ class HuggingFaceModel(Model):
         provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
         if response.created:  # pragma: no branch
             provider_details['timestamp'] = datetime.fromtimestamp(response.created, tz=timezone.utc)
-        finish_reason = _FINISH_REASON_MAP.get(cast(TextGenerationOutputFinishReason, raw_finish_reason), None)
+        finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
 
         return ModelResponse(
             parts=items,
@@ -349,7 +347,7 @@ class HuggingFaceModel(Model):
                         pass
                     else:
                         assert_never(item)
-                message_param = ChatCompletionInputMessage(role='assistant')  # type: ignore
+                message_param = ChatCompletionInputMessage(role='assistant')
                 if texts:
                     # Note: model responses from this model should only have one text item, so the following
                     # shouldn't merge multiple texts into one unless you switch models between runs:
@@ -361,7 +359,7 @@ class HuggingFaceModel(Model):
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
             system_prompt_count = sum(1 for m in hf_messages if getattr(m, 'role', None) == 'system')
-            hf_messages.insert(system_prompt_count, ChatCompletionInputMessage(content=instructions, role='system'))  # type: ignore
+            hf_messages.insert(system_prompt_count, ChatCompletionInputMessage(content=instructions, role='system'))
         return hf_messages
 
     @staticmethod
@@ -434,11 +432,11 @@ class HuggingFaceModel(Model):
                 if isinstance(item, str):
                     content.append(ChatCompletionInputMessageChunk(type='text', text=item))  # type: ignore
                 elif isinstance(item, ImageUrl):
-                    url = ChatCompletionInputURL(url=item.url)  # type: ignore
+                    url = ChatCompletionInputURL(url=item.url)
                     content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))  # type: ignore
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
-                        url = ChatCompletionInputURL(url=item.data_uri)  # type: ignore
+                        url = ChatCompletionInputURL(url=item.data_uri)
                         content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))  # type: ignore
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
@@ -484,9 +482,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
 
             if raw_finish_reason := choice.finish_reason:
                 self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
-                self.finish_reason = _FINISH_REASON_MAP.get(
-                    cast(TextGenerationOutputFinishReason, raw_finish_reason), None
-                )
+                self.finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
 
             # Handle the text part of the response
             content = choice.delta.content

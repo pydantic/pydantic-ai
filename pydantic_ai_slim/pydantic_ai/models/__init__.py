@@ -83,6 +83,7 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-sonnet-4-20250514',
         'anthropic:claude-sonnet-4-5-20250929',
         'anthropic:claude-sonnet-4-5',
+        'anthropic:claude-sonnet-4-6',
         'bedrock:amazon.titan-text-express-v1',
         'bedrock:amazon.titan-text-lite-v1',
         'bedrock:amazon.titan-tg1-large',
@@ -98,6 +99,7 @@ KnownModelName = TypeAliasType(
         'bedrock:anthropic.claude-opus-4-20250514-v1:0',
         'bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
         'bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'bedrock:anthropic.claude-sonnet-4-6',
         'bedrock:anthropic.claude-v2:1',
         'bedrock:anthropic.claude-v2',
         'bedrock:cohere.command-light-text-v14',
@@ -107,6 +109,7 @@ KnownModelName = TypeAliasType(
         'bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
         'bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
         'bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'bedrock:eu.anthropic.claude-sonnet-4-6',
         'bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
         'bedrock:meta.llama3-1-405b-instruct-v1:0',
         'bedrock:meta.llama3-1-70b-instruct-v1:0',
@@ -132,6 +135,7 @@ KnownModelName = TypeAliasType(
         'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
         'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
         'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'bedrock:us.anthropic.claude-sonnet-4-6',
         'bedrock:us.meta.llama3-1-70b-instruct-v1:0',
         'bedrock:us.meta.llama3-1-8b-instruct-v1:0',
         'bedrock:us.meta.llama3-2-11b-instruct-v1:0',
@@ -176,6 +180,7 @@ KnownModelName = TypeAliasType(
         'gateway/anthropic:claude-sonnet-4-20250514',
         'gateway/anthropic:claude-sonnet-4-5-20250929',
         'gateway/anthropic:claude-sonnet-4-5',
+        'gateway/anthropic:claude-sonnet-4-6',
         'gateway/bedrock:amazon.titan-text-express-v1',
         'gateway/bedrock:amazon.titan-text-lite-v1',
         'gateway/bedrock:amazon.titan-tg1-large',
@@ -191,6 +196,7 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:anthropic.claude-opus-4-20250514-v1:0',
         'gateway/bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
         'gateway/bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'gateway/bedrock:anthropic.claude-sonnet-4-6',
         'gateway/bedrock:anthropic.claude-v2:1',
         'gateway/bedrock:anthropic.claude-v2',
         'gateway/bedrock:cohere.command-light-text-v14',
@@ -200,6 +206,7 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
         'gateway/bedrock:meta.llama3-1-405b-instruct-v1:0',
         'gateway/bedrock:meta.llama3-1-70b-instruct-v1:0',
@@ -225,6 +232,7 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
         'gateway/bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
         'gateway/bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'gateway/bedrock:us.anthropic.claude-sonnet-4-6',
         'gateway/bedrock:us.meta.llama3-1-70b-instruct-v1:0',
         'gateway/bedrock:us.meta.llama3-1-8b-instruct-v1:0',
         'gateway/bedrock:us.meta.llama3-2-11b-instruct-v1:0',
@@ -243,6 +251,7 @@ KnownModelName = TypeAliasType(
         'gateway/google-vertex:gemini-3-flash-preview',
         'gateway/google-vertex:gemini-3-pro-image-preview',
         'gateway/google-vertex:gemini-3-pro-preview',
+        'gateway/google-vertex:gemini-3.1-pro-preview',
         'gateway/google-vertex:gemini-flash-latest',
         'gateway/google-vertex:gemini-flash-lite-latest',
         'gateway/groq:llama-3.1-8b-instant',
@@ -358,6 +367,7 @@ KnownModelName = TypeAliasType(
         'google-gla:gemini-3-flash-preview',
         'google-gla:gemini-3-pro-image-preview',
         'google-gla:gemini-3-pro-preview',
+        'google-gla:gemini-3.1-pro-preview',
         'google-gla:gemini-flash-latest',
         'google-gla:gemini-flash-lite-latest',
         'google-vertex:gemini-2.0-flash-lite',
@@ -371,6 +381,7 @@ KnownModelName = TypeAliasType(
         'google-vertex:gemini-3-flash-preview',
         'google-vertex:gemini-3-pro-image-preview',
         'google-vertex:gemini-3-pro-preview',
+        'google-vertex:gemini-3.1-pro-preview',
         'google-vertex:gemini-flash-latest',
         'google-vertex:gemini-flash-lite-latest',
         'grok:grok-2-image-1212',
@@ -780,6 +791,11 @@ class Model(ABC):
     def model_name(self) -> str:
         """The model name."""
         raise NotImplementedError()
+
+    @property
+    def model_id(self) -> str:
+        """The fully qualified model name in `'provider:model_name'` format."""
+        return f'{self.system}:{self.model_name}'
 
     @property
     def label(self) -> str:

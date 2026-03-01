@@ -74,7 +74,7 @@ Here's a minimal example of Pydantic AI:
 from pydantic_ai import Agent
 
 agent = Agent(  # (1)!
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     instructions='Be concise, reply with one sentence.',  # (2)!
 )
 
@@ -85,7 +85,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 """
 ```
 
-1. We configure the agent to use [Anthropic's Claude Sonnet 4.5](api/models/anthropic.md) model, but you can also set the model when running the agent.
+1. We configure the agent to use [Anthropic's Claude Sonnet 4.6](api/models/anthropic.md) model, but you can also set the model when running the agent.
 2. Register static [instructions](agent.md#instructions) using a keyword argument to the agent.
 3. [Run the agent](agent.md#running-agents) synchronously, starting a conversation with the LLM.
 
@@ -252,4 +252,4 @@ Read the [docs](agent.md) to learn more about building applications with Pydanti
 
 Read the [API Reference](api/agent.md) to understand Pydantic AI's interface.
 
-Join [:simple-slack: Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [:simple-github: GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.
+Join [Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [:simple-github: GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.

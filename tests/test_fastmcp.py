@@ -8,7 +8,6 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
@@ -16,6 +15,7 @@ from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
+from ._inline_snapshot import snapshot
 from .conftest import try_import
 
 with try_import() as imports_successful:

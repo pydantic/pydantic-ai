@@ -10,7 +10,6 @@ from typing import Any, Generic, Literal, TypeVar, Union
 
 import pytest
 from dirty_equals import IsJson
-from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter, field_validator
 from pydantic_core import ErrorDetails, to_json
 from typing_extensions import Self
@@ -41,6 +40,7 @@ from pydantic_ai import (
     RunContext,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -73,6 +73,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
@@ -2590,7 +2591,6 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='New instructions',
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -3144,6 +3144,18 @@ def test_unknown_tool_multiple_retries():
     )
 
 
+def test_unknown_tool_per_tool_retries_exceeded():
+    """When output_retries > retries, the per-tool retry limit fires before the agent-level one."""
+
+    def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
+
+    agent = Agent(FunctionModel(empty), retries=1, output_retries=5)
+
+    with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
+        agent.run_sync('Hello')
+
+
 def test_tool_exceeds_token_limit_error():
     def return_incomplete_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar",')])
@@ -3306,6 +3318,13 @@ class OutputType(BaseModel):
     """Result type used by multiple tests."""
 
     value: str
+
+
+class OutputTypeWithCount(BaseModel):
+    """Result type with an additional int field, used to test schema validation failures."""
+
+    value: str
+    count: int
 
 
 class TestMultipleToolCalls:
@@ -4270,7 +4289,7 @@ class TestMultipleToolCalls:
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
-                            content='Output tool not used - output failed validation.',
+                            content='Output tool not used - output function execution failed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
@@ -4452,6 +4471,112 @@ class TestMultipleToolCalls:
                 ),
             ]
         )
+
+    def test_exhaustive_strategy_second_output_schema_validation_fails(self):
+        """Test exhaustive strategy when first output succeeds and second fails schema validation."""
+        output_tools_called: list[str] = []
+
+        def process_first(output: OutputType) -> OutputType:
+            output_tools_called.append('first')
+            return output
+
+        def process_second(output: OutputTypeWithCount) -> OutputTypeWithCount:  # pragma: no cover
+            output_tools_called.append('second')
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'valid'}),
+                    ToolCallPart('second_output', {'value': 'invalid', 'count': 'not_an_int'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='exhaustive',
+        )
+
+        result = agent.run_sync('test exhaustive with schema validation failure')
+
+        assert isinstance(result.output, OutputType)
+        assert result.output.value == 'valid'
+        assert output_tools_called == ['first']
+
+    def test_exhaustive_strategy_second_output_max_retries_exceeded(self):
+        """Test exhaustive strategy when first output succeeds and second exceeds max retries."""
+        output_tools_called: list[str] = []
+
+        def process_first(output: OutputType) -> OutputType:
+            output_tools_called.append('first')
+            return output
+
+        def process_second(output: OutputTypeWithCount) -> OutputTypeWithCount:  # pragma: no cover
+            output_tools_called.append('second')
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'valid'}),
+                    ToolCallPart('second_output', {'value': 'invalid', 'count': 'not_an_int'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='exhaustive',
+            output_retries=0,
+        )
+
+        result = agent.run_sync('test exhaustive with max retries exceeded')
+
+        assert isinstance(result.output, OutputType)
+        assert result.output.value == 'valid'
+        assert output_tools_called == ['first']
+
+    def test_early_strategy_second_output_max_retries_exceeded(self):
+        """Test early strategy when first output succeeds and second exceeds max retries."""
+
+        def process_first(output: OutputType) -> OutputType:
+            return output
+
+        def process_second(output: OutputTypeWithCount) -> OutputTypeWithCount:  # pragma: no cover
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'valid'}),
+                    ToolCallPart('second_output', {'value': 'invalid', 'count': 'not_an_int'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='early',
+            output_retries=0,
+        )
+
+        result = agent.run_sync('test early with max retries exceeded')
+
+        assert isinstance(result.output, OutputType)
+        assert result.output.value == 'valid'
 
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
@@ -6522,8 +6647,6 @@ async def test_wrapper_agent():
 
 async def test_thinking_only_response_retry():
     """Test that thinking-only responses trigger a retry mechanism."""
-    from pydantic_ai import ThinkingPart
-    from pydantic_ai.models.function import FunctionModel
 
     call_count = 0
 
@@ -6572,7 +6695,7 @@ async def test_thinking_only_response_retry():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text or call a tool.',
+                        content='Please return text.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -6583,13 +6706,40 @@ async def test_thinking_only_response_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
-                usage=RequestUsage(input_tokens=67, output_tokens=8),
+                usage=RequestUsage(input_tokens=63, output_tokens=8),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
             ),
         ]
     )
+
+
+async def test_retry_message_no_tools():
+    """Test that retry message triggered by thinking-only response, does not suggest 'call a tool' when no function tools are registered."""
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            return ModelResponse(parts=[ThinkingPart(content='thinking...')])
+        else:
+            return ModelResponse(parts=[TextPart(content='result')])
+
+    agent = Agent(FunctionModel(model_function))
+    result = await agent.run('Hello')
+
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart)
+    ]
+    assert len(retry_parts) == 1
+    assert retry_parts[0].content == 'Please return text.'
 
 
 async def test_hitl_tool_approval():
@@ -7572,7 +7722,6 @@ async def test_message_history():
                         )
                     ],
                     timestamp=IsNow(tz=timezone.utc),
-                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='ok here is text')],

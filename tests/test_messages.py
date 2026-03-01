@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 
 from pydantic_ai import (
@@ -29,6 +28,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
 
 

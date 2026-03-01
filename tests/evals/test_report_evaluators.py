@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,14 +19,17 @@ with try_import() as imports_successful:
         ConfusionMatrixEvaluator,
         Evaluator,
         EvaluatorContext,
+        KolmogorovSmirnovEvaluator,
         PrecisionRecallEvaluator,
         ReportEvaluator,
         ReportEvaluatorContext,
+        ROCAUCEvaluator,
     )
     from pydantic_evals.evaluators.evaluator import EvaluatorOutput
     from pydantic_evals.reporting import EvaluationReport, ReportCase
     from pydantic_evals.reporting.analyses import (
         ConfusionMatrix,
+        LinePlot,
         PrecisionRecall,
         ReportAnalysis,
         ScalarResult,
@@ -262,15 +266,25 @@ def test_precision_recall_evaluator_basic():
         positive_key='is_correct',
     )
     ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
-    result = evaluator.evaluate(ctx)
+    results = evaluator.evaluate(ctx)
 
-    assert isinstance(result, PrecisionRecall)
-    assert len(result.curves) == 1
-    curve = result.curves[0]
+    assert isinstance(results, list)
+    assert len(results) == 2
+    pr_result = results[0]
+    assert isinstance(pr_result, PrecisionRecall)
+    assert len(pr_result.curves) == 1
+    curve = pr_result.curves[0]
     assert curve.name == 'test'
     assert len(curve.points) > 0
     assert curve.auc is not None
-    assert curve.auc > 0
+    # Perfect separation: AUC should be 1.0
+    assert curve.auc == 1.0
+
+    # ScalarResult with AUC is also returned for queryability
+    scalar = results[1]
+    assert isinstance(scalar, ScalarResult)
+    assert scalar.title == 'Precision-Recall Curve AUC'
+    assert scalar.value == 1.0
 
 
 def test_precision_recall_evaluator_from_metrics():
@@ -287,10 +301,34 @@ def test_precision_recall_evaluator_from_metrics():
         positive_key='positive',
     )
     ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
-    result = evaluator.evaluate(ctx)
+    results = evaluator.evaluate(ctx)
 
-    assert isinstance(result, PrecisionRecall)
-    assert len(result.curves) == 1
+    assert isinstance(results, list)
+    pr_result = results[0]
+    assert isinstance(pr_result, PrecisionRecall)
+    assert len(pr_result.curves) == 1
+
+
+def test_precision_recall_evaluator_downsamples():
+    """PrecisionRecallEvaluator downsamples when there are more unique thresholds than n_thresholds."""
+    cases = [_make_report_case(f'c{i}', scores={'s': i * 0.1}, assertions={'p': i >= 5}) for i in range(10)]
+    report = _make_report(cases)
+
+    evaluator = PrecisionRecallEvaluator(
+        score_from='scores',
+        score_key='s',
+        positive_from='assertions',
+        positive_key='p',
+        n_thresholds=3,
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    results = evaluator.evaluate(ctx)
+
+    pr_result = results[0]
+    assert isinstance(pr_result, PrecisionRecall)
+    curve = pr_result.curves[0]
+    # With n_thresholds=3, the anchor + 10 unique thresholds = 11 points should be downsampled to 3
+    assert len(curve.points) == 3
 
 
 def test_precision_recall_evaluator_empty():
@@ -302,10 +340,16 @@ def test_precision_recall_evaluator_empty():
         positive_key='p',
     )
     ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
-    result = evaluator.evaluate(ctx)
+    results = evaluator.evaluate(ctx)
 
-    assert isinstance(result, PrecisionRecall)
-    assert len(result.curves) == 0
+    assert isinstance(results, list)
+    assert len(results) == 2
+    pr_result = results[0]
+    assert isinstance(pr_result, PrecisionRecall)
+    assert len(pr_result.curves) == 0
+    scalar_result = results[1]
+    assert isinstance(scalar_result, ScalarResult)
+    assert math.isnan(scalar_result.value)
 
 
 def test_precision_recall_assertions_requires_key():
@@ -666,10 +710,11 @@ def test_precision_recall_evaluator_skips_missing_scores():
         positive_key='is_correct',
     )
     ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
-    result = evaluator.evaluate(ctx)
+    results = evaluator.evaluate(ctx)
 
-    assert isinstance(result, PrecisionRecall)
-    assert len(result.curves) == 1
+    pr_result = results[0]
+    assert isinstance(pr_result, PrecisionRecall)
+    assert len(pr_result.curves) == 1
     # Only case c1 should have been used (1 scored case)
 
 
@@ -687,10 +732,11 @@ def test_precision_recall_evaluator_positive_from_expected_output():
         positive_from='expected_output',
     )
     ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
-    result = evaluator.evaluate(ctx)
+    results = evaluator.evaluate(ctx)
 
-    assert isinstance(result, PrecisionRecall)
-    assert len(result.curves) == 1
+    pr_result = results[0]
+    assert isinstance(pr_result, PrecisionRecall)
+    assert len(pr_result.curves) == 1
 
 
 def test_precision_recall_evaluator_positive_from_labels():
@@ -707,10 +753,11 @@ def test_precision_recall_evaluator_positive_from_labels():
         positive_key='is_pos',
     )
     ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
-    result = evaluator.evaluate(ctx)
+    results = evaluator.evaluate(ctx)
 
-    assert isinstance(result, PrecisionRecall)
-    assert len(result.curves) == 1
+    pr_result = results[0]
+    assert isinstance(pr_result, PrecisionRecall)
+    assert len(pr_result.curves) == 1
 
 
 async def test_async_report_evaluator():
@@ -915,3 +962,263 @@ def test_builtin_report_evaluator_repr():
 
     evaluator_with_args = ConfusionMatrixEvaluator(predicted_from='labels', predicted_key='pred')
     assert repr(evaluator_with_args) == "ConfusionMatrixEvaluator(predicted_from='labels', predicted_key='pred')"
+
+
+# --- LinePlot serialization tests ---
+
+
+def test_line_plot_serialization():
+    from pydantic_evals.reporting.analyses import LinePlotCurve, LinePlotPoint
+
+    lp = LinePlot(
+        title='ROC Curve',
+        x_label='FPR',
+        y_label='TPR',
+        x_range=(0, 1),
+        y_range=(0, 1),
+        curves=[
+            LinePlotCurve(
+                name='test',
+                points=[LinePlotPoint(x=0.0, y=0.0), LinePlotPoint(x=0.5, y=0.8), LinePlotPoint(x=1.0, y=1.0)],
+            ),
+            LinePlotCurve(name='Random', points=[LinePlotPoint(x=0, y=0), LinePlotPoint(x=1, y=1)], style='dashed'),
+        ],
+    )
+    data = lp.model_dump()
+    assert data['type'] == 'line_plot'
+    assert data['x_label'] == 'FPR'
+    assert data['y_label'] == 'TPR'
+    assert data['x_range'] == (0, 1)
+    assert len(data['curves']) == 2
+    assert data['curves'][1]['style'] == 'dashed'
+
+    # Round-trip through discriminated union
+    adapter: TypeAdapter[ReportAnalysis] = TypeAdapter(ReportAnalysis)
+    restored = adapter.validate_python(data)
+    assert isinstance(restored, LinePlot)
+    assert restored.x_label == 'FPR'
+    assert len(restored.curves) == 2
+
+
+# --- ROCAUCEvaluator tests ---
+
+
+def test_roc_auc_evaluator_basic():
+    """ROCAUCEvaluator computes ROC curve and AUC for perfect separation."""
+    cases = [
+        _make_report_case('c1', scores={'confidence': 0.9}, assertions={'is_correct': True}),
+        _make_report_case('c2', scores={'confidence': 0.8}, assertions={'is_correct': True}),
+        _make_report_case('c3', scores={'confidence': 0.3}, assertions={'is_correct': False}),
+        _make_report_case('c4', scores={'confidence': 0.1}, assertions={'is_correct': False}),
+    ]
+    report = _make_report(cases)
+
+    evaluator = ROCAUCEvaluator(
+        score_key='confidence',
+        positive_from='assertions',
+        positive_key='is_correct',
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    results = evaluator.evaluate(ctx)
+
+    assert isinstance(results, list)
+    assert len(results) == 2
+
+    line_plot = results[0]
+    assert isinstance(line_plot, LinePlot)
+    assert line_plot.x_label == 'False Positive Rate'
+    assert line_plot.y_label == 'True Positive Rate'
+    assert line_plot.x_range == (0, 1)
+    assert line_plot.y_range == (0, 1)
+    assert len(line_plot.curves) == 2  # ROC curve + random baseline
+    assert line_plot.curves[1].style == 'dashed'  # baseline is dashed
+
+    scalar = results[1]
+    assert isinstance(scalar, ScalarResult)
+    assert scalar.title == 'ROC Curve AUC'
+    # Perfect separation: AUC should be 1.0
+    assert scalar.value == 1.0
+
+
+def test_roc_auc_evaluator_downsamples():
+    """ROCAUCEvaluator downsamples curve points when there are more than n_thresholds."""
+    cases = [_make_report_case(f'c{i}', scores={'s': i * 0.1}, assertions={'p': i >= 5}) for i in range(10)]
+    report = _make_report(cases)
+
+    evaluator = ROCAUCEvaluator(
+        score_key='s',
+        positive_from='assertions',
+        positive_key='p',
+        n_thresholds=3,
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    results = evaluator.evaluate(ctx)
+
+    line_plot = results[0]
+    assert isinstance(line_plot, LinePlot)
+    roc_curve = line_plot.curves[0]
+    # With n_thresholds=3, the ROC points should be downsampled
+    assert len(roc_curve.points) <= 3
+
+
+def test_roc_auc_evaluator_empty():
+    """ROCAUCEvaluator returns empty plot and NaN scalar for no data."""
+    report = _make_report([])
+    evaluator = ROCAUCEvaluator(
+        score_key='s',
+        positive_from='assertions',
+        positive_key='p',
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    results = evaluator.evaluate(ctx)
+
+    assert len(results) == 2
+    assert isinstance(results[0], LinePlot)
+    assert len(results[0].curves) == 0
+    assert isinstance(results[1], ScalarResult)
+    assert math.isnan(results[1].value)
+
+
+def test_roc_auc_evaluator_all_same_class():
+    """ROCAUCEvaluator returns empty plot and NaN scalar when all cases are the same class."""
+    cases = [
+        _make_report_case('c1', scores={'s': 0.9}, assertions={'p': True}),
+        _make_report_case('c2', scores={'s': 0.5}, assertions={'p': True}),
+    ]
+    report = _make_report(cases)
+
+    evaluator = ROCAUCEvaluator(score_key='s', positive_from='assertions', positive_key='p')
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    results = evaluator.evaluate(ctx)
+
+    assert len(results) == 2
+    assert isinstance(results[0], LinePlot)
+    assert len(results[0].curves) == 0
+    assert isinstance(results[1], ScalarResult)
+    assert math.isnan(results[1].value)
+
+
+def test_roc_auc_evaluator_from_metrics():
+    """ROCAUCEvaluator works with score_from='metrics'."""
+    cases = [
+        _make_report_case('c1', metrics={'score': 0.9}, assertions={'positive': True}),
+        _make_report_case('c2', metrics={'score': 0.1}, assertions={'positive': False}),
+    ]
+    report = _make_report(cases)
+
+    evaluator = ROCAUCEvaluator(
+        score_from='metrics',
+        score_key='score',
+        positive_from='assertions',
+        positive_key='positive',
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    results = evaluator.evaluate(ctx)
+
+    assert len(results) == 2
+    assert isinstance(results[0], LinePlot)
+    assert isinstance(results[1], ScalarResult)
+
+
+# --- KolmogorovSmirnovEvaluator tests ---
+
+
+def test_ks_evaluator_basic():
+    """KolmogorovSmirnovEvaluator computes KS plot and statistic."""
+    cases = [
+        _make_report_case('c1', scores={'confidence': 0.9}, assertions={'is_correct': True}),
+        _make_report_case('c2', scores={'confidence': 0.8}, assertions={'is_correct': True}),
+        _make_report_case('c3', scores={'confidence': 0.3}, assertions={'is_correct': False}),
+        _make_report_case('c4', scores={'confidence': 0.1}, assertions={'is_correct': False}),
+    ]
+    report = _make_report(cases)
+
+    evaluator = KolmogorovSmirnovEvaluator(
+        score_key='confidence',
+        positive_from='assertions',
+        positive_key='is_correct',
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    results = evaluator.evaluate(ctx)
+
+    assert isinstance(results, list)
+    assert len(results) == 2
+
+    line_plot = results[0]
+    assert isinstance(line_plot, LinePlot)
+    assert line_plot.x_label == 'Score'
+    assert line_plot.y_label == 'Cumulative Probability'
+    assert line_plot.y_range == (0, 1)
+    assert len(line_plot.curves) == 2  # Positive + Negative CDFs
+    assert line_plot.curves[0].name == 'Positive'
+    assert line_plot.curves[1].name == 'Negative'
+
+    scalar = results[1]
+    assert isinstance(scalar, ScalarResult)
+    assert scalar.title == 'KS Statistic'
+    # Perfect separation: KS should be 1.0
+    assert scalar.value == 1.0
+
+
+def test_ks_evaluator_empty():
+    """KolmogorovSmirnovEvaluator returns empty plot and NaN scalar for no data."""
+    report = _make_report([])
+    evaluator = KolmogorovSmirnovEvaluator(
+        score_key='s',
+        positive_from='assertions',
+        positive_key='p',
+    )
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    results = evaluator.evaluate(ctx)
+
+    assert len(results) == 2
+    assert isinstance(results[0], LinePlot)
+    assert len(results[0].curves) == 0
+    assert isinstance(results[1], ScalarResult)
+    assert math.isnan(results[1].value)
+
+
+def test_ks_evaluator_all_same_class():
+    """KolmogorovSmirnovEvaluator returns empty plot and NaN scalar when all cases are the same class."""
+    cases = [
+        _make_report_case('c1', scores={'s': 0.9}, assertions={'p': True}),
+        _make_report_case('c2', scores={'s': 0.5}, assertions={'p': True}),
+    ]
+    report = _make_report(cases)
+
+    evaluator = KolmogorovSmirnovEvaluator(score_key='s', positive_from='assertions', positive_key='p')
+    ctx = ReportEvaluatorContext(name='test', report=report, experiment_metadata=None)
+    results = evaluator.evaluate(ctx)
+
+    assert len(results) == 2
+    assert isinstance(results[0], LinePlot)
+    assert len(results[0].curves) == 0
+    assert isinstance(results[1], ScalarResult)
+    assert math.isnan(results[1].value)
+
+
+# --- LinePlot rendering test ---
+
+
+def test_report_rendering_line_plot():
+    """LinePlot rendering."""
+    from pydantic_evals.reporting.analyses import LinePlotCurve, LinePlotPoint
+
+    report = _make_report([_make_report_case('c1', output='x', expected_output='x')])
+    report.analyses = [
+        LinePlot(
+            title='ROC Curve',
+            x_label='FPR',
+            y_label='TPR',
+            curves=[
+                LinePlotCurve(
+                    name='test_curve',
+                    points=[LinePlotPoint(x=0.0, y=0.0), LinePlotPoint(x=0.5, y=0.8), LinePlotPoint(x=1.0, y=1.0)],
+                ),
+            ],
+        ),
+    ]
+
+    rendered = report.render(width=120)
+    assert 'ROC Curve' in rendered
+    assert 'test_curve' in rendered
