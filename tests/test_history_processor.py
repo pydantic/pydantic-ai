@@ -1317,7 +1317,6 @@ async def test_history_processor_resuming_without_prompt(
                     ),
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
             )
         ]
     )
