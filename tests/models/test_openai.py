@@ -4367,6 +4367,20 @@ def test_strict_schema_detects_empty_items_as_incompatible():
     typed_transformer.walk()
     assert typed_transformer.is_strict_compatible
 
+    # strict=True → should remove empty items and add description
+    strict_schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {
+            'values': {'type': 'array', 'items': {}},
+        },
+        'required': ['values'],
+    }
+    strict_transformer = OpenAIJsonSchemaTransformer(strict_schema, strict=True)
+    strict_result = strict_transformer.walk()
+    arr_schema = strict_result['properties']['values']
+    assert 'items' not in arr_schema
+    assert 'items={} (any type)' in arr_schema.get('description', '')
+
 
 def chunk_with_usage(
     delta: list[ChoiceDelta],
