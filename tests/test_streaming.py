@@ -2477,6 +2477,26 @@ def test_streamed_run_result_sync_close() -> None:
     sync_result.close()
 
 
+def test_streamed_run_result_sync_close_cleanup_gen_aclose_raises() -> None:
+    """Cover the branch where gen.aclose() itself raises before coro is assigned."""
+
+    class BadAsyncGen:
+        """Mimics an async generator whose aclose() raises immediately."""
+
+        def aclose(self):
+            raise RuntimeError('aclose failed')
+
+    run_result = _make_run_result(metadata=None)
+    streamed = StreamedRunResult(
+        all_messages=run_result.all_messages(),
+        new_message_index=0,
+        run_result=run_result,
+    )
+    sync_result = StreamedRunResultSync(streamed, _cleanup_gen=BadAsyncGen())
+    # close() should swallow the error and not raise
+    sync_result.close()
+
+
 def test_streamed_run_result_sync_close_with_cleanup_gen() -> None:
     """Verify close() actually drives the cleanup generator to completion."""
     import asyncio
