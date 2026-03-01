@@ -8409,3 +8409,73 @@ Instructions content\
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'
+
+
+async def test_anthropic_malformed_tool_args_retry(allow_model_requests: None):
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/4430.
+
+    When tool call args contain malformed JSON, the retry flow should not crash
+    with a raw ValueError during Anthropic message remapping.  Instead, the
+    malformed args should be safely mapped to an empty dict so the model has a
+    chance to self-correct via the retry prompt.
+    """
+    bad_args = (
+        '{"query": "bad query", '
+        '"file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    )
+
+    # Simulate history where the model produced malformed JSON and the
+    # framework already created a retry prompt.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='search for documents')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='search_knowledge',
+                    tool_call_id='toolu_malformed',
+                    args=bad_args,
+                )
+            ],
+            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='search_knowledge',
+                    tool_call_id='toolu_malformed',
+                    content=[
+                        {
+                            'type': 'json_invalid',
+                            'loc': (),
+                            'msg': 'Invalid JSON: expected `,` or `}` at line 1 column 99',
+                            'input': bad_args,
+                        }
+                    ],
+                )
+            ]
+        ),
+    ]
+
+    # The model should handle the retry and return a text response
+    c = completion_message(
+        [BetaTextBlock(text='Sorry, let me fix the tool call.', type='text')],
+        BetaUsage(input_tokens=50, output_tokens=20),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # This should NOT raise ValueError: "expected ',' or '}' at line 1 column 99"
+    result = await agent.run('Please fix the tool call.', message_history=history)
+    assert result.output == 'Sorry, let me fix the tool call.'
+
+    # Verify the malformed tool call was mapped with empty args
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    # Find the assistant message with tool_use
+    assistant_msgs = [m for m in messages if m['role'] == 'assistant']
+    assert len(assistant_msgs) >= 1
+    tool_use_blocks = [b for b in assistant_msgs[0]['content'] if b.get('type') == 'tool_use']
+    assert len(tool_use_blocks) == 1
+    # Malformed args should have been safely mapped to empty dict
+    assert tool_use_blocks[0]['input'] == {}
