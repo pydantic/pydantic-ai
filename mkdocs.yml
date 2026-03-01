@@ -382,6 +382,7 @@ plugins:
           - common-tools.md
           - output.md
           - retries.md
+          - security.md
           - message-history.md
           - multi-agent-applications.md
           - thinking.md
