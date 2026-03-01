@@ -5110,13 +5110,16 @@ async def test_google_stream_api_error_wrapped_as_model_http_error(
     """API errors during stream iteration should be wrapped as ModelHTTPError."""
     model = GoogleModel('gemini-1.5-flash', provider=google_provider)
 
+    api_error = errors.APIError(
+        429, {'error': {'code': 429, 'message': 'Rate limit exceeded', 'status': 'RESOURCE_EXHAUSTED'}}
+    )
+
     async def failing_stream():
-        raise errors.APIError(
-            429, {'error': {'code': 429, 'message': 'Rate limit exceeded', 'status': 'RESOURCE_EXHAUSTED'}}
-        )
+        raise api_error
         yield
 
-    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=failing_stream())
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', side_effect=lambda **kw: failing_stream())  # pyright: ignore[reportUnknownLambdaType]
+    mocker.patch.object(model.client.aio.models, 'generate_content', side_effect=api_error)
     agent = Agent(model=model)
 
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -5192,12 +5195,14 @@ async def test_google_stream_iteration_http_error_wrapped(
     model = GoogleModel('gemini-1.5-flash', provider=google_provider)
 
     valid_chunk = _generate_response_with_texts('stream-err', ['partial'])
+    api_error = errors.APIError(500, {'error': {'code': 500, 'message': 'Internal error', 'status': 'INTERNAL'}})
 
     async def stream_then_fail():
         yield valid_chunk
-        raise errors.APIError(500, {'error': {'code': 500, 'message': 'Internal error', 'status': 'INTERNAL'}})
+        raise api_error
 
-    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_then_fail())
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', side_effect=lambda **kw: stream_then_fail())  # pyright: ignore[reportUnknownLambdaType]
+    mocker.patch.object(model.client.aio.models, 'generate_content', side_effect=api_error)
     agent = Agent(model=model)
 
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -5217,12 +5222,14 @@ async def test_google_stream_iteration_non_http_error_wrapped(
     model = GoogleModel('gemini-1.5-flash', provider=google_provider)
 
     valid_chunk = _generate_response_with_texts('stream-err2', ['partial'])
+    api_error = errors.APIError(200, {'error': {'message': 'Unexpected'}})
 
     async def stream_then_fail():
         yield valid_chunk
-        raise errors.APIError(200, {'error': {'message': 'Unexpected'}})
+        raise api_error
 
-    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_then_fail())
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', side_effect=lambda **kw: stream_then_fail())  # pyright: ignore[reportUnknownLambdaType]
+    mocker.patch.object(model.client.aio.models, 'generate_content', side_effect=api_error)
     agent = Agent(model=model)
 
     with pytest.raises(ModelAPIError) as exc_info:
