@@ -711,6 +711,12 @@ Toolsets for database access help agents explore schemas, run queries, and inter
 
 - [`database-pydantic-ai`](https://github.com/vstorm-co/database-pydantic-ai) by [Vstorm](https://vstorm.co/) — `DatabaseToolset` with `list_tables`, `get_schema`, `describe_table`, `explain_query`, and `query` tools. Supports SQLite and PostgreSQL with built-in security controls (read-only mode, query timeouts, row limits).
 
+### Middleware & Guardrails
+
+Middleware for intercepting and transforming agent behavior with lifecycle hooks:
+
+- [`pydantic-ai-middleware`](https://github.com/vstorm-co/pydantic-ai-middleware) by [Vstorm](https://vstorm.co/) — `MiddlewareAgent` wrapper with 7 lifecycle hooks (`before_run`, `after_run`, `before_tool_call`, etc.), tool permission system, cost tracking with budget enforcement, parallel middleware execution, and async guardrails. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
+
 ### LangChain Tools {#langchain-tools}
 
 If you'd like to use tools or a [toolkit](https://python.langchain.com/docs/concepts/tools/#toolkits) from LangChain's [community tool library](https://python.langchain.com/docs/integrations/tools/) with Pydantic AI, you can use the [`LangChainToolset`][pydantic_ai.ext.langchain.LangChainToolset] which takes a list of LangChain tools. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the LangChain tool, and up to the LangChain tool to raise an error if the arguments are invalid.
