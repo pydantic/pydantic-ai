@@ -8419,10 +8419,7 @@ async def test_anthropic_malformed_tool_args_retry(allow_model_requests: None):
     malformed args should be safely mapped to an empty dict so the model has a
     chance to self-correct via the retry prompt.
     """
-    bad_args = (
-        '{"query": "bad query", '
-        '"file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
-    )
+    bad_args = '{"query": "bad query", "file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
 
     # Simulate history where the model produced malformed JSON and the
     # framework already created a retry prompt.
