@@ -37,6 +37,7 @@ from .exceptions import (
     ApprovalRequired,
     CallDeferred,
     ConcurrencyLimitExceeded,
+    ContextWindowExceeded,
     FallbackExceptionGroup,
     IncompleteToolCall,
     ModelAPIError,
@@ -45,6 +46,7 @@ from .exceptions import (
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
+    is_context_limit_error,
 )
 from .format_prompt import format_as_xml
 from .messages import (
@@ -155,6 +157,7 @@ __all__ = (
     'CallDeferred',
     'ApprovalRequired',
     'ConcurrencyLimitExceeded',
+    'ContextWindowExceeded',
     'ModelRetry',
     'ModelAPIError',
     'ModelHTTPError',
@@ -163,6 +166,7 @@ __all__ = (
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',
+    'is_context_limit_error',
     # messages
     'AgentStreamEvent',
     'AudioFormat',

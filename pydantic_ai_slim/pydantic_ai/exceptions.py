@@ -25,6 +25,8 @@ __all__ = (
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'ConcurrencyLimitExceeded',
+    'ContextWindowExceeded',
+    'is_context_limit_error',
     'ModelAPIError',
     'ModelHTTPError',
     'ContentFilterError',
@@ -132,6 +134,29 @@ class UsageLimitExceeded(AgentRunError):
 
 class ConcurrencyLimitExceeded(AgentRunError):
     """Error raised when the concurrency queue depth exceeds max_queued."""
+
+
+class ContextWindowExceeded(AgentRunError):
+    """Error raised when a model request exceeds the model/provider context window."""
+
+
+_CONTEXT_LIMIT_NEEDLES = (
+    'context window',
+    'context length',
+    'maximum context',
+    'max context',
+    'too many tokens',
+    'token limit',
+    'prompt is too long',
+)
+
+
+def is_context_limit_error(exc: BaseException) -> bool:
+    """Return `True` if an exception indicates a context-window overflow."""
+    if isinstance(exc, ContextWindowExceeded):
+        return True
+    text = str(exc).lower()
+    return any(needle in text for needle in _CONTEXT_LIMIT_NEEDLES)
 
 
 class UnexpectedModelBehavior(AgentRunError):

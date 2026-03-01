@@ -12,6 +12,7 @@ from pydantic_ai.exceptions import (
     AgentRunError,
     ApprovalRequired,
     CallDeferred,
+    ContextWindowExceeded,
     IncompleteToolCall,
     ModelAPIError,
     ModelHTTPError,
@@ -19,6 +20,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
+    is_context_limit_error,
 )
 from pydantic_ai.messages import RetryPromptPart
 
@@ -33,6 +35,7 @@ from pydantic_ai.messages import RetryPromptPart
         lambda: AgentRunError('test'),
         lambda: UnexpectedModelBehavior('test'),
         lambda: UsageLimitExceeded('test'),
+        lambda: ContextWindowExceeded('test'),
         lambda: ModelAPIError('model', 'test message'),
         lambda: ModelHTTPError(500, 'model'),
         lambda: IncompleteToolCall('test'),
@@ -46,6 +49,7 @@ from pydantic_ai.messages import RetryPromptPart
         'AgentRunError',
         'UnexpectedModelBehavior',
         'UsageLimitExceeded',
+        'ContextWindowExceeded',
         'ModelAPIError',
         'ModelHTTPError',
         'IncompleteToolCall',
@@ -108,3 +112,24 @@ def test_tool_retry_error_str_with_value_error_type():
     assert str(error) == (
         "1 validation error for 'my_tool'\nfield\n  Value error, must not be foo [type=value_error, input_value='foo']"
     )
+
+
+def test_is_context_limit_error_typed_exception() -> None:
+    assert is_context_limit_error(ContextWindowExceeded('overflow')) is True
+
+
+@pytest.mark.parametrize(
+    'message',
+    (
+        'context window exceeded',
+        'maximum context length reached',
+        'prompt is too long',
+        'too many tokens in request',
+    ),
+)
+def test_is_context_limit_error_string_fallback(message: str) -> None:
+    assert is_context_limit_error(RuntimeError(message)) is True
+
+
+def test_is_context_limit_error_negative_case() -> None:
+    assert is_context_limit_error(RuntimeError('connection timeout')) is False
