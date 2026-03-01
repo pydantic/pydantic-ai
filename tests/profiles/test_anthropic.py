@@ -250,6 +250,26 @@ def test_strict_true_warns_on_basemodel_with_dict_field():
         AnthropicJsonSchemaTransformer(schema, strict=True).walk()
 
 
+def test_strict_true_warns_on_any_dict_field():
+    """With strict=True, dict[str, Any] fields (additionalProperties: true) emit a warning."""
+    schema = {'type': 'object', 'additionalProperties': True}
+    with pytest.warns(UserWarning, match='`dict` fields are not supported by Anthropic in strict mode'):
+        AnthropicJsonSchemaTransformer(schema, strict=True).walk()
+
+
+def test_strict_true_warns_on_basemodel_with_any_dict_field():
+    """With strict=True, a BaseModel containing a dict[str, Any] field emits a warning."""
+    from typing import Any
+
+    class ModelWithAnyDict(BaseModel):
+        name: str
+        metadata: dict[str, Any]
+
+    schema = ModelWithAnyDict.model_json_schema()
+    with pytest.warns(UserWarning, match='`dict` fields are not supported by Anthropic in strict mode'):
+        AnthropicJsonSchemaTransformer(schema, strict=True).walk()
+
+
 # =============================================================================
 # Model Profile Tests
 # =============================================================================

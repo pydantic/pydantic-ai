@@ -144,7 +144,7 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
         schema = super()._handle_object(schema)
         if self.strict is True:
             additional_properties = schema.get('additionalProperties')
-            if isinstance(additional_properties, dict):
+            if isinstance(additional_properties, dict) or additional_properties is True:
                 warnings.warn(
                     '`dict` fields are not supported by Anthropic in strict mode '
                     '(including Native Output mode, which is used with extended thinking). '
