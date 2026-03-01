@@ -2046,7 +2046,7 @@ def test_logfire_plugin_uses_inspect_for_interceptor_param():
 
     from pydantic_ai.durable_exec.temporal._logfire import LogfirePlugin
 
-    sig = inspect.signature(SimplePlugin.__init__)
+    sig = inspect.signature(SimplePlugin.__init__)  # pyright: ignore[reportUnknownMemberType]
     # The installed temporalio version must have one of the two parameter names
     has_new = 'interceptors' in sig.parameters
     has_old = 'client_interceptors' in sig.parameters

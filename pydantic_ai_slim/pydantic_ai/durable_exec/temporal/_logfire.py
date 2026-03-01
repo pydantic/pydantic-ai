@@ -41,12 +41,12 @@ class LogfirePlugin(SimplePlugin):
         # temporalio >= 1.23.0 renamed 'client_interceptors' to 'interceptors'
         sig = inspect.signature(SimplePlugin.__init__)
         if 'interceptors' in sig.parameters:
-            super().__init__(  # type: ignore[reportUnknownMemberType]
+            super().__init__(  # type: ignore[reportUnknownMemberType,reportCallIssue]
                 name='LogfirePlugin',
                 interceptors=tracing_interceptors,
             )
         else:
-            super().__init__(  # type: ignore[reportUnknownMemberType]
+            super().__init__(  # type: ignore[reportUnknownMemberType,reportCallIssue]
                 name='LogfirePlugin',
                 client_interceptors=tracing_interceptors,
             )
