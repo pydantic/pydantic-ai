@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import aclosing
 from copy import deepcopy
@@ -30,6 +31,8 @@ from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
     from .run import AgentRunResult
+
+_logger = logging.getLogger(__name__)
 
 __all__ = (
     'OutputDataT',
@@ -818,6 +821,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
                 coro = gen.aclose()
                 _utils.get_event_loop().run_until_complete(coro)
             except Exception:
+                _logger.debug('Error closing cleanup generator', exc_info=True)
                 # Suppress RuntimeWarning for unawaited coroutine by
                 # explicitly closing the coroutine object when
                 # run_until_complete cannot execute it.

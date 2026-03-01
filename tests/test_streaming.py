@@ -2477,6 +2477,34 @@ def test_streamed_run_result_sync_close() -> None:
     sync_result.close()
 
 
+def test_streamed_run_result_sync_close_with_cleanup_gen() -> None:
+    """Verify close() actually drives the cleanup generator to completion."""
+    import asyncio
+
+    closed = False
+
+    async def fake_stream():
+        nonlocal closed
+        try:
+            yield None  # simulate yielding a StreamedRunResult
+        finally:
+            closed = True
+
+    run_result = _make_run_result(metadata=None)
+    streamed = StreamedRunResult(
+        all_messages=run_result.all_messages(),
+        new_message_index=0,
+        run_result=run_result,
+    )
+    agen = fake_stream()
+    # advance the generator to the yield point
+    asyncio.get_event_loop().run_until_complete(agen.__anext__())
+
+    sync_result = StreamedRunResultSync(streamed, _cleanup_gen=agen)
+    sync_result.close()
+    assert closed, '_cleanup_gen was not closed by close()'
+
+
 async def test_iter_stream_responses():
     m = TestModel(custom_output_text='The cat sat on the mat.')
 
