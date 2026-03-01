@@ -817,6 +817,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         if self._cleanup_gen is not None:
             gen = self._cleanup_gen
             self._cleanup_gen = None
+            coro = None
             try:
                 coro = gen.aclose()
                 _utils.get_event_loop().run_until_complete(coro)
@@ -825,16 +826,16 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
                 # Suppress RuntimeWarning for unawaited coroutine by
                 # explicitly closing the coroutine object when
                 # run_until_complete cannot execute it.
-                try:
-                    coro.close()  # type: ignore[union-attr]
-                except Exception:
-                    pass
+                if coro is not None:
+                    coro.close()
 
     def close(self) -> None:
         """Explicitly close the stream and release underlying resources.
 
-        This is called automatically by :meth:`get_output`, but can also be
-        called manually if you want to abort early.
+        Cleanup is performed automatically when :meth:`get_output` completes,
+        or after fully iterating :meth:`stream_output`, :meth:`stream_text`,
+        or :meth:`stream_responses`. This method can also be called manually
+        if you want to abort early.
         """
         self._close_cleanup_gen()
 
