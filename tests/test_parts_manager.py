@@ -707,3 +707,25 @@ def test_get_part_by_vendor_id():
     assert part == snapshot(TextPart(content='hello', part_kind='text'))
 
     assert manager.get_part_by_vendor_id('missing') is None
+
+
+def test_tool_call_part_delta_backwards_compat():
+    """Legacy serialized events used 'tool_call' (underscore); ensure they still parse."""
+    import pydantic
+
+    # Direct construction with legacy value should normalize
+    delta = ToolCallPartDelta(args_delta='{}', tool_call_id='c1', part_delta_kind='tool_call')
+    assert delta.part_delta_kind == 'tool-call'
+
+    # Pydantic deserialization with legacy value
+    ta = pydantic.TypeAdapter(ToolCallPartDelta)
+    parsed = ta.validate_python({'args_delta': '{}', 'tool_call_id': 'c2', 'part_delta_kind': 'tool_call'})
+    assert parsed.part_delta_kind == 'tool-call'
+
+    # Canonical value still works
+    parsed2 = ta.validate_python({'args_delta': '{}', 'tool_call_id': 'c3', 'part_delta_kind': 'tool-call'})
+    assert parsed2.part_delta_kind == 'tool-call'
+
+    # JSON round-trip always produces 'tool-call'
+    json_bytes = ta.dump_json(delta)
+    assert b'"tool-call"' in json_bytes
