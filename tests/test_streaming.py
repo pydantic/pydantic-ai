@@ -2480,7 +2480,6 @@ def test_streamed_run_result_sync_close() -> None:
 def test_streamed_run_result_sync_close_cleanup_gen_aclose_raises() -> None:
     """Cover the branch where gen.aclose() itself raises before coro is assigned."""
     from collections.abc import AsyncGenerator
-
     from typing import cast
 
     class BadAsyncGen:
