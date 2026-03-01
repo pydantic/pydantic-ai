@@ -231,6 +231,7 @@ class LocalEnvironment(ExecutionEnvironment):
                 raise FileNotFoundError(f'File not found: {path}')
 
             if resolved.suffix.lower() in IMAGE_EXTENSIONS:
+                # (TODO: Aditya) Only images? Does it matter which type of binary content is being read?
                 return resolved.read_bytes()
 
             raw = resolved.read_bytes()

@@ -75,6 +75,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         require_write_approval: bool = False,
         image_support: bool = True,
         max_image_bytes: int = 50 * 1024 * 1024,
+        max_output_chars: int = 200_000,
         max_retries: int = 1,
         id: str | None = None,
     ):
@@ -103,6 +104,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             max_image_bytes: Maximum image file size to return as BinaryContent.
             max_retries: Maximum retries per tool call.
             id: Optional unique ID for the toolset (required for durable execution).
+            max_output_chars: Maxium output of tools inside the toolset. All tools(shell included) should adhere to this
         """
         if shared_environment is not None and environment_factory is not None:
             raise ValueError('Cannot provide both shared_environment and environment_factory.')
@@ -125,6 +127,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         self._enter_lock = anyio.Lock()
         self._running_count: int = 0
         self._exit_stack: AsyncExitStack | None = None
+        self._max_output_chars = max_output_chars
 
         # Register all tools unconditionally so schemas are built eagerly.
         # get_tools() filters at runtime based on the current environment's capabilities.
@@ -161,13 +164,14 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             Args:
                 command: The shell command to execute.
                 timeout: Maximum seconds to wait for the command to complete.
+                max_chars: Maximum characters which will not be truncated.
             """
             result = await self.required_environment.shell(command, timeout=timeout)
             parts: list[str] = []
             if result.output:
                 parts.append(result.output)
             parts.append(f'Exit code: {result.exit_code}')
-            return '\n'.join(parts)
+            return '\n'.join(parts)[self._max_output_chars :]
 
         self.tool(requires_approval=self._require_shell_approval)(shell)
 
