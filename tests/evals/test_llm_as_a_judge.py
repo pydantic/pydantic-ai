@@ -20,6 +20,18 @@ with try_import() as imports_successful:
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
 
+def _mock_run_stream(mocker: MockerFixture, grading_output: GradingOutput):
+    """Mock AbstractAgent.run_stream to return the given GradingOutput."""
+    mock_stream = mocker.MagicMock()
+    mock_stream.get_output = mocker.AsyncMock(return_value=grading_output)
+
+    mock_run_stream = mocker.patch('pydantic_ai.agent.AbstractAgent.run_stream')
+    mock_run_stream.return_value.__aenter__ = mocker.AsyncMock(return_value=mock_stream)
+    mock_run_stream.return_value.__aexit__ = mocker.AsyncMock(return_value=False)
+
+    return mock_run_stream
+
+
 def test_grading_output():
     """Test GradingOutput model."""
     # Test with pass=True
@@ -72,10 +84,7 @@ def test_stringify():
 @pytest.mark.anyio
 async def test_judge_output_mock(mocker: MockerFixture):
     """Test judge_output function with mocked agent."""
-    # Mock the agent run method
-    mock_result = mocker.MagicMock()
-    mock_result.output = GradingOutput(reason='Test passed', pass_=True, score=1.0)
-    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+    mock_run = _mock_run_stream(mocker, GradingOutput(reason='Test passed', pass_=True, score=1.0))
 
     # Test with string output
     grading_output = await judge_output('Hello world', 'Content contains a greeting')
@@ -94,9 +103,7 @@ async def test_judge_output_mock(mocker: MockerFixture):
 @pytest.mark.anyio
 async def test_judge_output_with_model_settings_mock(mocker: MockerFixture):
     """Test judge_output function with model_settings and mocked agent."""
-    mock_result = mocker.MagicMock()
-    mock_result.output = GradingOutput(reason='Test passed with settings', pass_=True, score=1.0)
-    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+    mock_run = _mock_run_stream(mocker, GradingOutput(reason='Test passed with settings', pass_=True, score=1.0))
 
     test_model_settings = ModelSettings(temperature=1)
 
@@ -122,10 +129,7 @@ async def test_judge_output_with_model_settings_mock(mocker: MockerFixture):
 @pytest.mark.anyio
 async def test_judge_input_output_mock(mocker: MockerFixture):
     """Test judge_input_output function with mocked agent."""
-    # Mock the agent run method
-    mock_result = mocker.MagicMock()
-    mock_result.output = GradingOutput(reason='Test passed', pass_=True, score=1.0)
-    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+    mock_run = _mock_run_stream(mocker, GradingOutput(reason='Test passed', pass_=True, score=1.0))
 
     # Test with string input and output
     result = await judge_input_output('Hello', 'Hello world', 'Output contains input')
@@ -144,10 +148,7 @@ async def test_judge_input_output_mock(mocker: MockerFixture):
 
 async def test_judge_input_output_binary_content_list_mock(mocker: MockerFixture, image_content: BinaryContent):
     """Test judge_input_output function with mocked agent."""
-    # Mock the agent run method
-    mock_result = mocker.MagicMock()
-    mock_result.output = GradingOutput(reason='Test passed', pass_=True, score=1.0)
-    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+    mock_run = _mock_run_stream(mocker, GradingOutput(reason='Test passed', pass_=True, score=1.0))
 
     result = await judge_input_output([image_content, image_content], 'Hello world', 'Output contains input')
     assert isinstance(result, GradingOutput)
@@ -168,10 +169,7 @@ async def test_judge_input_output_binary_content_list_mock(mocker: MockerFixture
 
 async def test_judge_binary_output_mock(mocker: MockerFixture, image_content: BinaryContent) -> None:
     """Test judge_output function when binary content is to be judged"""
-    # Mock the agent run method
-    mock_result = mocker.MagicMock()
-    mock_result.output = GradingOutput(reason='Test passed', pass_=True, score=1.0)
-    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+    mock_run = _mock_run_stream(mocker, GradingOutput(reason='Test passed', pass_=True, score=1.0))
 
     result = await judge_output(output=image_content, rubric='dummy rubric')
     assert isinstance(result, GradingOutput)
@@ -188,10 +186,7 @@ async def test_judge_binary_output_mock(mocker: MockerFixture, image_content: Bi
 
 async def test_judge_input_output_binary_content_mock(mocker: MockerFixture, image_content: BinaryContent):
     """Test judge_input_output function with mocked agent."""
-    # Mock the agent run method
-    mock_result = mocker.MagicMock()
-    mock_result.output = GradingOutput(reason='Test passed', pass_=True, score=1.0)
-    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+    mock_run = _mock_run_stream(mocker, GradingOutput(reason='Test passed', pass_=True, score=1.0))
 
     result = await judge_input_output(image_content, 'Hello world', 'Output contains input')
     assert isinstance(result, GradingOutput)
@@ -213,9 +208,7 @@ async def test_judge_input_output_binary_content_mock(mocker: MockerFixture, ima
 @pytest.mark.anyio
 async def test_judge_input_output_with_model_settings_mock(mocker: MockerFixture):
     """Test judge_input_output function with model_settings and mocked agent."""
-    mock_result = mocker.MagicMock()
-    mock_result.output = GradingOutput(reason='Test passed with settings', pass_=True, score=1.0)
-    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+    mock_run = _mock_run_stream(mocker, GradingOutput(reason='Test passed with settings', pass_=True, score=1.0))
 
     test_model_settings = ModelSettings(temperature=1)
 
@@ -243,10 +236,7 @@ async def test_judge_input_output_with_model_settings_mock(mocker: MockerFixture
 @pytest.mark.anyio
 async def test_judge_input_output_expected_mock(mocker: MockerFixture, image_content: BinaryContent):
     """Test judge_input_output_expected function with mocked agent."""
-    # Mock the agent run method
-    mock_result = mocker.MagicMock()
-    mock_result.output = GradingOutput(reason='Test passed', pass_=True, score=1.0)
-    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+    mock_run = _mock_run_stream(mocker, GradingOutput(reason='Test passed', pass_=True, score=1.0))
 
     # Test with string input and output
     result = await judge_input_output_expected('Hello', 'Hello world', 'Hello', 'Output contains input')
@@ -308,9 +298,7 @@ async def test_judge_input_output_expected_with_model_settings_mock(
     mocker: MockerFixture, image_content: BinaryContent
 ):
     """Test judge_input_output_expected function with model_settings and mocked agent."""
-    mock_result = mocker.MagicMock()
-    mock_result.output = GradingOutput(reason='Test passed with settings', pass_=True, score=1.0)
-    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+    mock_run = _mock_run_stream(mocker, GradingOutput(reason='Test passed with settings', pass_=True, score=1.0))
 
     test_model_settings = ModelSettings(temperature=1)
 
@@ -457,10 +445,7 @@ Hello
 @pytest.mark.anyio
 async def test_judge_output_expected_mock(mocker: MockerFixture):
     """Test judge_output_expected function with mocked agent."""
-    # Mock the agent run method
-    mock_result = mocker.MagicMock()
-    mock_result.output = GradingOutput(reason='Test passed', pass_=True, score=1.0)
-    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+    mock_run = _mock_run_stream(mocker, GradingOutput(reason='Test passed', pass_=True, score=1.0))
 
     # Test with string output and expected output
     result = await judge_output_expected('Hello world', 'Hello', 'Output contains input')
@@ -480,9 +465,7 @@ async def test_judge_output_expected_mock(mocker: MockerFixture):
 @pytest.mark.anyio
 async def test_judge_output_expected_with_model_settings_mock(mocker: MockerFixture, image_content: BinaryContent):
     """Test judge_output_expected function with model_settings and mocked agent."""
-    mock_result = mocker.MagicMock()
-    mock_result.output = GradingOutput(reason='Test passed with settings', pass_=True, score=1.0)
-    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+    mock_run = _mock_run_stream(mocker, GradingOutput(reason='Test passed with settings', pass_=True, score=1.0))
 
     test_model_settings = ModelSettings(temperature=1)
 

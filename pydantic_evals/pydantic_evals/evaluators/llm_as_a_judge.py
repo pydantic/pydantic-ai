@@ -65,9 +65,10 @@ async def judge_output(
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(output=output, rubric=rubric)
-    return (
-        await _judge_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
-    ).output
+    async with _judge_output_agent.run_stream(
+        user_prompt, model=model or _default_model, model_settings=model_settings
+    ) as stream:
+        return await stream.get_output()
 
 
 _judge_input_output_agent = Agent(
@@ -107,9 +108,10 @@ async def judge_input_output(
     """
     user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric)
 
-    return (
-        await _judge_input_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
-    ).output
+    async with _judge_input_output_agent.run_stream(
+        user_prompt, model=model or _default_model, model_settings=model_settings
+    ) as stream:
+        return await stream.get_output()
 
 
 _judge_input_output_expected_agent = Agent(
@@ -152,11 +154,10 @@ async def judge_input_output_expected(
     """
     user_prompt = _build_prompt(inputs=inputs, output=output, rubric=rubric, expected_output=expected_output)
 
-    return (
-        await _judge_input_output_expected_agent.run(
-            user_prompt, model=model or _default_model, model_settings=model_settings
-        )
-    ).output
+    async with _judge_input_output_expected_agent.run_stream(
+        user_prompt, model=model or _default_model, model_settings=model_settings
+    ) as stream:
+        return await stream.get_output()
 
 
 _judge_output_expected_agent = Agent(
@@ -195,11 +196,10 @@ async def judge_output_expected(
     but this can be changed using the `set_default_judge_model` function.
     """
     user_prompt = _build_prompt(output=output, rubric=rubric, expected_output=expected_output)
-    return (
-        await _judge_output_expected_agent.run(
-            user_prompt, model=model or _default_model, model_settings=model_settings
-        )
-    ).output
+    async with _judge_output_expected_agent.run_stream(
+        user_prompt, model=model or _default_model, model_settings=model_settings
+    ) as stream:
+        return await stream.get_output()
 
 
 def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:
