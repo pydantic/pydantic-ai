@@ -165,6 +165,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .sentence_transformers import SentenceTransformersProvider
 
         return SentenceTransformersProvider
+    elif provider == 'modelslab':
+        from .modelslab import ModelsLabProvider
+
+        return ModelsLabProvider
     elif provider == 'voyageai':
         from .voyageai import VoyageAIProvider
 
