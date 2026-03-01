@@ -124,7 +124,7 @@ def test_is_context_limit_error_typed_exception() -> None:
         'context window exceeded',
         'maximum context length reached',
         'prompt is too long',
-        'too many tokens in request',
+        'too many tokens for the context window',
     ),
 )
 def test_is_context_limit_error_string_fallback(message: str) -> None:
@@ -133,3 +133,4 @@ def test_is_context_limit_error_string_fallback(message: str) -> None:
 
 def test_is_context_limit_error_negative_case() -> None:
     assert is_context_limit_error(RuntimeError('connection timeout')) is False
+    assert is_context_limit_error(RuntimeError('Exceeded token limit for this request')) is False

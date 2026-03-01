@@ -145,8 +145,6 @@ _CONTEXT_LIMIT_NEEDLES = (
     'context length',
     'maximum context',
     'max context',
-    'too many tokens',
-    'token limit',
     'prompt is too long',
 )
 
@@ -156,7 +154,13 @@ def is_context_limit_error(exc: BaseException) -> bool:
     if isinstance(exc, ContextWindowExceeded):
         return True
     text = str(exc).lower()
-    return any(needle in text for needle in _CONTEXT_LIMIT_NEEDLES)
+    if any(needle in text for needle in _CONTEXT_LIMIT_NEEDLES):
+        return True
+    if 'too many tokens' in text and 'context' in text:
+        return True
+    if 'token limit' in text and 'context' in text:
+        return True
+    return False
 
 
 class UnexpectedModelBehavior(AgentRunError):
