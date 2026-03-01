@@ -47,6 +47,7 @@ nav:
           - common-tools.md
           - third-party-tools.md
       - Advanced Features:
+          - security.md
           - input.md
           - thinking.md
           - retries.md
