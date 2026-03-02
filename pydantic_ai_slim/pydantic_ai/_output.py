@@ -440,12 +440,12 @@ class ImageOutputSchema(OutputSchema[OutputDataT]):
 @dataclass(init=False)
 class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
     processor: BaseObjectOutputProcessor[OutputDataT]
-    template: str | None
+    template: str | Literal[False] | None
 
     def __init__(
         self,
         *,
-        template: str | None = None,
+        template: str | Literal[False] | None = None,
         processor: BaseObjectOutputProcessor[OutputDataT],
         allows_deferred_tools: bool,
         allows_image: bool,

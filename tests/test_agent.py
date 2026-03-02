@@ -1999,6 +1999,25 @@ def test_prompted_output_with_template():
     )
 
 
+def test_prompted_output_with_template_false():
+    def return_foo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.model_request_parameters.prompted_output_template is False
+        assert info.model_request_parameters.prompted_output_instructions is None
+        assert info.instructions is None
+        text = Foo(bar='baz').model_dump_json()
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    m = FunctionModel(return_foo)
+
+    class Foo(BaseModel):
+        bar: str
+
+    agent = Agent(m, output_type=PromptedOutput(Foo, template=False))
+
+    result = agent.run_sync('What is the capital of Mexico?')
+    assert result.output == snapshot(Foo(bar='baz'))
+
+
 def test_prompted_output_with_defs():
     class Foo(BaseModel):
         """Foo description"""
