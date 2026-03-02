@@ -271,7 +271,6 @@ async def test_attribute_value_matches_json_serialized_dicts():
     assert not node.matches(SpanQuery(has_attributes={'missing': 'anything'}))
 
 
-
 async def test_span_tree_repr(span_tree: SpanTree):
     assert repr(SpanTree()) == snapshot('<SpanTree />')
     assert str(span_tree) == snapshot('<SpanTree num_roots=1 total_spans=6 />')
