@@ -532,9 +532,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.message_history[:], ctx.deps.history_processors, run_context
         )
         if message_history and message_history[-1].run_id is None:
-            is_resumed_tail = self.is_resuming_without_prompt and _is_same_request(message_history[-1], self.request)
-            if not is_resumed_tail:
-                message_history[-1].run_id = ctx.state.run_id
+            message_history[-1].run_id = ctx.state.run_id
 
         if self.is_resuming_without_prompt:
             ctx.deps.resumed_request = self.request
@@ -1542,11 +1540,13 @@ def _first_new_message_index(
     if resumed_request is not None:
         for index, message in enumerate(messages):
             if message is resumed_request:
-                return index + 1
+                # Include the resumed request in new_messages only if it was
+                # mapped/created during the current run (e.g., via adapters).
+                return index if message.run_id == run_id else index + 1
 
         for index in range(len(messages) - 1, -1, -1):
             if _is_same_request(messages[index], resumed_request):
-                return index + 1
+                return index if messages[index].run_id == run_id else index + 1
     return _first_run_id_index(messages, run_id)
 
 
@@ -1554,7 +1554,7 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
     if not isinstance(message, _messages.ModelRequest):
         return False
     if message is request:
-        return True
+        return True  # pragma: no cover
     # Intentionally excludes run_id: the resumed request may not have
     # run_id set yet when this comparison is performed.
     return (
