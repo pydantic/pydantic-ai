@@ -368,7 +368,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         content=output,
                                         provider_name=return_meta.get('provider_name') or provider_name,
                                         provider_details=return_meta.get('provider_details') or provider_details,
-                                        metadata={'is_denied': True} if denied else None,
+                                        status='denied' if denied else 'success',
                                     )
                                 )
                         else:
@@ -399,7 +399,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
                                         content=_denial_reason(part),
-                                        metadata={'is_denied': True},
+                                        status='denied',
                                     )
                                 )
                     elif isinstance(part, DataUIPart):  # pragma: no cover
@@ -528,7 +528,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     )
                     combined_provider_meta = cls._dump_builtin_tool_meta(call_meta, return_meta)
 
-                    if builtin_return.is_denied:
+                    if builtin_return.status == 'denied':
                         ui_parts.append(
                             ToolOutputDeniedPart(
                                 type=tool_name,
@@ -597,7 +597,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 tool_type = f'tool-{part.tool_name}'
 
                 if isinstance(tool_result, ToolReturnPart):
-                    if tool_result.is_denied:
+                    if tool_result.status == 'denied':
                         ui_parts.append(
                             DynamicToolOutputDeniedPart(
                                 tool_name=part.tool_name,

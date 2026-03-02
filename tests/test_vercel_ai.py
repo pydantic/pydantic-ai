@@ -2514,7 +2514,7 @@ async def test_tool_output_denied_chunk_emission():
                         content='User cancelled the deletion',
                         tool_call_id='delete_1',
                         timestamp=IsDatetime(),
-                        metadata={'is_denied': True},
+                        status='denied',
                     ),
                 ],
                 timestamp=IsDatetime(),
@@ -5806,7 +5806,7 @@ async def test_event_stream_builtin_tool_return_denied():
                 tool_name='web_search',
                 tool_call_id='tc_denied',
                 content='Blocked by policy',
-                metadata={'is_denied': True},
+                status='denied',
             ),
         )
 
@@ -6011,7 +6011,7 @@ async def test_adapter_load_messages_output_denied(reason: str | None, expected_
                         content=expected_content,
                         tool_call_id='tc_denied',
                         timestamp=IsDatetime(),
-                        metadata={'is_denied': True},
+                        status='denied',
                     )
                 ]
             ),
@@ -6053,7 +6053,7 @@ async def test_adapter_load_messages_output_denied_builtin_tool():
                         content='Blocked by policy',
                         tool_call_id='tc_builtin_denied',
                         timestamp=IsDatetime(),
-                        metadata={'is_denied': True},
+                        status='denied',
                     ),
                 ],
                 timestamp=IsDatetime(),
@@ -6072,9 +6072,7 @@ async def test_denied_dynamic_tool_round_trip():
         ),
         ModelRequest(
             parts=[
-                ToolReturnPart(
-                    tool_name='delete_file', content='Too dangerous', tool_call_id='tc1', metadata={'is_denied': True}
-                )
+                ToolReturnPart(tool_name='delete_file', content='Too dangerous', tool_call_id='tc1', status='denied')
             ],
         ),
     ]
@@ -6104,7 +6102,7 @@ async def test_denied_dynamic_tool_round_trip():
                         content='Too dangerous',
                         tool_call_id='tc1',
                         timestamp=IsDatetime(),
-                        metadata={'is_denied': True},
+                        status='denied',
                     )
                 ]
             ),
@@ -6124,7 +6122,7 @@ async def test_denied_builtin_tool_round_trip():
                     tool_name='web_search',
                     content='Blocked by policy',
                     tool_call_id='tc2',
-                    metadata={'is_denied': True},
+                    status='denied',
                 ),
             ],
         ),
@@ -6152,7 +6150,7 @@ async def test_denied_builtin_tool_round_trip():
                         content='Blocked by policy',
                         tool_call_id='tc2',
                         timestamp=IsDatetime(),
-                        metadata={'is_denied': True},
+                        status='denied',
                     ),
                 ],
                 timestamp=IsDatetime(),

@@ -887,17 +887,13 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
-    @property
-    def is_denied(self) -> bool:
-        """Whether this tool return represents a denied tool call rather than a successful execution.
+    status: Literal['success', 'error', 'denied'] = 'success'
+    """The outcome of the tool call.
 
-        This is stored in `metadata` rather than as a standalone field because it represents
-        UI display state, not semantic content sent to the model.
-        """
-        try:
-            return self.metadata['is_denied'] is True
-        except (TypeError, KeyError):
-            return False
+    - `'success'`: The tool executed successfully.
+    - `'error'`: The tool raised an error during execution.
+    - `'denied'`: The tool call was denied by the approval mechanism.
+    """
 
     def model_response_str(self) -> str:
         """Return a string representation of the content for the model."""
