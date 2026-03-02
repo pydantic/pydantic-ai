@@ -4,6 +4,7 @@ import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, TypeVar, cast
 from uuid import uuid4
 
@@ -35,7 +36,19 @@ from ..run import AgentRunResult, AgentRunResultEvent
 from ..tools import AgentDepsT
 
 if TYPE_CHECKING:
+    from fastapi.sse import EventSourceResponse, ServerSentEvent
     from starlette.responses import StreamingResponse
+
+
+@lru_cache(maxsize=1)
+def _get_fastapi_sse() -> tuple[type[EventSourceResponse], type[ServerSentEvent]] | None:
+    """Resolve FastAPI SSE classes once, caching the result."""
+    try:
+        from fastapi.sse import EventSourceResponse, ServerSentEvent
+
+        return EventSourceResponse, ServerSentEvent
+    except ImportError:
+        return None
 
 
 SSE_CONTENT_TYPE = 'text/event-stream'
@@ -108,7 +121,26 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             yield self.encode_event(event)
 
     def streaming_response(self, stream: AsyncIterator[EventT]) -> StreamingResponse:
-        """Generate a streaming response from a stream of protocol-specific events."""
+        """Generate a streaming response from a stream of protocol-specific events.
+
+        When FastAPI >= 0.135.0 is available, uses `EventSourceResponse` for Rust-side
+        serialization and automatic keep-alive pings. Falls back to Starlette's
+        `StreamingResponse` otherwise.
+        """
+        # Prefer FastAPI's EventSourceResponse for Rust-side serialization + keep-alive
+        if fastapi_sse := _get_fastapi_sse():
+            EventSourceResponse, ServerSentEvent = fastapi_sse
+
+            async def sse_stream() -> AsyncIterator[ServerSentEvent]:
+                async for event in stream:
+                    yield ServerSentEvent(raw_data=self.encode_event(event))
+
+            return EventSourceResponse(  # type: ignore[return-value]
+                sse_stream(),
+                headers=self.response_headers,
+            )
+
+        # Fallback to Starlette StreamingResponse
         try:
             from starlette.responses import StreamingResponse
         except ImportError as e:  # pragma: no cover
