@@ -20,7 +20,9 @@ from pydantic_ai import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
+    FilePart,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
@@ -31,9 +33,11 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturn,
@@ -234,6 +238,19 @@ def create_input(
         tools=tools or [],
         forwarded_props=None,
     )
+
+
+def _sync_timestamps(original_messages: list[ModelMessage], new_messages: list[ModelMessage]) -> None:
+    for original_message, new_message in zip(original_messages, new_messages):
+        if hasattr(new_message, 'timestamp'):
+            setattr(new_message, 'timestamp', getattr(original_message, 'timestamp', None))
+        for original_part, new_part in zip(original_message.parts, new_message.parts):
+            if hasattr(new_part, 'timestamp'):
+                setattr(new_part, 'timestamp', getattr(original_part, 'timestamp', None))
+
+
+def _dump_ag_ui_messages(messages: list[Message]) -> list[dict[str, Any]]:
+    return [message.model_dump() for message in messages]
 
 
 async def simple_stream(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
@@ -1846,6 +1863,362 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
             ),
         ]
     )
+
+
+async def test_adapter_dump_messages() -> None:
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are a helpful assistant.'),
+                UserPromptPart(content='Hello, world!'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hi there!')]),
+    ]
+
+    assert _dump_ag_ui_messages(AGUIAdapter.dump_messages(messages)) == snapshot(
+        [
+            {'id': IsStr(), 'role': 'system', 'content': 'You are a helpful assistant.', 'name': None},
+            {'id': IsStr(), 'role': 'user', 'content': 'Hello, world!', 'name': None},
+            {'id': IsStr(), 'role': 'assistant', 'content': 'Hi there!', 'name': None, 'tool_calls': None},
+        ]
+    )
+
+
+async def test_adapter_dump_messages_multimodal_user_prompt() -> None:
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Here is a file',
+                        CachePoint(),
+                        BinaryContent(data=b'file-bytes', media_type='application/pdf'),
+                        ImageUrl(url='https://example.com/image.png', media_type='image/png'),
+                        DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
+                    ]
+                )
+            ]
+        )
+    ]
+
+    assert _dump_ag_ui_messages(AGUIAdapter.dump_messages(messages)) == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'text': 'Here is a file'},
+                    {
+                        'type': 'binary',
+                        'mime_type': 'application/pdf',
+                        'id': None,
+                        'url': None,
+                        'data': 'ZmlsZS1ieXRlcw==',
+                        'filename': None,
+                    },
+                    {
+                        'type': 'binary',
+                        'mime_type': 'image/png',
+                        'id': None,
+                        'url': 'https://example.com/image.png',
+                        'data': None,
+                        'filename': None,
+                    },
+                    {
+                        'type': 'binary',
+                        'mime_type': 'application/pdf',
+                        'id': None,
+                        'url': 'https://example.com/doc.pdf',
+                        'data': None,
+                        'filename': None,
+                    },
+                ],
+                'name': None,
+            }
+        ]
+    )
+
+
+async def test_adapter_dump_messages_with_tool_interruption() -> None:
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Search for something')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Before '),
+                TextPart(content='tool'),
+                ToolCallPart(
+                    tool_name='search',
+                    args={'query': 'test query'},
+                    tool_call_id='tool_123',
+                ),
+                TextPart(content='After tool'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='search',
+                    content={'results': ['result1', 'result2']},
+                    tool_call_id='tool_123',
+                )
+            ]
+        ),
+    ]
+
+    assert _dump_ag_ui_messages(AGUIAdapter.dump_messages(messages)) == snapshot(
+        [
+            {'id': IsStr(), 'role': 'user', 'content': 'Search for something', 'name': None},
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'content': 'Before tool',
+                'name': None,
+                'tool_calls': [
+                    {
+                        'id': 'tool_123',
+                        'type': 'function',
+                        'function': {'name': 'search', 'arguments': '{"query":"test query"}'},
+                    }
+                ],
+            },
+            {
+                'id': IsStr(),
+                'role': 'tool',
+                'content': '{"results":["result1","result2"]}',
+                'tool_call_id': 'tool_123',
+                'error': None,
+            },
+            {'id': IsStr(), 'role': 'assistant', 'content': 'After tool', 'name': None, 'tool_calls': None},
+        ]
+    )
+
+
+async def test_adapter_dump_messages_with_builtin_tools() -> None:
+    messages = [
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query":"test"}',
+                    tool_call_id='search_1',
+                    provider_name='function',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content='{"status":"completed"}',
+                    tool_call_id='search_1',
+                    provider_name='function',
+                ),
+            ]
+        ),
+    ]
+
+    assert _dump_ag_ui_messages(AGUIAdapter.dump_messages(messages)) == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'content': None,
+                'name': None,
+                'tool_calls': [
+                    {
+                        'id': 'pyd_ai_builtin|function|search_1',
+                        'type': 'function',
+                        'function': {'name': 'web_search', 'arguments': '{"query":"test"}'},
+                    }
+                ],
+            },
+            {
+                'id': IsStr(),
+                'role': 'tool',
+                'content': '{"status":"completed"}',
+                'tool_call_id': 'pyd_ai_builtin|function|search_1',
+                'error': None,
+            },
+        ]
+    )
+
+
+async def test_adapter_dump_messages_with_retry_roundtrip() -> None:
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='my_tool', args='{"arg":"value"}', tool_call_id='tool_789'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    content='Tool failed with error',
+                    tool_name='my_tool',
+                    tool_call_id='tool_789',
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = AGUIAdapter.dump_messages(messages)
+
+    assert _dump_ag_ui_messages(ui_messages) == snapshot(
+        [
+            {'id': IsStr(), 'role': 'user', 'content': 'Do something', 'name': None},
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'content': None,
+                'name': None,
+                'tool_calls': [
+                    {
+                        'id': 'tool_789',
+                        'type': 'function',
+                        'function': {'name': 'my_tool', 'arguments': '{"arg":"value"}'},
+                    }
+                ],
+            },
+            {
+                'id': IsStr(),
+                'role': 'tool',
+                'content': 'Tool failed with error\n\nFix the errors and try again.',
+                'tool_call_id': 'tool_789',
+                'error': 'Tool failed with error',
+            },
+        ]
+    )
+
+    reloaded_messages = AGUIAdapter.load_messages(ui_messages)
+    _sync_timestamps(messages, reloaded_messages)
+    assert reloaded_messages == messages
+
+
+async def test_adapter_load_messages_tool_error() -> None:
+    messages = [
+        AssistantMessage(
+            id='assistant_1',
+            tool_calls=[
+                ToolCall(
+                    id='tool_123',
+                    function=FunctionCall(name='my_tool', arguments='{"arg":"value"}'),
+                )
+            ],
+        ),
+        ToolMessage(
+            id='tool_1',
+            content='Tool failed with error\n\nFix the errors and try again.',
+            tool_call_id='tool_123',
+            error='Tool failed with error',
+        ),
+    ]
+
+    assert AGUIAdapter.load_messages(messages) == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='my_tool',
+                        tool_call_id='tool_123',
+                        args='{"arg":"value"}',
+                    )
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Tool failed with error',
+                        tool_name='my_tool',
+                        tool_call_id='tool_123',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+
+async def test_adapter_dump_messages_thinking_is_skipped_without_merging_text() -> None:
+    messages = [
+        ModelResponse(
+            parts=[
+                TextPart(content='Before thinking'),
+                ThinkingPart(content='This is not persisted'),
+                TextPart(content='After thinking'),
+            ]
+        ),
+    ]
+
+    assert _dump_ag_ui_messages(AGUIAdapter.dump_messages(messages)) == snapshot(
+        [
+            {'id': IsStr(), 'role': 'assistant', 'content': 'Before thinking', 'name': None, 'tool_calls': None},
+            {'id': IsStr(), 'role': 'assistant', 'content': 'After thinking', 'name': None, 'tool_calls': None},
+        ]
+    )
+
+
+async def test_adapter_dump_messages_assistant_file_raises() -> None:
+    messages = [
+        ModelResponse(
+            parts=[
+                FilePart(content=BinaryContent(data=b'file_data', media_type='image/png')),
+            ]
+        )
+    ]
+
+    with pytest.raises(ValueError, match='assistant file parts'):
+        AGUIAdapter.dump_messages(messages)
+
+
+async def test_adapter_dump_load_roundtrip() -> None:
+    original_messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System message'),
+                UserPromptPart(
+                    content=[
+                        'See attached',
+                        BinaryContent(data=b'document', media_type='application/pdf'),
+                    ]
+                ),
+                UserPromptPart(content='User message'),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query":"Hello, world!"}',
+                    tool_call_id='search_1',
+                    provider_name='function',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content='{"results":[{"title":"Hello, world!"}]}',
+                    tool_call_id='search_1',
+                    provider_name='function',
+                ),
+                TextPart(content='Assistant message'),
+                ToolCallPart(tool_name='tool_call_1', args='{}', tool_call_id='tool_call_1'),
+            ],
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='tool_call_1',
+                    content='Tool message',
+                    tool_call_id='tool_call_1',
+                ),
+                UserPromptPart(content='Follow up'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Final assistant message')]),
+    ]
+
+    ui_messages = AGUIAdapter.dump_messages(original_messages)
+    reloaded_messages = AGUIAdapter.load_messages(ui_messages)
+    _sync_timestamps(original_messages, reloaded_messages)
+
+    assert reloaded_messages == original_messages
 
 
 async def test_builtin_tool_call() -> None:
