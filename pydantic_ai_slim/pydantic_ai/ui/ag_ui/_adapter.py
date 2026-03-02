@@ -10,6 +10,9 @@ from typing import (
     Any,
     cast,
 )
+from uuid import uuid4
+
+from typing_extensions import assert_never
 
 from ... import ExternalToolset, ToolDefinition
 from ...messages import (
@@ -17,11 +20,17 @@ from ...messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
+    FilePart,
     ImageUrl,
     ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -38,11 +47,13 @@ try:
         BaseEvent,
         BinaryInputContent,
         DeveloperMessage,
+        FunctionCall,
         Message,
         RunAgentInput,
         SystemMessage,
         TextInputContent,
         Tool as AGUITool,
+        ToolCall,
         ToolMessage,
         UserMessage,
     )
@@ -130,7 +141,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]:  # noqa: C901
         """Transform AG-UI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
-        tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
+        # `ToolMessage` only gives us the `tool_call_id`, so remember the tool name from the
+        # earlier assistant message in order to reconstruct the matching return part later.
+        tool_calls: dict[str, str] = {}
         for msg in messages:
             match msg:
                 case UserMessage(content=content):
@@ -186,7 +199,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_calls[tool_call_id] = tool_name
 
                             if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
-                                _, provider_name, original_id = tool_call_id.split('|', 2)
+                                # AG-UI persists built-in and regular tool calls with the same schema.
+                                # We encode builtin provenance into a prefixed ID when dumping and decode it here.
+                                provider_name, original_id = _load_builtin_tool_call_id(tool_call_id)
                                 builder.add(
                                     BuiltinToolCallPart(
                                         tool_name=tool_name,
@@ -210,25 +225,241 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
 
                     if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
-                        _, provider_name, original_id = tool_call_id.split('|', 2)
-                        builder.add(
-                            BuiltinToolReturnPart(
-                                tool_name=tool_name,
-                                content=tool_msg.content,
-                                tool_call_id=original_id,
-                                provider_name=provider_name,
+                        provider_name, original_id = _load_builtin_tool_call_id(tool_call_id)
+                        if tool_msg.error is not None:
+                            # Persisted AG-UI history has no dedicated retry message type, so retries roundtrip
+                            # through `ToolMessage.error` while the full formatted text stays in `content`.
+                            builder.add(
+                                RetryPromptPart(
+                                    tool_name=tool_name,
+                                    content=tool_msg.error,
+                                    tool_call_id=original_id,
+                                )
                             )
-                        )
+                        else:
+                            builder.add(
+                                BuiltinToolReturnPart(
+                                    tool_name=tool_name,
+                                    content=tool_msg.content,
+                                    tool_call_id=original_id,
+                                    provider_name=provider_name,
+                                )
+                            )
                     else:
-                        builder.add(
-                            ToolReturnPart(
-                                tool_name=tool_name,
-                                content=tool_msg.content,
-                                tool_call_id=tool_call_id,
+                        if tool_msg.error is not None:
+                            # See note above: `ToolMessage.error` is our persisted-history carrier for retries.
+                            builder.add(
+                                RetryPromptPart(
+                                    tool_name=tool_name,
+                                    content=tool_msg.error,
+                                    tool_call_id=tool_call_id,
+                                )
                             )
-                        )
+                        else:
+                            builder.add(
+                                ToolReturnPart(
+                                    tool_name=tool_name,
+                                    content=tool_msg.content,
+                                    tool_call_id=tool_call_id,
+                                )
+                            )
 
                 case ActivityMessage():
                     pass
 
         return builder.messages
+
+    @staticmethod
+    def _dump_tool_message(
+        result: ToolReturnPart | BuiltinToolReturnPart | RetryPromptPart,
+        *,
+        tool_call_id: str,
+    ) -> ToolMessage:
+        if isinstance(result, (ToolReturnPart, BuiltinToolReturnPart)):
+            return ToolMessage(
+                id=_message_id(),
+                content=result.model_response_str(),
+                tool_call_id=tool_call_id,
+            )
+        elif isinstance(result, RetryPromptPart):
+            error = result.content if isinstance(result.content, str) else result.model_response()
+            return ToolMessage(
+                id=_message_id(),
+                content=result.model_response(),
+                tool_call_id=tool_call_id,
+                error=error,
+            )
+        else:
+            assert_never(result)
+
+    @classmethod
+    def _dump_response_message(
+        cls,
+        msg: ModelResponse,
+        tool_results: dict[str, ToolReturnPart | RetryPromptPart],
+    ) -> list[Message]:
+        messages: list[Message] = []
+        assistant_content = ''
+        assistant_tool_calls: list[ToolCall] = []
+        assistant_tool_messages: list[ToolMessage] = []
+
+        builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, BuiltinToolReturnPart)}
+        used_builtin_return_ids: set[str] = set()
+
+        def flush_assistant_message() -> None:
+            nonlocal assistant_content, assistant_tool_calls, assistant_tool_messages
+            if not assistant_content and not assistant_tool_calls:
+                return
+
+            messages.append(
+                AssistantMessage(
+                    id=_message_id(),
+                    content=assistant_content or None,
+                    tool_calls=assistant_tool_calls or None,
+                )
+            )
+            messages.extend(assistant_tool_messages)
+            assistant_content = ''
+            assistant_tool_calls = []
+            assistant_tool_messages = []
+
+        for part in msg.parts:
+            if isinstance(part, TextPart):
+                if assistant_tool_calls:
+                    # AG-UI can store text and tool calls together on one assistant message, but text that appears
+                    # after a tool interruption needs a new assistant message to preserve ordering on roundtrip.
+                    flush_assistant_message()
+                assistant_content += part.content
+            elif isinstance(part, ToolCallPart):
+                assistant_tool_calls.append(
+                    ToolCall(
+                        id=part.tool_call_id,
+                        function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
+                    )
+                )
+                if tool_result := tool_results.get(part.tool_call_id):
+                    assistant_tool_messages.append(cls._dump_tool_message(tool_result, tool_call_id=part.tool_call_id))
+            elif isinstance(part, BuiltinToolCallPart):
+                dumped_tool_call_id = _dump_builtin_tool_call_id(part.tool_call_id, part.provider_name)
+                assistant_tool_calls.append(
+                    ToolCall(
+                        id=dumped_tool_call_id,
+                        function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
+                    )
+                )
+                if builtin_return := builtin_returns.get(part.tool_call_id):
+                    used_builtin_return_ids.add(part.tool_call_id)
+                    assistant_tool_messages.append(
+                        cls._dump_tool_message(builtin_return, tool_call_id=dumped_tool_call_id)
+                    )
+            elif isinstance(part, BuiltinToolReturnPart):
+                # Built-in tool returns are emitted when the matching BuiltinToolCallPart is processed.
+                pass
+            elif isinstance(part, ThinkingPart):
+                # `ag-ui-protocol==0.1.10` does not expose a persisted assistant reasoning message type.
+                # We flush before skipping so text on either side does not get merged across the omission.
+                flush_assistant_message()
+            elif isinstance(part, FilePart):
+                raise ValueError('AG-UI integration cannot persist assistant file parts in message history.')
+            else:
+                assert_never(part)
+
+        orphaned_builtin_returns = builtin_returns.keys() - used_builtin_return_ids
+        if orphaned_builtin_returns:
+            raise ValueError('Built-in tool return parts must be paired with matching BuiltinToolCallParts.')
+
+        flush_assistant_message()
+        return messages
+
+    @classmethod
+    def _dump_request_message(cls, msg: ModelRequest) -> list[Message]:
+        messages: list[Message] = []
+
+        for part in msg.parts:
+            if isinstance(part, SystemPromptPart):
+                messages.append(SystemMessage(id=_message_id(), content=part.content))
+            elif isinstance(part, UserPromptPart):
+                if user_message := _convert_user_prompt_part(part):
+                    messages.append(user_message)
+            elif isinstance(part, ToolReturnPart):
+                # Tool results are emitted immediately after their assistant tool-call message.
+                pass
+            elif isinstance(part, RetryPromptPart):
+                if part.tool_name is None:
+                    messages.append(UserMessage(id=_message_id(), content=part.model_response()))
+                # Tool retries are emitted after their assistant tool-call message.
+            else:
+                assert_never(part)
+
+        return messages
+
+    @staticmethod
+    def _collect_tool_results(messages: Sequence[ModelMessage]) -> dict[str, ToolReturnPart | RetryPromptPart]:
+        tool_results: dict[str, ToolReturnPart | RetryPromptPart] = {}
+
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                for part in msg.parts:
+                    # Pydantic AI stores tool results on subsequent requests, while AG-UI persists them as
+                    # separate `tool` messages immediately after the assistant tool call that triggered them.
+                    if isinstance(part, ToolReturnPart):
+                        tool_results[part.tool_call_id] = part
+                    elif isinstance(part, RetryPromptPart) and part.tool_name:
+                        tool_results[part.tool_call_id] = part
+
+        return tool_results
+
+    @classmethod
+    def dump_messages(cls, messages: Sequence[ModelMessage]) -> list[Message]:
+        """Transform Pydantic AI messages into AG-UI messages."""
+        tool_results = cls._collect_tool_results(messages)
+        dumped_messages: list[Message] = []
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                dumped_messages.extend(cls._dump_request_message(msg))
+            elif isinstance(msg, ModelResponse):
+                dumped_messages.extend(cls._dump_response_message(msg, tool_results))
+            else:
+                assert_never(msg)
+
+        return dumped_messages
+
+
+def _message_id() -> str:
+    return uuid4().hex
+
+
+def _dump_builtin_tool_call_id(tool_call_id: str, provider_name: str | None) -> str:
+    return '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, provider_name or '', tool_call_id])
+
+
+def _load_builtin_tool_call_id(tool_call_id: str) -> tuple[str | None, str]:
+    _, provider_name, original_id = tool_call_id.split('|', 2)
+    return provider_name or None, original_id
+
+
+def _convert_user_prompt_part(part: UserPromptPart) -> UserMessage | None:
+    if isinstance(part.content, str):
+        return UserMessage(id=_message_id(), content=part.content)
+
+    content: list[TextInputContent | BinaryInputContent] = []
+    for item in part.content:
+        if isinstance(item, str):
+            content.append(TextInputContent(text=item))
+        elif isinstance(item, BinaryContent):
+            content.append(BinaryInputContent(data=item.base64, mime_type=item.media_type))
+        elif isinstance(item, (ImageUrl, AudioUrl, VideoUrl, DocumentUrl)):
+            content.append(BinaryInputContent(url=item.url, mime_type=item.media_type))
+        elif isinstance(item, CachePoint):
+            # Cache points affect model prompt caching only and do not belong in persisted UI history.
+            pass
+        else:
+            assert_never(item)
+
+    if not content:
+        return None
+
+    if len(content) == 1 and isinstance(content[0], TextInputContent):
+        return UserMessage(id=_message_id(), content=content[0].text)
+
+    return UserMessage(id=_message_id(), content=content)
