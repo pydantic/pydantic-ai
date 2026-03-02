@@ -378,7 +378,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'What is this? https://ai.pydantic.dev': 'A Python agent framework for building Generative AI applications.',
     'Compare the documentation at https://ai.pydantic.dev and https://docs.pydantic.dev': (
         'Both sites provide comprehensive documentation for Pydantic projects. '
-        'ai.pydantic.dev focuses on PydanticAI, a framework for building AI agents, '
+        'ai.pydantic.dev focuses on Pydantic AI, a framework for building AI agents, '
         'while docs.pydantic.dev covers Pydantic, the data validation library. '
         'They share similar documentation styles and both emphasize type safety and developer experience.'
     ),

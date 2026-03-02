@@ -608,8 +608,7 @@ def test_repeat_tool_by_rename():
     agent = Agent('test')
 
     async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
-        tool_def.name = 'bar'
-        return tool_def
+        return replace(tool_def, name='bar')
 
     @agent.tool_plain
     def bar(x: int, y: str) -> str:  # pragma: no cover
@@ -632,8 +631,7 @@ def test_repeat_tool():
     agent = Agent('test')
 
     async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
-        tool_def.name = 'bar'
-        return tool_def
+        return replace(tool_def, name='bar')
 
     @agent.tool_plain(prepare=change_tool_name)
     def foo(x: int, y: str) -> str:  # pragma: no cover

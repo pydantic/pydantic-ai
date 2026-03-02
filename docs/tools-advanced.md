@@ -208,13 +208,18 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-Here's a more complex example where we change the description of the `name` parameter to based on the value of `deps`
+Here's a more complex example where we change the tool description based on the value of `deps`
 
 For the sake of variation, we create this tool using the [`Tool`][pydantic_ai.tools.Tool] dataclass.
+
+!!! note
+    Since `ToolDefinition` instances may be reused across runs, `prepare` functions should use
+    [`replace()`][dataclasses.replace] to return a modified copy rather than mutating the original in place.
 
 ```python {title="customize_name.py"}
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Literal
 
 from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
@@ -228,9 +233,7 @@ def greet(name: str) -> str:
 async def prepare_greet(
     ctx: RunContext[Literal['human', 'machine']], tool_def: ToolDefinition
 ) -> ToolDefinition | None:
-    d = f'Name of the {ctx.deps} to greet.'
-    tool_def.parameters_json_schema['properties']['name']['description'] = d
-    return tool_def
+    return replace(tool_def, description=f'Greet a {ctx.deps} by name.')
 
 
 greet_tool = Tool(greet, prepare=prepare_greet)
@@ -243,16 +246,15 @@ print(result.output)
 print(test_model.last_model_request_parameters.function_tools)
 """
 [
-    ToolDefinition(
+    FunctionToolDefinition(
         name='greet',
         parameters_json_schema={
             'additionalProperties': False,
-            'properties': {
-                'name': {'type': 'string', 'description': 'Name of the human to greet.'}
-            },
+            'properties': {'name': {'type': 'string'}},
             'required': ['name'],
             'type': 'object',
         },
+        description='Greet a human by name.',
     )
 ]
 """

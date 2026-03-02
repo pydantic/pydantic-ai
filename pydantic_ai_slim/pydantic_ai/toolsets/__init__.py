@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
 from ._dynamic import ToolsetFunc
 from .abstract import AbstractToolset, ToolsetTool
 from .approval_required import ApprovalRequiredToolset
@@ -10,10 +14,14 @@ from .prepared import PreparedToolset
 from .renamed import RenamedToolset
 from .wrapper import WrapperToolset
 
+if TYPE_CHECKING:
+    from .code_execution import CodeExecutionToolset
+
 __all__ = (
     'AbstractToolset',
     'ToolsetFunc',
     'ToolsetTool',
+    'CodeExecutionToolset',
     'CombinedToolset',
     'ExternalToolset',
     'DeferredToolset',
@@ -25,3 +33,11 @@ __all__ = (
     'WrapperToolset',
     'ApprovalRequiredToolset',
 )
+
+
+def __getattr__(name: str) -> Any:
+    if name == 'CodeExecutionToolset':
+        from .code_execution import CodeExecutionToolset
+
+        return CodeExecutionToolset
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
