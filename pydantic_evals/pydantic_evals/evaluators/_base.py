@@ -25,7 +25,7 @@ def _serializes_as_string_keyed_dict(value: Any) -> bool:
     on the round-trip. We avoid the compact form in this case.
     """
     jsonable = to_jsonable_python(value, serialize_unknown=True)
-    return isinstance(jsonable, dict) and all(isinstance(k, str) for k in jsonable)
+    return isinstance(jsonable, dict) and all(isinstance(k, str) for k in jsonable)  # pyright: ignore[reportUnknownVariableType]
 
 
 class _StrictABCMeta(ABCMeta):
