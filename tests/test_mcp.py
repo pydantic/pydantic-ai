@@ -7,7 +7,7 @@ import base64
 import re
 from datetime import timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -169,16 +169,10 @@ async def test_aexit_concurrent_does_not_corrupt_running_count():
 
     # Replace the real lock with one that yields before acquiring,
     # opening the interleaving window the old code left unprotected.
-    real_lock = server._enter_lock  # pyright: ignore[reportPrivateUsage]
-
-    class InterleavingLock:
-        async def __aenter__(self) -> InterleavingLock:
+    class InterleavingLock(asyncio.Lock):
+        async def acquire(self) -> Literal[True]:
             await asyncio.sleep(0)  # yield — lets the other task reach the same point
-            await real_lock.acquire()
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            real_lock.release()
+            return await super().acquire()
 
     server._enter_lock = InterleavingLock()  # pyright: ignore[reportPrivateUsage]
 
