@@ -722,3 +722,93 @@ def test_dummy_adapter_dump_messages():
     messages = [ModelRequest(parts=[UserPromptPart(content='Hello')])]
     result = DummyUIAdapter.dump_messages(messages)
     assert result == messages
+
+
+async def test_streaming_response_uses_fastapi_sse_when_available(monkeypatch: pytest.MonkeyPatch):
+    """When FastAPI SSE classes are available and content type is SSE, uses EventSourceResponse."""
+    from unittest.mock import MagicMock
+
+    from pydantic_ai.ui._event_stream import _get_fastapi_sse
+
+    MockServerSentEvent = MagicMock(name='ServerSentEvent')
+
+    class MockEventSourceResponse(StreamingResponse):
+        """Mock that tracks it was used."""
+
+        was_used = False
+
+        def __init__(self, *args: Any, **kwargs: Any):
+            MockEventSourceResponse.was_used = True
+            # Don't call super — just record that this path was taken
+
+    _get_fastapi_sse.cache_clear()
+    monkeypatch.setattr(
+        'pydantic_ai.ui._event_stream._get_fastapi_sse',
+        lambda: (MockEventSourceResponse, MockServerSentEvent),
+    )
+
+    async def dummy_stream() -> AsyncIterator[str]:
+        yield 'event1'
+
+    event_stream = DummyUIEventStream[None, str](DummyUIRunInput())
+    response = event_stream.streaming_response(dummy_stream())
+
+    assert isinstance(response, MockEventSourceResponse)
+    assert MockEventSourceResponse.was_used
+
+    # Restore cache
+    _get_fastapi_sse.cache_clear()
+
+
+async def test_streaming_response_falls_back_for_non_sse_content_type(monkeypatch: pytest.MonkeyPatch):
+    """When content type is not SSE, falls back to StreamingResponse even if FastAPI SSE is available."""
+    from unittest.mock import MagicMock
+
+    from pydantic_ai.ui._event_stream import _get_fastapi_sse
+
+    MockServerSentEvent = MagicMock(name='ServerSentEvent')
+    MockEventSourceResponse = MagicMock(name='EventSourceResponse')
+
+    _get_fastapi_sse.cache_clear()
+    monkeypatch.setattr(
+        'pydantic_ai.ui._event_stream._get_fastapi_sse',
+        lambda: (MockEventSourceResponse, MockServerSentEvent),
+    )
+
+    async def dummy_stream() -> AsyncIterator[str]:
+        yield 'event1'
+
+    event_stream = DummyUIEventStream[None, str](DummyUIRunInput())
+    # Override content_type to simulate a non-SSE subclass (e.g., AG-UI)
+    monkeypatch.setattr(type(event_stream), 'content_type', property(lambda self: 'application/json'))
+
+    response = event_stream.streaming_response(dummy_stream())
+
+    assert isinstance(response, StreamingResponse)
+    MockEventSourceResponse.assert_not_called()
+
+    # Restore cache
+    _get_fastapi_sse.cache_clear()
+
+
+async def test_streaming_response_falls_back_when_fastapi_unavailable(monkeypatch: pytest.MonkeyPatch):
+    """When FastAPI SSE is not available, uses Starlette StreamingResponse."""
+    from pydantic_ai.ui._event_stream import _get_fastapi_sse
+
+    _get_fastapi_sse.cache_clear()
+    monkeypatch.setattr(
+        'pydantic_ai.ui._event_stream._get_fastapi_sse',
+        lambda: None,
+    )
+
+    async def dummy_stream() -> AsyncIterator[str]:
+        yield 'event1'
+
+    event_stream = DummyUIEventStream[None, str](DummyUIRunInput())
+    response = event_stream.streaming_response(dummy_stream())
+
+    assert isinstance(response, StreamingResponse)
+    assert response.media_type == 'text/event-stream'
+
+    # Restore cache
+    _get_fastapi_sse.cache_clear()

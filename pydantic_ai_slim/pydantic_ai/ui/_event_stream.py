@@ -123,19 +123,21 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     def streaming_response(self, stream: AsyncIterator[EventT]) -> StreamingResponse:
         """Generate a streaming response from a stream of protocol-specific events.
 
-        When FastAPI >= 0.135.0 is available, uses `EventSourceResponse` for Rust-side
-        serialization and automatic keep-alive pings. Falls back to Starlette's
-        `StreamingResponse` otherwise.
+        When FastAPI >= 0.135.0 is available and the content type is SSE, uses
+        `EventSourceResponse` to integrate with FastAPI's SSE handling (including
+        automatic keep-alive pings and appropriate headers). Falls back to Starlette's
+        `StreamingResponse` otherwise. Serialization/encoding of events is still
+        handled by `encode_event()`.
         """
-        # Prefer FastAPI's EventSourceResponse for Rust-side serialization + keep-alive
-        if fastapi_sse := _get_fastapi_sse():
+        # Prefer FastAPI's EventSourceResponse for keep-alive pings and SSE headers
+        if self.content_type == SSE_CONTENT_TYPE and (fastapi_sse := _get_fastapi_sse()):
             EventSourceResponse, ServerSentEvent = fastapi_sse
 
             async def sse_stream() -> AsyncIterator[ServerSentEvent]:
                 async for event in stream:
                     yield ServerSentEvent(raw_data=self.encode_event(event))
 
-            return EventSourceResponse(  # type: ignore[return-value]
+            return EventSourceResponse(
                 sse_stream(),
                 headers=self.response_headers,
             )
