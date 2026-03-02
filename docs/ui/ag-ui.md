@@ -160,6 +160,15 @@ These are converted to Pydantic AI types and passed to the agent's run method. E
 A user request may require multiple round trips between client UI and Pydantic AI
 server, depending on the tools and events needed.
 
+!!! note "Persisted message history limitations"
+    The AG-UI message schema currently persists a smaller subset of assistant history than the streaming event protocol.
+
+    In practice this means:
+
+    - assistant reasoning / thinking is streamed, but is not preserved when converting Pydantic AI `message_history` back to AG-UI messages
+    - assistant file parts are not currently supported in persisted AG-UI message history
+    - AG-UI `developer` and `system` messages both load into `SystemPromptPart`, so converting back to AG-UI canonicalizes both to `system`
+
 ## Features
 
 ### State management
