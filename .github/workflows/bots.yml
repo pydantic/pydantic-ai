@@ -240,7 +240,7 @@ jobs:
             If the PR has high level problems that will likely require significant changes at lower levels, hold off on looking for or commenting on lower level problems until the higher level problems are addressed, so that the PR author (and your context window) don't get overwhelmed.
 
             Note that while another agent (Devin) is responsible for thoroughly reviewing the implementation for bugs, security issues, and edge cases,
-            _you_ are responsible for catching every violation of the repository's standards and guidelines listed in the `AGENTS.md` files.
+            _you_ are responsible for catching every violation of the repository's standards and guidelines listed in the `AGENTS.md` and `agent_docs/*.md` files.
             Do not focus exclusively on high-level concerns: by the time the author has addressed every comment you've left over multiple rounds of review, the PR should be ready to merge.
 
             # Gathering context
