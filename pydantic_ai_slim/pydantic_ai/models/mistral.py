@@ -19,6 +19,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -627,8 +628,10 @@ class MistralModel(Model):
                     raise NotImplementedError('AudioUrl is not supported in Mistral user prompts')
                 elif isinstance(item, VideoUrl):
                     raise NotImplementedError('VideoUrl is not supported in Mistral user prompts')
+                elif isinstance(item, CachePoint):
+                    pass
                 else:
-                    raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
+                    assert_never(item)
         return MistralUserMessage(content=content)
 
 

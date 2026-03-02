@@ -8,7 +8,13 @@ from typing import Any
 import pytest
 import yaml
 
-from tests.cassette_utils import CassetteContext, _get_cassette_bodies_from_yaml  # pyright: ignore[reportPrivateUsage]
+from tests.cassette_utils import (
+    CassetteContext,
+    _get_cassette_bodies_from_yaml,  # pyright: ignore[reportPrivateUsage]
+    _get_xai_cassette_request_bodies,  # pyright: ignore[reportPrivateUsage]
+)
+
+from ._inline_snapshot import snapshot
 
 
 def _make_ctx(tmp_path: Path, provider: str = 'openai') -> CassetteContext:
@@ -105,3 +111,38 @@ class TestVerifyWithEmptyBodies:
 
     def test_verify_ordering_no_bodies(self, ctx: CassetteContext) -> None:
         ctx.verify_ordering('a', 'b', 'c')
+
+
+class TestGetXaiCassetteRequestBodies:
+    def test_sdk_unavailable(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr('tests.models.xai_proto_cassettes.xai_sdk_available', lambda: False)
+        assert _get_xai_cassette_request_bodies(tmp_path / 'fake.yaml') == []
+
+    def test_sdk_available_with_interactions(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tests.models.xai_proto_cassettes import SampleInteraction, StreamInteraction, XaiProtoCassette
+
+        sample = SampleInteraction(
+            request_raw=b'',
+            response_raw=b'',
+            request_json={'model': 'grok'},
+            response_json={'text': 'hi'},
+        )
+        stream = StreamInteraction(
+            request_raw=b'',
+            chunks_raw=[],
+            request_json={'model': 'grok-stream'},
+            chunks_json=[{'chunk': 'data'}],
+        )
+        cassette = XaiProtoCassette(interactions=[sample, stream])
+
+        monkeypatch.setattr('tests.models.xai_proto_cassettes.xai_sdk_available', lambda: True)
+        monkeypatch.setattr(XaiProtoCassette, 'load', staticmethod(lambda _path: cassette))  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
+
+        bodies = _get_xai_cassette_request_bodies(tmp_path / 'fake.yaml')
+        assert bodies == snapshot(
+            ['{"model": "grok"}', '{"text": "hi"}', '{"model": "grok-stream"}', '{"chunk": "data"}']
+        )
+        assert '{"model": "grok"}' in bodies[0]
+        assert '{"text": "hi"}' in bodies[1]
+        assert '{"model": "grok-stream"}' in bodies[2]
+        assert '{"chunk": "data"}' in bodies[3]
