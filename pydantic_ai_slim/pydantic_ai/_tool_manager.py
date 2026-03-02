@@ -171,12 +171,18 @@ class ToolManager(Generic[AgentDepsT]):
     ) -> RunContext[AgentDepsT]:
         """Build the execution context for a tool call."""
         assert self.ctx is not None
+        if tool.tool_def.kind == 'output':
+            retry = self.ctx.retry
+            max_retries = self.ctx.max_retries
+        else:
+            retry = self.ctx.retries.get(call.tool_name, 0)
+            max_retries = tool.max_retries
         return replace(
             self.ctx,
             tool_name=call.tool_name,
             tool_call_id=call.tool_call_id,
-            retry=self.ctx.retries.get(call.tool_name, 0),
-            max_retries=tool.max_retries,
+            retry=retry,
+            max_retries=max_retries,
             tool_call_approved=approved,
             tool_call_metadata=metadata,
             partial_output=allow_partial,
