@@ -133,7 +133,9 @@ class TestGetXaiCassetteRequestBodies:
             request_json={'model': 'grok-stream'},
             chunks_json=[{'chunk': 'data'}],
         )
-        cassette = XaiProtoCassette(interactions=[sample, stream])
+        sample_no_json = SampleInteraction(request_raw=b'', response_raw=b'')
+        stream_no_json = StreamInteraction(request_raw=b'', chunks_raw=[])
+        cassette = XaiProtoCassette(interactions=[sample, stream, sample_no_json, stream_no_json])
 
         monkeypatch.setattr('tests.models.xai_proto_cassettes.xai_sdk_available', lambda: True)
         monkeypatch.setattr(XaiProtoCassette, 'load', staticmethod(lambda _path: cassette))  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
