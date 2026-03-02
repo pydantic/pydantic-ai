@@ -4,12 +4,12 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import BinaryContent, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:

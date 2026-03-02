@@ -9,9 +9,9 @@ from typing import Any, Literal
 import pytest
 import yaml
 from dirty_equals import HasRepr, IsNumber
-from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsStr, try_import
 from .utils import render_table
 

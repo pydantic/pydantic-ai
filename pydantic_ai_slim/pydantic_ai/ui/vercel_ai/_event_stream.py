@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import KW_ONLY, dataclass
+from functools import cached_property
 from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic_core import to_json
 
@@ -26,9 +28,9 @@ from ...messages import (
 )
 from ...output import OutputDataT
 from ...run import AgentRunResultEvent
-from ...tools import AgentDepsT
+from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from ._utils import dump_provider_metadata, iter_metadata_chunks
+from ._utils import dump_provider_metadata, iter_metadata_chunks, iter_tool_approval_responses
 from .request_types import RequestData
 from .response_types import (
     BaseChunk,
@@ -46,10 +48,12 @@ from .response_types import (
     TextDeltaChunk,
     TextEndChunk,
     TextStartChunk,
+    ToolApprovalRequestChunk,
     ToolInputAvailableChunk,
     ToolInputDeltaChunk,
     ToolInputStartChunk,
     ToolOutputAvailableChunk,
+    ToolOutputDeniedChunk,
     ToolOutputErrorChunk,
 )
 
@@ -79,10 +83,19 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     _: KW_ONLY
     sdk_version: Literal[5, 6] = 5
-    """Vercel AI SDK version to target."""
+    """Vercel AI SDK version to target. Setting to 6 enables tool approval streaming."""
 
     _step_started: bool = False
     _finish_reason: FinishReason = None
+
+    @cached_property
+    def _denied_tool_ids(self) -> set[str]:
+        """Get the set of tool_call_ids that were denied by the user."""
+        return {
+            tool_call_id
+            for tool_call_id, approval in iter_tool_approval_responses(self.run_input.messages)
+            if not approval.approved
+        }
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:
@@ -111,6 +124,16 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         pydantic_reason = event.result.response.finish_reason
         if pydantic_reason:
             self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason, 'other')
+
+        # Emit tool approval requests for deferred approvals (only when sdk_version >= 6)
+        output = event.result.output
+        if self.sdk_version >= 6 and isinstance(output, DeferredToolRequests):
+            for tool_call in output.approvals:
+                yield ToolApprovalRequestChunk(
+                    approval_id=str(uuid4()),
+                    tool_call_id=tool_call.tool_call_id,
+                )
+            return
         return
         yield
 
@@ -247,10 +270,15 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         part = event.result
-        if isinstance(part, RetryPromptPart):
-            yield ToolOutputErrorChunk(tool_call_id=part.tool_call_id, error_text=part.model_response())
+        tool_call_id = part.tool_call_id
+
+        # Check if this tool was denied by the user (only when sdk_version >= 6)
+        if self.sdk_version >= 6 and tool_call_id in self._denied_tool_ids:
+            yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
+        elif isinstance(part, RetryPromptPart):
+            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
         else:
-            yield ToolOutputAvailableChunk(tool_call_id=part.tool_call_id, output=self._tool_return_output(part))
+            yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=self._tool_return_output(part))
 
         # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
         # (e.g. text, images) that Vercel AI does not currently have chunk types for.
