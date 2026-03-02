@@ -977,9 +977,9 @@ async def test_combined_toolset_instructions():
     combined = CombinedToolset([toolset1, toolset2, toolset3])
     ctx = build_run_context(None)
 
-    # CombinedToolset aggregates non-None instructions from all contained toolsets
+    # CombinedToolset aggregates non-None instructions from all contained toolsets as a list
     instructions = await combined.get_instructions(ctx)
-    assert instructions == 'Instructions from toolset 1.\n\nInstructions from toolset 2.'
+    assert instructions == ['Instructions from toolset 1.', 'Instructions from toolset 2.']
 
 
 async def test_combined_toolset_instructions_all_none():
@@ -1180,7 +1180,7 @@ async def test_combined_toolset_aggregates_instructions():
 
     ctx = build_run_context(None)
     result = await combined.get_instructions(ctx)
-    assert result == 'Toolset 1 instructions.\n\nToolset 2 instructions.'
+    assert result == ['Toolset 1 instructions.', 'Toolset 2 instructions.']
 
 
 async def test_combined_toolset_skips_none_instructions():
@@ -1191,7 +1191,7 @@ async def test_combined_toolset_skips_none_instructions():
 
     ctx = build_run_context(None)
     result = await combined.get_instructions(ctx)
-    assert result == 'Only from ts1.'
+    assert result == ['Only from ts1.']
 
 
 async def test_combined_toolset_all_none_returns_none():

@@ -2544,7 +2544,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
 
     @my_agent.instructions
     def instructions(ctx: RunContext[None]):
-        return f'This is step {ctx.run_step + 1}'
+        return f'This is step {ctx.run_step}'
 
     @my_agent.tool_plain
     def my_tool() -> str:
@@ -2569,7 +2569,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
                     snapshot(
                         [
                             {
-                                'content': 'This is step 3',
+                                'content': 'This is step 2',
                                 'role': 'system',
                                 'event.name': 'gen_ai.system.message',
                             },
@@ -2641,7 +2641,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
             snapshot(
                 [
                     {
-                        'content': 'This is step 2',
+                        'content': 'This is step 1',
                         'role': 'system',
                         'gen_ai.system': 'test',
                         'event.name': 'gen_ai.system.message',
@@ -2776,7 +2776,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
                         ]
                     )
                 ),
-                'gen_ai.system_instructions': '[{"type": "text", "content": "This is step 3"}]',
+                'gen_ai.system_instructions': '[{"type": "text", "content": "This is step 2"}]',
                 'pydantic_ai.variable_instructions': True,
                 'logfire.json_schema': IsJson(
                     snapshot(
