@@ -3244,3 +3244,36 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             ),
         ]
     )
+
+
+async def test_bedrock_empty_user_message_synthesized(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that an empty user message is synthesized when there are no user messages.
+
+    Bedrock requires conversations to start with a user message, so when agent.run() is
+    called with only a system prompt or instructions, we need to synthesize one.
+    See: https://github.com/pydantic/pydantic-ai/issues/4495
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    # Only system prompt, no user messages
+    messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart(content='You are a helpful assistant.')])]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        None,
+    )
+    assert bedrock_messages == [{'role': 'user', 'content': [{'text': ''}]}]
+
+
+@pytest.mark.vcr()
+async def test_bedrock_model_with_instructions_only(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that agent.run() works without a user prompt, using only a system prompt.
+
+    Bedrock requires conversations to start with a user message. When called with only a
+    system prompt, the model layer synthesizes an empty user message automatically.
+    See: https://github.com/pydantic/pydantic-ai/issues/4495
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='Generate a short greeting.')
+
+    result = await agent.run()
+    assert result.output == snapshot('Hello! How can I help you today?')

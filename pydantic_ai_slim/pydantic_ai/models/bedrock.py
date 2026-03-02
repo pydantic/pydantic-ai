@@ -806,6 +806,12 @@ class BedrockConverseModel(Model):
                 # Note: _get_last_user_message_content ensures content doesn't already end with a cachePoint.
                 _insert_cache_point_before_trailing_documents(last_user_content)
 
+        # When there are no input messages, Bedrock will reject the request with:
+        # "A conversation must start with a user message."
+        # To avoid this, provide an explicit empty user message.
+        if not processed_messages:
+            processed_messages.append({'role': 'user', 'content': [{'text': ''}]})
+
         return system_prompt, processed_messages
 
     @staticmethod
