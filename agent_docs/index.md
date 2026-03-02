@@ -2,111 +2,129 @@
 
 # Coding Guidelines
 
-## Type System
-
-<!-- rule:185 -->
-- End union type `isinstance()` or `if`/`elif` chains with `else: assert_never()` — catches missing variants at type-check time when unions expand — Type checkers flag unhandled union members before runtime, preventing silent bugs when new types are added to the union
-<!-- rule:60 -->
-- Avoid `Any` types — use `Union`, `Protocol`, `TypedDict`, or `TypeVar` with bounds; import optional types under `if TYPE_CHECKING:` with quoted hints — Precise types catch bugs at type-check time, improve IDE autocomplete, and document expected structures without requiring docstrings
-<!-- rule:882 -->
-- Extract complex (3+ union branches, nested generics) or repeated (2+ uses) type annotations into named type aliases — Improves readability, ensures consistency across related fields, and makes refactoring type definitions safer
-<!-- rule:142 -->
-- Use `Literal` types instead of plain `str` for parameters/fields/returns with fixed string values — Makes valid values explicit in type signatures, enables better IDE autocomplete, and catches invalid string values at type-check time instead of runtime
-<!-- rule:0 -->
-- Use `isinstance()` for type checking, not `hasattr()`, `type(obj).__name__`, or discriminator field comparisons like `part_kind == 'text'` — Enables type narrowing, prevents breakage during refactoring, and allows type checkers to understand your code flow
-<!-- rule:469 -->
-- Avoid `cast()` by fixing type definitions to match runtime — prefer narrowing unions, correcting generics, or improving type guards over casting to bypass errors — Prevents masking structural type problems and ensures static analysis catches real bugs; only use `cast()` when runtime guarantees safety but static analysis can't infer it (e.g., after literal checks or known invariants)
-<!-- rule:46 -->
-- Fix type errors with proper annotations/narrowing/casting instead of `# type: ignore` — when suppression is unavoidable, add specific error code and justification inline — Prevents masking real type safety issues; inline suppressions with error codes (e.g., `# type: ignore[attr-defined]`) make future debugging easier and signal intentional decisions rather than laziness
-<!-- rule:635 -->
-- Remove or justify type system workarounds (`# type: ignore`, redundant `isinstance()`, unnecessary `is not None` checks) — improves type safety and prevents silently masking real type errors — Type workarounds often hide real type issues or become outdated as the codebase evolves; removing them ensures the type system catches actual bugs and maintains accurate type information
-<!-- rule:494 -->
-- Don't add `| None` to TypedDict fields marked `total=False` or `NotRequired` — optionality is already expressed — Redundant None unions create confusion about whether a field can be omitted vs. must be present with a None value; TypedDict mechanisms already handle optionality correctly
-
-## Naming
-
-<!-- rule:280 -->
-- Drop redundant prefixes/suffixes when context (class name, module, type annotation) already conveys meaning — Reduces noise and improves readability — `ToolConfig.description` is clearer than `ToolConfig.tool_description`, and type annotations eliminate the need for `_str`/`_dict`/`_list` suffixes
-<!-- rule:198 -->
-- Rename methods when implementation scope changes — prevents misleading names that hide actual behavior — Accurate names prevent bugs by making it clear what code actually does; renaming `_call_function_tool` to `_call_tool_traced` when it starts handling both function and output tools signals the change to maintainers and prevents incorrect assumptions about behavior.
-<!-- rule:321 -->
-- Use specific parameter/variable names like `toolset_id`, `memory_id`, `config_data` instead of generic `name`, `id`, `data` — improves code clarity and prevents ambiguity — Descriptive names convey semantic meaning across method signatures, error messages, and docs, reducing cognitive load and preventing bugs from mistaken identity
-<!-- rule:770 -->
-- Name module constants `UPPER_CASE`; prefix with `_` if internal — signals API boundaries — Distinguishes public API constants from internal implementation details, preventing accidental dependencies on private constants.
-<!-- rule:556 -->
-- Use parallel naming patterns for equivalent fields across providers — e.g., `send_back_thinking_parts` in Bedrock becomes `openai_chat_send_back_thinking_parts` in OpenAI — Consistent naming across provider implementations signals common purpose and makes the codebase predictable for users working with multiple providers
-
 ## Code Style
 
 <!-- rule:409 -->
-- Keep PRs focused on their stated purpose — exclude unrelated code, docs, or formatting changes — Makes reviews faster, reduces merge conflicts, and isolates changes for easier debugging and rollback
+- Keep PRs focused on their stated purpose — exclude unrelated changes even if conceptually related — Simplifies review, prevents unintended side effects, and makes rollbacks cleaner when each PR has a single clear objective
 <!-- rule:910 -->
-- Wrap code elements (variables, functions, classes, types, keywords) in backticks in user-facing messages — Improves readability and clearly distinguishes code from prose in error messages, warnings, and logs
+- Wrap code identifiers in backticks in user-facing messages (errors, warnings, logs) — Improves readability and clearly distinguishes code elements from prose, making error messages easier to parse and debug
+<!-- rule:193 -->
+- Centralize validation at one layer — removes redundancy and establishes single source of truth — Prevents validation drift when requirements change and reduces maintenance burden by avoiding duplicate validation logic across the call chain
+<!-- rule:2 -->
+- Extract duplicated logic into shared helpers after 2+ occurrences — refactor existing code rather than creating parallel implementations — Prevents bugs from inconsistent implementations, reduces maintenance burden, and creates single sources of truth for validation, transformation, and schema handling
+<!-- rule:341 -->
+- Remove commented-out code, unused definitions, and superseded implementations — Version control preserves history; dead code creates confusion about intent, control flow, and which implementation is actually active
+<!-- rule:559 -->
+- Consolidate duplicate logic across conditional branches using combined conditions, extracted variables, or hoisted shared code — Reduces duplication, makes changes easier to maintain in one place, and clarifies that behavior is intentionally shared across branches
+<!-- rule:14 -->
+- Inline single-use helpers that only wrap property access or delegation — reduces nesting and cognitive load without sacrificing clarity — Eliminates unnecessary indirection that forces readers to jump between methods to understand simple operations, making code more direct and maintainable
+<!-- rule:21 -->
+- Extract model profile logic into dedicated `{provider}_model_profile()` functions in `profiles/{provider}.py` rather than inline in provider classes — Separates profile definitions from provider implementation, making profiles testable in isolation and easier to maintain across providers
+<!-- rule:263 -->
+- Extract repeated logic into helper methods or top-level functions when patterns recur (e.g., streaming vs non-streaming handlers, serialization, part types, message mappings, model adapters) — Prevents duplication bugs and makes changes easier to apply consistently across all code paths (like both streaming and non-streaming handlers)
 <!-- rule:176 -->
-- Place single-use helpers and constants in function/method scope, not module-level — reduces namespace pollution and clarifies usage scope — Keeps module namespace clean and makes it immediately clear which code depends on which helpers, improving maintainability and reducing cognitive load when reading the code
-<!-- rule:120 -->
-- Colocate utilities with their primary types — place factory methods, helpers, and context managers in the module with the types/ContextVars they operate on, preferably as class methods — Keeps related code together, improves discoverability, and makes dependencies explicit — critical for maintaining consistency across CLI, temporal, models, messages, UI, and agent graph modules
+- Scope helpers and constants to their single usage site — define inline or within the class/function that uses them, not at module level — Reduces namespace pollution, clarifies intent, and prevents accidental reuse of implementation details not designed for broader use
+<!-- rule:345 -->
+- Extract duplicated logic (validation, types, activity definitions, transformations) to parent classes or shared utilities — prevents drift and reduces maintenance burden across implementations — Keeping shared code in one place (like `_call_tool_in_activity` in `TemporalWrapperToolset`) prevents inconsistencies when logic evolves across multiple implementations (`TemporalFunctionToolset`, `TemporalMCPServer`, etc.)
+<!-- rule:284 -->
+- Use `model_dump()` for Pydantic model serialization; reserve `TypeAdapter` with `mode='json'` for collections or external SDKs needing JSON-compatible primitives — Prevents manual dictionary construction errors and ensures consistent serialization; `TypeAdapter.dump_python(mode='json')` guarantees primitive types (dicts/lists/strings) instead of `BaseModel` instances when required by external systems
+<!-- rule:499 -->
+- Compile static regex patterns at module level as constants — avoids recompilation overhead on repeated calls — Prevents performance degradation when regex-using functions are called frequently, as pattern compilation is expensive
 
-## Documentation
+## Type System
 
-<!-- rule:325 -->
-- Use latest frontier models in docs/examples (e.g., `claude-sonnet-4-5`, `gpt-4o`) — users copy-paste this code and expect current best practices — Outdated model references like `gpt-3.5-turbo` mislead users and hurt adoption of better-performing models
-<!-- rule:102 -->
-- When adding a provider, update `docs/models/{provider}.md`, `docs/api/models/{provider}.md`, `docs/api/providers.md`, `docs/models/overview.md`, `docs/index.md`, `README.md`, `mkdocs.yml`, and feature tables in `builtin-tools.md`, `thinking.md`, `input.md` — Ensures users discover new providers across all documentation entry points and understand feature support
-<!-- rule:50 -->
-- Update examples to show current patterns, not deprecated ones — examples are teaching tools, not compatibility contracts — Keeps documentation accurate and prevents developers from learning outdated patterns that may be less safe, less idiomatic, or harder to maintain
-<!-- rule:390 -->
-- Use provider-prefixed model identifiers (`{provider}:{model}`) and platform-specific formats (e.g., `bedrock:us.anthropic.claude-3-5-sonnet-20241022:0`) — Ensures model references work correctly across different platforms and prevents confusion when the same model has different identifiers per provider
-
-## API Design
-
-<!-- rule:146 -->
-- Prefix internal-only functions, methods, classes, and modules with underscore; exclude from `__all__` — makes API boundaries clear and prevents accidental external dependencies — Clear API boundaries prevent external code from depending on implementation details that may change, while allowing easy promotion to public API when legitimate external needs emerge
-<!-- rule:589 -->
-- Store model capabilities (`supports_*` flags, builtin tools) as properties in `ModelProfile`, set conditionally in profile definitions or `model_profile()` methods — Centralizes capability metadata in profiles instead of scattering `isinstance()` checks at usage sites, making capabilities discoverable and reducing coupling between model detection and feature logic.
-<!-- rule:265 -->
-- Use `'provider:model'` format (e.g., `'openai:gpt-4'`) with `infer_model()` for instantiation — Provides a consistent, unified interface across all code and documentation, preventing fragmentation of model instantiation patterns and making the API predictable for users
-<!-- rule:717 -->
-- Override profile properties in model/provider classes, not in shared profile functions — Shared profile functions like `anthropic_model_profile()` are used by multiple providers (e.g., OpenAI and Bedrock); modifying them breaks compatibility for other consumers—use `dataclasses.replace()` in provider-specific `.profile` properties instead
+<!-- rule:0 -->
+- Use `isinstance()` for type checking, not `hasattr()`, `getattr()`, `type(obj).__name__`, or discriminator field checks like `part_kind` — Enables proper type narrowing for static analysis and prevents fragile string-based comparisons that break during refactoring
+<!-- rule:142 -->
+- Use `Literal` types instead of plain `str` for fixed string value sets in parameters, fields, and return types — Makes valid values explicit in type signatures, enabling static type checkers to catch invalid strings at compile time and improving IDE autocomplete
+<!-- rule:809 -->
+- Create type aliases for complex types (3+ union branches, `dict[str, Any] | Callable` patterns, multi-value `Literal`s) or types used 2+ times — skip aliases for simple one-off internal types — Reduces duplication and improves readability for complex types while avoiding unnecessary abstraction that obscures simple inline hints
+<!-- rule:95 -->
+- Use `if TYPE_CHECKING:` blocks for optional dependency types with quoted hints — keeps package installable without all deps while preserving type safety — Prevents runtime import errors when optional dependencies aren't installed while maintaining proper type annotations instead of falling back to `Any`
+<!-- rule:513 -->
+- Type signatures to match runtime reality — if control flow (e.g., `match`/`case`, API contracts) guarantees only specific types reach a code path, narrow the annotation to exclude impossible types from unions — Prevents confusion, enables better type checking, and documents actual behavior rather than overly permissive signatures that suggest unreachable code paths
+<!-- rule:46 -->
+- Fix type errors properly instead of using `# type: ignore` or `# pyright: ignore` — use type annotations, narrowing, or `cast()` with explanatory comments — Prevents masking real type errors and makes code safer; when suppressions are genuinely needed (complex generics, tool limits), document with error codes and justification so reviewers understand the safety reasoning
+<!-- rule:479 -->
+- Remove redundant runtime checks when types already constrain the value — prevents noise and maintains type system trust — Redundant assertions (`assert x is not None` for non-`Optional` types, duplicate `isinstance()` checks, etc.) add visual clutter and imply the type system can't be trusted, making code harder to maintain
+<!-- rule:469 -->
+- Fix type definitions instead of using `cast()` — adjust generics or remove unnecessary unions to match runtime reality — Prevents masking structural type mismatches that indicate design problems; only use `cast()` when runtime logic guarantees safety but static analysis cannot narrow (e.g., after literal checks or known invariants)
+<!-- rule:494 -->
+- Don't add `| None` to `TypedDict` fields marked `total=False` or `NotRequired` — optionality is already expressed — Prevents redundant type declarations and makes it clear that omission (not None) is the intended optional behavior
+<!-- rule:196 -->
+- Remove `| None` from type annotations when values are guaranteed to be initialized or always provided — Prevents false optionality in types, making the API clearer and avoiding unnecessary None-checks that can never trigger
 
 ## Error Handling
 
 <!-- rule:895 -->
-- Raise `ModelRetry` for recoverable tool errors (timeouts, validation failures, invalid params) — enables automatic retry with corrected input instead of hard failure — This is a core framework recovery mechanism that allows the agent to self-correct rather than failing or returning error messages in tool responses
+- Raise `ModelRetry` for recoverable tool errors (timeouts, validation failures, missing params) — enables automatic retry with corrected input instead of terminal failure — Distinguishes transient/fixable errors from hard failures, allowing the agent to self-correct rather than propagating error messages to users
 <!-- rule:400 -->
-- Use `assert` for invariants that should never fail in correct code — not `RuntimeError('Internal error')`, `'Unreachable code'`, or `pragma: no cover` — Distinguishes programming errors (bugs) from runtime errors, making bugs immediately visible in development while keeping production stacktraces clean and meaningful
+- Use `assert` for invariants that should never fail, not `RuntimeError('Internal error')` or `pragma: no cover` — Asserts document assumptions and fail fast in development; `RuntimeError` obscures programming errors as runtime issues and `pragma: no cover` hides untested branches
 <!-- rule:32 -->
-- Use `!r` format specifier for identifiers in error messages (e.g., `f'Tool {name!r}'` not `f'Tool `{name}`'`) — Ensures consistent, unambiguous representation of names/values in user-facing strings and prevents quoting inconsistencies
+- Use `!r` format specifier for identifiers in error messages (e.g., `f'Tool {name!r}'` not `f'Tool `{name}`'`) — Provides consistent, unambiguous quoting that clearly delimits values and handles edge cases like empty strings or special characters.
+<!-- rule:353 -->
+- Fail fast on explicit user config conflicts; gracefully fallback on internal/auto setting conflicts — Catching user mistakes early with clear errors prevents debugging confusion, while internal fallbacks enable cross-provider compatibility and system resilience when constraints are automatically inferred or propagated
+<!-- rule:337 -->
+- Inherit new exception types from existing base exceptions like `UnexpectedModelBehavior` when semantically appropriate — Maintains backward compatibility so user code catching parent exceptions continues to work when new exception types are introduced
+<!-- rule:320 -->
+- Catch specific exception types instead of bare `except Exception` when failure modes are known — Prevents catching unexpected errors that should propagate, makes debugging easier, and documents expected failure cases
+<!-- rule:1104 -->
+- Validate input parameters before expensive operations — fail fast to avoid wasted computation — Prevents unnecessary resource consumption and provides faster feedback when invalid inputs are detected
+<!-- rule:130 -->
+- Trust validated invariants and use defaults over assertions — reduces brittle failures and improves resilience — Assertions crash on unexpected states; defaults and graceful handling keep the system operational when assumptions don't hold, while trusting earlier validation stages avoids redundant defensive checks.
+
+## Naming
+
+<!-- rule:280 -->
+- Drop redundant prefixes when context is clear — prefer `ToolConfig.description` over `ToolConfig.tool_description`, `MCPServerTool.label` over `MCPServerTool.server_label` — Reduces noise and improves readability since the class/module name already provides context (e.g., `tool_config.description` is clearer than `tool_config.tool_description`)
+<!-- rule:198 -->
+- Rename methods/functions when their behavior changes — names must reflect actual scope, return values, and abstraction level — Prevents confusion and bugs when implementation evolves (e.g., `_call_function_tool` handling output tools should become `_call_tool_traced`)
+<!-- rule:321 -->
+- Use specific parameter/variable names that convey semantic meaning — prefer `toolset_id`, `memory_id`, `config_data` over generic `id`, `name`, `data` — Improves code readability and prevents confusion when multiple IDs or data objects are in scope
+<!-- rule:488 -->
+- Avoid redundant type suffixes (`Value`, `Type`, `Class`, `_dict`, `_list`, `_str`) when type is clear from annotations or context — Reduces noise and improves readability since Python's type system already documents the type explicitly
+<!-- rule:770 -->
+- Use `UPPER_CASE` for module constants; prefix with `_` if internal (`_MAX_RETRIES`) — Distinguishes public API from internal implementation details and signals immutability
 
 ## Imports
 
-<!-- rule:155 -->
-- Place imports at module level; group optional deps in single `try`/`except ImportError` with install instructions — Avoids import overhead on every call, makes dependencies explicit at file top, and provides clear error messages directing users to the correct install group (e.g., `[anthropic]`, `[web]`)
+<!-- rule:464 -->
+- Place all imports at the top of the file, not inline within functions or test bodies — Ensures imports are visible at module load time, prevents hidden dependencies, and follows Python conventions for clarity and consistency
 <!-- rule:77 -->
-- Import optional dependencies inside functions at point of use, not at module level — Defers dependency requirements until functionality is actually needed, keeping the package installable without all optional deps
+- Handle optional dependencies: (1) import inside functions to defer requirements, OR (2) use `try`/`except ImportError` at module level with helpful errors directing to install groups like `[web]`, `[bedrock]` — Keeps the package installable without all dependencies while providing clear guidance when optional features are used
+<!-- rule:141 -->
+- Remove unused imports — reduces dependency bloat and keeps the module namespace clean — Prevents accidental dependencies, reduces cognitive load when reading code, and avoids circular import issues
 <!-- rule:223 -->
 - Remove duplicate imports — keep only one declaration per imported item — Prevents confusion, reduces file size, and avoids potential issues if imports have side effects
 
 ## Testing
 
 <!-- rule:432 -->
-- Remove tests when their code paths are eliminated or superseded by better coverage — Integration tests covering realistic usage provide more valuable validation than isolated unit tests of the same paths; duplicate tests create maintenance burden without adding safety
+- Remove tests when redundant, obsolete, or duplicative — each test should verify distinct, valuable behavior that currently exists — Reduces maintenance burden and keeps test suite focused on actual behavior; prevents false confidence from tests covering non-existent code paths or duplicating coverage without verifying edge cases
 <!-- rule:97 -->
-- Write tests instead of using `# pragma: no cover` — reserve pragmas only for truly untestable code (defensive errors, platform branches, optional deps unavailable in CI); remove pragmas when tests are added or CI shows execution — Maintains accurate coverage metrics and prevents lazy testing practices; pragmas should reflect actual untestability, not developer convenience
+- Avoid `# pragma: no cover` — write tests instead. Only use for truly untestable code (defensive guards, platform branches, optional deps unavailable in CI) — Coverage pragmas hide gaps in test coverage; proper tests prevent regressions and document expected behavior, while pragmas should only mark code paths that cannot be executed in testing environments
+
+## Documentation
+
+<!-- rule:132 -->
+- Use latest/frontier models (e.g., `'gpt-5'` not `'gpt-4o'`) in docs and examples — Shows users current best practices and prevents outdated examples from becoming cargo-culted into production code
+<!-- rule:390 -->
+- Use provider-prefixed model identifiers (`{provider}:{model}`) and platform-specific formats (e.g., AWS Bedrock requires `us.anthropic.claude-{model}-{version}:0`) — Prevents misconfiguration and API errors by matching exact identifier formats required by each platform, ensures consistency across docs and code
 
 ## General
 
+<!-- rule:-2 -->
+- Use latest frontier models (e.g. `openai:gpt-5.2`, `anthropic:claude-opus-4-6`) in `docs/examples` — Outdated model references make our product look unmaintained and reduce user trust
 <!-- rule:449 -->
-- Use `make install` to regenerate lock files after dependency changes — ensures consistent tooling versions and isolates actual dependency changes from lock file churn — Prevents accidental lock file corruption from version mismatches and makes PR diffs reviewable by showing only intentional changes.
-<!-- rule:29 -->
-- Export commonly-used types and classes from top-level `pydantic_ai` package — simplifies imports and prevents user coupling to internal module structure — Users shouldn't need to know internal submodule paths; top-level exports improve discoverability and allow refactoring internals without breaking imports
+- Use `make install` to regenerate lock files (e.g., `uv.lock`) after dependency changes — Ensures reproducible builds and keeps lock file diffs minimal. Update the package manager (uv, npm, pip-tools) to latest first and start from clean state. If diffs are unexpectedly large, reset to base branch and regenerate to isolate actual changes — prevents spurious conflicts and version drift.
+<!-- rule:717 -->
+- Override profile properties in model/provider classes, not in shared profile functions — Prevents provider-specific logic from leaking into shared utilities like `anthropic_model_profile()` that multiple providers (OpenAI, Bedrock, etc.) depend on — keeps profiles reusable and avoids cross-provider bugs
 
 ## Topic Guides
 
 Check these when working in specific areas:
 
-- **[Code Style & Simplification](code-style-simplification.md)**: When writing loops, conditionals, variable assignments, or refactoring code for clarity
-- **[Documentation & Comments](documentation.md)**: When writing or updating documentation, docstrings, comments, or user-facing guides
-- **[API Design & Public Interfaces](api-design.md)**: When designing new APIs, adding parameters to public functions, or deciding what to expose publicly
-
+- **[Code Simplification & Idioms](agent_docs/code-simplification.md)**: When refactoring code for clarity or looking to simplify complex patterns
+- **[Documentation](agent_docs/documentation.md)**: When writing or updating documentation, comments, or docstrings
+- **[API Design & Interfaces](agent_docs/api-design.md)**: When designing or modifying public APIs, parameters, or class interfaces
 <!-- /braindump -->

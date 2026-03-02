@@ -1,28 +1,28 @@
-# API Design & Public Interfaces
+# API Design & Interfaces
 
-> Rules for designing clean, maintainable APIs including keyword-only parameters, return value conventions, private vs public interfaces, capability flags, provider-agnostic abstractions, and avoiding implicit defaults.
+> Rules for designing public APIs, managing visibility, backward compatibility, and API patterns
 
-**When to check**: When designing new APIs, adding parameters to public functions, or deciding what to expose publicly
+**When to check**: When designing or modifying public APIs, parameters, or class interfaces
 
 ## Rules
 
-<!-- rule:40 -->
-- Use keyword-only parameters (place `*` after 1-2 clear positional args) for functions with 3+ params, optional params, and `__init__` methods — Prevents breakage when adding parameters and eliminates positional argument confusion in configuration-heavy APIs
+<!-- rule:146 -->
+- Prefix implementation details with underscore (`_`) and exclude from `__all__` — prevents accidental API surface expansion and signals internal-only usage — Keeps the public API surface minimal and clearly separates internal implementation from stable public interfaces, preventing backward compatibility obligations for internal code.
+<!-- rule:29 -->
+- Export commonly-used types and classes from top-level `pydantic_ai` package — hides internal structure and simplifies user imports — Makes the public API easier to use and allows internal refactoring without breaking user code that would otherwise depend on specific submodule paths
 <!-- rule:124 -->
-- Use `_: KW_ONLY` before fields with defaults in dataclasses/Pydantic models — Prevents breakage when adding parameters — forces keyword arguments so positional call sites don't break when field order changes
+- Use `_: KW_ONLY` marker before optional fields in dataclasses/Pydantic models — Prevents breakage when adding parameters — callers can't accidentally pass defaults positionally, ensuring backward compatibility when fields are added or reordered
 <!-- rule:56 -->
-- Use instance methods when accessing `self` attributes or enabling polymorphism; use standalone functions for stateless logic — Instance methods eliminate parameter passing overhead, provide encapsulation, and enable subclass overriding. For shared logic across classes, extract to private top-level helpers (e.g., `_is_valid_format()`) that multiple methods can call.
+- Prefer instance methods when accessing `self` attributes or enabling polymorphism; use module-level functions when no instance state is needed — Reduces unnecessary coupling and parameter passing while enabling proper polymorphism; extract shared logic to private top-level helpers to avoid duplication across classes
+<!-- rule:491 -->
+- Keep old names as deprecated aliases when renaming public API elements — prevents breaking existing code — Maintains backward compatibility so users can migrate gradually rather than experiencing immediate breakage when upgrading
 <!-- rule:775 -->
-- Return new collections from transform functions instead of mutating inputs (unless named `update_*` or `*_inplace`) — prevents surprising side effects and makes code easier to reason about — Immutable transforms prevent bugs from unexpected mutations and make data flow explicit, improving testability and composability
-<!-- rule:929 -->
-- Require ≥2 provider support before adding fields to cross-provider abstractions — Prevents API bloat with provider-specific features and ensures abstractions remain truly cross-compatible
-<!-- rule:587 -->
-- Add boolean capability flags to model profile classes for provider-specific features; check before sending optional parameters — Prevents API errors when features aren't universally supported across models in a provider (e.g., `bedrock_supports_prompt_caching` in `BedrockModelProfile`). Only add flags for features that error; omit for silently-ignored features.
+- Return new collections from transform functions instead of mutating inputs — prevents surprising side effects and makes code easier to reason about (exceptions: performance-critical paths or functions named `update_*`/`*_inplace`) — Immutable transforms prevent surprising side effects and make code easier to reason about, improving maintainability across the codebase
+<!-- rule:367 -->
+- Don't access or modify private attributes (`_prefixed`) — use public APIs, properties, or constructor parameters — Prevents breakage when internal implementation changes and ensures compatibility with library updates
+<!-- rule:72 -->
+- Promote settings to base classes (`ModelSettings`, embedding settings) when 2-3+ providers support them; maintain backward compatibility with automatic mapping from new common fields to legacy provider-prefixed fields — Prevents API duplication across provider-specific subclasses (e.g., `OpenAIEmbeddingSettings`, `CohereEmbeddingSettings`) while preserving backward compatibility when refactoring provider-prefixed parameters (e.g., `cohere_`, `openai_`) to shared fields
 <!-- rule:302 -->
-- In `BuiltinToolReturnPart.content`, avoid redundancy: no duplicate fields, no wrapper dicts with single keys, no single-item lists, no repeating `return_value` data — Prevents API bloat and confusion — keeps the structure flat and ensures each field has a distinct purpose
-<!-- rule:673 -->
-- Avoid accessing `_private` attributes from external code — respect encapsulation and prevent breakage from internal changes — Private attributes can change without notice; using public APIs ensures backward compatibility and clear interfaces
-<!-- rule:711 -->
-- Avoid implicit defaults for context-specific API config (model names, endpoint URLs, API versions) — require explicit values or use sentinel values like `None` to signal user attention needed — Prevents silent failures when credentials don't match assumed defaults and makes cross-provider APIs predictable; document any side effects in config options explicitly
-<!-- rule:33 -->
-- Design provider-agnostic abstractions (e.g., `programmatically_callable`) in framework APIs and classes like `ToolDefinition` — avoid provider-specific fields (`allowed_callers`, beta headers, magic version strings) that couple interfaces to one implementation — Prevents tight coupling to specific providers, enables framework evolution without breaking changes, and keeps user-facing APIs consistent regardless of which provider they use
+- Keep `BuiltinToolReturnPart.content` flat and non-redundant — avoid duplicating part fields, repeating `return_value` data, single-key wrappers, or unnecessary lists — Reduces API surface area, prevents inconsistencies between duplicate fields, and simplifies consumption for both users and AI assistants
+<!-- rule:265 -->
+- Use `'provider:model'` format (e.g., `'openai:gpt-4'`, `'anthropic:claude-3'`) and `infer_model()` for instantiation — Ensures consistent model reference syntax across code, docs, and CLI; provides unified instantiation interface that prevents fragmentation

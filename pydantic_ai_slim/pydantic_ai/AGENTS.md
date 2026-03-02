@@ -4,37 +4,43 @@
 
 ## API Design
 
-<!-- rule:267 -->
-- Store provider-specific metadata in `provider_details` or `provider_metadata`, not in string IDs, URIs, or semantic fields like `id` — Keeps main content fields (`content`, `args`) normalized and consistent across providers, preventing semantic field overloading and brittle string-encoded metadata
+<!-- rule:587 -->
+- Add capability flags to model profile classes instead of inline `isinstance()` checks — prevents scattered feature detection logic — Centralizing feature support as boolean flags (e.g., `bedrock_supports_prompt_caching`) in profile classes makes capability detection maintainable and prevents duplicating provider/model type checks across usage sites.
 <!-- rule:716 -->
-- Configure provider-specific API features (like `thinking_field_name`) in `Provider.model_profile()`, not in model profile functions — model profiles should contain only model-intrinsic characteristics — Maintains separation of concerns between model characteristics (consistent across providers) and provider API implementation details (varies by provider), preventing profile pollution and enabling proper provider abstraction
+- Configure provider-specific API features in `Provider.model_profile()`, not in model profile functions — model profiles should contain only intrinsic model characteristics — Keeps provider-agnostic model traits separate from provider-specific API behaviors, enabling models to work consistently across different providers
+<!-- rule:264 -->
+- Store provider-specific metadata in structured `provider_details` or `provider_metadata` fields, not in `id`, `content`, or `args` — Prevents semantic field overloading and enables consistent provider behavior interpretation while keeping main fields normalized across providers
 <!-- rule:17 -->
-- In `_otel_*.py` modules, implement only what's in the spec — no custom extensions or mixing standards — Prevents divergence from external standards like OpenTelemetry, ensuring compatibility with spec-compliant tooling and avoiding confusion between official and custom conventions
-<!-- rule:811 -->
-- Always set `provider_name` when setting provider-specific fields (`id`, `signature`, `provider_details`, file IDs) on message parts (`ThinkingPart`, `ToolCallPart`, `TextPart`, etc.) — Maintains the architectural invariant that objects without `provider_name` are portable across providers, preventing accidental cross-provider incompatibilities in both streaming and non-streaming paths
+- In `_otel_*.py` modules, implement only spec-defined features — no custom additions from internal concepts or other standards — Prevents spec drift and ensures compatibility with external tooling that expects standard-compliant telemetry data
 <!-- rule:266 -->
-- In serialization methods (e.g., `dump_messages`/`load_messages`), preserve provider-specific fields (`provider_details`, `provider_name`, `id`, `signature`) in dedicated metadata structures — prevents data loss in round-trip conversions and maintains provider-specific behavior — Encoding provider data into existing string fields (like `id: 'openai:123:xyz'`) loses structure after JSON deserialization; dedicated metadata fields ensure full round-trip preservation and support conditional logic that depends on provider-specific information
-<!-- rule:415 -->
-- Follow `ModelSettings` architecture: common options in base class, provider-specific options in provider subclasses (e.g., `CohereEmbeddingSettings`) with provider prefix (e.g., `cohere_`). Support both generic params and prefixed overrides with documented precedence, map standard params to provider-specific ones automatically, keep prefixed versions for backward compatibility — Prevents base class pollution with provider-specific options, maintains consistent API across providers, ensures backward compatibility when migrating from prefixed to generic parameters
+- Store provider metadata (`provider_details`, `provider_name`, `id`, `signature`) in dedicated `provider_metadata` fields, not encoded in string fields — Prevents data loss during JSON serialization/deserialization cycles across storage, UI exchange, and provider round-trips — structured metadata survives where encoded strings lose type information
 <!-- rule:987 -->
-- Use `WrapperToolset` subclasses for cross-cutting toolset behavior — compose functionality instead of modifying base classes or individual toolsets — Prevents duplication and fragile inheritance; allows stacking behaviors like approval, deferred loading, or search without touching every toolset implementation
-<!-- rule:72 -->
-- Promote settings to base `ModelSettings` when 2-3+ providers support them — avoids duplicate provider-prefixed fields and maintains backward compatibility — Reduces API duplication, prevents fragmentation across provider SDKs, and creates a consistent interface while preserving existing provider-prefixed fields for backward compatibility
+- Extend `WrapperToolset` for cross-cutting toolset behavior — don't modify base classes or individual toolset implementations — Composable wrappers (like `ApprovalRequiredToolset`, `DeferredLoadingToolset`) apply features to any toolset without coupling or duplication
+
+## Type System
+
+<!-- rule:185 -->
+- End exhaustive `if`/`elif` chains with `else: assert_never(value)` for typed unions — Catches unhandled union variants at type-check time when unions are extended, preventing runtime errors from missing cases
+<!-- rule:60 -->
+- Avoid `Any` type annotations — use `Union`, `Protocol`, `TypeVar`, or schema-derived types for precision — Precise types catch bugs at type-check time and improve IDE autocomplete; when `Any` is unavoidable due to external constraints, document expected structure in docstrings
+<!-- rule:238 -->
+- Use `TypedDict` or dataclass instead of `dict[str, Any]` when structure is known — Enables static type checking, eliminates `cast()` calls, provides runtime validation, and self-documents expected structure
 
 ## Code Style
 
 <!-- rule:552 -->
-- Consolidate methods with duplicated logic using helpers, delegation, or type overloads — Reduces maintenance burden and prevents logic drift when the same control flow appears in multiple methods
-<!-- rule:14 -->
-- Inline single-use helper methods that only wrap property access or delegate calls — reduces indirection and improves readability — Unnecessary abstraction layers make code harder to trace and understand without providing reuse, clarity, or meaningful encapsulation benefits
-<!-- rule:345 -->
-- Extract shared activity logic, types, and patterns to parent classes or utilities in `pydantic_ai/durable_exec/temporal/` — Prevents duplication across wrapper classes like `TemporalFunctionToolset` and `TemporalMCPServer`, ensuring consistent validation and easier maintenance
-<!-- rule:21 -->
-- Extract model profile logic into dedicated `{provider}_model_profile()` functions in `profiles/{provider}.py` — keeps provider classes thin and profile logic testable/reusable — Separating profile logic from provider classes prevents bloat, makes profiles independently testable, and allows reuse across different provider implementations.
+- Consolidate methods with duplicated logic using helpers, delegation, or type overloads — Reduces maintenance burden and prevents bugs from divergent implementations of the same control flow
+<!-- rule:41 -->
+- Order required fields before optional fields in dataclasses — Python requires non-default args before defaults — This prevents syntax errors since Python's dataclass implementation enforces that fields without defaults must precede fields with defaults
 
 ## General
 
-<!-- rule:468 -->
-- Document provider-specific feature support in docstrings with `Supported by:` section — provider name and link on same line — Standardizes provider capability documentation so developers can quickly identify compatibility across Anthropic, OpenAI, etc.
+<!-- rule:40 -->
+- Use keyword-only params (place `*` after first 1-2 positional args) for optional/config parameters — Prevents breakage when adding parameters and eliminates positional argument confusion in functions with multiple optional parameters
+<!-- rule:71 -->
+- Prefix provider-specific fields with `{provider}_` in `ModelSettings` subclasses and profiles — prevents confusion about which provider supports which parameters — Clear provider namespacing prevents users from assuming a field works across providers when it's actually provider-specific, reducing API misuse
+<!-- rule:894 -->
+- Consolidate `try`/`except` blocks catching the same exception into one block — reduces duplication and simplifies control flow — When multiple operations throw the same exception type with similar handling logic, merging the try blocks prevents code duplication and makes error handling easier to maintain and update consistently.
+
 
 <!-- /braindump -->
