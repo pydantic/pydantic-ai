@@ -1269,7 +1269,7 @@ class OpenAIChatModel(Model):
                 type='file',
             )
 
-    async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:  # pragma: no cover
+    async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:
         """Map a VideoUrl to a chat completion content part."""
         raise NotImplementedError('VideoUrl is not supported in OpenAI Chat Completions user prompts')
 
