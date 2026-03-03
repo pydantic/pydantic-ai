@@ -165,10 +165,11 @@ class NativeOutput(Generic[OutputDataT]):
     """The description of the structured output that will be passed to the model. If not specified and only one output is provided, the docstring of the output type or function will be used."""
     strict: bool | None
     """Whether to use strict mode for the output, if the model supports it."""
-    template: str | None
+    template: str | Literal[False] | None
     """Template for the prompt passed to the model.
     The '{schema}' placeholder will be replaced with the output JSON schema.
     If no template is specified but the model's profile indicates that it requires the schema to be sent as a prompt, the default template specified on the profile will be used.
+    Set to `False` to disable the schema prompt entirely.
     """
 
     def __init__(
@@ -178,7 +179,7 @@ class NativeOutput(Generic[OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
-        template: str | None = None,
+        template: str | Literal[False] | None = None,
     ):
         self.outputs = outputs
         self.name = name
@@ -236,10 +237,11 @@ class PromptedOutput(Generic[OutputDataT]):
     """The name of the structured output that will be passed to the model. If not specified and only one output is provided, the name of the output type or function will be used."""
     description: str | None
     """The description that will be passed to the model. If not specified and only one output is provided, the docstring of the output type or function will be used."""
-    template: str | None
+    template: str | Literal[False] | None
     """Template for the prompt passed to the model.
     The '{schema}' placeholder will be replaced with the output JSON schema.
     If not specified, the default template specified on the model's profile will be used.
+    Set to `False` to disable the schema prompt entirely.
     """
 
     def __init__(
@@ -248,7 +250,7 @@ class PromptedOutput(Generic[OutputDataT]):
         *,
         name: str | None = None,
         description: str | None = None,
-        template: str | None = None,
+        template: str | Literal[False] | None = None,
     ):
         self.outputs = outputs
         self.name = name

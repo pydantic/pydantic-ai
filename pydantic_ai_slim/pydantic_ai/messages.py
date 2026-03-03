@@ -1298,13 +1298,8 @@ class BaseToolCallPart:
         return pydantic_core.to_json(self.args).decode()
 
     def has_content(self) -> bool:
-        """Return `True` if the arguments contain any data."""
-        if isinstance(self.args, dict):
-            # TODO: This should probably return True if you have the value False, or 0, etc.
-            #   It makes sense to me to ignore empty strings, but not sure about empty lists or dicts
-            return any(self.args.values())
-        else:
-            return bool(self.args)
+        """Return `True` if the tool call has content."""
+        return self.args not in ('', {}, None)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -2025,6 +2020,15 @@ class FunctionToolCallEvent:
     """The (function) tool call to make."""
 
     _: KW_ONLY
+
+    args_valid: bool | None = None
+    """Whether the tool arguments passed validation.
+    See the [custom validation docs](https://ai.pydantic.dev/tools-advanced/#args-validator) for more info.
+
+    - `True`: Schema validation and custom validation (if configured) both passed; args are guaranteed valid.
+    - `False`: Validation was performed and failed.
+    - `None`: Validation was not performed.
+    """
 
     event_kind: Literal['function_tool_call'] = 'function_tool_call'
     """Event type identifier, used as a discriminator."""

@@ -503,6 +503,62 @@ def test_file_part_has_content():
     assert filepart.has_content()
 
 
+@pytest.mark.parametrize(
+    'args',
+    [
+        {'key': 'value'},
+        {'key': 0},
+        {'key': False},
+        {'key': ''},
+        {'key': []},
+        {'key': {}},
+        '{"key": "value"}',
+        '0',
+    ],
+)
+def test_tool_call_part_has_content(args: dict[str, object] | str):
+    part = ToolCallPart(tool_name='test_tool', args=args)
+    assert part.has_content()
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        {},
+        '',
+        None,
+    ],
+)
+def test_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
+    part = ToolCallPart(tool_name='test_tool', args=args)
+    assert not part.has_content()
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        {'key': 'value'},
+        {'key': 0},
+        {'key': False},
+    ],
+)
+def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None):
+    part = BuiltinToolCallPart(tool_name='web_search', args=args)
+    assert part.has_content()
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        {},
+        None,
+    ],
+)
+def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
+    part = BuiltinToolCallPart(tool_name='web_search', args=args)
+    assert not part.has_content()
+
+
 def test_file_part_serialization_roundtrip():
     # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
     messages: list[ModelMessage] = [
