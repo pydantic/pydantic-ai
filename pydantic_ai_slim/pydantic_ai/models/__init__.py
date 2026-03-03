@@ -617,7 +617,7 @@ class ModelRequestParameters:
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
-    prompted_output_template: str | None = None
+    prompted_output_template: str | Literal[False] | None = None
     allow_text_output: bool = True
     allow_image_output: bool = False
 
@@ -763,7 +763,7 @@ class Model(ABC):
         if (
             params.output_mode == 'prompted'
             or (params.output_mode == 'native' and self.profile.native_output_requires_schema_in_instructions)
-        ) and not params.prompted_output_template:
+        ) and params.prompted_output_template is None:
             params = replace(params, prompted_output_template=self.profile.prompted_output_template)
 
         # Check if output mode is supported
