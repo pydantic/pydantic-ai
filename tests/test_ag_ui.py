@@ -98,6 +98,10 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.ui.ag_ui import AGUIEventStream
 
+with try_import() as anthropic_imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1063,8 +1067,7 @@ async def test_thinking() -> None:
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
-            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': IsStr()},
-            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': IsStr()},
+            # Part 0: empty thinking — skipped (no content, no metadata)
             {
                 'type': 'TEXT_MESSAGE_START',
                 'timestamp': IsInt(),
@@ -1084,53 +1087,56 @@ async def test_thinking() -> None:
                 'delta': ' and some more',
             },
             {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
-            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (reasoning_id := IsSameStr())},
+            # Part 1: "Thinking about the weather"
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r1 := IsSameStr())},
             {
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
-                'messageId': reasoning_id,
+                'messageId': r1,
                 'role': 'assistant',
             },
+            {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r1, 'delta': 'Thinking '},
             {
                 'type': 'REASONING_MESSAGE_CONTENT',
                 'timestamp': IsInt(),
-                'messageId': reasoning_id,
-                'delta': 'Thinking ',
-            },
-            {
-                'type': 'REASONING_MESSAGE_CONTENT',
-                'timestamp': IsInt(),
-                'messageId': reasoning_id,
+                'messageId': r1,
                 'delta': 'about the weather',
             },
-            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': reasoning_id},
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r1},
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r1},
+            # Part 2: empty thinking — skipped (no content, no metadata)
+            # Part 3: "Thinking about the meaning of life"
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r3 := IsSameStr())},
             {
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
-                'messageId': reasoning_id,
+                'messageId': r3,
                 'role': 'assistant',
             },
             {
                 'type': 'REASONING_MESSAGE_CONTENT',
                 'timestamp': IsInt(),
-                'messageId': reasoning_id,
+                'messageId': r3,
                 'delta': 'Thinking about the meaning of life',
             },
-            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': reasoning_id},
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r3},
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r3},
+            # Part 4: "Thinking about the universe"
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r4 := IsSameStr())},
             {
                 'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
-                'messageId': reasoning_id,
+                'messageId': r4,
                 'role': 'assistant',
             },
             {
                 'type': 'REASONING_MESSAGE_CONTENT',
                 'timestamp': IsInt(),
-                'messageId': reasoning_id,
+                'messageId': r4,
                 'delta': 'Thinking about the universe',
             },
-            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': reasoning_id},
-            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': reasoning_id},
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r4},
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r4},
             {
                 'type': 'RUN_FINISHED',
                 'timestamp': IsInt(),
@@ -1206,6 +1212,106 @@ async def test_thinking_with_signature() -> None:
     )
 
 
+async def test_thinking_consecutive_signatures() -> None:
+    """Test that consecutive ThinkingParts each preserve their own metadata via separate REASONING blocks."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        yield {0: DeltaThinkingPart(content='First thought', signature='sig_aaa')}
+        yield {1: DeltaThinkingPart(content='Second thought', signature='sig_bbb')}
+        yield {2: DeltaThinkingPart(content='Third thought', signature='sig_ccc')}
+        yield 'Final answer'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    run_input = create_input(
+        UserMessage(id='msg_1', content='Think deeply'),
+    )
+
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            # Part 0: signature=sig_aaa
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r0 := IsSameStr())},
+            {
+                'type': 'REASONING_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': r0,
+                'role': 'assistant',
+            },
+            {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r0, 'delta': 'First thought'},
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r0},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'timestamp': IsInt(),
+                'subtype': 'message',
+                'entityId': r0,
+                'encryptedValue': IsStr(),
+            },
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r0},
+            # Part 1: signature=sig_bbb
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r1 := IsSameStr())},
+            {
+                'type': 'REASONING_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': r1,
+                'role': 'assistant',
+            },
+            {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r1, 'delta': 'Second thought'},
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r1},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'timestamp': IsInt(),
+                'subtype': 'message',
+                'entityId': r1,
+                'encryptedValue': IsStr(),
+            },
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r1},
+            # Part 2: signature=sig_ccc
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r2 := IsSameStr())},
+            {
+                'type': 'REASONING_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': r2,
+                'role': 'assistant',
+            },
+            {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r2, 'delta': 'Third thought'},
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r2},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'timestamp': IsInt(),
+                'subtype': 'message',
+                'entityId': r2,
+                'encryptedValue': IsStr(),
+            },
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r2},
+            # Text response
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': message_id,
+                'delta': 'Final answer',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {'type': 'RUN_FINISHED', 'timestamp': IsInt(), 'threadId': thread_id, 'runId': run_id},
+        ]
+    )
+
+
 def test_reasoning_message_thinking_roundtrip() -> None:
     """Test that ReasoningMessage converts to ThinkingPart with metadata from encrypted_value."""
     messages = AGUIAdapter.load_messages(
@@ -1259,9 +1365,9 @@ async def test_reasoning_events_with_all_metadata() -> None:
     )
 
     events: list[BaseEvent] = []
-    async for e in event_stream.handle_thinking_start(part, follows_thinking=False):
+    async for e in event_stream.handle_thinking_start(part):
         events.append(e)
-    async for e in event_stream.handle_thinking_end(part, followed_by_thinking=False):
+    async for e in event_stream.handle_thinking_end(part):
         events.append(e)
 
     assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
@@ -1584,6 +1690,39 @@ def test_dump_load_roundtrip_file_part_only() -> None:
     _sync_timestamps(original, reloaded)
 
     assert reloaded == original
+
+
+@pytest.mark.vcr()
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropic_api_key: str) -> None:
+    """Test that pydantic -> AG-UI -> pydantic round-trip preserves thinking metadata with real Anthropic responses."""
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+    agent: Agent[None, str] = Agent(m, model_settings=settings)
+
+    result = await agent.run('What is 1+1? Reply in one word.')
+    original = result.all_messages()
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='What is 1+1? Reply in one word.', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is asking what 1+1 equals and wants a one-word reply. The answer is 2, which is one word.',
+                        signature='EooCCkYICxgCKkDYW6Ka+Mo73ZE34HVijmFbdV6QH/iRdv+3WuisH3pR8D5aSFASMBsF1F1bZRQFQXuM0+G4H83czthKvHqdqWriEgwB0eJaWoXZWU18NKoaDMH4nN8ZwJ6W9DnYLyIwrdTWmfc5QTqDr8gye3/yrPpV2YPeZnUBoHBLOGl8MUaC6SuGmxcm8rGqf2s+P+ZtKnJPJJzQiTrvPcEkF3ij22w3bXC9yoyZCyJVPcibR2ZZpLYF/UOoZ+BRBs0FCdm/QFXUUe8W1tcQ/ZQgBaW44LTcdzwOSP5hJb25UrPiGWuTytGMxIr7QyG7INpVbmm8JRBIIEzj3gs2zlxdbl17yZ/yZXcYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content='Two'),
+                ],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
 
 
 async def test_tool_local_then_ag_ui() -> None:

@@ -75,6 +75,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     """UI event stream transformer for the Agent-User Interaction (AG-UI) protocol."""
 
     _reasoning_message_id: str | None = None
+    _reasoning_started: bool = False
     _reasoning_text: bool = False
     _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
     _error: bool = False
@@ -145,52 +146,61 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if not followed_by_text:
             yield TextMessageEndEvent(message_id=self.message_id)
 
-    async def handle_thinking_start(
-        self, part: ThinkingPart, follows_thinking: bool = False
-    ) -> AsyncIterator[BaseEvent]:
-        if not follows_thinking:
-            self._reasoning_message_id = str(uuid4())
-            yield ReasoningStartEvent(message_id=self._reasoning_message_id)
+    async def handle_thinking_start(self, part: ThinkingPart) -> AsyncIterator[BaseEvent]:
+        self._reasoning_message_id = str(uuid4())
+        self._reasoning_started = False
 
         if part.content:
-            yield ReasoningMessageStartEvent(message_id=self._reasoning_message_id or '', role='assistant')
-            yield ReasoningMessageContentEvent(message_id=self._reasoning_message_id or '', delta=part.content)
+            yield ReasoningStartEvent(message_id=self._reasoning_message_id)
+            self._reasoning_started = True
+            yield ReasoningMessageStartEvent(message_id=self._reasoning_message_id, role='assistant')
+            yield ReasoningMessageContentEvent(message_id=self._reasoning_message_id, delta=part.content)
             self._reasoning_text = True
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseEvent]:
         if not delta.content_delta:
             return  # pragma: no cover
 
+        message_id = self._reasoning_message_id or ''
+
+        if not self._reasoning_started:
+            yield ReasoningStartEvent(message_id=message_id)
+            self._reasoning_started = True
+
         if not self._reasoning_text:
-            yield ReasoningMessageStartEvent(message_id=self._reasoning_message_id or '', role='assistant')
+            yield ReasoningMessageStartEvent(message_id=message_id, role='assistant')
             self._reasoning_text = True
 
-        yield ReasoningMessageContentEvent(message_id=self._reasoning_message_id or '', delta=delta.content_delta)
+        yield ReasoningMessageContentEvent(message_id=message_id, delta=delta.content_delta)
 
-    async def handle_thinking_end(
-        self, part: ThinkingPart, followed_by_thinking: bool = False
-    ) -> AsyncIterator[BaseEvent]:
+    async def handle_thinking_end(self, part: ThinkingPart) -> AsyncIterator[BaseEvent]:
         message_id = self._reasoning_message_id or ''
+
+        encrypted: dict[str, Any] = {}
+        for attr in ('id', 'signature', 'provider_name', 'provider_details'):
+            if (value := getattr(part, attr)) is not None:
+                encrypted[attr] = value
+
+        if not self._reasoning_started and not encrypted:
+            self._reasoning_message_id = None
+            return
+
+        if not self._reasoning_started:
+            yield ReasoningStartEvent(message_id=message_id)
 
         if self._reasoning_text:
             yield ReasoningMessageEndEvent(message_id=message_id)
             self._reasoning_text = False
 
-        if not followed_by_thinking:
-            encrypted: dict[str, Any] = {}
-            for attr in ('id', 'signature', 'provider_name', 'provider_details'):
-                if (value := getattr(part, attr)) is not None:
-                    encrypted[attr] = value
+        if encrypted:
+            yield ReasoningEncryptedValueEvent(
+                subtype='message',
+                entity_id=message_id,
+                encrypted_value=json.dumps(encrypted),
+            )
 
-            if encrypted:
-                yield ReasoningEncryptedValueEvent(
-                    subtype='message',
-                    entity_id=message_id,
-                    encrypted_value=json.dumps(encrypted),
-                )
-
-            yield ReasoningEndEvent(message_id=message_id)
-            self._reasoning_message_id = None
+        yield ReasoningEndEvent(message_id=message_id)
+        self._reasoning_message_id = None
 
     def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
         return self._handle_tool_call_start(part)

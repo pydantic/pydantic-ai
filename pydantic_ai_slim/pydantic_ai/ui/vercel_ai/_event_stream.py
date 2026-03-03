@@ -168,9 +168,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             )
             yield TextEndChunk(id=self.message_id, provider_metadata=provider_metadata)
 
-    async def handle_thinking_start(
-        self, part: ThinkingPart, follows_thinking: bool = False
-    ) -> AsyncIterator[BaseChunk]:
+    async def handle_thinking_start(self, part: ThinkingPart) -> AsyncIterator[BaseChunk]:
         message_id = self.new_message_id()
         provider_metadata = dump_provider_metadata(
             id=part.id,
@@ -193,9 +191,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                 id=self.message_id, delta=delta.content_delta, provider_metadata=provider_metadata
             )
 
-    async def handle_thinking_end(
-        self, part: ThinkingPart, followed_by_thinking: bool = False
-    ) -> AsyncIterator[BaseChunk]:
+    async def handle_thinking_end(self, part: ThinkingPart) -> AsyncIterator[BaseChunk]:
         provider_metadata = dump_provider_metadata(
             id=part.id,
             signature=part.signature,
