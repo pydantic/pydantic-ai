@@ -180,6 +180,34 @@ toolset = ExecutionEnvironmentToolset(
 )
 ```
 
+### Approval and Safety
+
+When using `LocalEnvironment`, shell commands and file writes run directly on the host with no isolation. You can require human-in-the-loop approval for these operations:
+
+```python {title="environments_approval.py"}
+from pydantic_ai.environments import ExecutionEnvironmentToolset
+from pydantic_ai.environments.local import LocalEnvironment
+
+toolset = ExecutionEnvironmentToolset(
+    LocalEnvironment('/tmp/workspace'),
+    require_shell_approval=True,   # shell commands require approval
+    require_write_approval=True,   # write_file and edit_file require approval
+)
+```
+
+With `DockerEnvironment`, commands are already isolated inside a container, so approval is typically unnecessary.
+
+### Output Limits
+
+Tool output is truncated to prevent overwhelming the model's context window. You can configure the limits:
+
+- `max_output_chars` (default: 200,000) — Maximum characters of text output from `shell` and `read_file`. Output beyond this limit is truncated with a `... (truncated)` indicator. For `shell`, the exit code is always preserved regardless of truncation.
+- `max_image_bytes` (default: 50 MB) — Maximum image file size that `read_file` will return as binary content for multimodal models. Larger images return an error message instead.
+
+### Error Handling
+
+The `edit_file` tool raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on errors (e.g., the old string wasn't found, or matched multiple times without `replace_all`). This lets the model automatically retry with corrected arguments — for example, re-reading the file to get the exact text. The `read_file` and `write_file` tools return error messages as strings instead, since retrying with different arguments is less likely to help.
+
 ### Using with an Agent
 
 The toolset manages the environment lifecycle when used as a context manager:

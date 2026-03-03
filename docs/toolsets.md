@@ -652,6 +652,12 @@ print([t.name for t in test_model.last_model_request_parameters.function_tools])
 
 _(This example is complete, it can be run "as is")_
 
+## Execution Environment Toolset
+
+[`ExecutionEnvironmentToolset`][pydantic_ai.environments.ExecutionEnvironmentToolset] provides shell, file read/write, and edit tools backed by an [`ExecutionEnvironment`][pydantic_ai.environments.ExecutionEnvironment] — either a [`LocalEnvironment`][pydantic_ai.environments.local.LocalEnvironment] for development or a [`DockerEnvironment`][pydantic_ai.environments.docker.DockerEnvironment] for isolated execution. This is the foundation for building coding agents and other agents that need shell and filesystem access.
+
+See [Execution Environments](environments.md) for full documentation.
+
 ## Building a Custom Toolset
 
 To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] and implement the [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] and [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] methods.
