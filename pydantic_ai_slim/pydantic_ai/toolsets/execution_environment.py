@@ -174,11 +174,13 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                 timeout: Maximum seconds to wait for the command to complete.
             """
             result = await self.required_environment.shell(command, timeout=timeout)
-            parts: list[str] = []
-            if result.output:
-                parts.append(result.output)
-            parts.append(f'Exit code: {result.exit_code}')
-            return '\n'.join(parts)[: self._max_output_chars]
+            exit_line = f'\nExit code: {result.exit_code}'
+            output = result.output or ''
+            # Truncate command output first, reserving space for the exit code line
+            max_output = self._max_output_chars - len(exit_line)
+            if len(output) > max_output:
+                output = output[:max_output] + '\n... (truncated)'
+            return (output + exit_line).strip()
 
         self.tool(requires_approval=self._require_shell_approval)(shell)
 
@@ -211,6 +213,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                             return f'[Image file: {path} — image_support is disabled on this toolset]'
                     else:
                         return f'[Binary file: {path} — cannot display as text]'
+                if len(content) > self._max_output_chars:
+                    content = content[: self._max_output_chars] + '\n... (truncated)'
                 return content
             except (FileNotFoundError, PermissionError, ValueError, OSError) as e:
                 return f'Error: {e}'
