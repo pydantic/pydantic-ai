@@ -16,13 +16,10 @@ import anyio.to_thread
 from typing_extensions import Self
 
 from ._base import (
-    IMAGE_EXTENSIONS,
     EnvToolName,
     ExecutionEnvironment,
     ExecutionProcess,
     ExecutionResult,
-    apply_edit,
-    format_lines,
 )
 
 
@@ -221,25 +218,15 @@ class LocalEnvironment(ExecutionEnvironment):
             exit_code=proc.returncode if proc.returncode is not None else 0,
         )
 
-    async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str | bytes:
+    async def _read_file_content(self, path: str) -> bytes:
         resolved = self._resolve_path(path)
 
-        def _read() -> str | bytes:
+        def _read() -> bytes:
             if not resolved.is_file():
                 if resolved.is_dir():
                     raise FileNotFoundError(f"'{path}' is a directory, not a file.")
                 raise FileNotFoundError(f'File not found: {path}')
-
-            if resolved.suffix.lower() in IMAGE_EXTENSIONS:
-                # (TODO: Aditya) Only images? Does it matter which type of binary content is being read?
-                return resolved.read_bytes()
-
-            raw = resolved.read_bytes()
-            try:
-                text = raw.decode('utf-8')
-            except UnicodeDecodeError:
-                return raw
-            return format_lines(text, offset, limit)
+            return resolved.read_bytes()
 
         return await anyio.to_thread.run_sync(_read)
 
@@ -254,24 +241,3 @@ class LocalEnvironment(ExecutionEnvironment):
                 resolved.write_text(content, encoding='utf-8')
 
         await anyio.to_thread.run_sync(_write)
-
-    async def replace_str(
-        self,
-        path: str,
-        old: str,
-        new: str,
-        *,
-        replace_all: bool = False,
-    ) -> int:
-        resolved = self._resolve_path(path)
-
-        def _edit() -> int:
-            if not resolved.is_file():
-                raise FileNotFoundError(f'File not found: {path}')
-
-            text = resolved.read_text(encoding='utf-8')
-            new_text, count = apply_edit(text, old, new, path, replace_all=replace_all)
-            resolved.write_text(new_text, encoding='utf-8')
-            return count
-
-        return await anyio.to_thread.run_sync(_edit)

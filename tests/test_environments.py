@@ -27,10 +27,10 @@ from pydantic_ai.environments._base import (
     format_lines,
 )
 from pydantic_ai.environments.local import LocalEnvironment, _LocalEnvironmentProcess
-from pydantic_ai.environments.memory import MemoryEnvironment
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
+from tests.environment_helpers import MemoryEnvironment
 
 try:
     from docker.errors import DockerException, NotFound as DockerNotFound

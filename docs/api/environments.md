@@ -22,10 +22,3 @@
     options:
         members:
         - DockerEnvironment
-
-## `pydantic_ai.environments.memory`
-
-::: pydantic_ai.environments.memory
-    options:
-        members:
-        - MemoryEnvironment

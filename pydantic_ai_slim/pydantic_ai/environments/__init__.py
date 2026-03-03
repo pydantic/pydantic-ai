@@ -11,7 +11,6 @@ Implementations:
 
 - `environments.docker.DockerEnvironment` — Docker container-based sandbox (isolated)
 - `environments.local.LocalEnvironment` — local subprocess environment (no isolation, for dev/testing)
-- `environments.memory.MemoryEnvironment` — in-memory environment for testing
 """
 
 from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset

@@ -25,13 +25,12 @@ async def main():
 
 ## Environments
 
-An [`ExecutionEnvironment`][pydantic_ai.environments.ExecutionEnvironment] defines where and how commands run. Three implementations are included:
+An [`ExecutionEnvironment`][pydantic_ai.environments.ExecutionEnvironment] defines where and how commands run. Two implementations are included:
 
 | Environment | Isolation | Use case |
 |---|---|---|
 | [`LocalEnvironment`][pydantic_ai.environments.local.LocalEnvironment] | None — runs on host | Development, testing, trusted agents |
 | [`DockerEnvironment`][pydantic_ai.environments.docker.DockerEnvironment] | Container-level | Production, untrusted code |
-| [`MemoryEnvironment`][pydantic_ai.environments.memory.MemoryEnvironment] | In-memory (no filesystem) | Unit testing |
 
 All environments are async context managers. Enter the environment before running the agent, and exit it to clean up:
 
@@ -172,11 +171,11 @@ Tools are dynamically registered based on the environment's capabilities. You ca
 
 ```python {title="environments_selective_tools.py"}
 from pydantic_ai.environments import ExecutionEnvironmentToolset
-from pydantic_ai.environments.memory import MemoryEnvironment
+from pydantic_ai.environments.local import LocalEnvironment
 
-# Only file tools — no shell or search
+# Only file tools — no shell
 toolset = ExecutionEnvironmentToolset(
-    MemoryEnvironment(),
+    LocalEnvironment(),
     include=['read_file', 'write_file', 'edit_file'],
 )
 ```

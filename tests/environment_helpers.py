@@ -10,16 +10,13 @@ import posixpath
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING
 
-from ._base import (
-    IMAGE_EXTENSIONS,
+from pydantic_ai.environments._base import (
     ExecutionEnvironment,
     ExecutionResult,
-    apply_edit,
-    format_lines,
 )
 
 if TYPE_CHECKING:
-    from ._base import EnvToolName
+    from pydantic_ai.environments._base import EnvToolName
 
 
 class MemoryEnvironment(ExecutionEnvironment):
@@ -31,16 +28,6 @@ class MemoryEnvironment(ExecutionEnvironment):
 
     This is the testing counterpart to `LocalEnvironment`, analogous to
     how `TestModel` and `FunctionModel` relate to real model classes.
-
-    Usage:
-        ```python {test="skip" lint="skip"}
-        from pydantic_ai.environments.memory import MemoryEnvironment
-
-        env = MemoryEnvironment(files={'main.py': 'print("hello")'})
-        async with env:
-            content = await env.read_file('main.py')
-            assert 'hello' in content
-        ```
     """
 
     def __init__(
@@ -77,7 +64,7 @@ class MemoryEnvironment(ExecutionEnvironment):
 
         Keys are normalized file paths, values are file contents.
         Useful for test assertions against raw file content without the
-        line-number formatting that [`read_file()`][pydantic_ai.environments.memory.MemoryEnvironment.read_file] adds.
+        line-number formatting that `read_file()` adds.
         """
         return self._files
 
@@ -99,19 +86,7 @@ class MemoryEnvironment(ExecutionEnvironment):
         timeout: float | None = 120,
         env: dict[str, str] | None = None,
     ) -> ExecutionResult:
-        """Execute a command using the configured handler.
-
-        Args:
-            command: The shell command to execute.
-            timeout: Ignored for MemoryEnvironment.
-            env: Ignored for MemoryEnvironment.
-
-        Returns:
-            The result from the command handler.
-
-        Raises:
-            RuntimeError: If no command_handler was provided.
-        """
+        """Execute a command using the configured `command_handler`."""
         if self._command_handler is None:
             raise RuntimeError(
                 'MemoryEnvironment has no command_handler configured. '
@@ -119,7 +94,7 @@ class MemoryEnvironment(ExecutionEnvironment):
             )
         return self._command_handler(command)
 
-    async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str | bytes:
+    async def _read_file_content(self, path: str) -> bytes:
         normalized = self._normalize(path)
 
         # Check if path is a "directory" (any file starts with path/)
@@ -131,42 +106,9 @@ class MemoryEnvironment(ExecutionEnvironment):
             raise FileNotFoundError(f'File not found: {path}')
 
         content = self._files[normalized]
-
-        # Return raw bytes for image files
-        ext = posixpath.splitext(normalized)[1].lower()
-        if ext in IMAGE_EXTENSIONS:
-            if isinstance(content, bytes):
-                return content
+        if isinstance(content, str):
             return content.encode('utf-8')
-
-        # Text mode
-        if isinstance(content, bytes):
-            try:
-                text = content.decode('utf-8')
-            except UnicodeDecodeError:
-                return content
-        else:
-            text = content
-
-        return format_lines(text, offset, limit)
+        return content
 
     async def write_file(self, path: str, content: str | bytes) -> None:
         self._files[self._normalize(path)] = content
-
-    async def replace_str(
-        self,
-        path: str,
-        old: str,
-        new: str,
-        *,
-        replace_all: bool = False,
-    ) -> int:
-        normalized = self._normalize(path)
-        if normalized not in self._files:
-            raise FileNotFoundError(f'File not found: {path}')
-
-        content = self._files[normalized]
-        text = content.decode('utf-8') if isinstance(content, bytes) else content
-        new_text, count = apply_edit(text, old, new, path, replace_all=replace_all)
-        self._files[normalized] = new_text
-        return count

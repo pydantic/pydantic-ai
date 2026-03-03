@@ -23,7 +23,6 @@ from ._base import (
     ExecutionEnvironment,
     ExecutionProcess,
     ExecutionResult,
-    apply_edit,
 )
 
 try:
@@ -508,10 +507,14 @@ class DockerEnvironment(ExecutionEnvironment):
             output += '\n[Command timed out]'
         return ExecutionResult(output=output, exit_code=exit_code)
 
+    async def _read_file_content(self, path: str) -> bytes:
+        return await anyio.to_thread.run_sync(self._read_file_bytes_sync, path)
+
     async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str | bytes:
+        # Server-side pagination via awk to avoid full file transfer.
         ext = posixpath.splitext(path)[1].lower()
         if ext in IMAGE_EXTENSIONS:
-            return await anyio.to_thread.run_sync(self._read_file_bytes_sync, path)
+            return await super().read_file(path, offset=offset, limit=limit)
 
         def _read() -> str | bytes:
             cmd = _build_read_file_cmd(path, offset=offset, limit=limit)
@@ -557,23 +560,6 @@ class DockerEnvironment(ExecutionEnvironment):
             _put_file(self._required_container, full_path, data)
 
         await anyio.to_thread.run_sync(_write)
-
-    async def replace_str(
-        self,
-        path: str,
-        old: str,
-        new: str,
-        *,
-        replace_all: bool = False,
-    ) -> int:
-        def _edit() -> int:
-            raw = self._read_file_bytes_sync(path)
-            text = raw.decode('utf-8')
-            new_text, count = apply_edit(text, old, new, path, replace_all=replace_all)
-            _put_file(self._required_container, self._resolve_path(path), new_text.encode('utf-8'))
-            return count
-
-        return await anyio.to_thread.run_sync(_edit)
 
     async def is_alive(self) -> bool:
         """Check if the container is running.

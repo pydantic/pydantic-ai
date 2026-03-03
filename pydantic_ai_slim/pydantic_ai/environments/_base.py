@@ -6,6 +6,7 @@ This module defines the core types, the `ExecutionEnvironment` ABC, and the
 
 from __future__ import annotations
 
+import posixpath
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -42,31 +43,18 @@ class ExecutionResult:
 
 
 class ExecutionProcess(ABC):
-    """Handle to a running process with bidirectional streaming I/O.
-
-    Used for interactive execution where a script outputs data,
-    waits for input, processes it, and outputs more data.
-    """
+    """Handle to a running process with bidirectional streaming I/O."""
 
     @abstractmethod
     async def send(self, data: bytes) -> None:
-        """Write data to the process's stdin.
-
-        Args:
-            data: The bytes to write to stdin.
-        """
+        """Write data to the process's stdin."""
 
     @abstractmethod
     async def recv(self, timeout: float | None = None) -> bytes:
         """Read available output from stdout.
 
-        Blocks until data is available, the process exits, or the timeout expires.
-
         Args:
-            timeout: Maximum seconds to wait for data. None means wait indefinitely.
-
-        Raises:
-            TimeoutError: If the timeout expires with no data available.
+            timeout: Maximum seconds to wait. `None` waits indefinitely.
         """
 
     @abstractmethod
@@ -74,29 +62,23 @@ class ExecutionProcess(ABC):
         """Read available output from stderr.
 
         Args:
-            timeout: Maximum seconds to wait for data. None means wait indefinitely.
-
-        Raises:
-            TimeoutError: If the timeout expires with no data available.
+            timeout: Maximum seconds to wait. `None` waits indefinitely.
         """
 
     @property
     @abstractmethod
     def returncode(self) -> int | None:
-        """Return code if the process has exited, None if still running."""
+        """Return code if the process has exited, `None` if still running."""
 
     @abstractmethod
     async def wait(self, timeout: float | None = None) -> int:
         """Wait for the process to exit.
 
         Args:
-            timeout: Maximum seconds to wait. None means wait indefinitely.
+            timeout: Maximum seconds to wait. `None` waits indefinitely.
 
         Returns:
             The process exit code.
-
-        Raises:
-            TimeoutError: If the timeout expires before the process exits.
         """
 
     @abstractmethod
@@ -125,16 +107,6 @@ IMAGE_EXTENSIONS = frozenset(
     }
 )
 
-IMAGE_MEDIA_TYPES: dict[str, str] = {
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.bmp': 'image/bmp',
-    '.svg': 'image/svg+xml',
-}
-
 
 # --- ExecutionEnvironment ---
 
@@ -143,14 +115,12 @@ class ExecutionEnvironment(ABC):
     """Abstract base class for execution environments.
 
     An execution environment provides a place where agents can execute
-    commands, read/write files, and search the filesystem.
-
-    Implementations range from in-memory (for testing) to local subprocess,
+    commands and read/write files. Implementations include local subprocess,
     Docker containers, and cloud-hosted VMs.
 
-    The only abstract member is `capabilities`; all tool methods raise
-    `NotImplementedError` by default. Concrete subclasses override the
-    methods that match their declared capabilities.
+    Subclasses implement `capabilities`, `_read_file_content`, `write_file`,
+    and `shell` as needed. `read_file` and `replace_str` have defaults
+    built on `_read_file_content` and can be overridden for performance.
     """
 
     # --- Capability introspection ---
@@ -158,16 +128,10 @@ class ExecutionEnvironment(ABC):
     @property
     @abstractmethod
     def capabilities(self) -> frozenset[EnvToolName]:
-        """Capabilities this environment supports (high-level).
-
-        Used by toolsets to decide which tools to register. Only methods
-        corresponding to declared capabilities need to be implemented.
-        """
+        """Tool capabilities this environment supports."""
         ...
 
     # --- Tool methods ---
-    # All raise NotImplementedError by default. Concrete subclasses override
-    # the methods that match their declared capabilities.
 
     async def shell(
         self,
@@ -180,15 +144,18 @@ class ExecutionEnvironment(ABC):
 
         Args:
             command: The shell command to execute.
-            timeout: Maximum seconds to wait for completion.
-                Pass `None` to disable the timeout.
-            env: Additional environment variables for this command.
-                Merged with (and overrides) any baseline environment variables.
-
-        Returns:
-            An `ExecutionResult` with the command output and exit code.
+            timeout: Maximum seconds to wait. `None` disables the timeout.
+            env: Additional environment variables, merged with any baseline vars.
         """
         raise NotImplementedError(f'{type(self).__name__} does not support shell.')
+
+    async def _read_file_content(self, path: str) -> bytes:
+        """Read the full raw content of a file, without formatting or pagination.
+
+        Subclasses implement this as the raw I/O primitive. The default
+        `read_file` and `replace_str` are built on top of it.
+        """
+        raise NotImplementedError(f'{type(self).__name__} does not implement _read_file_content.')
 
     async def read_file(
         self,
@@ -199,28 +166,30 @@ class ExecutionEnvironment(ABC):
     ) -> str | bytes:
         """Read a file from the environment.
 
-        For text files, returns a string with `cat -n` style line numbers.
-        For binary files (images), returns raw bytes.
+        Returns text with `cat -n` style line numbers, or raw bytes for binary files.
+        Subclasses may override for optimized pagination (e.g. Docker server-side slicing).
 
         Args:
             path: The file path within the environment.
             offset: The line number to start reading from (0-indexed).
-                Ignored for binary files.
             limit: Maximum number of lines to read.
-                Ignored for binary files.
-
-        Returns:
-            Text content with line numbers (`str`), or raw bytes for binary files.
         """
-        raise NotImplementedError(f'{type(self).__name__} does not support read_file.')
+        content = await self._read_file_content(path)
+
+        # Return raw bytes for image files
+        ext = posixpath.splitext(path)[1].lower()
+        if ext in IMAGE_EXTENSIONS:
+            return content
+
+        try:
+            text = content.decode('utf-8')
+        except UnicodeDecodeError:
+            return content
+
+        return format_lines(text, offset, limit)
 
     async def write_file(self, path: str, content: str | bytes) -> None:
-        """Create or overwrite a file in the environment.
-
-        Args:
-            path: The file path within the environment.
-            content: The file content (text or binary).
-        """
+        """Create or overwrite a file in the environment."""
         raise NotImplementedError(f'{type(self).__name__} does not support write_file.')
 
     async def replace_str(
@@ -237,18 +206,17 @@ class ExecutionEnvironment(ABC):
             path: The file path within the environment.
             old: The exact text to find.
             new: The replacement text.
-            replace_all: If True, replace all occurrences. If False, the
-                old string must appear exactly once or an error is raised.
+            replace_all: If `True`, replace all occurrences. If `False`,
+                `old` must appear exactly once or a `ValueError` is raised.
 
         Returns:
             The number of replacements made.
-
-        Raises:
-            FileNotFoundError: If the file does not exist.
-            ValueError: If `old` is not found, or appears multiple times
-                when `replace_all` is False.
         """
-        raise NotImplementedError(f'{type(self).__name__} does not support replace_str.')
+        content = await self._read_file_content(path)
+        text = content.decode('utf-8')
+        new_text, count = apply_edit(text, old, new, path, replace_all=replace_all)
+        await self.write_file(path, new_text)
+        return count
 
     # --- Internal helpers (not tools) ---
 
@@ -258,7 +226,7 @@ class ExecutionEnvironment(ABC):
         *,
         env: dict[str, str] | None = None,
     ) -> ExecutionProcess:
-        r"""Create an interactive process with streaming stdin/stdout.
+        """Create an interactive process with streaming stdin/stdout.
 
         Args:
             command: The shell command to run.
@@ -283,11 +251,7 @@ class ExecutionEnvironment(ABC):
 
 
 def format_lines(text: str, offset: int, limit: int) -> str:
-    """Format text with line numbers and continuation hints.
-
-    Shared helper used by `LocalEnvironment` and `MemoryEnvironment`
-    to produce consistent `cat -n` style output.
-    """
+    """Format text with `cat -n` style line numbers and pagination hints."""
     lines = text.splitlines(keepends=True)
     total_lines = len(lines)
 

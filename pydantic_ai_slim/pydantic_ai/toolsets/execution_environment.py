@@ -15,13 +15,22 @@ from typing_extensions import Self
 
 from ..environments._base import (
     IMAGE_EXTENSIONS,
-    IMAGE_MEDIA_TYPES,
     EnvToolName,
     ExecutionEnvironment,
 )
 from ..exceptions import ModelRetry
 from ..messages import BinaryContent
 from ..toolsets.function import FunctionToolset
+
+IMAGE_MEDIA_TYPES: dict[str, str] = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.bmp': 'image/bmp',
+    '.svg': 'image/svg+xml',
+}
 
 if TYPE_CHECKING:
     from .._run_context import AgentDepsT, RunContext
@@ -104,7 +113,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             max_image_bytes: Maximum image file size to return as BinaryContent.
             max_retries: Maximum retries per tool call.
             id: Optional unique ID for the toolset (required for durable execution).
-            max_output_chars: Maxium output of tools inside the toolset. All tools(shell included) should adhere to this
+            max_output_chars: Maximum characters of tool output before truncation.
         """
         if shared_environment is not None and environment_factory is not None:
             raise ValueError('Cannot provide both shared_environment and environment_factory.')
@@ -164,14 +173,13 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             Args:
                 command: The shell command to execute.
                 timeout: Maximum seconds to wait for the command to complete.
-                max_chars: Maximum characters which will not be truncated.
             """
             result = await self.required_environment.shell(command, timeout=timeout)
             parts: list[str] = []
             if result.output:
                 parts.append(result.output)
             parts.append(f'Exit code: {result.exit_code}')
-            return '\n'.join(parts)[self._max_output_chars :]
+            return '\n'.join(parts)[: self._max_output_chars]
 
         self.tool(requires_approval=self._require_shell_approval)(shell)
 
