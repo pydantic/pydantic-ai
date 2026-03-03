@@ -3351,11 +3351,11 @@ async def test_adapter_dump_messages_with_tools():
                 'parts': [
                     {'type': 'text', 'text': 'Let me search for that.', 'state': 'done', 'provider_metadata': None},
                     {
-                        'type': 'tool-web_search',
+                        'type': 'dynamic-tool',
+                        'tool_name': 'web_search',
                         'tool_call_id': 'tool_123',
                         'state': 'output-available',
                         'input': {'query': 'test query'},
-                        'provider_executed': False,
                         'output': {'results': ['result1', 'result2']},
                         'call_provider_metadata': None,
                         'preliminary': None,
@@ -3418,11 +3418,11 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'tool-send_data',
+                        'type': 'dynamic-tool',
+                        'tool_name': 'send_data',
                         'tool_call_id': 'call_1',
                         'state': 'output-available',
                         'input': {},
-                        'provider_executed': False,
                         'output': 'Data sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
@@ -3491,11 +3491,11 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'tool-send_events',
+                        'type': 'dynamic-tool',
+                        'tool_name': 'send_events',
                         'tool_call_id': 'call_1',
                         'state': 'output-available',
                         'input': {},
-                        'provider_executed': False,
                         'output': 'Events sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
@@ -3580,11 +3580,11 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'tool-send_data',
+                        'type': 'dynamic-tool',
+                        'tool_name': 'send_data',
                         'tool_call_id': 'call_1',
                         'state': 'output-available',
                         'input': {},
-                        'provider_executed': False,
                         'output': 'Data sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
@@ -4803,11 +4803,11 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'tool-my_tool',
+                        'type': 'dynamic-tool',
+                        'tool_name': 'my_tool',
                         'tool_call_id': 'tool_abc',
                         'state': 'output-available',
                         'input': {'arg': 'value'},
-                        'provider_executed': False,
                         'output': 'result',
                         'call_provider_metadata': {
                             'pydantic_ai': {

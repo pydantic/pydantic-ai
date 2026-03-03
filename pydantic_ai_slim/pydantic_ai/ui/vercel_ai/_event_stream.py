@@ -28,7 +28,7 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from ._utils import dump_provider_metadata, iter_metadata_chunks, iter_tool_approval_responses, tool_return_output
+from ._utils import dump_provider_metadata, iter_metadata_chunks, tool_return_output
 from .request_types import RequestData
 from .response_types import (
     BaseChunk,
