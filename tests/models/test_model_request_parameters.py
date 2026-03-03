@@ -155,8 +155,21 @@ def test_model_request_parameters_are_serializable():
         ('prompted', True),
     ],
 )
-def test_resolve_auto_output_mode(output_mode: StructuredOutputMode, expected_allow_text: bool):
+def test_with_default_output_mode(output_mode: StructuredOutputMode, expected_allow_text: bool):
     params = ModelRequestParameters(output_mode='auto', allow_text_output=True)
-    resolved = params.resolve_auto_output_mode(output_mode)
+    resolved = params.with_default_output_mode(output_mode)
     assert resolved.output_mode == output_mode
     assert resolved.allow_text_output == expected_allow_text
+
+
+def test_with_default_output_mode_noop_when_not_auto():
+    params = ModelRequestParameters(output_mode='tool', allow_text_output=False)
+    resolved = params.with_default_output_mode('native')
+    assert resolved is params
+
+
+def test_with_default_output_mode_overrides_allow_text():
+    params = ModelRequestParameters(output_mode='auto', allow_text_output=False)
+    resolved = params.with_default_output_mode('native')
+    assert resolved.output_mode == 'native'
+    assert resolved.allow_text_output is True

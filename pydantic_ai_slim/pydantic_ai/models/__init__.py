@@ -630,12 +630,15 @@ class ModelRequestParameters:
             return StructuredTextOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
         return None
 
-    def resolve_auto_output_mode(self, output_mode: StructuredOutputMode) -> ModelRequestParameters:
-        """Resolve 'auto' output mode, atomically setting both output_mode and allow_text_output.
+    def with_default_output_mode(self, output_mode: StructuredOutputMode) -> ModelRequestParameters:
+        """Set the default output mode if the current mode is 'auto', atomically updating allow_text_output.
 
-        This ensures the two fields stay in sync — output_mode='tool' implies allow_text_output=False,
-        while 'native' and 'prompted' imply allow_text_output=True.
+        No-op if the current output_mode is not 'auto'. This ensures the two fields stay in sync —
+        output_mode='tool' implies allow_text_output=False, while 'native' and 'prompted' imply
+        allow_text_output=True.
         """
+        if self.output_mode != 'auto':
+            return self
         return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -750,8 +753,7 @@ class Model(ABC):
                 builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
             )
 
-        if params.output_mode == 'auto':
-            params = params.resolve_auto_output_mode(self.profile.default_structured_output_mode)
+        params = params.with_default_output_mode(self.profile.default_structured_output_mode)
 
         # Reset irrelevant fields
         if params.output_tools and params.output_mode != 'tool':
