@@ -246,10 +246,17 @@ class ModelSettings(TypedDict, total=False):
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:
     """Merge two sets of model settings, preferring the overrides.
 
+    Always returns a new dict (or None) to prevent callers from accidentally
+    mutating the original settings objects.
+
     A common use case is: merge_model_settings(<agent settings>, <run settings>)
     """
     # Note: we may want merge recursively if/when we add non-primitive values
     if base and overrides:
         return base | overrides
+    elif base:
+        return base | {}
+    elif overrides:
+        return overrides | {}
     else:
-        return base or overrides
+        return None

@@ -33,14 +33,14 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
     )
 
     # Reasoning model detection:
-    # - grok-3-mini: reasoning with effort control (low/high)
+    # - grok-3-mini: always-on reasoning with effort control (low/high)
     # - grok-4 reasoning variants: always-on reasoning, no effort control
     # - non-reasoning variants (e.g., grok-4-fast-non-reasoning): no thinking
     is_non_reasoning = 'non-reasoning' in model_lower
     is_grok_3_mini = 'grok-3-mini' in model_lower
     is_grok_4 = 'grok-4' in model_lower
     supports_thinking = (is_grok_3_mini or is_grok_4) and not is_non_reasoning
-    thinking_always_enabled = supports_thinking and not is_grok_3_mini
+    thinking_always_enabled = supports_thinking
 
     return GrokModelProfile(
         supports_tools=True,

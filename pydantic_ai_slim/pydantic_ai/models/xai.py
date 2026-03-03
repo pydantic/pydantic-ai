@@ -516,9 +516,6 @@ class XaiModel(Model):
         if 'grok-3-mini' not in self.model_name:
             return None
 
-        if not resolved.enabled:
-            return None  # grok-3-mini reasoning can't be disabled via API
-
         if resolved.effort:
             return _XAI_EFFORT_MAP.get(resolved.effort)
 

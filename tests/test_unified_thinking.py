@@ -1262,8 +1262,8 @@ class TestXaiUnifiedThinking:
 
     @pytest.fixture
     def grok3_mini_profile(self) -> ModelProfile:
-        """Profile for grok-3-mini (supports thinking, effort control)."""
-        return ModelProfile(supports_thinking=True)
+        """Profile for grok-3-mini (always-on thinking with effort control)."""
+        return ModelProfile(supports_thinking=True, thinking_always_enabled=True)
 
     @pytest.fixture
     def grok4_profile(self) -> ModelProfile:
@@ -1315,7 +1315,7 @@ class TestXaiUnifiedThinking:
         assert result is None
 
     def test_thinking_false_grok3_mini(self, grok3_mini_profile: ModelProfile):
-        """thinking=False on grok-3-mini → None (can't disable via API)."""
+        """thinking=False on grok-3-mini → None (always-on, can't disable)."""
         model = XaiModel.__new__(XaiModel)
         model._model_name = 'grok-3-mini'
         model._profile = grok3_mini_profile
@@ -1505,11 +1505,11 @@ class TestProfileThinkingCapabilities:
         """Grok profiles correctly detect reasoning models and model variants."""
         from pydantic_ai.profiles.grok import grok_model_profile
 
-        # grok-3-mini: supports thinking, NOT always-on (has effort control)
+        # grok-3-mini: supports thinking, always-on (has effort control)
         profile = grok_model_profile('grok-3-mini')
         assert profile is not None
         assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is False
+        assert profile.thinking_always_enabled is True
 
         # grok-4: supports thinking, always-on
         profile = grok_model_profile('grok-4-fast-reasoning')
