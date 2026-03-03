@@ -1205,6 +1205,20 @@ async def test_combined_toolset_all_none_returns_none():
     assert result is None
 
 
+async def test_combined_toolset_with_nested_list_instructions():
+    """CombinedToolset flattens list[str] results from child CombinedToolsets (covers combined.py list branch)."""
+    ts1 = FunctionToolset(instructions='Instruction A.')
+    ts2 = FunctionToolset(instructions='Instruction B.')
+    inner = CombinedToolset([ts1, ts2])  # returns list[str]
+
+    ts3 = FunctionToolset(instructions='Instruction C.')
+    outer = CombinedToolset([inner, ts3])
+    ctx = build_run_context(None)
+
+    result = await outer.get_instructions(ctx)
+    assert result == ['Instruction A.', 'Instruction B.', 'Instruction C.']
+
+
 async def test_dynamic_toolset_instructions_before_resolution():
     """DynamicToolset returns None for instructions before get_tools resolves it."""
     dynamic = DynamicToolset(lambda ctx: FunctionToolset(instructions='Dynamic instructions.'))
