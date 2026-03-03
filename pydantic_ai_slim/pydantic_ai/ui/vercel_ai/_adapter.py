@@ -353,14 +353,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
 
                             if has_tool_output:
-                                output: Any | None = None
-                                denied = isinstance(part, ToolOutputDeniedPart)
-                                if isinstance(part, ToolOutputAvailablePart):
-                                    output = part.output
-                                elif isinstance(part, ToolOutputErrorPart):
-                                    output = {'error_text': part.error_text, 'is_error': True}
-                                elif denied:  # pragma: no branch
+                                if isinstance(part, ToolOutputErrorPart):
+                                    output: Any = {'error_text': part.error_text, 'is_error': True}
+                                    status: Literal['success', 'error', 'denied'] = 'error'
+                                elif isinstance(part, ToolOutputDeniedPart):
                                     output = _denial_reason(part)
+                                    status = 'denied'
+                                else:
+                                    output = part.output if isinstance(part, ToolOutputAvailablePart) else None
+                                    status = 'success'
                                 builder.add(
                                     BuiltinToolReturnPart(
                                         tool_name=tool_name,
@@ -368,7 +369,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         content=output,
                                         provider_name=return_meta.get('provider_name') or provider_name,
                                         provider_details=return_meta.get('provider_details') or provider_details,
-                                        status='denied' if denied else 'success',
+                                        status=status,
                                     )
                                 )
                         else:

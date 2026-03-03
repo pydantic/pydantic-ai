@@ -3239,6 +3239,7 @@ async def test_adapter_load_messages():
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2z',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        status='error',
                     ),
                     TextPart(
                         content='Here are the Table of Contents for both repositories:... Both products are designed to work together - Pydantic AI for building AI agents and Logfire for observing and monitoring them in production.'
@@ -5059,6 +5060,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                     tool_call_id='bt_err_123',
                     provider_name='openai',
                     provider_details={'error_code': 'RATE_LIMIT'},
+                    status='error',
                 ),
             ]
         ),
@@ -5227,6 +5229,7 @@ async def test_adapter_load_messages_builtin_tool_error_with_provider_details():
                         timestamp=IsDatetime(),
                         provider_name='openai',
                         provider_details={'error_code': 'RATE_LIMIT'},
+                        status='error',
                     ),
                 ],
                 timestamp=IsDatetime(),
