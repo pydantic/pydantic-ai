@@ -2164,6 +2164,34 @@ async def test_toolset_factory_concurrent_isolation():
     assert 'Error' in read_a
 
 
+async def test_toolset_factory_concurrent_agent_runs():
+    """Parallel agent.run() calls with a factory get isolated environments (relates to #4347)."""
+    import asyncio
+
+    envs_created: list[MemoryEnvironment] = []
+
+    def factory() -> MemoryEnvironment:
+        env = MemoryEnvironment(
+            files={'id.txt': str(len(envs_created))},
+            command_handler=lambda cmd: ExecutionResult(output='ok', exit_code=0),
+        )
+        envs_created.append(env)
+        return env
+
+    toolset = ExecutionEnvironmentToolset(factory)
+    agent = Agent('test', toolsets=[toolset])
+
+    result_a, result_b = await asyncio.gather(
+        agent.run('Read the file id.txt'),
+        agent.run('Read the file id.txt'),
+    )
+
+    # Each run should have created its own environment
+    assert len(envs_created) == 2
+    assert result_a.output is not None
+    assert result_b.output is not None
+
+
 async def test_toolset_factory_cleanup():
     """__aexit__ properly cleans up factory-created environments."""
     entered = 0
