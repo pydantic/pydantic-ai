@@ -759,8 +759,7 @@ class AnthropicModel(Model):
                         for item in request_part.content_items(mode='str'):
                             if is_multi_modal_content(item):
                                 tool_result_content.append(await self._map_file_to_content_block(item, 'tool returns'))
-                            else:
-                                assert isinstance(item, str)
+                            elif isinstance(item, str):  # pragma: no branch
                                 tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
 
                         tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(

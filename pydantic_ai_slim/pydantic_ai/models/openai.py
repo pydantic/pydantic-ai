@@ -1156,12 +1156,7 @@ class OpenAIChatModel(Model):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                for f in part.files:
-                    if isinstance(f, AudioUrl) or (isinstance(f, BinaryContent) and f.is_audio):
-                        raise NotImplementedError('AudioUrl is not supported in OpenAI Chat Completions tool returns')
-                    if isinstance(f, VideoUrl) or (isinstance(f, BinaryContent) and f.is_video):
-                        raise NotImplementedError('VideoUrl is not supported in OpenAI Chat Completions tool returns')
-                tool_text, tool_file_content = part.fallback_tool_return()
+                tool_text, tool_file_content = part.model_response_str_and_user_content()
                 file_content.extend(tool_file_content)
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
@@ -2259,8 +2254,7 @@ class OpenAIResponsesModel(Model):
         for item in part.content_items(mode='str'):
             if is_multi_modal_content(item):
                 output.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns'))
-            else:
-                assert isinstance(item, str)
+            elif isinstance(item, str):  # pragma: no branch
                 output.append(ResponseInputTextContentParam(type='input_text', text=item))
 
         return output
