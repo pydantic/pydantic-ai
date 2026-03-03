@@ -4,7 +4,6 @@ This package provides:
 
 - `ExecutionEnvironment` — abstract base class for execution environments
 - `ExecutionProcess` — interactive process handle with bidirectional I/O
-- `ExecutionEnvironmentToolset` — toolset exposing coding-agent-style tools backed by an environment
 - `ExecutionResult` — result type
 
 Implementations:
@@ -13,14 +12,11 @@ Implementations:
 - `environments.local.LocalEnvironment` — local subprocess environment (no isolation, for dev/testing)
 """
 
-from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
-
 from ._base import EnvToolName, ExecutionEnvironment, ExecutionProcess, ExecutionResult
 
 __all__ = (
     'EnvToolName',
     'ExecutionResult',
     'ExecutionEnvironment',
-    'ExecutionEnvironmentToolset',
     'ExecutionProcess',
 )

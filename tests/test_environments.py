@@ -19,7 +19,6 @@ from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.environments import (
     EnvToolName,
     ExecutionEnvironment as BaseEnv,
-    ExecutionEnvironmentToolset,
     ExecutionResult,
 )
 from pydantic_ai.environments._base import (
@@ -29,6 +28,7 @@ from pydantic_ai.environments._base import (
 from pydantic_ai.environments.local import LocalEnvironment, _LocalEnvironmentProcess
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
 from pydantic_ai.usage import RunUsage
 from tests.environment_helpers import MemoryEnvironment
 
@@ -595,6 +595,37 @@ async def test_toolset_default_no_approval():
     tools = await toolset.get_tools(ctx)
     for tool in tools.values():
         assert tool.tool_def.kind == 'function'
+
+
+# --- ExecutionEnvironmentToolset: output truncation ---
+
+
+async def test_toolset_shell_output_truncation():
+    """Shell output is truncated while preserving the exit code."""
+    long_output = 'x' * 500
+    env = MemoryEnvironment(command_handler=lambda cmd: ExecutionResult(output=long_output, exit_code=0))
+    toolset = ExecutionEnvironmentToolset(env, max_output_chars=100)
+    ctx = build_run_context(None)
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+
+    result = await manager.handle_call(ToolCallPart(tool_name='shell', args={'command': 'echo'}))
+    assert isinstance(result, str)
+    assert result.endswith('Exit code: 0')
+    assert '... (truncated)' in result
+
+
+async def test_toolset_read_file_output_truncation(tmp_path: Path):
+    """read_file text output is truncated when exceeding max_output_chars."""
+    long_line = 'y' * 500
+    env = MemoryEnvironment(files={'big.txt': long_line})
+    toolset = ExecutionEnvironmentToolset(env, max_output_chars=100)
+    ctx = build_run_context(None)
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+
+    result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'big.txt'}))
+    assert isinstance(result, str)
+    assert len(result) <= 120  # 100 + truncation marker
+    assert '... (truncated)' in result
 
 
 # --- ExecutionEnvironmentToolset: environment management ---

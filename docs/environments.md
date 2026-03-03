@@ -8,7 +8,7 @@ This is the foundation for building coding agents, data analysis bots, and other
 
 ```python {title="environments_quickstart.py"}
 from pydantic_ai import Agent
-from pydantic_ai.environments import ExecutionEnvironmentToolset
+from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
 from pydantic_ai.environments.local import LocalEnvironment
 
 env = LocalEnvironment(root_dir='/tmp/workspace')
@@ -170,7 +170,7 @@ env = DockerEnvironment.hardened(
 Tools are dynamically registered based on the environment's capabilities. You can selectively include or exclude capabilities:
 
 ```python {title="environments_selective_tools.py"}
-from pydantic_ai.environments import ExecutionEnvironmentToolset
+from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
 from pydantic_ai.environments.local import LocalEnvironment
 
 # Only file tools — no shell
@@ -185,7 +185,7 @@ toolset = ExecutionEnvironmentToolset(
 When using `LocalEnvironment`, shell commands and file writes run directly on the host with no isolation. You can require human-in-the-loop approval for these operations:
 
 ```python {title="environments_approval.py"}
-from pydantic_ai.environments import ExecutionEnvironmentToolset
+from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
 from pydantic_ai.environments.local import LocalEnvironment
 
 toolset = ExecutionEnvironmentToolset(
@@ -214,7 +214,7 @@ The toolset manages the environment lifecycle when used as a context manager:
 
 ```python {title="environments_agent.py"}
 from pydantic_ai import Agent
-from pydantic_ai.environments import ExecutionEnvironmentToolset
+from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
 from pydantic_ai.environments.docker import DockerEnvironment
 
 env = DockerEnvironment(image='python:3.12-slim')
@@ -244,7 +244,7 @@ You can swap the backing environment at runtime using [`use_environment()`][pyda
 
 ```python {title="environments_override.py"}
 from pydantic_ai import Agent
-from pydantic_ai.environments import ExecutionEnvironmentToolset
+from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
 from pydantic_ai.environments.docker import DockerEnvironment
 from pydantic_ai.environments.local import LocalEnvironment
 
@@ -272,7 +272,7 @@ When multiple `agent.run()` calls execute concurrently (e.g. via `asyncio.gather
 import asyncio
 
 from pydantic_ai import Agent
-from pydantic_ai.environments import ExecutionEnvironmentToolset
+from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
 from pydantic_ai.environments.docker import DockerEnvironment
 
 # Each concurrent run gets its own container

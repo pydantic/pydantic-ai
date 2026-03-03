@@ -5,9 +5,15 @@
         members:
         - EnvToolName
         - ExecutionEnvironment
-        - ExecutionEnvironmentToolset
         - ExecutionProcess
         - ExecutionResult
+
+## `pydantic_ai.toolsets.execution_environment`
+
+::: pydantic_ai.toolsets.execution_environment
+    options:
+        members:
+        - ExecutionEnvironmentToolset
 
 ## `pydantic_ai.environments.local`
 

@@ -50,7 +50,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
     Usage:
         ```python {test="skip" lint="skip"}
         from pydantic_ai import Agent
-        from pydantic_ai.environments import ExecutionEnvironmentToolset
+        from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
         from pydantic_ai.environments.docker import DockerEnvironment
 
         env = DockerEnvironment(image='python:3.12-slim')
