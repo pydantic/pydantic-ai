@@ -377,6 +377,9 @@ def test_custom_provider_instance_method_model_profile():
             return ModelProfile()
 
     provider = LegacyCustomProvider()
+    assert provider.name == 'legacy-custom'
+    assert provider.base_url == 'https://example.com'
+    assert provider.client is None
     # Instance call should still work
     profile = provider.model_profile('some-model')
     assert isinstance(profile, ModelProfile)
