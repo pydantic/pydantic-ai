@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from .._run_context import AgentDepsT, RunContext
     from ..toolsets.abstract import ToolsetTool
 
+
 class ExecutionEnvironmentToolset(FunctionToolset[Any]):
     """Toolset providing coding-agent-style tools backed by an `ExecutionEnvironment`.
 

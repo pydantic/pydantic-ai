@@ -29,8 +29,7 @@ try:
     from docker.models.containers import Container
 except ImportError as _import_error:
     raise ImportError(
-        'The `docker` package is required for DockerEnvironment. '
-        'Install it with: pip install pydantic-ai-slim[docker]'
+        'The `docker` package is required for DockerEnvironment. Install it with: pip install pydantic-ai-slim[docker]'
     ) from _import_error
 
 

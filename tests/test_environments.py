@@ -1398,9 +1398,7 @@ class TestDocker:
         result = await proc.wait(timeout=5.0)
         assert result == 42
 
-    async def test_docker_read_file_binary(
-        self, mock_docker_sandbox: Any, mock_container: MockContainer
-    ) -> None:
+    async def test_docker_read_file_binary(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
         """DockerEnvironment.read_file returns raw bytes for any file."""
         binary_data = b'\x80\x81\x82\xff'
         mock_container._files['/workspace/data.bin'] = binary_data
