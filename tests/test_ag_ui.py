@@ -32,6 +32,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -2150,11 +2151,63 @@ async def test_callback_sync() -> None:
     # Verify we can access messages
     messages = run_result.all_messages()
     assert len(messages) >= 1
+    assert isinstance(messages[0], ModelRequest)
+    assert messages[0].run_id == run_result.run_id
 
     # Verify events were still streamed normally
     assert len(events) > 0
     assert events[0]['type'] == 'RUN_STARTED'
     assert events[-1]['type'] == 'RUN_FINISHED'
+
+
+async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
+    """The adapter sets `run_id` on the current run's mapped request, not older history."""
+    captured_results: list[AgentRunResult[Any]] = []
+
+    def sync_callback(run_result: AgentRunResult[Any]) -> None:
+        captured_results.append(run_result)
+
+    agent = Agent(TestModel())
+    run_input = create_input(
+        UserMessage(id='msg0', content='Previous question'),
+        AssistantMessage(id='msg1', content='Previous response'),
+        UserMessage(id='msg2', content='Hello!'),
+    )
+
+    await run_and_collect_events(agent, run_input, on_complete=sync_callback)
+
+    assert len(captured_results) == 1
+    run_result = captured_results[0]
+    messages = run_result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())],
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Previous response')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello!', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=(run_id := IsSameStr()),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=run_id,
+            ),
+        ]
+    )
+    assert messages[0].run_id is None
+    assert messages[1].run_id is None
+    assert messages[2].run_id == run_result.run_id
+    assert messages[3].run_id == run_result.run_id
+    assert run_result.new_messages() == messages[-2:]
 
 
 async def test_callback_async() -> None:
