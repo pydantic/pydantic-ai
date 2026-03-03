@@ -81,6 +81,22 @@ def test_youtube_video_url(url: str, is_youtube: bool):
             'https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.asciidoc',
             'text/x-asciidoc',
         ),
+        (
+            'https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.pptx',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        ),
+        (
+            'https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.ppt',
+            'application/vnd.ms-powerpoint',
+        ),
+        (
+            'https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.odt',
+            'application/vnd.oasis.opendocument.text',
+        ),
+        (
+            'https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.tsv',
+            'text/tab-separated-values',
+        ),
     ],
 )
 def test_document_url_other_types(url: str, expected_data_type: str) -> None:
@@ -164,9 +180,16 @@ def test_binary_content_video(media_type: str, format: str):
         ('application/msword', 'doc'),
         ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'docx'),
         ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'xlsx'),
+        ('application/vnd.openxmlformats-officedocument.presentationml.presentation', 'pptx'),
         ('text/html', 'html'),
         ('text/markdown', 'md'),
+        ('text/tab-separated-values', 'tsv'),
         ('application/vnd.ms-excel', 'xls'),
+        ('application/vnd.ms-powerpoint', 'ppt'),
+        ('application/rtf', 'rtf'),
+        ('application/vnd.oasis.opendocument.text', 'odt'),
+        ('application/json', 'json'),
+        ('application/xml', 'xml'),
     ],
 )
 def test_binary_content_document(media_type: str, format: str):
@@ -239,6 +262,18 @@ _url_formats = [
     ),
     pytest.param(DocumentUrl('foobar.html'), 'text/html', 'html', id='html'),
     pytest.param(DocumentUrl('foobar.xls'), 'application/vnd.ms-excel', 'xls', id='xls'),
+    pytest.param(
+        DocumentUrl('foobar.pptx'),
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'pptx',
+        id='pptx',
+    ),
+    pytest.param(DocumentUrl('foobar.ppt'), 'application/vnd.ms-powerpoint', 'ppt', id='ppt'),
+    pytest.param(DocumentUrl('foobar.rtf'), 'application/rtf', 'rtf', id='rtf'),
+    pytest.param(DocumentUrl('foobar.odt'), 'application/vnd.oasis.opendocument.text', 'odt', id='odt'),
+    pytest.param(DocumentUrl('foobar.tsv'), 'text/tab-separated-values', 'tsv', id='tsv'),
+    pytest.param(DocumentUrl('foobar.json'), 'application/json', 'json', id='json'),
+    pytest.param(DocumentUrl('foobar.xml'), 'application/xml', 'xml', id='xml'),
 ]
 if sys.version_info > (3, 11):  # pragma: no branch
     # This solves an issue with MIMEType on MacOS + python < 3.12. mimetypes.py added the text/markdown in 3.12, but on
@@ -320,6 +355,23 @@ def test_binary_content_is_methods():
     assert document_content.is_video is False
     assert document_content.is_document is True
     assert document_content.format == 'pdf'
+
+    pptx_content = BinaryContent(
+        data=b'Hello, world!',
+        media_type='application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    )
+    assert pptx_content.is_audio is False
+    assert pptx_content.is_image is False
+    assert pptx_content.is_video is False
+    assert pptx_content.is_document is True
+    assert pptx_content.format == 'pptx'
+
+    tsv_content = BinaryContent(data=b'Hello, world!', media_type='text/tab-separated-values')
+    assert tsv_content.is_audio is False
+    assert tsv_content.is_image is False
+    assert tsv_content.is_video is False
+    assert tsv_content.is_document is True
+    assert tsv_content.format == 'tsv'
 
 
 def test_binary_content_base64():

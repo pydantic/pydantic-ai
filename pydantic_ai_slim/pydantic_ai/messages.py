@@ -41,6 +41,10 @@ for file in mimetypes.knownfiles:
 _mime_types.add_type('application/rtf', '.rtf')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx')
+_mime_types.add_type('application/vnd.openxmlformats-officedocument.presentationml.presentation', '.pptx')
+_mime_types.add_type('application/vnd.ms-powerpoint', '.ppt')
+_mime_types.add_type('application/vnd.oasis.opendocument.text', '.odt')
+_mime_types.add_type('text/tab-separated-values', '.tsv')
 _mime_types.add_type('text/markdown', '.mdx')
 _mime_types.add_type('text/markdown', '.md')
 _mime_types.add_type('text/x-asciidoc', '.asciidoc')
@@ -81,10 +85,17 @@ DocumentMediaType: TypeAlias = Literal[
     'text/csv',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     'text/html',
     'text/markdown',
+    'text/tab-separated-values',
     'application/msword',
     'application/vnd.ms-excel',
+    'application/vnd.ms-powerpoint',
+    'application/rtf',
+    'application/vnd.oasis.opendocument.text',
+    'application/json',
+    'application/xml',
 ]
 VideoMediaType: TypeAlias = Literal[
     'video/x-matroska',
@@ -99,7 +110,9 @@ VideoMediaType: TypeAlias = Literal[
 
 AudioFormat: TypeAlias = Literal['wav', 'mp3', 'oga', 'flac', 'aiff', 'aac']
 ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
-DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
+DocumentFormat: TypeAlias = Literal[
+    'csv', 'doc', 'docx', 'html', 'json', 'md', 'odt', 'pdf', 'ppt', 'pptx', 'rtf', 'tsv', 'txt', 'xls', 'xlsx', 'xml'
+]
 VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
 
 FinishReason: TypeAlias = Literal[
@@ -834,10 +847,17 @@ _document_format_lookup: dict[str, DocumentFormat] = {
     'text/csv': 'csv',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
     'text/html': 'html',
     'text/markdown': 'md',
+    'text/tab-separated-values': 'tsv',
     'application/msword': 'doc',
     'application/vnd.ms-excel': 'xls',
+    'application/vnd.ms-powerpoint': 'ppt',
+    'application/rtf': 'rtf',
+    'application/vnd.oasis.opendocument.text': 'odt',
+    'application/json': 'json',
+    'application/xml': 'xml',
 }
 _audio_format_lookup: dict[str, AudioFormat] = {
     'audio/mpeg': 'mp3',
