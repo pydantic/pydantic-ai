@@ -285,7 +285,9 @@ def test_infer_str_unknown():
     ],
 )
 def test_parse_model_id(model_id: str, expected: tuple[str | None, str]):
-    assert parse_model_id(model_id) == expected
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', DeprecationWarning)
+        assert parse_model_id(model_id) == expected
 
 
 @pytest.mark.parametrize(
@@ -343,3 +345,38 @@ def test_infer_model_profile_matches_provider(model_id: str, provider_path: str,
     profile = infer_model_profile(model_id)
     provider_profile = provider_class.model_profile(model_name)
     assert profile == provider_profile
+
+
+def test_custom_provider_instance_method_model_profile():
+    """Verify that a custom provider using the old instance-method model_profile pattern still works for non-Temporal usage.
+
+    Before the @staticmethod change, Provider.model_profile was an instance method.
+    Custom providers that still define it as `def model_profile(self, model_name)` should
+    continue to work when called on an instance (e.g. `provider.model_profile(model_name)`).
+    """
+    from pydantic_ai.profiles import ModelProfile
+    from pydantic_ai.providers import Provider
+
+    class LegacyCustomProvider(Provider[None]):
+        """A custom provider using the old instance-method pattern."""
+
+        @property
+        def name(self) -> str:
+            return 'legacy-custom'
+
+        @property
+        def base_url(self) -> str:
+            return 'https://example.com'
+
+        @property
+        def client(self) -> None:
+            return None
+
+        # Old-style instance method (not @staticmethod or @classmethod)
+        def model_profile(self, model_name: str) -> ModelProfile | None:  # type: ignore[override]
+            return ModelProfile()
+
+    provider = LegacyCustomProvider()
+    # Instance call should still work
+    profile = provider.model_profile('some-model')
+    assert isinstance(profile, ModelProfile)

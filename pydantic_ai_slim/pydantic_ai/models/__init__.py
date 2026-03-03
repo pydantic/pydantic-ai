@@ -1127,6 +1127,8 @@ def parse_model_id(model: str) -> tuple[str | None, str]:
     Handles both the modern `provider:model` format and legacy model names
     that start with known prefixes (e.g., `gpt-4`, `claude-3`).
 
+    Emits a `DeprecationWarning` when a legacy prefix-based model name is used.
+
     Args:
         model: A model identifier string, either `provider:model_name` or a legacy
             prefix-based name.
@@ -1142,6 +1144,12 @@ def parse_model_id(model: str) -> tuple[str | None, str]:
     # Legacy model names without provider prefix
     for prefix, provider_name in _LEGACY_MODEL_PREFIXES.items():
         if model.startswith(prefix):
+            warnings.warn(
+                f'Specifying a model name without a provider prefix is deprecated. '
+                f"Instead of {model!r}, use '{provider_name}:{model}'.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return provider_name, model
 
     # Unknown prefix: let callers decide how to handle this case.
@@ -1151,7 +1159,7 @@ def parse_model_id(model: str) -> tuple[str | None, str]:
 def infer_model_profile(model: str) -> ModelProfile:
     """Infer the model profile from a model id string without constructing a provider.
 
-    Uses `Provider.model_profile` class methods to look up the profile for the given model.
+    Uses `Provider.model_profile` to look up the profile for the given model.
     Returns `DEFAULT_PROFILE` for unknown or unrecognized providers.
 
     Note: This returns the raw provider profile **without** intersecting with
@@ -1169,16 +1177,6 @@ def infer_model_profile(model: str) -> ModelProfile:
     provider, model_name = parse_model_id(model)
     if provider is None:
         return DEFAULT_PROFILE
-
-    if provider == 'vertexai':  # pragma: no cover
-        provider = 'google-vertex'
-    elif provider == 'google':
-        provider = 'google-gla'
-
-    if provider.startswith('gateway/'):
-        from ..providers.gateway import normalize_gateway_provider
-
-        provider = normalize_gateway_provider(provider)
 
     try:
         provider_class = infer_provider_class(provider)
@@ -1212,14 +1210,6 @@ def infer_model(  # noqa: C901
     provider_name, model_name = parse_model_id(model)
     if provider_name is None:
         raise UserError(f'Unknown model: {model}')
-
-    # Warn if using legacy model name without provider prefix
-    if ':' not in model:
-        warnings.warn(
-            f'Specifying a model name without a provider prefix is deprecated. '
-            f"Instead of {model!r}, use '{provider_name}:{model}'.",
-            DeprecationWarning,
-        )
 
     if provider_name == 'vertexai':  # pragma: no cover
         warnings.warn(

@@ -43,8 +43,8 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The client for the provider."""
         raise NotImplementedError()
 
-    @classmethod
-    def model_profile(cls, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
 
@@ -54,6 +54,18 @@ class Provider(ABC, Generic[InterfaceClient]):
 
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
+    # Normalize gateway-prefixed providers (e.g. 'gateway/openai' -> 'openai')
+    if provider.startswith('gateway/'):
+        from .gateway import normalize_gateway_provider
+
+        provider = normalize_gateway_provider(provider)
+
+    # Normalize deprecated/alias provider names
+    if provider == 'vertexai':
+        provider = 'google-vertex'
+    elif provider == 'google':
+        provider = 'google-gla'
+
     if provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
