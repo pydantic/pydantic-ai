@@ -15,6 +15,7 @@ from typing_extensions import Self
 
 from ..environments._base import (
     IMAGE_EXTENSIONS,
+    IMAGE_MEDIA_TYPES,
     EnvToolName,
     ExecutionEnvironment,
 )
@@ -25,16 +26,6 @@ from ..toolsets.function import FunctionToolset
 if TYPE_CHECKING:
     from .._run_context import AgentDepsT, RunContext
     from ..toolsets.abstract import ToolsetTool
-
-IMAGE_MEDIA_TYPES: dict[str, str] = {
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.bmp': 'image/bmp',
-    '.svg': 'image/svg+xml',
-}
 
 _TOOL_TO_ENV_METHOD: dict[str, str] = {
     'edit_file': 'replace_str',
@@ -110,9 +101,9 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             image_support: Whether `read_file` should return images as `BinaryContent`
                 for multimodal models (otherwise returns a placeholder message).
             max_image_bytes: Maximum image file size to return as BinaryContent.
+            max_output_chars: Maximum characters of tool output before truncation.
             max_retries: Maximum retries per tool call.
             id: Optional unique ID for the toolset (required for durable execution).
-            max_output_chars: Maximum characters of tool output before truncation.
         """
         if shared_environment is not None and environment_factory is not None:
             raise ValueError('Cannot provide both shared_environment and environment_factory.')

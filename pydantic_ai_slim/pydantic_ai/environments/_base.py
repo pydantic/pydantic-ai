@@ -95,17 +95,22 @@ class ExecutionProcess(ABC):
 
 # --- Constants ---
 
-IMAGE_EXTENSIONS = frozenset(
-    {
-        '.png',
-        '.jpg',
-        '.jpeg',
-        '.gif',
-        '.webp',
-        '.bmp',
-        '.svg',
-    }
-)
+IMAGE_MEDIA_TYPES: dict[str, str] = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.bmp': 'image/bmp',
+    '.svg': 'image/svg+xml',
+}
+"""Map image file extensions to MIME types.
+
+Used by `ExecutionEnvironmentToolset` to return images as `BinaryContent`,
+and to identify image files in `read_file` (returning raw bytes instead of text).
+"""
+
+IMAGE_EXTENSIONS = frozenset(IMAGE_MEDIA_TYPES)
 
 
 # --- ExecutionEnvironment ---

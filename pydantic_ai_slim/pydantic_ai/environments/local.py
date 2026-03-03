@@ -6,6 +6,7 @@ Runs commands directly on the host machine within a specified root directory.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -150,8 +151,6 @@ class LocalEnvironment(ExecutionEnvironment):
         """Merge baseline env vars with per-call overrides."""
         if not self._env_vars and not env and self._inherit_env:
             return None  # subprocess inherits naturally
-        import os
-
         merged = {**os.environ} if self._inherit_env else {}
         merged.update(self._env_vars)
         if env:
