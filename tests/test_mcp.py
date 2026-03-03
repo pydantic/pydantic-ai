@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import re
 from datetime import timezone
@@ -118,8 +119,48 @@ async def test_reentrant_context_manager():
             pass
 
 
+async def test_cross_task_mcp_server():
+    """Test that multiple asyncio tasks can share one MCPServer without cancel scope errors.
+
+    Previously, this would raise:
+        RuntimeError: Attempted to exit cancel scope in a different task than it was entered in
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def task_a():
+        async with server:
+            entered.set()
+            await release.wait()
+
+    async def task_b():
+        await entered.wait()
+        async with server:
+            result = await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
+            assert result == 32.0
+        release.set()
+
+    await asyncio.gather(task_a(), task_b())
+    assert not server.is_running
+
+
+async def test_parallel_agent_runs():
+    """Test that multiple parallel agent.run() calls sharing one MCPServer work."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
+
+    async def run_agent(celsius: int) -> str:
+        result = await agent.run(f'Convert {celsius}C to F')
+        return result.output
+
+    results = await asyncio.gather(run_agent(0), run_agent(100), run_agent(50))
+    assert len(results) == 3
+    assert not server.is_running
+
+
 async def test_context_manager_initialization_error() -> None:
-    """Test if streams are closed if client fails to initialize."""
+    """Test that a failed initialization cleans up and allows re-entry."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     from mcp.client.session import ClientSession
 
@@ -128,8 +169,12 @@ async def test_context_manager_initialization_error() -> None:
             async with server:
                 pass
 
-    assert server._read_stream._closed  # pyright: ignore[reportPrivateUsage]
-    assert server._write_stream._closed  # pyright: ignore[reportPrivateUsage]
+    assert not server.is_running
+
+    # Verify re-entry works after a failed initialization
+    async with server:
+        assert server.is_running
+    assert not server.is_running
 
 
 async def test_aexit_called_more_times_than_aenter():
@@ -1611,7 +1656,7 @@ async def test_mcp_server_raises_mcp_error(
 
     async with agent:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'send_request',
             new=AsyncMock(side_effect=mcp_error),
         ):
@@ -1828,7 +1873,7 @@ async def test_read_resource_error(mcp_server: MCPServerStdio) -> None:
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'read_resource',
             new=AsyncMock(side_effect=mcp_error),
         ):
@@ -1850,7 +1895,7 @@ async def test_read_resource_empty_contents(mcp_server: MCPServerStdio) -> None:
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'read_resource',
             new=AsyncMock(return_value=empty_result),
         ):
@@ -1866,7 +1911,7 @@ async def test_list_resources_error(mcp_server: MCPServerStdio) -> None:
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'list_resources',
             new=AsyncMock(side_effect=mcp_error),
         ):
@@ -1888,7 +1933,7 @@ async def test_list_resource_templates_error(mcp_server: MCPServerStdio) -> None
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'list_resource_templates',
             new=AsyncMock(side_effect=mcp_error),
         ):

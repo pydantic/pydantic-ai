@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
@@ -283,6 +284,29 @@ TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
 _ENV_VAR_PATTERN = re.compile(r'\$\{([^}:]+)(:-([^}]*))?\}')
 
 
+_next_conn_id: int = 0
+
+# Maps server id(self) → connection ID for the current context.
+# Child tasks inherit the parent's context, so graph node tasks
+# share the parent's MCP connection. Separate user-level tasks
+# get independent contexts and thus independent connections.
+_mcp_conn_ctx: ContextVar[dict[int, int]] = ContextVar('_mcp_conn_ctx')
+
+
+@dataclass
+class _MCPConnectionState:
+    """Per-context connection state for an MCPServer.
+
+    Each logical context (user-level task and its child graph tasks) gets its
+    own connection, ensuring cancel scopes are entered and exited in the same
+    task that opened them.
+    """
+
+    exit_stack: AsyncExitStack
+    client: ClientSession
+    ref_count: int = 1
+
+
 class MCPServer(AbstractToolset[Any], ABC):
     """Base class for attaching agents to MCP servers.
 
@@ -362,12 +386,8 @@ class MCPServer(AbstractToolset[Any], ABC):
     _id: str | None
 
     _enter_lock: Lock = field(compare=False)
-    _running_count: int
-    _exit_stack: AsyncExitStack | None
+    _connections: dict[int, _MCPConnectionState]
 
-    _client: ClientSession
-    _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
-    _write_stream: MemoryObjectSendStream[SessionMessage]
     _server_info: mcp_types.Implementation
     _server_capabilities: ServerCapabilities
     _instructions: str | None
@@ -414,8 +434,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     def __post_init__(self):
         self._enter_lock = Lock()
-        self._running_count = 0
-        self._exit_stack = None
+        self._connections: dict[int, _MCPConnectionState] = {}
         self._cached_tools = None
         self._cached_resources = None
 
@@ -492,7 +511,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             return self._cached_tools
 
         async with self:
-            result = await self._client.list_tools()
+            result = await self._get_client().list_tools()
             if self.cache_tools:
                 self._cached_tools = result.tools
             return result.tools
@@ -518,7 +537,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         """
         async with self:  # Ensure server is running
             try:
-                result = await self._client.send_request(
+                result = await self._get_client().send_request(
                     mcp_types.ClientRequest(
                         mcp_types.CallToolRequest(
                             method='tools/call',
@@ -617,7 +636,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             if not self.capabilities.resources:
                 return []
             try:
-                result = await self._client.list_resources()
+                result = await self._get_client().list_resources()
                 resources = [Resource.from_mcp_sdk(r) for r in result.resources]
                 if self.cache_resources:
                     self._cached_resources = resources
@@ -635,7 +654,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             if not self.capabilities.resources:
                 return []
             try:
-                result = await self._client.list_resource_templates()
+                result = await self._get_client().list_resource_templates()
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
         return [ResourceTemplate.from_mcp_sdk(t) for t in result.resourceTemplates]
@@ -666,7 +685,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         resource_uri = uri if isinstance(uri, str) else uri.uri
         async with self:  # Ensure server is running
             try:
-                result = await self._client.read_resource(AnyUrl(resource_uri))
+                result = await self._get_client().read_resource(AnyUrl(resource_uri))
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
 
@@ -676,58 +695,102 @@ class MCPServer(AbstractToolset[Any], ABC):
             else [self._get_content(resource) for resource in result.contents]
         )
 
+    def _get_conn_id(self) -> int | None:
+        """Get the connection ID for this server in the current context."""
+        try:
+            return _mcp_conn_ctx.get().get(id(self))
+        except LookupError:
+            return None
+
+    def _get_client(self) -> ClientSession:
+        """Get the MCP client session for the current context."""
+        conn_id = self._get_conn_id()
+        if conn_id is not None and (conn := self._connections.get(conn_id)):
+            return conn.client
+        raise RuntimeError(
+            f'{self.__class__.__name__} has no connection for the current context. '
+            'Use `async with server:` to open a connection first.'
+        )
+
+    async def _open_connection(self) -> _MCPConnectionState:
+        """Open a new MCP connection in the current task."""
+        async with AsyncExitStack() as exit_stack:
+            read_stream, write_stream = await exit_stack.enter_async_context(self.client_streams())
+
+            session = ClientSession(
+                read_stream=read_stream,
+                write_stream=write_stream,
+                sampling_callback=self._sampling_callback if self.allow_sampling else None,
+                elicitation_callback=self.elicitation_callback,
+                logging_callback=self.log_handler,
+                read_timeout_seconds=timedelta(seconds=self.read_timeout),
+                message_handler=self._handle_notification,
+                client_info=self.client_info,
+            )
+            client = await exit_stack.enter_async_context(session)
+
+            with anyio.fail_after(self.timeout):
+                result = await client.initialize()
+                self._server_info = result.serverInfo
+                self._server_capabilities = ServerCapabilities.from_mcp_sdk(result.capabilities)
+                self._instructions = result.instructions
+                if log_level := self.log_level:
+                    await client.set_logging_level(log_level)
+
+            # pop_all() is safe: aclose() will be called from the same task
+            return _MCPConnectionState(exit_stack=exit_stack.pop_all(), client=client)
+
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.
 
         This will initialize the connection to the server.
         If this server is an [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio], the server will first be started as a subprocess.
 
-        This is a no-op if the MCP server has already been entered.
+        Each context (user-level task and its graph child tasks) gets its own
+        connection so that cancel scopes are entered and exited in the same task.
+        Reentrant access within the same context increments a reference count.
         """
+        global _next_conn_id
+        conn_id = self._get_conn_id()
         async with self._enter_lock:
-            if self._running_count == 0:
-                async with AsyncExitStack() as exit_stack:
-                    self._read_stream, self._write_stream = await exit_stack.enter_async_context(self.client_streams())
-
-                    client = ClientSession(
-                        read_stream=self._read_stream,
-                        write_stream=self._write_stream,
-                        sampling_callback=self._sampling_callback if self.allow_sampling else None,
-                        elicitation_callback=self.elicitation_callback,
-                        logging_callback=self.log_handler,
-                        read_timeout_seconds=timedelta(seconds=self.read_timeout),
-                        message_handler=self._handle_notification,
-                        client_info=self.client_info,
-                    )
-                    self._client = await exit_stack.enter_async_context(client)
-
-                    with anyio.fail_after(self.timeout):
-                        result = await self._client.initialize()
-                        self._server_info = result.serverInfo
-                        self._server_capabilities = ServerCapabilities.from_mcp_sdk(result.capabilities)
-                        self._instructions = result.instructions
-                        if log_level := self.log_level:
-                            await self._client.set_logging_level(log_level)
-
-                    self._exit_stack = exit_stack.pop_all()
-            self._running_count += 1
+            if conn_id is not None and conn_id in self._connections:
+                self._connections[conn_id].ref_count += 1
+            else:
+                conn = await self._open_connection()
+                conn_id = _next_conn_id
+                _next_conn_id += 1
+                self._connections[conn_id] = conn
+                # Set the connection ID in the current context so child tasks inherit it
+                try:
+                    conn_ctx = _mcp_conn_ctx.get()
+                except LookupError:
+                    conn_ctx: dict[int, int] = {}
+                    _mcp_conn_ctx.set(conn_ctx)
+                conn_ctx[id(self)] = conn_id
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        if self._running_count == 0:
-            raise ValueError('MCPServer.__aexit__ called more times than __aenter__')
+        conn_id = self._get_conn_id()
+        conn_to_close: _MCPConnectionState | None = None
         async with self._enter_lock:
-            self._running_count -= 1
-            if self._running_count == 0 and self._exit_stack is not None:
-                await self._exit_stack.aclose()
-                self._exit_stack = None
-                self._cached_tools = None
-                self._cached_resources = None
+            if conn_id is None or conn_id not in self._connections:
+                raise ValueError('MCPServer.__aexit__ called more times than __aenter__')
+            conn = self._connections[conn_id]
+            conn.ref_count -= 1
+            if conn.ref_count == 0:
+                del self._connections[conn_id]
+                conn_to_close = conn
+                if not self._connections:
+                    self._cached_tools = None
+                    self._cached_resources = None
+        # Close outside the lock — same task as open, so cancel scopes are safe
+        if conn_to_close:
+            await conn_to_close.exit_stack.aclose()
 
     @property
     def is_running(self) -> bool:
         """Check if the MCP server is running."""
-        return bool(self._running_count)
+        return bool(self._connections)
 
     async def _sampling_callback(
         self, context: RequestContext[ClientSession, Any], params: mcp_types.CreateMessageRequestParams
