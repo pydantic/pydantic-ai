@@ -131,7 +131,7 @@ class ExecutionEnvironment(ABC):
         """Tool capabilities this environment supports."""
         ...
 
-    # --- Tool methods ---
+    # --- File and shell operations ---
 
     async def shell(
         self,

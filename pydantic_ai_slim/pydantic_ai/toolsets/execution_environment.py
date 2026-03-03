@@ -22,6 +22,10 @@ from ..exceptions import ModelRetry
 from ..messages import BinaryContent
 from ..toolsets.function import FunctionToolset
 
+if TYPE_CHECKING:
+    from .._run_context import AgentDepsT, RunContext
+    from ..toolsets.abstract import ToolsetTool
+
 IMAGE_MEDIA_TYPES: dict[str, str] = {
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
@@ -31,11 +35,6 @@ IMAGE_MEDIA_TYPES: dict[str, str] = {
     '.bmp': 'image/bmp',
     '.svg': 'image/svg+xml',
 }
-
-if TYPE_CHECKING:
-    from .._run_context import AgentDepsT, RunContext
-    from ..toolsets.abstract import ToolsetTool
-
 
 _TOOL_TO_ENV_METHOD: dict[str, str] = {
     'edit_file': 'replace_str',
