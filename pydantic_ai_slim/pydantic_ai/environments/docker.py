@@ -1,6 +1,6 @@
 """Docker container-based environment for isolated code execution.
 
-Requires the `docker` package: `pip install pydantic-ai-slim[docker-environment]`
+Requires the `docker` package: `pip install pydantic-ai-slim[docker]`
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'The `docker` package is required for DockerEnvironment. '
-        'Install it with: pip install pydantic-ai-slim[docker-environment]'
+        'Install it with: pip install pydantic-ai-slim[docker]'
     ) from _import_error
 
 

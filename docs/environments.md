@@ -72,7 +72,7 @@ File operations (read, write, edit) are confined to the root directory — path 
 
 [`DockerEnvironment`][pydantic_ai.environments.docker.DockerEnvironment] runs commands inside a Docker container with configurable resource limits, security options, and network access.
 
-Requires the `docker` package: `pip install pydantic-ai-slim[docker-environment]`
+Requires the `docker` package: `pip install pydantic-ai-slim[docker]`
 
 ```python {title="environments_docker.py"}
 from pydantic_ai.environments.docker import DockerEnvironment

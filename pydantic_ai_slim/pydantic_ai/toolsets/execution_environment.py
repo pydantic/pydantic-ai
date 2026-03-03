@@ -45,13 +45,10 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
         from pydantic_ai.environments.docker import DockerEnvironment
 
-        env = DockerEnvironment(image='python:3.12-slim')
-        toolset = ExecutionEnvironmentToolset(env)
+        toolset = ExecutionEnvironmentToolset(DockerEnvironment(image='python:3.12-slim'))
 
         agent = Agent('openai:gpt-5.2', toolsets=[toolset])
-
-        async with env:
-            result = await agent.run('Write a script that prints hello')
+        result = await agent.run('Write a script that prints hello')
         ```
     """
 
