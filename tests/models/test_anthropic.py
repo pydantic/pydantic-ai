@@ -44,7 +44,14 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    TextEditorTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -8161,6 +8168,29 @@ async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_k
 
 According to my memory, you live in **Mexico City**.\
 """)
+
+
+async def test_anthropic_text_editor_tool(allow_model_requests: None, anthropic_api_key: str):
+    anthropic_model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key),
+    )
+    agent = Agent(anthropic_model, builtin_tools=[TextEditorTool(max_characters=10_000)])
+
+    with pytest.raises(
+        UserError, match="Built-in `TextEditorTool` requires a 'str_replace_based_edit_tool' tool to be defined."
+    ):
+        await agent.run('Use the text editor to view hello.py')
+
+    @agent.tool_plain
+    def str_replace_based_edit_tool(**command: Any) -> str:
+        cmd = command.get('command')
+        if cmd == 'view':
+            return '1: print("Hello, world!")'
+        return 'OK'  # pragma: no cover
+
+    result = await agent.run('Use the text editor to view hello.py')
+    assert result.output == snapshot('The file hello.py contains: print("Hello, world!")')
 
 
 async def test_anthropic_model_usage_limit_exceeded(

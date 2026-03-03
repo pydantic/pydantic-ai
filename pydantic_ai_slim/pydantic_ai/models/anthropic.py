@@ -18,6 +18,7 @@ from ..builtin_tools import (
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
+    TextEditorTool,
     WebFetchTool,
     WebSearchTool,
 )
@@ -125,6 +126,7 @@ try:
         BetaToolChoiceParam,
         BetaToolParam,
         BetaToolResultBlockParam,
+        BetaToolTextEditor20250728Param,
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
@@ -296,7 +298,7 @@ class AnthropicModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """The set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
+        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, TextEditorTool, MemoryTool, MCPServerTool})
 
     async def request(
         self,
@@ -680,10 +682,21 @@ class AnthropicModel(Model):
                     )
                 )
                 beta_features.add('web-fetch-2025-09-10')
+            elif isinstance(tool, TextEditorTool):  # pragma: no branch
+                tool_name = 'str_replace_based_edit_tool'
+                if tool_name not in model_request_parameters.tool_defs:
+                    raise UserError(f"Built-in `TextEditorTool` requires a '{tool_name}' tool to be defined.")
+                tools = [t for t in tools if t.get('name') != tool_name]
+                text_editor_param = BetaToolTextEditor20250728Param(
+                    name='str_replace_based_edit_tool',
+                    type='text_editor_20250728',
+                )
+                if tool.max_characters is not None:
+                    text_editor_param['max_characters'] = tool.max_characters
+                tools.append(text_editor_param)
             elif isinstance(tool, MemoryTool):  # pragma: no branch
                 if 'memory' not in model_request_parameters.tool_defs:
                     raise UserError("Built-in `MemoryTool` requires a 'memory' tool to be defined.")
-                # Replace the memory tool definition with the built-in memory tool
                 tools = [tool for tool in tools if tool.get('name') != 'memory']
                 tools.append(BetaMemoryTool20250818Param(name='memory', type='memory_20250818'))
                 beta_features.add('context-management-2025-06-27')
