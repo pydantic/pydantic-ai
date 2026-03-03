@@ -541,37 +541,32 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 ),
                             )
                         )
+                    elif builtin_return.status == 'error' and (
+                        (error_text := builtin_return.model_response_object().get('error_text')) is not None
+                    ):
+                        ui_parts.append(
+                            ToolOutputErrorPart(
+                                type=tool_name,
+                                tool_call_id=part.tool_call_id,
+                                input=_safe_args_as_dict(part),
+                                error_text=error_text,
+                                state='output-error',
+                                provider_executed=True,
+                                call_provider_metadata=combined_provider_meta,
+                            )
+                        )
                     else:
-                        response_object = builtin_return.model_response_object()
-                        # These `is_error`/`error_text` fields are only present when the BuiltinToolReturnPart
-                        # was parsed from an incoming VercelAI request. We can't detect errors for other sources
-                        # until BuiltinToolReturnPart has standardized error fields (see https://github.com/pydantic/pydantic-ai/issues/3561).
-                        if response_object.get('is_error') is True and (
-                            (error_text := response_object.get('error_text')) is not None
-                        ):
-                            ui_parts.append(
-                                ToolOutputErrorPart(
-                                    type=tool_name,
-                                    tool_call_id=part.tool_call_id,
-                                    input=_safe_args_as_dict(part),
-                                    error_text=error_text,
-                                    state='output-error',
-                                    provider_executed=True,
-                                    call_provider_metadata=combined_provider_meta,
-                                )
+                        ui_parts.append(
+                            ToolOutputAvailablePart(
+                                type=tool_name,
+                                tool_call_id=part.tool_call_id,
+                                input=_safe_args_as_dict(part),
+                                output=tool_return_output(builtin_return),
+                                state='output-available',
+                                provider_executed=True,
+                                call_provider_metadata=combined_provider_meta,
                             )
-                        else:
-                            ui_parts.append(
-                                ToolOutputAvailablePart(
-                                    type=tool_name,
-                                    tool_call_id=part.tool_call_id,
-                                    input=_safe_args_as_dict(part),
-                                    output=tool_return_output(builtin_return),
-                                    state='output-available',
-                                    provider_executed=True,
-                                    call_provider_metadata=combined_provider_meta,
-                                )
-                            )
+                        )
                 else:
                     call_provider_metadata = dump_provider_metadata(
                         id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
