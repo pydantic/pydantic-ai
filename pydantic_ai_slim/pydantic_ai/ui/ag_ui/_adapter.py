@@ -226,43 +226,22 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
                     if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
                         provider_name, original_id = _load_builtin_tool_call_id(tool_call_id)
-                        if tool_msg.error is not None:
-                            # Persisted AG-UI history has no dedicated retry message type, so retries roundtrip
-                            # through `ToolMessage.error` while the full formatted text stays in `content`.
-                            builder.add(
-                                RetryPromptPart(
-                                    tool_name=tool_name,
-                                    content=tool_msg.error,
-                                    tool_call_id=original_id,
-                                )
+                        builder.add(
+                            BuiltinToolReturnPart(
+                                tool_name=tool_name,
+                                content=tool_msg.content,
+                                tool_call_id=original_id,
+                                provider_name=provider_name,
                             )
-                        else:
-                            builder.add(
-                                BuiltinToolReturnPart(
-                                    tool_name=tool_name,
-                                    content=tool_msg.content,
-                                    tool_call_id=original_id,
-                                    provider_name=provider_name,
-                                )
-                            )
+                        )
                     else:
-                        if tool_msg.error is not None:
-                            # See note above: `ToolMessage.error` is our persisted-history carrier for retries.
-                            builder.add(
-                                RetryPromptPart(
-                                    tool_name=tool_name,
-                                    content=tool_msg.error,
-                                    tool_call_id=tool_call_id,
-                                )
+                        builder.add(
+                            ToolReturnPart(
+                                tool_name=tool_name,
+                                content=tool_msg.content,
+                                tool_call_id=tool_call_id,
                             )
-                        else:
-                            builder.add(
-                                ToolReturnPart(
-                                    tool_name=tool_name,
-                                    content=tool_msg.content,
-                                    tool_call_id=tool_call_id,
-                                )
-                            )
+                        )
 
                 case ActivityMessage():
                     pass

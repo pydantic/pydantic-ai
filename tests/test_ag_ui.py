@@ -2040,7 +2040,7 @@ async def test_adapter_dump_messages_with_builtin_tools() -> None:
     )
 
 
-async def test_adapter_dump_messages_with_retry_roundtrip() -> None:
+async def test_adapter_dump_messages_with_retry() -> None:
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Do something')]),
         ModelResponse(
@@ -2084,55 +2084,6 @@ async def test_adapter_dump_messages_with_retry_roundtrip() -> None:
                 'tool_call_id': 'tool_789',
                 'error': 'Tool failed with error',
             },
-        ]
-    )
-
-    reloaded_messages = AGUIAdapter.load_messages(ui_messages)
-    _sync_timestamps(messages, reloaded_messages)
-    assert reloaded_messages == messages
-
-
-async def test_adapter_load_messages_tool_error() -> None:
-    messages = [
-        AssistantMessage(
-            id='assistant_1',
-            tool_calls=[
-                ToolCall(
-                    id='tool_123',
-                    function=FunctionCall(name='my_tool', arguments='{"arg":"value"}'),
-                )
-            ],
-        ),
-        ToolMessage(
-            id='tool_1',
-            content='Tool failed with error\n\nFix the errors and try again.',
-            tool_call_id='tool_123',
-            error='Tool failed with error',
-        ),
-    ]
-
-    assert AGUIAdapter.load_messages(messages) == snapshot(
-        [
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='my_tool',
-                        tool_call_id='tool_123',
-                        args='{"arg":"value"}',
-                    )
-                ],
-                timestamp=IsDatetime(),
-            ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content='Tool failed with error',
-                        tool_name='my_tool',
-                        tool_call_id='tool_123',
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
         ]
     )
 
