@@ -2,7 +2,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import NativeOutput
+from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.profiles import ModelProfile
 
 
@@ -103,4 +103,37 @@ async def test_native_output_no_injection_by_default():
 
     params = model.last_model_request_parameters
     assert params
+    assert params.prompted_output_instructions is None
+
+
+async def test_prompted_output_template_false():
+    """Test that `template=False` on `PromptedOutput` disables the schema prompt entirely."""
+    model = TestModel(custom_output_text='{"name": "Paris", "population": 9000000}')
+    agent = Agent(model, output_type=PromptedOutput(City, template=False))
+
+    await agent.run('Paris')
+
+    params = model.last_model_request_parameters
+    assert params
+    assert params.prompted_output_template is False
+    assert params.prompted_output_instructions is None
+
+
+async def test_native_output_template_false():
+    """Test that `template=False` on `NativeOutput` disables the schema prompt,
+    even when the profile would normally inject one."""
+    profile = ModelProfile(
+        supports_json_schema_output=True,
+        default_structured_output_mode='native',
+        native_output_requires_schema_in_instructions=True,
+        prompted_output_template='SCHEMA: {schema}',
+    )
+    model = TestModel(profile=profile, custom_output_text='{"name": "Tokyo", "population": 9000000}')
+    agent = Agent(model, output_type=NativeOutput(City, template=False))
+
+    await agent.run('Tokyo')
+
+    params = model.last_model_request_parameters
+    assert params
+    assert params.prompted_output_template is False
     assert params.prompted_output_instructions is None
