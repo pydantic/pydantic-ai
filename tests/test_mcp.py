@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import re
 from datetime import timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -143,6 +144,49 @@ async def test_aexit_called_more_times_than_aenter():
 
     with pytest.raises(ValueError, match='MCPServer.__aexit__ called more times than __aenter__'):
         await server.__aexit__(None, None, None)
+
+
+async def test_aexit_concurrent_does_not_corrupt_running_count():
+    """Regression test: concurrent __aexit__ calls must not corrupt _running_count.
+
+    Injects a yield point before real lock acquisition so both tasks pass the
+    pre-lock guard simultaneously — the exact interleaving the TOCTOU race required.
+
+    Old code (guard outside lock):
+      Task A reads _running_count == 1, passes guard, yields.
+      Task B reads _running_count == 1, passes guard, yields.
+      Task A acquires lock, decrements to 0.
+      Task B acquires lock, decrements to -1.  ← bug: count corrupted, no ValueError
+
+    New code (guard inside lock):
+      Task A acquires lock, reads 1, decrements to 0, releases.
+      Task B acquires lock, reads 0, raises ValueError correctly.  ← fix verified
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    # One active entry — the race only matters when both tasks see count > 0.
+    server._running_count = 1  # pyright: ignore[reportPrivateUsage]
+
+    # Replace the real lock with one that yields before acquiring,
+    # opening the interleaving window the old code left unprotected.
+    class InterleavingLock(asyncio.Lock):
+        async def acquire(self) -> Literal[True]:
+            await asyncio.sleep(0)  # yield — lets the other task reach the same point
+            return await super().acquire()
+
+    server._enter_lock = InterleavingLock()  # pyright: ignore[reportPrivateUsage]
+
+    results = await asyncio.gather(
+        server.__aexit__(None, None, None),
+        server.__aexit__(None, None, None),
+        return_exceptions=True,
+    )
+
+    # Exactly one exit must succeed and one must raise ValueError (not silently
+    # corrupt the count). With the old code both would succeed and count == -1.
+    errors = [r for r in results if isinstance(r, ValueError)]
+    assert len(errors) == 1, f'Expected 1 ValueError, got {len(errors)}: {results}'
+    assert server._running_count == 0  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):

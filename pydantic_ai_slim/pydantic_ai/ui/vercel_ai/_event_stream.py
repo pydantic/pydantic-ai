@@ -32,7 +32,7 @@ from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
 from .._event_stream import describe_file
-from ._utils import dump_provider_metadata, iter_metadata_chunks, iter_tool_approval_responses
+from ._utils import dump_provider_metadata, iter_metadata_chunks, iter_tool_approval_responses, tool_return_output
 from .request_types import RequestData
 from .response_types import (
     BaseChunk,
@@ -77,6 +77,15 @@ VERCEL_AI_DSP_HEADERS = {'x-vercel-ai-ui-message-stream': 'v1'}
 def _json_dumps(obj: Any) -> str:
     """Dump an object to JSON string."""
     return to_json(obj).decode('utf-8')
+
+
+def _tool_return_with_files(part: BaseToolReturnPart) -> Any:
+    """Wrap tool_return_output with file descriptions for multimodal tool returns."""
+    output = tool_return_output(part)
+    if file_descriptions := [describe_file(f) for f in part.files]:
+        text = output if isinstance(output, str) else json.dumps(output) if output else ''
+        return (text + '\n' + '\n'.join(file_descriptions)).strip() if text else '\n'.join(file_descriptions)
+    return output
 
 
 @dataclass
@@ -262,7 +271,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseChunk]:
         yield ToolOutputAvailableChunk(
             tool_call_id=part.tool_call_id,
-            output=self._tool_return_output(part),
+            output=_tool_return_with_files(part),
             provider_executed=True,
         )
 
@@ -280,7 +289,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         elif isinstance(part, RetryPromptPart):
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
         else:
-            yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=self._tool_return_output(part))
+            yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=_tool_return_with_files(part))
 
         # ToolOutputAvailableChunk/ToolOutputErrorChunk.output may hold user parts
         # (e.g. text, images) that Vercel AI does not currently have chunk types for.
@@ -291,16 +300,3 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if isinstance(part, ToolReturnPart):
             for chunk in iter_metadata_chunks(part):
                 yield chunk
-
-    def _tool_return_output(self, part: BaseToolReturnPart) -> Any:
-        output = part.model_response_str()
-        if file_descriptions := [describe_file(f) for f in part.files]:
-            if output:
-                return output + '\n' + '\n'.join(file_descriptions)
-            return '\n'.join(file_descriptions)
-        if not output:
-            return output
-        try:
-            return json.loads(output)
-        except (json.JSONDecodeError, ValueError):
-            return output

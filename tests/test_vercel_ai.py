@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import AsyncIterator, MutableMapping
 from typing import Any, cast
 from unittest.mock import Mock
@@ -2488,6 +2489,7 @@ async def test_tool_approval_request_emission():
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='delete_file', args='{"path": "test.txt"}', tool_call_id='delete_1')],
@@ -3474,12 +3476,12 @@ async def test_adapter_dump_messages_with_tools():
                 'parts': [
                     {'type': 'text', 'text': 'Let me search for that.', 'state': 'done', 'provider_metadata': None},
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'web_search',
+                        'type': 'tool-web_search',
                         'tool_call_id': 'tool_123',
                         'state': 'output-available',
-                        'input': '{"query":"test query"}',
-                        'output': '{"results":["result1","result2"]}',
+                        'input': {'query': 'test query'},
+                        'provider_executed': False,
+                        'output': {'results': ['result1', 'result2']},
                         'call_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
@@ -3541,11 +3543,11 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'send_data',
+                        'type': 'tool-send_data',
                         'tool_call_id': 'call_1',
                         'state': 'output-available',
-                        'input': '{}',
+                        'input': {},
+                        'provider_executed': False,
                         'output': 'Data sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
@@ -3614,11 +3616,11 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'send_events',
+                        'type': 'tool-send_events',
                         'tool_call_id': 'call_1',
                         'state': 'output-available',
-                        'input': '{}',
+                        'input': {},
+                        'provider_executed': False,
                         'output': 'Events sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
@@ -3703,11 +3705,11 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'send_data',
+                        'type': 'tool-send_data',
                         'tool_call_id': 'call_1',
                         'state': 'output-available',
-                        'input': '{}',
+                        'input': {},
+                        'provider_executed': False,
                         'output': 'Data sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
@@ -3862,8 +3864,8 @@ async def test_adapter_dump_messages_with_builtin_tools():
                         'type': 'tool-web_search',
                         'tool_call_id': 'tool_456',
                         'state': 'output-available',
-                        'input': '{"query":"test"}',
-                        'output': '{"status":"completed"}',
+                        'input': {'query': 'test'},
+                        'output': {'status': 'completed'},
                         'provider_executed': True,
                         'call_provider_metadata': {
                             'pydantic_ai': {
@@ -3922,7 +3924,7 @@ async def test_adapter_dump_messages_with_builtin_tool_without_return():
                         'type': 'tool-web_search',
                         'tool_call_id': 'orphan_tool_id',
                         'state': 'input-available',
-                        'input': '{"query":"orphan query"}',
+                        'input': {'query': 'orphan query'},
                         'provider_executed': True,
                         'call_provider_metadata': {'pydantic_ai': {'provider_name': 'openai'}},
                         'approval': None,
@@ -4081,11 +4083,12 @@ async def test_adapter_dump_messages_with_retry():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'my_tool',
+                        'type': 'tool-my_tool',
                         'tool_call_id': 'tool_789',
                         'state': 'output-error',
-                        'input': '{"arg":"value"}',
+                        'raw_input': None,
+                        'input': {'arg': 'value'},
+                        'provider_executed': False,
                         'error_text': """\
 Tool failed with error
 
@@ -4270,7 +4273,7 @@ async def test_adapter_dump_messages_text_with_interruption():
                         'type': 'tool-test',
                         'tool_call_id': 't1',
                         'state': 'output-available',
-                        'input': '{}',
+                        'input': {},
                         'output': 'result',
                         'provider_executed': True,
                         'call_provider_metadata': {
@@ -4327,33 +4330,167 @@ async def test_adapter_dump_load_roundtrip():
 
 
 async def test_adapter_dump_load_roundtrip_without_timestamps():
-    """Test that dump_messages and load_messages work when messages don't have timestamps."""
-    original_messages = [
+    """Test that dump_messages and load_messages work when ModelRequest has no timestamp (None)."""
+    original_messages: list[ModelRequest | ModelResponse] = [
         ModelRequest(
             parts=[
                 UserPromptPart(content='User message'),
-            ]
+            ],
+            timestamp=None,
         ),
         ModelResponse(
             parts=[
                 TextPart(content='Response text'),
-            ]
+            ],
         ),
     ]
-
-    for msg in original_messages:
-        delattr(msg, 'timestamp')
 
     ui_messages = VercelAIAdapter.dump_messages(original_messages)
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
 
     _sync_timestamps(original_messages, reloaded_messages)
+    assert reloaded_messages == original_messages
 
-    for msg in reloaded_messages:
-        if hasattr(msg, 'timestamp'):  # pragma: no branch
-            delattr(msg, 'timestamp')
 
-    assert len(reloaded_messages) == len(original_messages)
+async def test_adapter_dump_messages_deterministic_ids():
+    """Test that dump_messages produces deterministic IDs for the same messages.
+
+    Uses provider_response_id for responses and run_id-based IDs for requests.
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4263
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are a helpful assistant.'),
+                UserPromptPart(content='Hello!'),
+            ],
+            run_id='run-abc',
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Hi there!'),
+            ],
+            provider_response_id='resp-123',
+        ),
+    ]
+
+    result1 = VercelAIAdapter.dump_messages(messages)
+    result2 = VercelAIAdapter.dump_messages(messages)
+
+    # run_id-based IDs for request parts (message_index 0 and 1)
+    assert result1[0].id == 'run-abc-0'
+    assert result1[1].id == 'run-abc-1'
+    # provider_response_id with message_index for response
+    assert result1[2].id == 'resp-123-2'
+    # Deterministic across calls
+    assert result1[0].id == result2[0].id
+    assert result1[1].id == result2[1].id
+    assert result1[2].id == result2[2].id
+
+
+async def test_adapter_dump_messages_custom_id_generator():
+    """Test that dump_messages accepts a custom message ID generator."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System'),
+                UserPromptPart(content='User'),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Assistant'),
+            ]
+        ),
+    ]
+
+    generated_ids: list[str] = []
+
+    def custom_id_generator(msg: ModelRequest | ModelResponse, role: str, message_index: int) -> str:
+        msg_id = f'custom-{message_index}-{msg.kind}-{role}'
+        generated_ids.append(msg_id)
+        return msg_id
+
+    ui_messages = VercelAIAdapter.dump_messages(messages, generate_message_id=custom_id_generator)
+
+    assert len(ui_messages) == 3
+    assert ui_messages[0].id == 'custom-0-request-system'
+    assert ui_messages[1].id == 'custom-1-request-user'
+    assert ui_messages[2].id == 'custom-2-response-assistant'
+    assert generated_ids == [
+        'custom-0-request-system',
+        'custom-1-request-user',
+        'custom-2-response-assistant',
+    ]
+
+
+async def test_adapter_dump_messages_id_fallback():
+    """Test that messages without run_id or provider_response_id get deterministic UUID5 IDs."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System'),
+                UserPromptPart(content='User'),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Assistant'),
+            ]
+        ),
+    ]
+
+    result1 = VercelAIAdapter.dump_messages(messages)
+    result2 = VercelAIAdapter.dump_messages(messages)
+
+    # All IDs should be valid UUID strings (UUID5 fallback)
+    for msg in result1:
+        uuid.UUID(msg.id)
+
+    # Deterministic across calls
+    assert [m.id for m in result1] == [m.id for m in result2]
+
+    # Each ID should be unique
+    ids = [m.id for m in result1]
+    assert len(ids) == len(set(ids))
+
+
+async def test_adapter_dump_messages_with_invalid_json_args():
+    """Test that dump_messages handles invalid JSON args gracefully."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='test',
+                    args='{invalid json',
+                    tool_call_id='call_1',
+                ),
+            ]
+        ),
+    ]
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'tool-test',
+                        'tool_call_id': 'call_1',
+                        'state': 'input-available',
+                        'provider_executed': False,
+                        'input': '{invalid json',
+                        'call_provider_metadata': None,
+                        'approval': None,
+                    }
+                ],
+            }
+        ]
+    )
 
 
 async def test_adapter_dump_messages_text_before_thinking():
@@ -4415,11 +4552,11 @@ async def test_adapter_dump_messages_tool_call_without_return():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'get_weather',
+                        'type': 'tool-get_weather',
                         'tool_call_id': 'tool_abc',
                         'state': 'input-available',
-                        'input': '{"city":"New York"}',
+                        'provider_executed': False,
+                        'input': {'city': 'New York'},
                         'call_provider_metadata': None,
                         'approval': None,
                     }
@@ -4450,11 +4587,11 @@ async def test_adapter_dump_messages_assistant_starts_with_tool():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 't',
+                        'type': 'tool-t',
                         'tool_call_id': 'tc1',
                         'state': 'input-available',
-                        'input': '{}',
+                        'provider_executed': False,
+                        'input': {},
                         'call_provider_metadata': None,
                         'approval': None,
                     },
@@ -4791,11 +4928,11 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'my_tool',
+                        'type': 'tool-my_tool',
                         'tool_call_id': 'tool_abc',
                         'state': 'output-available',
-                        'input': '{"arg":"value"}',
+                        'input': {'arg': 'value'},
+                        'provider_executed': False,
                         'output': 'result',
                         'call_provider_metadata': {
                             'pydantic_ai': {
@@ -4998,7 +5135,7 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                         'type': 'tool-web_search',
                         'tool_call_id': 'bt_123',
                         'state': 'output-available',
-                        'input': '{"query":"test"}',
+                        'input': {'query': 'test'},
                         'output': '{"results":[]}',
                         'provider_executed': True,
                         'call_provider_metadata': {
@@ -5073,7 +5210,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                         'type': 'tool-web_search',
                         'tool_call_id': 'bt_err_123',
                         'state': 'output-error',
-                        'input': '{"query":"test"}',
+                        'input': {'query': 'test'},
                         'raw_input': None,
                         'error_text': 'Search failed: rate limit exceeded',
                         'provider_executed': True,
@@ -5332,11 +5469,12 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'failing_tool',
+                        'type': 'tool-failing_tool',
                         'tool_call_id': 'tc_fail',
                         'state': 'output-error',
-                        'input': '{"x":1}',
+                        'raw_input': None,
+                        'input': {'x': 1},
+                        'provider_executed': False,
                         'error_text': """\
 Tool execution failed
 
@@ -5918,44 +6056,43 @@ class TestSdkVersion:
 
 
 @pytest.mark.parametrize(
-    'model_response_str,files,expected',
+    'model_response_object,files,expected',
     [
         pytest.param(
-            'hello',
+            {'return_value': 'hello'},
             [BinaryContent(data=b'x', media_type='image/png')],
             snapshot('hello\n[File: image/png]'),
             id='string_with_files',
         ),
         pytest.param(
-            '',
+            {},
             [BinaryContent(data=b'x', media_type='audio/wav')],
             snapshot('[File: audio/wav]'),
             id='empty_with_files',
         ),
         pytest.param(
-            '[1, 2]',
+            {'return_value': [1, 2]},
             [BinaryContent(data=b'x', media_type='image/png')],
             snapshot('[1, 2]\n[File: image/png]'),
-            id='list_str_with_files',
+            id='list_with_files',
         ),
         pytest.param(
-            '',
+            {},
             [],
-            snapshot(''),
+            snapshot({}),
             id='empty_no_files',
         ),
     ],
 )
-def test_tool_return_output_edge_cases(model_response_str: str, files: list[BinaryContent], expected: str):
-    """Test `_tool_return_output` with files and various `model_response_str` values."""
-    request = SubmitMessage(
-        id='test',
-        messages=[UIMessage(id='test', role='user', parts=[TextUIPart(text='Test')])],
-    )
-    stream = VercelAIEventStream(run_input=request)
+def test_tool_return_output_edge_cases(
+    model_response_object: dict[str, Any], files: list[BinaryContent], expected: str
+):
+    """Test `_tool_return_with_files` with files and various `model_response_object` values."""
+    from pydantic_ai.ui.vercel_ai._event_stream import _tool_return_with_files  # pyright: ignore[reportPrivateUsage]
+
     mock_part = Mock()
-    mock_part.model_response_str.return_value = model_response_str
+    mock_part.model_response_object.return_value = model_response_object
     mock_part.files = files
 
-    result = stream._tool_return_output(mock_part)  # pyright: ignore[reportPrivateUsage]
+    result = _tool_return_with_files(mock_part)
     assert result == expected
