@@ -271,7 +271,7 @@ class XaiModel(Model):
             file_content: list[UserContent] = []
             for part in tool_results:
                 if isinstance(part, ToolReturnPart):
-                    text, files = await self._map_tool_return_output(part)
+                    text, files = part.model_response_str_and_user_content()
                     xai_messages.append(tool_result(text))
                     file_content.extend(files)
                 else:
@@ -492,15 +492,6 @@ class XaiModel(Model):
             return user(*content_items)
 
         return None
-
-    async def _map_tool_return_output(self, part: ToolReturnPart) -> tuple[str, list[UserContent]]:
-        """Map a `ToolReturnPart` to xAI tool_result format, handling multimodal content.
-
-        xAI tool_result only accepts text strings, so multimodal files are extracted
-        and returned for sending as a separate user message. Validation of supported
-        file types is handled by `_map_user_prompt`.
-        """
-        return part.fallback_tool_return()
 
     async def _create_chat(
         self,
