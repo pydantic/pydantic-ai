@@ -1946,6 +1946,34 @@ async def test_adapter_dump_messages_multimodal_user_prompt() -> None:
     )
 
 
+async def test_adapter_dump_messages_single_text_list_user_prompt() -> None:
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['Hello from a list']),
+            ]
+        )
+    ]
+
+    assert _dump_ag_ui_messages(AGUIAdapter.dump_messages(messages)) == snapshot(
+        [
+            {'id': IsStr(), 'role': 'user', 'content': 'Hello from a list', 'name': None},
+        ]
+    )
+
+
+async def test_adapter_dump_messages_cache_point_only_user_prompt_is_skipped() -> None:
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=[CachePoint()]),
+            ]
+        )
+    ]
+
+    assert AGUIAdapter.dump_messages(messages) == []
+
+
 async def test_adapter_dump_messages_with_tool_interruption() -> None:
     messages = [
         ModelRequest(parts=[UserPromptPart(content='Search for something')]),
@@ -2000,6 +2028,34 @@ async def test_adapter_dump_messages_with_tool_interruption() -> None:
     )
 
 
+async def test_adapter_dump_messages_tool_call_without_return() -> None:
+    messages = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='search', args='{"query":"test query"}', tool_call_id='tool_123'),
+            ]
+        ),
+    ]
+
+    assert _dump_ag_ui_messages(AGUIAdapter.dump_messages(messages)) == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'content': None,
+                'name': None,
+                'tool_calls': [
+                    {
+                        'id': 'tool_123',
+                        'type': 'function',
+                        'function': {'name': 'search', 'arguments': '{"query":"test query"}'},
+                    }
+                ],
+            },
+        ]
+    )
+
+
 async def test_adapter_dump_messages_with_builtin_tools() -> None:
     messages = [
         ModelResponse(
@@ -2041,6 +2097,39 @@ async def test_adapter_dump_messages_with_builtin_tools() -> None:
                 'content': '{"status":"completed"}',
                 'tool_call_id': 'pyd_ai_builtin|function|search_1',
                 'error': None,
+            },
+        ]
+    )
+
+
+async def test_adapter_dump_messages_builtin_tool_without_return() -> None:
+    messages = [
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args='{"query":"test"}',
+                    tool_call_id='search_1',
+                    provider_name='function',
+                ),
+            ]
+        ),
+    ]
+
+    assert _dump_ag_ui_messages(AGUIAdapter.dump_messages(messages)) == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'content': None,
+                'name': None,
+                'tool_calls': [
+                    {
+                        'id': 'pyd_ai_builtin|function|search_1',
+                        'type': 'function',
+                        'function': {'name': 'web_search', 'arguments': '{"query":"test"}'},
+                    }
+                ],
             },
         ]
     )
@@ -2094,6 +2183,29 @@ async def test_adapter_dump_messages_with_retry() -> None:
     )
 
 
+async def test_adapter_dump_messages_retry_without_tool_name() -> None:
+    messages = [
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    content='Output validation failed: expected integer',
+                )
+            ]
+        ),
+    ]
+
+    assert _dump_ag_ui_messages(AGUIAdapter.dump_messages(messages)) == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'content': 'Validation feedback:\nOutput validation failed: expected integer\n\nFix the errors and try again.',
+                'name': None,
+            },
+        ]
+    )
+
+
 async def test_adapter_dump_messages_thinking_is_skipped_without_merging_text() -> None:
     messages = [
         ModelResponse(
@@ -2113,6 +2225,18 @@ async def test_adapter_dump_messages_thinking_is_skipped_without_merging_text() 
     )
 
 
+async def test_adapter_dump_messages_thinking_only_is_skipped() -> None:
+    messages = [
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='This is not persisted'),
+            ]
+        ),
+    ]
+
+    assert AGUIAdapter.dump_messages(messages) == []
+
+
 async def test_adapter_dump_messages_assistant_file_raises() -> None:
     messages = [
         ModelResponse(
@@ -2123,6 +2247,24 @@ async def test_adapter_dump_messages_assistant_file_raises() -> None:
     ]
 
     with pytest.raises(ValueError, match='assistant file parts'):
+        AGUIAdapter.dump_messages(messages)
+
+
+async def test_adapter_dump_messages_orphaned_builtin_tool_return_raises() -> None:
+    messages = [
+        ModelResponse(
+            parts=[
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content='{"status":"completed"}',
+                    tool_call_id='search_1',
+                    provider_name='function',
+                ),
+            ]
+        ),
+    ]
+
+    with pytest.raises(ValueError, match='Built-in tool return parts must be paired'):
         AGUIAdapter.dump_messages(messages)
 
 
