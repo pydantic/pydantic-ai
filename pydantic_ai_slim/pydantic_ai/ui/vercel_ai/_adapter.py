@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -35,15 +35,18 @@ from ...messages import (
     VideoUrl,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT
-from .. import MessagesBuilder, UIAdapter, UIEventStream
+from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
+from .. import MessagesBuilder, UIAdapter
 from ._event_stream import VercelAIEventStream
-from ._utils import dump_provider_metadata, load_provider_metadata
+from ._utils import (
+    dump_provider_metadata,
+    iter_metadata_chunks,
+    iter_tool_approval_responses,
+    load_provider_metadata,
+    tool_return_output,
+)
 from .request_types import (
     DataUIPart,
-    DynamicToolInputAvailablePart,
-    DynamicToolOutputAvailablePart,
-    DynamicToolOutputErrorPart,
     DynamicToolUIPart,
     FileUIPart,
     ProviderMetadata,
@@ -60,15 +63,58 @@ from .request_types import (
     UIMessage,
     UIMessagePart,
 )
-from .response_types import BaseChunk
+from .response_types import BaseChunk, DataChunk, FileChunk, SourceDocumentChunk, SourceUrlChunk
 
 if TYPE_CHECKING:
-    pass
+    from starlette.requests import Request
+    from starlette.responses import Response
 
+    from ...agent import AbstractAgent
+    from ...agent.abstract import AgentMetadata, Instructions
+    from ...builtin_tools import AbstractBuiltinTool
+    from ...models import KnownModelName, Model
+    from ...output import OutputSpec
+    from ...settings import ModelSettings
+    from ...tools import DeferredToolApprovalResult
+    from ...toolsets import AbstractToolset
+    from ...usage import RunUsage, UsageLimits
+    from .. import UIEventStream
+    from .._adapter import DispatchDepsT, DispatchOutputDataT
+    from .._event_stream import OnCompleteFunc
 
 __all__ = ['VercelAIAdapter']
 
 request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
+
+
+def _generate_message_id(
+    msg: ModelRequest | ModelResponse, role: Literal['system', 'user', 'assistant'], message_index: int
+) -> str:
+    """Generate a deterministic message ID based on message content and position.
+
+    Priority order:
+    1. For `ModelResponse` with `provider_response_id` set, use '{provider_response_id}-{message_index}'.
+    2. For any message with run_id set, use '{run_id}-{message_index}'.
+    3. Fallback: UUID5 from 'timestamp-kind-role-message_index'.
+    """
+    if isinstance(msg, ModelResponse) and msg.provider_response_id:
+        return f'{msg.provider_response_id}-{message_index}'
+    if msg.run_id:
+        return f'{msg.run_id}-{message_index}'
+    ts_str = msg.timestamp.isoformat() if msg.timestamp else ''
+    return str(uuid.uuid5(uuid.NAMESPACE_OID, f'{ts_str}-{msg.kind}-{role}-{message_index}'))
+
+
+def _safe_args_as_dict(part: ToolCallPart | BuiltinToolCallPart) -> dict[str, Any] | str:
+    """Safely convert tool call args to dict, falling back to JSON string on parse failure.
+
+    In practice, incomplete tool calls don't reach dump_messages(), but this provides
+    defensive handling for edge cases like interrupted streaming or invalid JSON.
+    """
+    try:
+        return part.args_as_dict()
+    except (ValueError, AssertionError):
+        return part.args_as_json_str()
 
 
 @dataclass
@@ -77,16 +123,91 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
     _: KW_ONLY
     sdk_version: Literal[5, 6] = 5
-    """Vercel AI SDK version to target. Default is 5 for backwards compatibility."""
+    """Vercel AI SDK version to target. Default is 5 for backwards compatibility.
+
+    Setting `sdk_version=6` enables tool approval streaming for human-in-the-loop workflows.
+    """
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RequestData:
         """Build a Vercel AI run input object from the request body."""
         return request_data_ta.validate_json(body)
 
+    @classmethod
+    async def from_request(
+        cls,
+        request: Request,
+        *,
+        agent: AbstractAgent[AgentDepsT, OutputDataT],
+        sdk_version: Literal[5, 6] = 5,
+        **kwargs: Any,
+    ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
+        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with the `sdk_version` parameter."""
+        return await super().from_request(request, agent=agent, sdk_version=sdk_version, **kwargs)
+
+    @classmethod
+    async def dispatch_request(
+        cls,
+        request: Request,
+        *,
+        agent: AbstractAgent[DispatchDepsT, DispatchOutputDataT],
+        sdk_version: Literal[5, 6] = 5,
+        message_history: Sequence[ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: Model | KnownModelName | str | None = None,
+        instructions: Instructions[DispatchDepsT] = None,
+        deps: DispatchDepsT = None,
+        output_type: OutputSpec[Any] | None = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: RunUsage | None = None,
+        metadata: AgentMetadata[DispatchDepsT] | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        on_complete: OnCompleteFunc[BaseChunk] | None = None,
+        **kwargs: Any,
+    ) -> Response:
+        """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with the `sdk_version` parameter."""
+        return await super().dispatch_request(
+            request,
+            agent=agent,
+            sdk_version=sdk_version,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            model=model,
+            instructions=instructions,
+            deps=deps,
+            output_type=output_type,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            metadata=metadata,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            builtin_tools=builtin_tools,
+            on_complete=on_complete,
+            **kwargs,
+        )
+
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         """Build a Vercel AI event stream transformer."""
         return VercelAIEventStream(self.run_input, accept=self.accept, sdk_version=self.sdk_version)
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        """Extract deferred tool results from Vercel AI messages with approval responses."""
+        if self.sdk_version < 6:
+            return None
+        approvals: dict[str, bool | DeferredToolApprovalResult] = {}
+        for tool_call_id, approval in iter_tool_approval_responses(self.run_input.messages):
+            if approval.approved:
+                approvals[tool_call_id] = True
+            elif approval.reason:
+                approvals[tool_call_id] = ToolDenied(message=approval.reason)
+            else:
+                approvals[tool_call_id] = False
+        return DeferredToolResults(approvals=approvals) if approvals else None
 
     @cached_property
     def messages(self) -> list[ModelMessage]:
@@ -397,7 +518,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             ToolOutputErrorPart(
                                 type=tool_name,
                                 tool_call_id=part.tool_call_id,
-                                input=part.args_as_json_str(),
+                                input=_safe_args_as_dict(part),
                                 error_text=error_text,
                                 state='output-error',
                                 provider_executed=True,
@@ -405,13 +526,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
                     else:
-                        content = builtin_return.model_response_str()
                         ui_parts.append(
                             ToolOutputAvailablePart(
                                 type=tool_name,
                                 tool_call_id=part.tool_call_id,
-                                input=part.args_as_json_str(),
-                                output=content,
+                                input=_safe_args_as_dict(part),
+                                output=tool_return_output(builtin_return),
                                 state='output-available',
                                 provider_executed=True,
                                 call_provider_metadata=combined_provider_meta,
@@ -425,7 +545,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         ToolInputAvailablePart(
                             type=tool_name,
                             tool_call_id=part.tool_call_id,
-                            input=part.args_as_json_str(),
+                            input=_safe_args_as_dict(part),
                             state='input-available',
                             provider_executed=True,
                             call_provider_metadata=call_provider_metadata,
@@ -436,38 +556,43 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 call_provider_metadata = dump_provider_metadata(
                     id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
                 )
+                tool_type = f'tool-{part.tool_name}'
 
                 if isinstance(tool_result, ToolReturnPart):
-                    content = tool_result.model_response_str()
                     ui_parts.append(
-                        DynamicToolOutputAvailablePart(
-                            tool_name=part.tool_name,
+                        ToolOutputAvailablePart(
+                            type=tool_type,
                             tool_call_id=part.tool_call_id,
-                            input=part.args_as_json_str(),
-                            output=content,
+                            input=_safe_args_as_dict(part),
+                            output=tool_return_output(tool_result),
                             state='output-available',
+                            provider_executed=False,
                             call_provider_metadata=call_provider_metadata,
                         )
                     )
+                    # Check for Vercel AI chunks returned by tool calls via metadata.
+                    ui_parts.extend(_extract_metadata_ui_parts(tool_result))
                 elif isinstance(tool_result, RetryPromptPart):
                     error_text = tool_result.model_response()
                     ui_parts.append(
-                        DynamicToolOutputErrorPart(
-                            tool_name=part.tool_name,
+                        ToolOutputErrorPart(
+                            type=tool_type,
                             tool_call_id=part.tool_call_id,
-                            input=part.args_as_json_str(),
+                            input=_safe_args_as_dict(part),
                             error_text=error_text,
                             state='output-error',
+                            provider_executed=False,
                             call_provider_metadata=call_provider_metadata,
                         )
                     )
                 else:
                     ui_parts.append(
-                        DynamicToolInputAvailablePart(
-                            tool_name=part.tool_name,
+                        ToolInputAvailablePart(
+                            type=tool_type,
                             tool_call_id=part.tool_call_id,
-                            input=part.args_as_json_str(),
+                            input=_safe_args_as_dict(part),
                             state='input-available',
+                            provider_executed=False,
                             call_provider_metadata=call_provider_metadata,
                         )
                     )
@@ -480,11 +605,19 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def dump_messages(
         cls,
         messages: Sequence[ModelMessage],
+        *,
+        generate_message_id: Callable[[ModelRequest | ModelResponse, Literal['system', 'user', 'assistant'], int], str]
+        | None = None,
     ) -> list[UIMessage]:
         """Transform Pydantic AI messages into Vercel AI messages.
 
         Args:
             messages: A sequence of ModelMessage objects to convert
+            generate_message_id: Optional custom function to generate message IDs. If provided,
+                it receives the message, the role ('system', 'user', or 'assistant'), and the
+                message index (incremented per UIMessage appended), and should return a unique
+                string ID. If not provided, uses `provider_response_id` for responses,
+                run_id-based IDs for messages with run_id, or a deterministic UUID5 fallback.
 
         Returns:
             A list of UIMessage objects in Vercel AI format
@@ -499,23 +632,34 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, RetryPromptPart) and part.tool_name:
                         tool_results[part.tool_call_id] = part
 
+        id_generator = generate_message_id or _generate_message_id
         result: list[UIMessage] = []
+        message_index = 0
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
                 system_ui_parts, user_ui_parts = cls._dump_request_message(msg)
                 if system_ui_parts:
-                    result.append(UIMessage(id=str(uuid.uuid4()), role='system', parts=system_ui_parts))
+                    result.append(
+                        UIMessage(id=id_generator(msg, 'system', message_index), role='system', parts=system_ui_parts)
+                    )
+                    message_index += 1
 
                 if user_ui_parts:
-                    result.append(UIMessage(id=str(uuid.uuid4()), role='user', parts=user_ui_parts))
+                    result.append(
+                        UIMessage(id=id_generator(msg, 'user', message_index), role='user', parts=user_ui_parts)
+                    )
+                    message_index += 1
 
             elif isinstance(  # pragma: no branch
                 msg, ModelResponse
             ):
                 ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results)
                 if ui_parts:  # pragma: no branch
-                    result.append(UIMessage(id=str(uuid.uuid4()), role='assistant', parts=ui_parts))
+                    result.append(
+                        UIMessage(id=id_generator(msg, 'assistant', message_index), role='assistant', parts=ui_parts)
+                    )
+                    message_index += 1
             else:
                 assert_never(msg)
 
@@ -543,3 +687,42 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 assert_never(item)
 
     return ui_parts
+
+
+def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:
+    """Convert data-carrying chunks from tool metadata into UIMessageParts.
+
+    Both this dump path and the streaming path use ``iter_metadata_chunks``,
+    but the streaming path yields raw chunk objects (preserving ``transient``
+    and other chunk-specific fields) while this path converts to persisted
+    ``UIMessagePart`` equivalents — matching Vercel AI SDK semantics where
+    transient data is streamed but not persisted.
+    """
+    parts: list[UIMessagePart] = []
+    for chunk in iter_metadata_chunks(tool_result):
+        if isinstance(chunk, DataChunk):
+            parts.append(DataUIPart(type=chunk.type, id=chunk.id, data=chunk.data))
+        elif isinstance(chunk, SourceUrlChunk):
+            parts.append(
+                SourceUrlUIPart(
+                    source_id=chunk.source_id,
+                    url=chunk.url,
+                    title=chunk.title,
+                    provider_metadata=chunk.provider_metadata,
+                )
+            )
+        elif isinstance(chunk, SourceDocumentChunk):
+            parts.append(
+                SourceDocumentUIPart(
+                    source_id=chunk.source_id,
+                    media_type=chunk.media_type,
+                    title=chunk.title,
+                    filename=chunk.filename,
+                    provider_metadata=chunk.provider_metadata,
+                )
+            )
+        elif isinstance(chunk, FileChunk):
+            parts.append(FileUIPart(url=chunk.url, media_type=chunk.media_type))
+        else:
+            assert_never(chunk)
+    return parts
