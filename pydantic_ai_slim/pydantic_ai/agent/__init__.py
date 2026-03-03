@@ -675,6 +675,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             user_deps=deps,
             prompt=user_prompt,
             new_message_index=len(message_history) if message_history else 0,
+            resumed_request=None,
             model=model_used,
             model_settings=model_settings,
             usage_limits=usage_limits,
