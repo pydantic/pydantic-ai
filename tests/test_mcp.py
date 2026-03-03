@@ -7,7 +7,7 @@ import base64
 import re
 from datetime import timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -188,6 +188,47 @@ async def test_aexit_called_more_times_than_aenter():
 
     with pytest.raises(ValueError, match='MCPServer.__aexit__ called more times than __aenter__'):
         await server.__aexit__(None, None, None)
+
+
+async def test_aexit_concurrent_does_not_corrupt_connections():
+    """Regression test: concurrent __aexit__ calls must not corrupt connection state.
+
+    With per-context connections, each context tracks its own connection via ContextVar.
+    Concurrent exits from the same context should still be safe — one succeeds,
+    the other raises ValueError.
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    # Simulate one active connection for this context.
+    from pydantic_ai.mcp import _mcp_conn_ctx, _MCPConnectionState  # pyright: ignore[reportPrivateUsage]
+
+    conn_id = 0
+    mock_exit_stack = AsyncMock()
+    mock_client = AsyncMock()
+    server._connections[conn_id] = _MCPConnectionState(  # pyright: ignore[reportPrivateUsage]
+        exit_stack=mock_exit_stack,
+        client=mock_client,
+        ref_count=1,
+    )
+    _mcp_conn_ctx.set({id(server): conn_id})
+
+    # Replace the real lock with one that yields before acquiring.
+    class InterleavingLock(asyncio.Lock):
+        async def acquire(self) -> Literal[True]:
+            await asyncio.sleep(0)
+            return await super().acquire()
+
+    server._enter_lock = InterleavingLock()  # pyright: ignore[reportPrivateUsage]
+
+    results = await asyncio.gather(
+        server.__aexit__(None, None, None),
+        server.__aexit__(None, None, None),
+        return_exceptions=True,
+    )
+
+    errors = [r for r in results if isinstance(r, ValueError)]
+    assert len(errors) == 1, f'Expected 1 ValueError, got {len(errors)}: {results}'
+    assert conn_id not in server._connections  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):

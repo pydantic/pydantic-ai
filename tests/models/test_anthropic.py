@@ -1099,6 +1099,57 @@ async def test_async_request_text_response(allow_model_requests: None):
     )
 
 
+async def test_request_stream_fallback_for_high_max_tokens(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """When the Anthropic SDK raises ValueError for high max_tokens, request() falls back to streaming."""
+    # https://github.com/anthropics/anthropic-sdk-python/blob/49d639a671cb0ac30c767e8e1e68fdd5925205d5/src/anthropic/_base_client.py#L726
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(
+        'What is 1+1? Answer with just the number.', model_settings=ModelSettings(max_tokens=32_000)
+    )
+
+    # Verify the fallback used streaming — the only request recorded should have stream=true
+    assert len(vcr.requests) == 1
+    request_body = json.loads(vcr.requests[0].body)
+    assert request_body['stream'] is True
+    assert request_body['max_tokens'] == 32_000
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 1+1? Answer with just the number.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='2')],
+                usage=RequestUsage(
+                    input_tokens=20,
+                    output_tokens=5,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 20,
+                        'output_tokens': 5,
+                    },
+                ),
+                model_name='claude-sonnet-4-5-20250929',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+    assert result.output == snapshot('2')
+
+
 async def test_request_structured_response(allow_model_requests: None):
     c = completion_message(
         [BetaToolUseBlock(id='123', input={'response': [1, 2, 3]}, name='final_result', type='tool_use')],
