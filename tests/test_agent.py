@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
-from typing import Any, Generic, Literal, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union
 
 import pytest
 from dirty_equals import IsJson
@@ -65,24 +65,42 @@ from pydantic_ai.builtin_tools import (
     WebSearchUserLocation,
 )
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
-from pydantic_ai.providers.anthropic import AnthropicProvider
-from pydantic_ai.providers.azure import AzureProvider
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
+if TYPE_CHECKING:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+else:
+    try:
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.azure import AzureProvider
+        from pydantic_ai.providers.openai import OpenAIProvider
+    except ImportError:  # pragma: lax no cover
+        OpenAIChatModel = AzureProvider = OpenAIProvider = None
+
+    try:
+        from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.providers.anthropic import AnthropicProvider
+    except ImportError:  # pragma: lax no cover
+        AnthropicModel = AnthropicProvider = None
+
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
+
+requires_openai = pytest.mark.skipif(OpenAIProvider is None, reason='openai not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_anthropic = pytest.mark.skipif(AnthropicProvider is None, reason='anthropic not installed')  # pyright: ignore[reportUnnecessaryComparison]
 
 
 def test_result_tuple():
@@ -5788,6 +5806,7 @@ def test_cached_async_http_client_deprecated():
         cached_async_http_client()
 
 
+@requires_openai
 async def test_provider_lifecycle_closes_client():
     """Provider lifecycle closes owned HTTP client on exit.
 
@@ -5801,6 +5820,7 @@ async def test_provider_lifecycle_closes_client():
     assert http_client.is_closed
 
 
+@requires_openai
 async def test_provider_reentrant_lifecycle():
     """Reentrant provider lifecycle keeps client open until outermost exit.
 
@@ -5816,6 +5836,7 @@ async def test_provider_reentrant_lifecycle():
     assert http_client.is_closed
 
 
+@requires_openai
 async def test_provider_aexit_without_aenter():
     """Calling __aexit__ without __aenter__ is a no-op (no crash).
 
@@ -5826,6 +5847,7 @@ async def test_provider_aexit_without_aenter():
     await provider.__aexit__(None, None, None)
 
 
+@requires_openai
 async def test_azure_provider_lifecycle_closes_client():
     """Azure provider lifecycle closes owned HTTP client on exit.
 
@@ -5843,6 +5865,8 @@ async def test_azure_provider_lifecycle_closes_client():
     assert http_client.is_closed
 
 
+@requires_openai
+@requires_anthropic
 async def test_fallback_model_lifecycle_closes_all_clients():
     """FallbackModel lifecycle propagates to all underlying models' providers.
 
@@ -5868,6 +5892,8 @@ async def test_fallback_model_lifecycle_closes_all_clients():
     assert client2.is_closed
 
 
+@requires_openai
+@requires_anthropic
 async def test_agent_with_fallback_model_lifecycle():
     """Agent context manager propagates lifecycle through FallbackModel.
 
