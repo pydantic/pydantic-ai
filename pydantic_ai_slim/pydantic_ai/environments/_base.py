@@ -219,7 +219,7 @@ class ExecutionEnvironment(ABC):
         """
         content = await self._read_file_content(path)
         text = content.decode('utf-8')
-        new_text, count = apply_edit(text, old, new, path, replace_all=replace_all)
+        new_text, count = apply_replace_str(text, old, new, path, replace_all=replace_all)
         await self.write_file(path, new_text)
         return count
 
@@ -278,7 +278,7 @@ def format_lines(text: str, offset: int, limit: int) -> str:
     return result
 
 
-def apply_edit(text: str, old_string: str, new_string: str, path: str, *, replace_all: bool) -> tuple[str, int]:
+def apply_replace_str(text: str, old_string: str, new_string: str, path: str, *, replace_all: bool) -> tuple[str, int]:
     """Apply a string replacement edit, returning the new text and the number of replacements.
 
     Raises:

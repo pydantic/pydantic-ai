@@ -22,7 +22,7 @@ from pydantic_ai.environments import (
     ExecutionResult,
 )
 from pydantic_ai.environments._base import (
-    apply_edit,
+    apply_replace_str,
     format_lines,
 )
 from pydantic_ai.environments.local import LocalEnvironment, _LocalEnvironmentProcess
@@ -916,26 +916,26 @@ def test_format_lines_trailing_newline():
     assert '1\tno trailing newline' in result
 
 
-def test_apply_edit_basic():
-    new_text, count = apply_edit('hello world', 'world', 'earth', 'test.txt', replace_all=False)
+def test_apply_replace_str_basic():
+    new_text, count = apply_replace_str('hello world', 'world', 'earth', 'test.txt', replace_all=False)
     assert new_text == 'hello earth'
     assert count == 1
 
 
-def test_apply_edit_replace_all():
-    new_text, count = apply_edit('aaa bbb aaa', 'aaa', 'xxx', 'test.txt', replace_all=True)
+def test_apply_replace_str_replace_all():
+    new_text, count = apply_replace_str('aaa bbb aaa', 'aaa', 'xxx', 'test.txt', replace_all=True)
     assert new_text == 'xxx bbb xxx'
     assert count == 2
 
 
-def test_apply_edit_not_found():
+def test_apply_replace_str_not_found():
     with pytest.raises(ValueError, match='not found'):
-        apply_edit('hello', 'missing', 'x', 'test.txt', replace_all=False)
+        apply_replace_str('hello', 'missing', 'x', 'test.txt', replace_all=False)
 
 
-def test_apply_edit_ambiguous():
+def test_apply_replace_str_ambiguous():
     with pytest.raises(ValueError, match='2 times'):
-        apply_edit('aa bb aa', 'aa', 'x', 'test.txt', replace_all=False)
+        apply_replace_str('aa bb aa', 'aa', 'x', 'test.txt', replace_all=False)
 
 
 # --- LocalEnvironment: additional edge cases ---
