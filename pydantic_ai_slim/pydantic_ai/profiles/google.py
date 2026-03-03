@@ -25,6 +25,9 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     # Gemini 2.5 models have thinking capabilities (dynamic thinking enabled by default)
     is_2_5_or_newer = 'gemini-2.5' in model_name or is_3_or_newer
     supports_thinking = is_2_5_or_newer and not is_image_model
+    # Pro models can't disable thinking (Gemini 2.5 Pro min budget=128, Gemini 3 Pro min level=MINIMAL)
+    is_pro = '-pro' in model_name
+    thinking_always_enabled = supports_thinking and is_pro
 
     return GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
@@ -34,6 +37,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         supports_tools=not is_image_model,
         google_supports_native_output_with_builtin_tools=is_3_or_newer,
         supports_thinking=supports_thinking,
+        thinking_always_enabled=thinking_always_enabled,
     )
 
 

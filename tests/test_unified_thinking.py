@@ -372,6 +372,42 @@ class TestGoogleUnifiedThinking:
 
         assert cast(GoogleModelSettings, merged).get('google_thinking_config') == {'thinking_budget': 1024}
 
+    def test_thinking_false_gemini25_pro_silent_drop(self):
+        """thinking=False on Gemini 2.5 Pro → None (Pro can't disable, min budget 128)."""
+        pro_profile = ModelProfile(supports_thinking=True, thinking_always_enabled=True)
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-2.5-pro'
+        model._profile = pro_profile
+
+        settings: GoogleModelSettings = {'thinking': False}
+        result = model._resolve_thinking_config(settings)
+
+        assert result is None
+
+    def test_thinking_false_gemini3_pro_silent_drop(self):
+        """thinking=False on Gemini 3 Pro → None (Pro can't disable thinking)."""
+        pro_profile = ModelProfile(supports_thinking=True, thinking_always_enabled=True)
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-3-pro'
+        model._profile = pro_profile
+
+        settings: GoogleModelSettings = {'thinking': False}
+        result = model._resolve_thinking_config(settings)
+
+        assert result is None
+
+    def test_effort_still_works_on_pro(self):
+        """thinking_effort on Pro models still maps to budget/level (effort != disable)."""
+        pro_profile = ModelProfile(supports_thinking=True, thinking_always_enabled=True)
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-2.5-pro'
+        model._profile = pro_profile
+
+        settings: GoogleModelSettings = {'thinking_effort': 'high'}
+        result = model._resolve_thinking_config(settings)
+
+        assert result == {'thinking_budget': 32768}
+
     def test_silent_drop_unsupported_model(self, non_thinking_profile: ModelProfile):
         """thinking=True on unsupported model → None (silent drop)."""
         model = GoogleModel.__new__(GoogleModel)
@@ -1413,18 +1449,32 @@ class TestProfileThinkingCapabilities:
         assert profile.supports_thinking is False
 
     def test_google_profile_thinking_support(self):
-        """Google profiles correctly detect thinking-capable models."""
+        """Google profiles correctly detect thinking-capable models and Pro always-on."""
         from pydantic_ai.profiles.google import google_model_profile
 
-        # Gemini 2.5 supports thinking
+        # Gemini 2.5 Flash: supports thinking, can disable
         profile = google_model_profile('gemini-2.5-flash')
         assert profile is not None
         assert profile.supports_thinking is True
+        assert profile.thinking_always_enabled is False
 
-        # Gemini 3 supports thinking
+        # Gemini 2.5 Pro: supports thinking, always-on (min budget 128)
+        profile = google_model_profile('gemini-2.5-pro')
+        assert profile is not None
+        assert profile.supports_thinking is True
+        assert profile.thinking_always_enabled is True
+
+        # Gemini 3 Flash: supports thinking, can disable
         profile = google_model_profile('gemini-3-flash')
         assert profile is not None
         assert profile.supports_thinking is True
+        assert profile.thinking_always_enabled is False
+
+        # Gemini 3 Pro: supports thinking, always-on
+        profile = google_model_profile('gemini-3-pro')
+        assert profile is not None
+        assert profile.supports_thinking is True
+        assert profile.thinking_always_enabled is True
 
         # Older models don't support thinking
         profile = google_model_profile('gemini-2.0-flash')
@@ -1679,21 +1729,23 @@ class TestMergeModelSettingsThinking:
         assert result.get('temperature') == 0.5
         assert result.get('thinking') is True
 
-    def test_merge_with_none_base(self):
-        """Merging with None base returns overrides."""
-        from pydantic_ai.settings import merge_model_settings
-
-        overrides: AnthropicModelSettings = {'thinking': True, 'thinking_effort': 'high'}
-        result = merge_model_settings(None, overrides)
-        assert result == overrides
-
     def test_merge_with_none_overrides(self):
-        """Merging with None overrides returns base."""
+        """Merging with None overrides returns a copy of base (not same object)."""
         from pydantic_ai.settings import merge_model_settings
 
         base: AnthropicModelSettings = {'thinking': True}
         result = merge_model_settings(base, None)
         assert result == base
+        assert result is not base
+
+    def test_merge_with_none_base(self):
+        """Merging with None base returns a copy of overrides (not same object)."""
+        from pydantic_ai.settings import merge_model_settings
+
+        overrides: AnthropicModelSettings = {'thinking': True, 'thinking_effort': 'high'}
+        result = merge_model_settings(None, overrides)
+        assert result == overrides
+        assert result is not overrides
 
     def test_merge_with_both_none(self):
         """Merging both None returns None."""
@@ -1701,6 +1753,16 @@ class TestMergeModelSettingsThinking:
 
         result = merge_model_settings(None, None)
         assert result is None
+
+    def test_merge_returns_new_dict_prevents_mutation(self):
+        """Mutating the merged result must not affect the original settings."""
+        from pydantic_ai.settings import merge_model_settings
+
+        base: AnthropicModelSettings = {'thinking': True}
+        result = merge_model_settings(base, None)
+        assert result is not None
+        result['anthropic_thinking'] = {'type': 'enabled', 'budget_tokens': 5000}  # type: ignore[typeddict-unknown-key]
+        assert 'anthropic_thinking' not in base
 
 
 class TestMergeModelSettingsDictMerge:
@@ -1799,6 +1861,72 @@ class TestMergeModelSettingsDictMerge:
         result = merge_model_settings(base, overrides)
         assert result is not None
         assert result.get('bedrock_additional_model_requests_fields') == {'custom': 'value'}
+
+
+class TestPrepareRequestNoMutation:
+    """Tests that prepare_request doesn't mutate stored model settings.
+
+    Regression tests for the bug where merge_model_settings returned the same
+    dict object as self.settings when no per-run overrides were provided,
+    causing prepare_request to permanently taint the instance settings with
+    provider-specific keys (e.g., anthropic_thinking, google_thinking_config).
+    """
+
+    def test_anthropic_sequential_calls_no_leakage(self):
+        """Sequential prepare_request calls don't leak anthropic_thinking into self.settings."""
+        profile = AnthropicModelProfile(supports_thinking=True)
+        model = AnthropicModel.__new__(AnthropicModel)
+        model._model_name = 'claude-sonnet-4-5'
+        model._profile = profile
+        model._settings = AnthropicModelSettings(thinking=True)
+
+        # First call: should resolve thinking and add anthropic_thinking to merged result
+        model.prepare_request(None, ModelRequestParameters())
+
+        # self.settings must NOT contain the provider-specific key
+        assert 'anthropic_thinking' not in (model._settings or {}), (
+            'prepare_request leaked anthropic_thinking into self._settings'
+        )
+
+        # Second call with thinking=False: should NOT see stale anthropic_thinking
+        merged2, _ = model.prepare_request({'thinking': False}, ModelRequestParameters())
+        anthropic_thinking = cast(AnthropicModelSettings, merged2).get('anthropic_thinking')
+        # thinking=False on non-always-on model → disabled config
+        assert anthropic_thinking is not None
+        assert anthropic_thinking.get('type') == 'disabled'
+
+    def test_google_sequential_calls_no_leakage(self):
+        """Sequential prepare_request calls don't leak google_thinking_config into self.settings."""
+        profile = ModelProfile(supports_thinking=True)
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = 'gemini-2.5-flash'
+        model._profile = profile
+        model._settings = GoogleModelSettings(thinking_effort='high')
+
+        model.prepare_request(None, ModelRequestParameters())
+
+        assert 'google_thinking_config' not in (model._settings or {}), (
+            'prepare_request leaked google_thinking_config into self._settings'
+        )
+
+        # Second call with thinking=False: should produce thinking_budget: 0
+        merged2, _ = model.prepare_request({'thinking': False}, ModelRequestParameters())
+        google_config = cast(GoogleModelSettings, merged2).get('google_thinking_config')
+        assert google_config == {'thinking_budget': 0}
+
+    def test_openai_chat_sequential_calls_no_leakage(self):
+        """Sequential prepare_request calls don't leak openai_reasoning_effort into self.settings."""
+        profile = ModelProfile(supports_thinking=True)
+        model = OpenAIChatModel.__new__(OpenAIChatModel)
+        model._model_name = 'o3-mini'
+        model._profile = profile
+        model._settings = OpenAIChatModelSettings(thinking_effort='high')
+
+        model.prepare_request(None, ModelRequestParameters())
+
+        assert 'openai_reasoning_effort' not in (model._settings or {}), (
+            'prepare_request leaked openai_reasoning_effort into self._settings'
+        )
 
 
 # ============================================================================
