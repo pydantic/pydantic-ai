@@ -46,7 +46,7 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
     def factory_wrapper(**kwargs: Any) -> Any:
         client = mock(**kwargs)
-        if hasattr(client, '__aenter__'):  # pragma: no cover
+        if hasattr(client, '__aenter__'):
             client.__aenter__.return_value = client
         return client
 
