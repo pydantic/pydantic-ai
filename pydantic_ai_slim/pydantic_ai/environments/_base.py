@@ -204,6 +204,12 @@ class ExecutionEnvironment(ABC):
     ) -> ExecutionProcess:
         """Create an interactive process with streaming stdin/stdout.
 
+        The returned process must be used as an async context manager::
+
+            async with await env.create_process('cmd') as proc:
+                await proc.send(b'input')
+                output = await proc.recv()
+
         Args:
             command: The shell command to run.
             env: Additional environment variables for this process.
