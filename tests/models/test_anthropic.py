@@ -44,14 +44,7 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import (
-    CodeExecutionTool,
-    MCPServerTool,
-    MemoryTool,
-    TextEditorTool,
-    WebFetchTool,
-    WebSearchTool,
-)
+from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, TextEditorTool, WebFetchTool, WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -8175,7 +8168,7 @@ async def test_anthropic_text_editor_tool(allow_model_requests: None, anthropic_
         'claude-sonnet-4-5',
         provider=AnthropicProvider(api_key=anthropic_api_key),
     )
-    agent = Agent(anthropic_model, builtin_tools=[TextEditorTool(max_characters=10_000)])
+    agent = Agent(anthropic_model, builtin_tools=[TextEditorTool()])
 
     with pytest.raises(
         UserError, match="Built-in `TextEditorTool` requires a 'str_replace_based_edit_tool' tool to be defined."

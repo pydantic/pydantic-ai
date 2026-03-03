@@ -26,8 +26,7 @@ interactions:
       tool_choice:
         type: auto
       tools:
-      - max_characters: 10000
-        name: str_replace_based_edit_tool
+      - name: str_replace_based_edit_tool
         type: text_editor_20250728
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
@@ -113,8 +112,7 @@ interactions:
       tool_choice:
         type: auto
       tools:
-      - max_characters: 10000
-        name: str_replace_based_edit_tool
+      - name: str_replace_based_edit_tool
         type: text_editor_20250728
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
