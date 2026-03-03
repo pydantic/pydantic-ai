@@ -238,6 +238,7 @@ result = agent.run_sync(
 print(result.output)
 ```
 
+
 See the [input documentation](../input.md) for more details and examples.
 
 ## Model settings

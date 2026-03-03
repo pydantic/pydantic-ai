@@ -1,0 +1,358 @@
+interactions:
+- request:
+    body: test image data for integration test
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '36'
+      content-type:
+      - image/png
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: PUT
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/integration-test.png
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '0'
+      content-type:
+      - text/plain;charset=UTF-8
+      etag:
+      - '"272808564d5e753103ab27611fe53e16"'
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: HEAD
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/integration-test.png
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      connection:
+      - keep-alive
+      content-length:
+      - '36'
+      content-type:
+      - image/png
+      etag:
+      - '"272808564d5e753103ab27611fe53e16"'
+      last-modified:
+      - Sun, 14 Dec 2025 03:27:47 GMT
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: GET
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/integration-test.png
+  response:
+    body:
+      string: test image data for integration test
+    headers:
+      accept-ranges:
+      - bytes
+      connection:
+      - keep-alive
+      content-length:
+      - '36'
+      content-type:
+      - image/png
+      etag:
+      - '"272808564d5e753103ab27611fe53e16"'
+      last-modified:
+      - Sun, 14 Dec 2025 03:27:47 GMT
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: DELETE
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/integration-test.png
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      vary:
+      - Accept-Encoding
+    status:
+      code: 204
+      message: No Content
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: HEAD
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/integration-test.png
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '0'
+      content-type:
+      - text/plain;charset=UTF-8
+      vary:
+      - Accept-Encoding
+    status:
+      code: 404
+      message: Not Found
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: DELETE
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/integration-test.png
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      vary:
+      - Accept-Encoding
+    status:
+      code: 204
+      message: No Content
+- request:
+    body: test image data for integration test
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '36'
+      content-type:
+      - image/png
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: PUT
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/integration-test.png
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '0'
+      content-type:
+      - text/plain;charset=UTF-8
+      etag:
+      - '"272808564d5e753103ab27611fe53e16"'
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: HEAD
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/integration-test.png
+  response:
+    body:
+      string: ''
+    headers:
+      accept-ranges:
+      - bytes
+      connection:
+      - keep-alive
+      content-length:
+      - '36'
+      content-type:
+      - image/png
+      etag:
+      - '"272808564d5e753103ab27611fe53e16"'
+      last-modified:
+      - Sun, 14 Dec 2025 03:27:59 GMT
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: GET
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/integration-test.png
+  response:
+    body:
+      string: test image data for integration test
+    headers:
+      accept-ranges:
+      - bytes
+      connection:
+      - keep-alive
+      content-length:
+      - '36'
+      content-type:
+      - image/png
+      etag:
+      - '"272808564d5e753103ab27611fe53e16"'
+      last-modified:
+      - Sun, 14 Dec 2025 03:27:59 GMT
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: DELETE
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/integration-test.png
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      vary:
+      - Accept-Encoding
+    status:
+      code: 204
+      message: No Content
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: HEAD
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/integration-test.png
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '0'
+      content-type:
+      - text/plain;charset=UTF-8
+      vary:
+      - Accept-Encoding
+    status:
+      code: 404
+      message: Not Found
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: DELETE
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/integration-test.png
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      vary:
+      - Accept-Encoding
+    status:
+      code: 204
+      message: No Content
+version: 1

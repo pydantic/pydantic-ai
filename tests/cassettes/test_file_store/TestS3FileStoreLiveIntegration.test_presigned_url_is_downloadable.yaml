@@ -1,0 +1,186 @@
+interactions:
+- request:
+    body: test data for presigned URL
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '27'
+      content-type:
+      - text/plain
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: PUT
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/presigned-test.txt
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '0'
+      content-type:
+      - text/plain;charset=UTF-8
+      etag:
+      - '"ef75c1a55dc3a3aed4080fd5e2afa55c"'
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: GET
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/presigned-test.txt
+  response:
+    body:
+      string: test data for presigned URL
+    headers:
+      accept-ranges:
+      - bytes
+      connection:
+      - keep-alive
+      content-length:
+      - '27'
+      content-type:
+      - text/plain
+      etag:
+      - '"ef75c1a55dc3a3aed4080fd5e2afa55c"'
+      last-modified:
+      - Sun, 14 Dec 2025 03:27:49 GMT
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: DELETE
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/presigned-test.txt
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      vary:
+      - Accept-Encoding
+    status:
+      code: 204
+      message: No Content
+- request:
+    body: test data for presigned URL
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '27'
+      content-type:
+      - text/plain
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: PUT
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/presigned-test.txt
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '0'
+      content-type:
+      - text/plain;charset=UTF-8
+      etag:
+      - '"ef75c1a55dc3a3aed4080fd5e2afa55c"'
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: GET
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/presigned-test.txt
+  response:
+    body:
+      string: test data for presigned URL
+    headers:
+      accept-ranges:
+      - bytes
+      connection:
+      - keep-alive
+      content-length:
+      - '27'
+      content-type:
+      - text/plain
+      etag:
+      - '"ef75c1a55dc3a3aed4080fd5e2afa55c"'
+      last-modified:
+      - Sun, 14 Dec 2025 03:28:00 GMT
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - accountid.r2.cloudflarestorage.com
+    method: DELETE
+    uri: https://accountid.r2.cloudflarestorage.com/pydantic-ai-tests/test-files/presigned-test.txt
+  response:
+    body:
+      string: ''
+    headers:
+      connection:
+      - keep-alive
+      vary:
+      - Accept-Encoding
+    status:
+      code: 204
+      message: No Content
+version: 1
