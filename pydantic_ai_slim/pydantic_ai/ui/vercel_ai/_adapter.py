@@ -47,8 +47,6 @@ from ._utils import (
 )
 from .request_types import (
     DataUIPart,
-    DynamicToolOutputAvailablePart,
-    DynamicToolOutputDeniedPart,
     DynamicToolUIPart,
     FileUIPart,
     ProviderMetadata,
@@ -598,11 +596,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 if isinstance(tool_result, ToolReturnPart):
                     if tool_result.status == 'denied':
                         ui_parts.append(
-                            DynamicToolOutputDeniedPart(
-                                tool_name=part.tool_name,
+                            ToolOutputDeniedPart(
+                                type=tool_type,
                                 tool_call_id=part.tool_call_id,
                                 input=_safe_args_as_dict(part),
                                 state='output-denied',
+                                provider_executed=False,
                                 call_provider_metadata=call_provider_metadata,
                                 approval=ToolApprovalResponded(
                                     id=str(uuid.uuid4()),
@@ -613,12 +612,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         )
                     else:
                         ui_parts.append(
-                            DynamicToolOutputAvailablePart(
-                                tool_name=part.tool_name,
+                            ToolOutputAvailablePart(
+                                type=tool_type,
                                 tool_call_id=part.tool_call_id,
                                 input=_safe_args_as_dict(part),
                                 output=tool_return_output(tool_result),
                                 state='output-available',
+                                provider_executed=False,
                                 call_provider_metadata=call_provider_metadata,
                             )
                         )

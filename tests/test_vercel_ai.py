@@ -3351,11 +3351,11 @@ async def test_adapter_dump_messages_with_tools():
                 'parts': [
                     {'type': 'text', 'text': 'Let me search for that.', 'state': 'done', 'provider_metadata': None},
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'web_search',
+                        'type': 'tool-web_search',
                         'tool_call_id': 'tool_123',
                         'state': 'output-available',
                         'input': {'query': 'test query'},
+                        'provider_executed': False,
                         'output': {'results': ['result1', 'result2']},
                         'call_provider_metadata': None,
                         'preliminary': None,
@@ -3418,11 +3418,11 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'send_data',
+                        'type': 'tool-send_data',
                         'tool_call_id': 'call_1',
                         'state': 'output-available',
                         'input': {},
+                        'provider_executed': False,
                         'output': 'Data sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
@@ -3491,11 +3491,11 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'send_events',
+                        'type': 'tool-send_events',
                         'tool_call_id': 'call_1',
                         'state': 'output-available',
                         'input': {},
+                        'provider_executed': False,
                         'output': 'Events sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
@@ -3580,11 +3580,11 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'send_data',
+                        'type': 'tool-send_data',
                         'tool_call_id': 'call_1',
                         'state': 'output-available',
                         'input': {},
+                        'provider_executed': False,
                         'output': 'Data sent',
                         'call_provider_metadata': None,
                         'preliminary': None,
@@ -4803,11 +4803,11 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                 'metadata': None,
                 'parts': [
                     {
-                        'type': 'dynamic-tool',
-                        'tool_name': 'my_tool',
+                        'type': 'tool-my_tool',
                         'tool_call_id': 'tool_abc',
                         'state': 'output-available',
                         'input': {'arg': 'value'},
+                        'provider_executed': False,
                         'output': 'result',
                         'call_provider_metadata': {
                             'pydantic_ai': {
@@ -6067,7 +6067,7 @@ async def test_adapter_load_messages_output_denied_builtin_tool():
 
 async def test_denied_dynamic_tool_round_trip():
     """Test that denied dynamic tool state survives a dump/load cycle."""
-    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolOutputDeniedPart
+    from pydantic_ai.ui.vercel_ai.request_types import ToolOutputDeniedPart
 
     messages: list[ModelMessage] = [
         ModelResponse(
@@ -6082,10 +6082,10 @@ async def test_denied_dynamic_tool_round_trip():
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
 
-    # The denied tool should produce a DynamicToolOutputDeniedPart with the reason preserved
+    # The denied tool should produce a ToolOutputDeniedPart with the reason preserved
     assistant_parts = ui_messages[0].parts
     assert len(assistant_parts) == 1
-    assert isinstance(assistant_parts[0], DynamicToolOutputDeniedPart)
+    assert isinstance(assistant_parts[0], ToolOutputDeniedPart)
     assert assistant_parts[0].state == 'output-denied'
     assert isinstance(assistant_parts[0].approval, ToolApprovalResponded)
     assert assistant_parts[0].approval.reason == 'Too dangerous'
