@@ -1,6 +1,6 @@
 # Execution Environments & Sandboxes
 
-Pydantic AI provides [`ExecutionEnvironment`][pydantic_ai.environments.ExecutionEnvironment] — an abstraction for environments where agents can execute commands, read/write files, and search the filesystem — along with [`ExecutionEnvironmentToolset`][pydantic_ai.environments.ExecutionEnvironmentToolset], a ready-made [toolset](toolsets.md) that exposes these capabilities as tools.
+Pydantic AI provides [`ExecutionEnvironment`][pydantic_ai.environments.ExecutionEnvironment] — an abstraction for environments where agents can execute commands, read/write files, and search the filesystem — along with [`ExecutionEnvironmentToolset`][pydantic_ai.toolsets.execution_environment.ExecutionEnvironmentToolset], a ready-made [toolset](toolsets.md) that exposes these capabilities as tools.
 
 This is the foundation for building coding agents, data analysis bots, and other agents that need to interact with a shell and filesystem.
 
@@ -158,7 +158,7 @@ env = DockerEnvironment.hardened(
 
 ## ExecutionEnvironmentToolset
 
-[`ExecutionEnvironmentToolset`][pydantic_ai.environments.ExecutionEnvironmentToolset] wraps an environment and exposes coding-agent-style tools that models are well-trained on (matching tools that popular coding agents expose):
+[`ExecutionEnvironmentToolset`][pydantic_ai.toolsets.execution_environment.ExecutionEnvironmentToolset] wraps an environment and exposes coding-agent-style tools that models are well-trained on (matching tools that popular coding agents expose):
 
 | Tool | Description |
 |---|---|
@@ -240,7 +240,7 @@ async def main():
 
 ### Environment Overrides
 
-You can swap the backing environment at runtime using [`use_environment()`][pydantic_ai.environments.ExecutionEnvironmentToolset.use_environment]:
+You can swap the backing environment at runtime using [`use_environment()`][pydantic_ai.toolsets.execution_environment.ExecutionEnvironmentToolset.use_environment]:
 
 ```python {title="environments_override.py"}
 from pydantic_ai import Agent

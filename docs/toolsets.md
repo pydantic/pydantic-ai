@@ -654,7 +654,7 @@ _(This example is complete, it can be run "as is")_
 
 ## Execution Environment Toolset
 
-[`ExecutionEnvironmentToolset`][pydantic_ai.environments.ExecutionEnvironmentToolset] provides shell, file read/write, and edit tools backed by an [`ExecutionEnvironment`][pydantic_ai.environments.ExecutionEnvironment] — either a [`LocalEnvironment`][pydantic_ai.environments.local.LocalEnvironment] for development or a [`DockerEnvironment`][pydantic_ai.environments.docker.DockerEnvironment] for isolated execution. This is the foundation for building coding agents and other agents that need shell and filesystem access.
+[`ExecutionEnvironmentToolset`][pydantic_ai.toolsets.execution_environment.ExecutionEnvironmentToolset] provides shell, file read/write, and edit tools backed by an [`ExecutionEnvironment`][pydantic_ai.environments.ExecutionEnvironment] — either a [`LocalEnvironment`][pydantic_ai.environments.local.LocalEnvironment] for development or a [`DockerEnvironment`][pydantic_ai.environments.docker.DockerEnvironment] for isolated execution. This is the foundation for building coding agents and other agents that need shell and filesystem access.
 
 See [Execution Environments](environments.md) for full documentation.
 
