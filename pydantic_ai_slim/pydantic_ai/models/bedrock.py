@@ -42,7 +42,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import ContextWindowExceeded, ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
@@ -301,6 +301,31 @@ class BedrockModelSettings(ModelSettings, total=False):
     """
 
 
+_CONTEXT_WINDOW_ERROR_PATTERNS = (
+    'input is too long',
+    'input tokens exceeded',
+    'maximum context length',
+    'token limit',
+)
+
+
+def _check_context_window_exceeded(e: ClientError, model_name: str) -> ContextWindowExceeded | None:
+    """Check if the error is a context window exceeded error and return the appropriate exception."""
+    status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+    message = e.response.get('Error', {}).get('Message', '')
+    if (
+        status_code == 400
+        and isinstance(message, str)
+        and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS)
+    ):
+        return ContextWindowExceeded(
+            status_code=status_code,
+            model_name=model_name,
+            body=e.response,
+        )
+    return None
+
+
 @dataclass(init=False)
 class BedrockConverseModel(Model):
     """A model that uses the Bedrock Converse API."""
@@ -410,6 +435,8 @@ class BedrockConverseModel(Model):
         try:
             response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
         except ClientError as e:
+            if ctx_exc := _check_context_window_exceeded(e, self.model_name):
+                raise ctx_exc from e
             status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
             if isinstance(status_code, int):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
@@ -593,6 +620,8 @@ class BedrockConverseModel(Model):
             else:
                 model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
         except ClientError as e:
+            if ctx_exc := _check_context_window_exceeded(e, self.model_name):
+                raise ctx_exc from e
             status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
             if isinstance(status_code, int):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
