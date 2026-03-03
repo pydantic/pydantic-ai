@@ -141,9 +141,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]:  # noqa: C901
         """Transform AG-UI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
-        # `ToolMessage` only gives us the `tool_call_id`, so remember the tool name from the
-        # earlier assistant message in order to reconstruct the matching return part later.
-        tool_calls: dict[str, str] = {}
+        tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
         for msg in messages:
             match msg:
                 case UserMessage(content=content):
@@ -199,9 +197,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_calls[tool_call_id] = tool_name
 
                             if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
-                                # AG-UI persists built-in and regular tool calls with the same schema.
-                                # We encode builtin provenance into a prefixed ID when dumping and decode it here.
-                                provider_name, original_id = _load_builtin_tool_call_id(tool_call_id)
+                                _, provider_name, original_id = tool_call_id.split('|', 2)
                                 builder.add(
                                     BuiltinToolCallPart(
                                         tool_name=tool_name,
@@ -225,7 +221,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
 
                     if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
-                        provider_name, original_id = _load_builtin_tool_call_id(tool_call_id)
+                        _, provider_name, original_id = tool_call_id.split('|', 2)
                         builder.add(
                             BuiltinToolReturnPart(
                                 tool_name=tool_name,
