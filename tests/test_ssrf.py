@@ -48,7 +48,7 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         client = mock(**kwargs)
         if hasattr(client, '__aenter__'):
             client.__aenter__.return_value = client
-        return client
+        return client  # pragma: no cover
 
     monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', factory_wrapper)
     return mock
