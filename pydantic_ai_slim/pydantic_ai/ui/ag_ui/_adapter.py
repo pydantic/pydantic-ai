@@ -408,11 +408,6 @@ def _dump_builtin_tool_call_id(tool_call_id: str, provider_name: str | None) -> 
     return '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, provider_name or '', tool_call_id])
 
 
-def _load_builtin_tool_call_id(tool_call_id: str) -> tuple[str | None, str]:
-    _, provider_name, original_id = tool_call_id.split('|', 2)
-    return provider_name or None, original_id
-
-
 def _convert_user_prompt_part(part: UserPromptPart) -> UserMessage | None:
     if isinstance(part.content, str):
         return UserMessage(id=_message_id(), content=part.content)
