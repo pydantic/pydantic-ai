@@ -265,7 +265,7 @@ def format_lines(text: str, offset: int, limit: int) -> str:
 
     selected = lines[offset : offset + limit]
 
-    numbered = [f'{i:>6}\t{line}' for i, line in enumerate(selected, start=offset + 1)]
+    numbered = [f'{i}\t{line}' for i, line in enumerate(selected, start=offset + 1)]
     result = ''.join(numbered)
     if not result.endswith('\n'):
         result += '\n'

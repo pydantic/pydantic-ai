@@ -171,9 +171,9 @@ async def test_local_read_line_numbers(tmp_path: Path):
         await env.write_file('numbered.txt', 'alpha\nbeta\ngamma\n')
         content = await env.read_file('numbered.txt')
         assert content == snapshot("""\
-     1\talpha
-     2\tbeta
-     3\tgamma
+1	alpha
+2	beta
+3	gamma
 """)
 
 
@@ -184,9 +184,9 @@ async def test_local_read_with_offset_limit(tmp_path: Path):
 
         content = await env.read_file('long.txt', offset=5, limit=3)
         assert content == snapshot("""\
-     6\tline 5
-     7\tline 6
-     8\tline 7
+6	line 5
+7	line 6
+8	line 7
 ... (12 more lines. Use offset=8 to continue reading.)
 """)
 
@@ -198,11 +198,11 @@ async def test_local_read_continuation_hint(tmp_path: Path):
 
         content = await env.read_file('long.txt', offset=0, limit=5)
         assert content == snapshot("""\
-     1\tline 0
-     2\tline 1
-     3\tline 2
-     4\tline 3
-     5\tline 4
+1	line 0
+2	line 1
+3	line 2
+4	line 3
+5	line 4
 ... (15 more lines. Use offset=5 to continue reading.)
 """)
 
@@ -441,7 +441,7 @@ async def test_toolset_read_write_tools(tmp_path: Path):
 
         # Read
         read_result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'test.txt'}))
-        assert read_result == snapshot('     1\thello world\n')
+        assert read_result == snapshot('1\thello world\n')
 
 
 async def test_toolset_edit_retry_on_error(tmp_path: Path):
@@ -554,11 +554,11 @@ async def test_toolset_read_continuation_hint(tmp_path: Path):
             ToolCallPart(tool_name='read_file', args={'path': 'long.txt', 'offset': 0, 'limit': 5})
         )
         assert result == snapshot("""\
-     1	line 0
-     2	line 1
-     3	line 2
-     4	line 3
-     5	line 4
+1	line 0
+2	line 1
+3	line 2
+4	line 3
+5	line 4
 ... (15 more lines. Use offset=5 to continue reading.)
 """)
 
@@ -718,9 +718,7 @@ async def test_memory_read_write():
     async with MemoryEnvironment() as env:
         await env.write_file('test.txt', 'hello world\n')
         content = await env.read_file('test.txt')
-        assert content == snapshot("""\
-     1\thello world
-""")
+        assert content == snapshot('1\thello world\n')
 
 
 async def test_memory_initial_files():
@@ -870,7 +868,7 @@ async def test_memory_toolset_integration():
     async with env:
         # read_file
         result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'main.py'}))
-        assert result == snapshot('     1\tprint("hello")\n')
+        assert result == snapshot('1\tprint("hello")\n')
 
         # write_file
         result = await manager.handle_call(
