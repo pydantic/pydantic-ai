@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import io
 import math
-import posixpath
 import struct
 import tarfile
 from pathlib import PurePosixPath
@@ -18,7 +17,6 @@ import anyio.to_thread
 from typing_extensions import Self
 
 from ._base import (
-    IMAGE_EXTENSIONS,
     EnvToolName,
     ExecutionEnvironment,
     ExecutionProcess,
@@ -39,21 +37,6 @@ except ImportError as _import_error:
 def _shell_escape(s: str) -> str:
     """Escape a string for safe use in shell commands."""
     return "'" + s.replace("'", "'\\''") + "'"
-
-
-def _build_read_file_cmd(path: str, *, offset: int = 0, limit: int = 2000) -> str:
-    """Build a shell command that reads a file with line numbers."""
-    escaped = _shell_escape(path)
-    start = offset + 1
-    end = offset + limit
-    return (
-        f'awk \'NR>={start} && NR<={end} {{printf "%6d\\t%s\\n", NR, $0}}'
-        f' END {{'
-        f'if(NR>{end}) printf "... (%d more lines. Use offset={end} to continue reading.)\\n", NR-{end};'
-        f' else if(NR>0 && NR<{start}) printf "__OFFSET_ERROR__:%d\\n", NR'
-        f"}}'"
-        f' {escaped}'
-    )
 
 
 def _put_file(container: Container, path: str, data: bytes) -> None:
@@ -507,30 +490,8 @@ class DockerEnvironment(ExecutionEnvironment):
             output += '\n[Command timed out]'
         return ExecutionResult(output=output, exit_code=exit_code)
 
-    async def _read_file_content(self, path: str) -> bytes:
+    async def read_file(self, path: str) -> bytes:
         return await anyio.to_thread.run_sync(self._read_file_bytes_sync, path)
-
-    async def read_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> str | bytes:
-        # Server-side pagination via awk to avoid full file transfer.
-        ext = posixpath.splitext(path)[1].lower()
-        if ext in IMAGE_EXTENSIONS:
-            return await super().read_file(path, offset=offset, limit=limit)
-
-        def _read() -> str | bytes:
-            cmd = _build_read_file_cmd(path, offset=offset, limit=limit)
-            exit_code, output = self._required_container.exec_run(['sh', '-c', cmd], workdir=self._work_dir)
-            if exit_code != 0:
-                raise FileNotFoundError(f'File not found or not readable: {path}')
-            try:
-                text = output.decode('utf-8')
-            except UnicodeDecodeError:
-                return self._read_file_bytes_sync(path)
-            if text.startswith('__OFFSET_ERROR__:'):
-                total_lines = int(text.split(':')[1].strip())
-                raise ValueError(f'Offset {offset} exceeds file length ({total_lines} lines).')
-            return text
-
-        return await anyio.to_thread.run_sync(_read)
 
     def _read_file_bytes_sync(self, path: str) -> bytes:
         """Read raw file bytes using Docker's get_archive API."""

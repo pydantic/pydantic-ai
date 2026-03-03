@@ -188,22 +188,27 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                 limit: Maximum number of lines to read.
             """
             try:
-                content = await self.required_environment.read_file(path, offset=offset, limit=limit)
-                if isinstance(content, bytes):
-                    ext = posixpath.splitext(path)[1].lower()
-                    if ext in IMAGE_EXTENSIONS:
-                        # Image file — return as BinaryContent or placeholder
-                        if self._image_support:
-                            if len(content) > self._max_image_bytes:
-                                return (
-                                    f'Error: Image too large ({len(content)} bytes, max {self._max_image_bytes} bytes).'
-                                )
-                            media_type = IMAGE_MEDIA_TYPES.get(ext, 'application/octet-stream')
-                            return BinaryContent(data=content, media_type=media_type)
-                        else:
-                            return f'[Image file: {path} — image_support is disabled on this toolset]'
+                raw = await self.required_environment.read_file(path)
+                ext = posixpath.splitext(path)[1].lower()
+
+                # Image file — return as BinaryContent or placeholder
+                if ext in IMAGE_EXTENSIONS:
+                    if self._image_support:
+                        if len(raw) > self._max_image_bytes:
+                            return f'Error: Image too large ({len(raw)} bytes, max {self._max_image_bytes} bytes).'
+                        media_type = IMAGE_MEDIA_TYPES.get(ext, 'application/octet-stream')
+                        return BinaryContent(data=raw, media_type=media_type)
                     else:
-                        return f'[Binary file: {path} — cannot display as text]'
+                        return f'[Image file: {path} — image_support is disabled on this toolset]'
+
+                # Try to decode as text
+                try:
+                    text = raw.decode('utf-8')
+                except UnicodeDecodeError:
+                    return f'[Binary file: {path} — cannot display as text]'
+
+                # Format with line numbers and pagination
+                content = _format_lines(text, offset, limit)
                 if len(content) > self._max_output_chars:
                     content = content[: self._max_output_chars] + '\n... (truncated)'
                 return content
@@ -368,3 +373,26 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                     await self._exit_stack.aclose()
                     self._exit_stack = None
         return None
+
+
+def _format_lines(text: str, offset: int, limit: int) -> str:
+    """Format text with line numbers and pagination hints."""
+    lines = text.splitlines(keepends=True)
+    total_lines = len(lines)
+
+    if offset >= total_lines and total_lines > 0:
+        raise ValueError(f'Offset {offset} exceeds file length ({total_lines} lines).')
+
+    selected = lines[offset : offset + limit]
+
+    numbered = [f'{i}\t{line}' for i, line in enumerate(selected, start=offset + 1)]
+    result = ''.join(numbered)
+    if not result.endswith('\n'):
+        result += '\n'
+
+    remaining = total_lines - (offset + len(selected))
+    if remaining > 0:
+        next_offset = offset + len(selected)
+        result += f'... ({remaining} more lines. Use offset={next_offset} to continue reading.)\n'
+
+    return result

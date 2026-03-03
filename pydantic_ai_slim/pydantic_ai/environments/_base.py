@@ -6,7 +6,6 @@ This module defines the core types, the `ExecutionEnvironment` ABC, and the
 
 from __future__ import annotations
 
-import posixpath
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -123,9 +122,9 @@ class ExecutionEnvironment(ABC):
     commands and read/write files. Implementations include local subprocess,
     Docker containers, and cloud-hosted VMs.
 
-    Subclasses implement `capabilities`, `_read_file_content`, `write_file`,
-    and `shell` as needed. `read_file` and `replace_str` have defaults
-    built on `_read_file_content` and can be overridden for performance.
+    Subclasses implement `capabilities`, `read_file`, `write_file`,
+    and `shell` as needed. `replace_str` has a default built on
+    `read_file` and `write_file`.
     """
 
     # --- Capability introspection ---
@@ -154,44 +153,16 @@ class ExecutionEnvironment(ABC):
         """
         raise NotImplementedError(f'{type(self).__name__} does not support shell.')
 
-    async def _read_file_content(self, path: str) -> bytes:
-        """Read the full raw content of a file, without formatting or pagination.
-
-        Subclasses implement this as the raw I/O primitive. The default
-        `read_file` and `replace_str` are built on top of it.
-        """
-        raise NotImplementedError(f'{type(self).__name__} does not implement _read_file_content.')
-
-    async def read_file(
-        self,
-        path: str,
-        *,
-        offset: int = 0,
-        limit: int = 2000,
-    ) -> str | bytes:
-        """Read a file from the environment.
-
-        Returns text with `cat -n` style line numbers, or raw bytes for binary files.
-        Subclasses may override for optimized pagination (e.g. Docker server-side slicing).
+    async def read_file(self, path: str) -> bytes:
+        """Read the raw content of a file.
 
         Args:
             path: The file path within the environment.
-            offset: The line number to start reading from (0-indexed).
-            limit: Maximum number of lines to read.
+
+        Returns:
+            The raw bytes of the file.
         """
-        content = await self._read_file_content(path)
-
-        # Return raw bytes for image files
-        ext = posixpath.splitext(path)[1].lower()
-        if ext in IMAGE_EXTENSIONS:
-            return content
-
-        try:
-            text = content.decode('utf-8')
-        except UnicodeDecodeError:
-            return content
-
-        return format_lines(text, offset, limit)
+        raise NotImplementedError(f'{type(self).__name__} does not support read_file.')
 
     async def write_file(self, path: str, content: str | bytes) -> None:
         """Create or overwrite a file in the environment."""
@@ -217,7 +188,7 @@ class ExecutionEnvironment(ABC):
         Returns:
             The number of replacements made.
         """
-        content = await self._read_file_content(path)
+        content = await self.read_file(path)
         text = content.decode('utf-8')
         new_text, count = apply_replace_str(text, old, new, path, replace_all=replace_all)
         await self.write_file(path, new_text)
@@ -253,29 +224,6 @@ class ExecutionEnvironment(ABC):
 
 
 # --- Helper functions ---
-
-
-def format_lines(text: str, offset: int, limit: int) -> str:
-    """Format text with `cat -n` style line numbers and pagination hints."""
-    lines = text.splitlines(keepends=True)
-    total_lines = len(lines)
-
-    if offset >= total_lines and total_lines > 0:
-        raise ValueError(f'Offset {offset} exceeds file length ({total_lines} lines).')
-
-    selected = lines[offset : offset + limit]
-
-    numbered = [f'{i}\t{line}' for i, line in enumerate(selected, start=offset + 1)]
-    result = ''.join(numbered)
-    if not result.endswith('\n'):
-        result += '\n'
-
-    remaining = total_lines - (offset + len(selected))
-    if remaining > 0:
-        next_offset = offset + len(selected)
-        result += f'... ({remaining} more lines. Use offset={next_offset} to continue reading.)\n'
-
-    return result
 
 
 def apply_replace_str(text: str, old_string: str, new_string: str, path: str, *, replace_all: bool) -> tuple[str, int]:

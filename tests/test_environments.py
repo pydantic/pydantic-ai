@@ -21,14 +21,11 @@ from pydantic_ai.environments import (
     ExecutionEnvironment as BaseEnv,
     ExecutionResult,
 )
-from pydantic_ai.environments._base import (
-    apply_replace_str,
-    format_lines,
-)
+from pydantic_ai.environments._base import apply_replace_str
 from pydantic_ai.environments.local import LocalEnvironment, _LocalEnvironmentProcess
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
+from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset, _format_lines
 from pydantic_ai.usage import RunUsage
 from tests.environment_helpers import MemoryEnvironment
 
@@ -37,7 +34,6 @@ try:
 
     from pydantic_ai.environments.docker import (
         DockerEnvironment,
-        _build_read_file_cmd,
         _DockerEnvironmentProcess,
         _put_file,
         _shell_escape,
@@ -161,57 +157,8 @@ async def test_local_write_and_read(tmp_path: Path):
     async with LocalEnvironment(tmp_path) as env:
         await env.write_file('test.txt', 'line one\nline two\n')
         content = await env.read_file('test.txt')
-        assert isinstance(content, str)
-        assert 'line one' in content
-        assert 'line two' in content
-
-
-async def test_local_read_line_numbers(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('numbered.txt', 'alpha\nbeta\ngamma\n')
-        content = await env.read_file('numbered.txt')
-        assert content == snapshot("""\
-1	alpha
-2	beta
-3	gamma
-""")
-
-
-async def test_local_read_with_offset_limit(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        lines = '\n'.join(f'line {i}' for i in range(20))
-        await env.write_file('long.txt', lines)
-
-        content = await env.read_file('long.txt', offset=5, limit=3)
-        assert content == snapshot("""\
-6	line 5
-7	line 6
-8	line 7
-... (12 more lines. Use offset=8 to continue reading.)
-""")
-
-
-async def test_local_read_continuation_hint(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        lines = '\n'.join(f'line {i}' for i in range(20))
-        await env.write_file('long.txt', lines)
-
-        content = await env.read_file('long.txt', offset=0, limit=5)
-        assert content == snapshot("""\
-1	line 0
-2	line 1
-3	line 2
-4	line 3
-5	line 4
-... (15 more lines. Use offset=5 to continue reading.)
-""")
-
-
-async def test_local_read_offset_out_of_bounds(tmp_path: Path):
-    async with LocalEnvironment(tmp_path) as env:
-        await env.write_file('short.txt', 'one\ntwo\n')
-        with pytest.raises(ValueError, match='Offset 100 exceeds file length'):
-            await env.read_file('short.txt', offset=100)
+        assert isinstance(content, bytes)
+        assert content == b'line one\nline two\n'
 
 
 async def test_local_read_directory_error(tmp_path: Path):
@@ -231,8 +178,7 @@ async def test_local_write_creates_parent_dirs(tmp_path: Path):
     async with LocalEnvironment(tmp_path) as env:
         await env.write_file('deep/nested/dir/file.txt', 'content')
         content = await env.read_file('deep/nested/dir/file.txt')
-        assert isinstance(content, str)
-        assert 'content' in content
+        assert content == b'content'
 
 
 async def test_local_write_binary(tmp_path: Path):
@@ -718,7 +664,7 @@ async def test_memory_read_write():
     async with MemoryEnvironment() as env:
         await env.write_file('test.txt', 'hello world\n')
         content = await env.read_file('test.txt')
-        assert content == snapshot('1\thello world\n')
+        assert content == b'hello world\n'
 
 
 async def test_memory_initial_files():
@@ -726,11 +672,9 @@ async def test_memory_initial_files():
     async with env:
         assert env.files == {'a.txt': 'alpha', 'b.txt': 'beta'}
         a = await env.read_file('a.txt')
-        assert isinstance(a, str)
-        assert 'alpha' in a
+        assert a == b'alpha'
         b = await env.read_file('b.txt')
-        assert isinstance(b, str)
-        assert 'beta' in b
+        assert b == b'beta'
 
 
 async def test_memory_read_nonexistent():
@@ -746,44 +690,13 @@ async def test_memory_read_directory_error():
             await env.read_file('dir')
 
 
-async def test_memory_read_offset_limit():
-    lines = '\n'.join(f'line {i}' for i in range(20))
-    env = MemoryEnvironment(files={'long.txt': lines})
-    async with env:
-        content = await env.read_file('long.txt', offset=5, limit=3)
-        assert isinstance(content, str)
-        assert 'line 5' in content
-        assert 'line 7' in content
-        assert 'line 4' not in content
-        assert 'line 8' not in content
-
-
-async def test_memory_read_continuation_hint():
-    lines = '\n'.join(f'line {i}' for i in range(20))
-    env = MemoryEnvironment(files={'long.txt': lines})
-    async with env:
-        content = await env.read_file('long.txt', offset=0, limit=5)
-        assert isinstance(content, str)
-        assert '15 more lines' in content
-        assert 'offset=5' in content
-
-
-async def test_memory_read_offset_out_of_bounds():
-    env = MemoryEnvironment(files={'short.txt': 'one\ntwo\n'})
-    async with env:
-        with pytest.raises(ValueError, match='Offset 100 exceeds'):
-            await env.read_file('short.txt', offset=100)
-
-
 async def test_memory_edit_file():
     env = MemoryEnvironment(files={'code.py': 'old_value = 1'})
     async with env:
         count = await env.replace_str('code.py', 'old_value', 'new_value')
         assert count == 1
         content = await env.read_file('code.py')
-        assert isinstance(content, str)
-        assert 'new_value' in content
-        assert 'old_value' not in content
+        assert content == b'new_value = 1'
 
 
 async def test_memory_edit_file_not_found():
@@ -812,8 +725,7 @@ async def test_memory_edit_replace_all():
         count = await env.replace_str('f.txt', 'aaa', 'xxx', replace_all=True)
         assert count == 2
         content = await env.read_file('f.txt')
-        assert isinstance(content, str)
-        assert 'xxx bbb xxx' in content
+        assert content == b'xxx bbb xxx'
 
 
 async def test_memory_execute_with_handler():
@@ -841,9 +753,8 @@ async def test_memory_create_process_not_supported():
 async def test_memory_write_binary():
     async with MemoryEnvironment() as env:
         await env.write_file('data.bin', b'\x00\x01\x02')
-        # Non-image binary files are returned as text (decoded)
         content = await env.read_file('data.bin')
-        assert isinstance(content, str)
+        assert content == b'\x00\x01\x02'
 
 
 async def test_memory_read_file_bytes():
@@ -903,15 +814,15 @@ async def test_agent_with_execution_toolset():
 # --- _base.py helper functions ---
 
 
-def test_format_lines_empty_file():
-    """format_lines on empty string returns just a newline."""
-    result = format_lines('', 0, 2000)
+def test__format_lines_empty_file():
+    """_format_lines on empty string returns just a newline."""
+    result = _format_lines('', 0, 2000)
     assert result == '\n'
 
 
-def test_format_lines_trailing_newline():
-    """format_lines adds trailing newline when text doesn't end with one."""
-    result = format_lines('no trailing newline', 0, 2000)
+def test__format_lines_trailing_newline():
+    """_format_lines adds trailing newline when text doesn't end with one."""
+    result = _format_lines('no trailing newline', 0, 2000)
     assert result.endswith('\n')
     assert '1\tno trailing newline' in result
 
@@ -981,8 +892,7 @@ async def test_memory_normalize_paths():
     async with MemoryEnvironment() as env:
         await env.write_file('./test.txt', 'content')
         content = await env.read_file('test.txt')
-        assert isinstance(content, str)
-        assert 'content' in content
+        assert content == b'content'
 
 
 async def test_memory_normalize_leading_slash():
@@ -990,17 +900,15 @@ async def test_memory_normalize_leading_slash():
     async with MemoryEnvironment() as env:
         await env.write_file('/test.txt', 'content')
         content = await env.read_file('test.txt')
-        assert isinstance(content, str)
-        assert 'content' in content
+        assert content == b'content'
 
 
 async def test_memory_read_file_text():
-    """read_file on text file returns formatted string."""
+    """read_file returns raw bytes."""
     env = MemoryEnvironment(files={'text.txt': 'hello'})
     async with env:
         result = await env.read_file('text.txt')
-        assert isinstance(result, str)
-        assert 'hello' in result
+        assert result == b'hello'
 
 
 async def test_memory_read_file_not_found():
@@ -1141,33 +1049,6 @@ class MockContainer:
         if 'mkdir -p' in cmd_str:
             return 0, b''
 
-        # Handle awk (read_file)
-        if 'awk' in cmd_str:
-            # Parse start/end from the awk NR range: NR>=start && NR<=end
-            import re as _re
-
-            nr_match = _re.search(r'NR>=(\d+) && NR<=(\d+)', cmd_str)
-            start = int(nr_match.group(1)) if nr_match else 1
-            end = int(nr_match.group(2)) if nr_match else 2000
-            # Try to find the file by matching path in the awk command.
-            for fpath, data in self._files.items():
-                name = fpath.rsplit('/', 1)[-1] if '/' in fpath else fpath
-                if name in cmd_str or fpath in cmd_str:  # pragma: no branch
-                    text = data.decode('utf-8', errors='replace')
-                    lines = text.splitlines(keepends=True)
-                    total = len(lines)
-                    # Offset exceeds file length
-                    if total > 0 and total < start:
-                        return 0, f'__OFFSET_ERROR__:{total}\n'.encode()
-                    selected = lines[start - 1 : end]
-                    numbered = [f'{i:>6}\t{line}' for i, line in enumerate(selected, start=start)]
-                    result = ''.join(numbered)
-                    remaining = total - end
-                    if remaining > 0:
-                        result += f'... ({remaining} more lines. Use offset={end} to continue reading.)\n'
-                    return 0, result.encode('utf-8')
-            return 1, b'File not found'
-
         # Handle find (glob)
         if 'find' in cmd_str:
             # Extract the search path from: find '<path>' ...
@@ -1284,7 +1165,7 @@ class TestDocker:
         """DockerEnvironment write and read files."""
         await mock_docker_sandbox.write_file('test.txt', 'hello world\n')
         content = await mock_docker_sandbox.read_file('test.txt')
-        assert isinstance(content, str)
+        assert isinstance(content, bytes)
 
     async def test_docker_write_file_binary(self, mock_docker_sandbox: Any) -> None:
         """DockerEnvironment write binary file."""
@@ -1294,23 +1175,6 @@ class TestDocker:
         """DockerEnvironment.read_file on missing file raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
             await mock_docker_sandbox.read_file('nonexistent.txt')
-
-    async def test_docker_read_file_offset_out_of_range(
-        self, mock_docker_sandbox: Any, mock_container: MockContainer
-    ) -> None:
-        """DockerEnvironment.read_file raises ValueError when offset exceeds file length."""
-        mock_container._files['/workspace/small.txt'] = b'line1\nline2\nline3\n'
-        with pytest.raises(ValueError, match='Offset 10 exceeds file length \\(3 lines\\)'):
-            await mock_docker_sandbox.read_file('small.txt', offset=10)
-
-    async def test_docker_read_file_with_offset(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-        """DockerEnvironment.read_file respects offset and limit."""
-        mock_container._files['/workspace/lines.txt'] = b'a\nb\nc\nd\ne\n'
-        result = await mock_docker_sandbox.read_file('lines.txt', offset=2, limit=2)
-        assert isinstance(result, str)
-        assert '     3\tc\n' in result
-        assert '     4\td\n' in result
-        assert '... (1 more lines. Use offset=4 to continue reading.)' in result
 
     async def test_docker_read_file_image(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
         """DockerEnvironment.read_file returns raw bytes for image files."""
@@ -1534,26 +1398,14 @@ class TestDocker:
         result = await proc.wait(timeout=5.0)
         assert result == 42
 
-    async def test_docker_read_file_unicode_error(
+    async def test_docker_read_file_binary(
         self, mock_docker_sandbox: Any, mock_container: MockContainer
     ) -> None:
-        """DockerEnvironment.read_file falls back to raw bytes on UnicodeDecodeError."""
-        # Store a binary file (not an image extension) that will fail utf-8 decode
+        """DockerEnvironment.read_file returns raw bytes for any file."""
         binary_data = b'\x80\x81\x82\xff'
         mock_container._files['/workspace/data.bin'] = binary_data
-
-        # Make the awk command return non-utf8 data to trigger UnicodeDecodeError
-        original = mock_container.exec_run
-
-        def exec_with_binary(cmd: Any, **kwargs: Any) -> tuple[int, bytes]:
-            cmd_str = ' '.join(cmd) if isinstance(cmd, list) else cmd
-            if 'awk' in cmd_str and 'data.bin' in cmd_str:
-                return 0, b'\x80\x81\x82\xff'
-            return original(cmd, **kwargs)  # pragma: no cover
-
-        mock_container.exec_run = exec_with_binary  # type: ignore[assignment]
         result = await mock_docker_sandbox.read_file('data.bin')
-        assert isinstance(result, bytes)
+        assert result == binary_data
 
     async def test_docker_is_alive_exception(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
         """DockerEnvironment.is_alive returns False when reload raises."""
@@ -2057,25 +1909,6 @@ class TestDocker:
         assert _shell_escape('') == "''"
         assert _shell_escape('a b c') == "'a b c'"
 
-    def test_build_read_file_cmd_default(self):
-        cmd = _build_read_file_cmd('test.txt')
-        assert 'awk' in cmd
-        assert "'test.txt'" in cmd
-        assert 'NR>=1' in cmd
-        assert 'NR<=2000' in cmd
-
-    def test_build_read_file_cmd_with_offset(self):
-        cmd = _build_read_file_cmd('file.py', offset=10, limit=50)
-        assert 'NR>=11' in cmd
-        assert 'NR<=60' in cmd
-        assert "'file.py'" in cmd
-
-    def test_build_read_file_cmd_continuation_hint(self):
-        """_build_read_file_cmd includes a continuation hint in the awk END block."""
-        cmd = _build_read_file_cmd('file.py', offset=0, limit=10)
-        assert 'more lines' in cmd
-        assert 'offset=10' in cmd
-
 
 # --- Additional coverage: _base.py ---
 
@@ -2208,8 +2041,7 @@ async def test_memory_normalize_leading_slash_in_constructor():
     """MemoryEnvironment normalizes paths with leading /."""
     env = MemoryEnvironment(files={'/abs/path.txt': 'content'})
     content = await env.read_file('abs/path.txt')
-    assert isinstance(content, str)
-    assert 'content' in content
+    assert content == b'content'
 
 
 async def test_memory_read_file_directory_error():
@@ -2249,8 +2081,7 @@ async def test_memory_read_file_that_is_also_directory_prefix():
     env = MemoryEnvironment(files={'dir': 'I am a file', 'dir/child.txt': 'child content'})
     async with env:
         content = await env.read_file('dir')
-        assert isinstance(content, str)
-        assert 'I am a file' in content
+        assert content == b'I am a file'
 
 
 # --- ExecutionEnvironmentToolset: environment_factory ---

@@ -94,7 +94,7 @@ class MemoryEnvironment(ExecutionEnvironment):
             )
         return self._command_handler(command)
 
-    async def _read_file_content(self, path: str) -> bytes:
+    async def read_file(self, path: str) -> bytes:
         normalized = self._normalize(path)
 
         # Check if path is a "directory" (any file starts with path/)

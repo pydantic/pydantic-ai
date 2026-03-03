@@ -217,7 +217,7 @@ class LocalEnvironment(ExecutionEnvironment):
             exit_code=proc.returncode if proc.returncode is not None else 0,
         )
 
-    async def _read_file_content(self, path: str) -> bytes:
+    async def read_file(self, path: str) -> bytes:
         resolved = self._resolve_path(path)
 
         def _read() -> bytes:
