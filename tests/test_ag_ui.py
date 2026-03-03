@@ -242,8 +242,14 @@ def create_input(
 
 def _sync_timestamps(original_messages: list[ModelMessage], new_messages: list[ModelMessage]) -> None:
     for original_message, new_message in zip(original_messages, new_messages):
-        if hasattr(new_message, 'timestamp'):
-            setattr(new_message, 'timestamp', getattr(original_message, 'timestamp', None))
+        if isinstance(new_message, ModelRequest):
+            assert isinstance(original_message, ModelRequest)
+            new_message.timestamp = original_message.timestamp
+        else:
+            assert isinstance(new_message, ModelResponse)
+            assert isinstance(original_message, ModelResponse)
+            new_message.timestamp = original_message.timestamp
+
         for original_part, new_part in zip(original_message.parts, new_message.parts):
             if hasattr(new_part, 'timestamp'):
                 setattr(new_part, 'timestamp', getattr(original_part, 'timestamp', None))
