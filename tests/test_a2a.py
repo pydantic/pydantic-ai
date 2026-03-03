@@ -6,7 +6,6 @@ import anyio
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -24,6 +23,7 @@ from pydantic_ai import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:

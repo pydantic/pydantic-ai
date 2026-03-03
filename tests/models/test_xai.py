@@ -22,7 +22,6 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
@@ -70,6 +69,7 @@ from pydantic_ai.profiles.grok import GrokModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from .mock_xai import (
     MockXai,

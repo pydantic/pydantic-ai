@@ -9,7 +9,6 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
@@ -33,6 +32,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
@@ -810,6 +810,7 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                {'first': ''},
                 {'first': 'O'},
                 {'first': 'On'},
                 {'first': 'One'},
@@ -923,6 +924,7 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                [],
                 [''],
                 ['f'],
                 ['fi'],
@@ -1015,6 +1017,7 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                MyTypedBaseModel(first='', second=''),
                 MyTypedBaseModel(first='O', second=''),
                 MyTypedBaseModel(first='On', second=''),
                 MyTypedBaseModel(first='One', second=''),
