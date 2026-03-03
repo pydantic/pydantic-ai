@@ -222,6 +222,9 @@ class ToolRetryError(Exception):
         )
         super().__init__(message)
 
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.tool_retry,)
+
     @staticmethod
     def _format_error_details(errors: list[pydantic_core.ErrorDetails], tool_name: str | None) -> str:
         """Format ErrorDetails as a human-readable message.

@@ -126,6 +126,20 @@ def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], chec
         assert getattr(restored, attr) == expected
 
 
+def test_tool_retry_error_pickle_round_trip():
+    """Test that ToolRetryError survives pickle round-trip with tool_retry preserved."""
+    part = RetryPromptPart(content='retry this', tool_name='my_tool')
+    exc = ToolRetryError(part)
+    restored = pickle.loads(pickle.dumps(exc))
+
+    assert type(restored) is ToolRetryError
+    assert str(restored) == str(exc)
+    assert restored.tool_retry.content == 'retry this'
+    assert restored.tool_retry.tool_name == 'my_tool'
+    assert restored.tool_retry.tool_call_id == part.tool_call_id
+    assert restored.tool_retry.timestamp == part.timestamp
+
+
 def test_tool_retry_error_str_with_string_content():
     """Test that ToolRetryError uses string content as message automatically."""
     part = RetryPromptPart(content='error from tool', tool_name='my_tool')
