@@ -2096,7 +2096,7 @@ async def test_toolset_factory_basic():
         envs_created.append(env)
         return env
 
-    toolset = ExecutionEnvironmentToolset(environment_factory=factory)
+    toolset = ExecutionEnvironmentToolset(factory)
 
     async with toolset:
         assert len(envs_created) == 1
@@ -2120,7 +2120,7 @@ async def test_toolset_factory_concurrent():
         envs_created.append(env)
         return env
 
-    toolset = ExecutionEnvironmentToolset(environment_factory=factory)
+    toolset = ExecutionEnvironmentToolset(factory)
 
     async def enter_and_check() -> MemoryEnvironment:
         async with toolset:
@@ -2140,7 +2140,7 @@ async def test_toolset_factory_concurrent_isolation():
     def factory() -> MemoryEnvironment:
         return MemoryEnvironment()
 
-    toolset = ExecutionEnvironmentToolset(environment_factory=factory)
+    toolset = ExecutionEnvironmentToolset(factory)
     ctx = build_run_context()
 
     async def write_and_read(filename: str, content: str) -> tuple[str, str]:
@@ -2182,7 +2182,7 @@ async def test_toolset_factory_cleanup():
             exited += 1
             return await super().__aexit__(*args)
 
-    toolset = ExecutionEnvironmentToolset(environment_factory=TrackingEnv)
+    toolset = ExecutionEnvironmentToolset(TrackingEnv)
 
     async with toolset:
         assert entered == 1
@@ -2192,18 +2192,11 @@ async def test_toolset_factory_cleanup():
     assert exited == 1
 
 
-async def test_toolset_factory_mutual_exclusivity():
-    """Passing both shared_environment and environment_factory raises ValueError."""
-    env = MemoryEnvironment()
-    with pytest.raises(ValueError, match='Cannot provide both'):
-        ExecutionEnvironmentToolset(env, environment_factory=MemoryEnvironment)
-
-
 async def test_toolset_factory_with_use_environment():
     """use_environment() overrides the factory-created environment within the context."""
     override_env = MemoryEnvironment()
 
-    toolset = ExecutionEnvironmentToolset(environment_factory=MemoryEnvironment)
+    toolset = ExecutionEnvironmentToolset(MemoryEnvironment)
 
     async with toolset:
         factory_env = toolset.environment
@@ -2244,7 +2237,7 @@ async def test_toolset_factory_filters_tools_by_capabilities():
         ) -> ExecutionResult:
             return ExecutionResult(output='', exit_code=0)  # pragma: no cover
 
-    toolset = ExecutionEnvironmentToolset(environment_factory=_ShellOnlyEnv)
+    toolset = ExecutionEnvironmentToolset(_ShellOnlyEnv)
     # Before entering, all tools are registered (no env to check)
     ctx = build_run_context()
 

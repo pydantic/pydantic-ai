@@ -236,7 +236,7 @@ async def main():
     Using `async with toolset:` starts the environment once and keeps it alive across all agent runs. Without it, the environment is started and stopped on each `agent.run()` call — for Docker, that means creating and destroying a container every time. Pre-start the toolset for better performance when running the agent multiple times.
 
 !!! note "Shared environment"
-    When you pass an environment directly, all concurrent `agent.run()` calls share the same environment instance (same container, filesystem, and processes). For isolated concurrent runs, use `environment_factory` — see [Concurrent Runs](#concurrent-runs) below.
+    When you pass an environment instance directly, all concurrent `agent.run()` calls share the same environment (same container, filesystem, and processes). For isolated concurrent runs, pass a callable instead — see [Concurrent Runs](#concurrent-runs) below.
 
 ### Environment Overrides
 
@@ -266,7 +266,7 @@ async def main():
 
 ### Concurrent Runs
 
-When multiple `agent.run()` calls execute concurrently (e.g. via `asyncio.gather`), a shared environment means they all operate on the same filesystem and processes, which can cause interference. Use `environment_factory` to create a fresh, isolated environment for each run:
+When multiple `agent.run()` calls execute concurrently (e.g. via `asyncio.gather`), a shared environment means they all operate on the same filesystem and processes, which can cause interference. Pass a callable to create a fresh, isolated environment for each run:
 
 ```python {title="environments_concurrent.py"}
 import asyncio
@@ -277,7 +277,7 @@ from pydantic_ai.environments.docker import DockerEnvironment
 
 # Each concurrent run gets its own container
 toolset = ExecutionEnvironmentToolset(
-    environment_factory=lambda: DockerEnvironment(image='python:3.12-slim')
+    lambda: DockerEnvironment(image='python:3.12-slim')
 )
 
 agent = Agent('openai:gpt-5.2', toolsets=[toolset])

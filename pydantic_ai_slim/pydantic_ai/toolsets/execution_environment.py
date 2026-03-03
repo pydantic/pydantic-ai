@@ -43,8 +43,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
     filtered by `include`/`exclude`.
 
     The environment can be:
-    - Passed directly at construction time via `shared_environment` (shared across concurrent runs)
-    - Created per-run via `environment_factory` (isolated concurrent runs)
+    - Passed directly at construction time as an instance (shared across concurrent runs)
+    - Created per-run via a callable factory (isolated concurrent runs)
     - Set/overridden via context var using `use_environment()` (for testing or per-call-site config)
 
     Usage:
@@ -65,9 +65,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
 
     def __init__(
         self,
-        shared_environment: ExecutionEnvironment | None = None,
+        environment: ExecutionEnvironment | Callable[[], ExecutionEnvironment] | None = None,
         *,
-        environment_factory: Callable[[], ExecutionEnvironment] | None = None,
         include: Sequence[EnvToolName] | None = None,
         exclude: Sequence[EnvToolName] | None = None,
         require_shell_approval: bool = False,
@@ -81,13 +80,13 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         """Create a new execution environment toolset.
 
         Args:
-            shared_environment: A shared execution environment for tool execution.
-                All concurrent runs share this single environment instance.
-                Can also be set later via `use_environment()`.
-            environment_factory: A callable that creates a fresh environment per
-                `async with toolset:` entry. Use this for concurrent runs that need
-                isolation (e.g. separate Docker containers). Mutually exclusive with
-                `shared_environment`.
+            environment: The execution environment for tool execution. Can be:
+
+                - An `ExecutionEnvironment` instance — shared across all concurrent runs.
+                - A callable returning an `ExecutionEnvironment` — called once per
+                  `async with toolset:` entry, creating isolated environments for
+                  concurrent runs (e.g. separate Docker containers).
+                - `None` — set later via `use_environment()`.
             include: Tool names to include. `None` means all tools supported
                 by the environment. Pass an explicit sequence to restrict to
                 specific tools.
@@ -105,12 +104,13 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             max_retries: Maximum retries per tool call.
             id: Optional unique ID for the toolset (required for durable execution).
         """
-        if shared_environment is not None and environment_factory is not None:
-            raise ValueError('Cannot provide both shared_environment and environment_factory.')
-
         super().__init__(max_retries=max_retries, id=id)
-        self._shared_environment = shared_environment
-        self._environment_factory = environment_factory
+        if callable(environment) and not isinstance(environment, ExecutionEnvironment):
+            self._shared_environment: ExecutionEnvironment | None = None
+            self._environment_factory: Callable[[], ExecutionEnvironment] | None = environment
+        else:
+            self._shared_environment = environment
+            self._environment_factory = None
         self._environment_override: ContextVar[ExecutionEnvironment | None] = ContextVar(
             f'_environment_override_{id or "environment"}', default=None
         )
@@ -348,7 +348,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                     if env is None:
                         self._running_count -= 1
                         raise RuntimeError(
-                            'No execution environment configured. Pass one to ExecutionEnvironmentToolset() or use environment_factory.'
+                            'No execution environment configured. Pass one to ExecutionEnvironmentToolset() or use .use_environment().'
                         )
                     self._exit_stack = AsyncExitStack()
                     try:
