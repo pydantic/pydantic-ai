@@ -1,0 +1,106 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '688'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: moonshotai/kimi-k2-instruct
+      n: 1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: ''
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '784'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Paris","country":"France"}'
+              name: final_result
+            id: functions.final_result:0
+            type: function
+      created: 1771291675
+      id: chatcmpl-f17dc497-fe1d-438c-98cc-9a623c4afffa
+      model: moonshotai/kimi-k2-instruct
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_6986a421e1
+      usage:
+        completion_time: 0.057427142
+        completion_tokens: 30
+        prompt_time: 0.031969136
+        prompt_tokens: 171
+        queue_time: 0.002705648
+        total_time: 0.089396278
+        total_tokens: 201
+      usage_breakdown: null
+      x_groq:
+        id: req_01khmkc301fm1r41mh1khb4zrj
+        seed: 201872145
+    status:
+      code: 200
+      message: OK
+version: 1

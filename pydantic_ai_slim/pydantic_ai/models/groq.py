@@ -177,6 +177,24 @@ class GroqModel(Model):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool})
 
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        # Groq doesn't support native structured output with function tools.
+        # This must happen BEFORE super().prepare_request() because the base class
+        # clears output_tools when output_mode != 'tool'.
+        if model_request_parameters.function_tools:
+            if model_request_parameters.output_mode == 'native':
+                raise UserError(
+                    'Groq does not support native structured output (JSON mode) with function tools. '
+                    'Use `output_type=ToolOutput(...)` instead.'
+                )
+            elif model_request_parameters.output_mode == 'auto':
+                if self.profile.default_structured_output_mode == 'native':
+                    model_request_parameters = model_request_parameters.resolve_auto_output_mode('tool')
+
+        return super().prepare_request(model_settings, model_request_parameters)
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -481,7 +499,7 @@ class GroqModel(Model):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
-            elif isinstance(part, RetryPromptPart):  # pragma: no branch
+            elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
                     yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
                 else:
@@ -490,6 +508,8 @@ class GroqModel(Model):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            else:
+                assert_never(part)
 
     @staticmethod
     def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
@@ -681,7 +701,7 @@ class _GroqToolUseFailedError(BaseModel):
     # Example payload from `exception.body`:
     # {
     #     'error': {
-    #         'message': "Tool call validation failed: tool call validation failed: parameters for tool get_something_by_name did not match schema: errors: [missing properties: 'name', additionalProperties 'foo' not allowed]",
+    #         'message': "Tool call validation failed: ...",
     #         'type': 'invalid_request_error',
     #         'code': 'tool_use_failed',
     #         'failed_generation': '{"name": "get_something_by_name", "arguments": {\n  "foo": "bar"\n}}',
