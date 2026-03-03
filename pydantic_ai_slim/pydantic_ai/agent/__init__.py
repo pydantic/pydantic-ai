@@ -666,7 +666,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if toolset_result:
                 if isinstance(toolset_result, list):
                     parts.extend(toolset_result)
-                else:
+                else:  # pragma: no cover
                     parts.append(toolset_result)
 
             if not parts:
