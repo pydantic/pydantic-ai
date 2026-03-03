@@ -507,7 +507,7 @@ class MistralModel(Model):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, files = await self._map_tool_return(part)
+                tool_text, files = part.model_response_str_and_user_content()
                 file_content.extend(files)
                 yield MistralToolMessage(
                     tool_call_id=part.tool_call_id,
@@ -525,15 +525,6 @@ class MistralModel(Model):
                 assert_never(part)
         if file_content:
             yield await self._map_user_prompt(UserPromptPart(content=file_content))
-
-    async def _map_tool_return(self, part: ToolReturnPart) -> tuple[str, list[UserContent]]:
-        """Map a ToolReturnPart to a text string and any file content for a trailing user message.
-
-        Mistral's ToolMessage only accepts string content, so multimodal files are extracted
-        and sent in a separate user message via the fallback pattern. Validation of supported
-        file types is handled by `_map_user_prompt`.
-        """
-        return part.fallback_tool_return()
 
     async def _map_messages(  # noqa: C901
         self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
