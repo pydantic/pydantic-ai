@@ -707,7 +707,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         conn_id = self._get_conn_id()
         if conn_id is not None and (conn := self._connections.get(conn_id)):
             return conn.client
-        raise RuntimeError(
+        raise RuntimeError(  # pragma: no cover
             f'{self.__class__.__name__} has no connection for the current context. '
             'Use `async with server:` to open a connection first.'
         )
