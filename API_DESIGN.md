@@ -285,7 +285,7 @@ _DEFAULT_THINKING_BUDGET = 4096
 ```python
 # Constants in GoogleModel
 _GOOGLE_EFFORT_TO_BUDGET: dict[str, int] = {
-    'low': 1024, 'medium': 8192, 'high': 32768,
+    'low': 1024, 'medium': 8192, 'high': 24576,
 }
 _EFFORT_TO_LEVEL = {
     'low': ThinkingLevel.LOW,
@@ -300,7 +300,7 @@ _EFFORT_TO_LEVEL = {
 | `thinking=False` | `thinking_level: "minimal"` (Flash) / silent ignore (Pro — can't disable) | `thinking_budget: 0` (Flash) / silent ignore (Pro) |
 | `effort='low'` | `thinking_level: "low"` | `thinking_budget: 1024` |
 | `effort='medium'` | `thinking_level: "medium"` | `thinking_budget: 8192` |
-| `effort='high'` | `thinking_level: "high"` | `thinking_budget: 32768` |
+| `effort='high'` | `thinking_level: "high"` | `thinking_budget: 24576` |
 
 **Key**: Gemini 3 Pro and Gemini 2.5 Pro CANNOT disable thinking — even `minimal` on Gemini 3 may still think for complex tasks. When `thinking=False` hits a Pro model, we silently ignore rather than error.
 

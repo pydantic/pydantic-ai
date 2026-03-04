@@ -117,11 +117,13 @@ _GOOGLE_EFFORT_TO_LEVEL: dict[str, ThinkingLevel] = {
     'high': ThinkingLevel.HIGH,
 }
 
-# Effort-to-thinking-budget mapping for Gemini 2.5 models
+# Effort-to-thinking-budget mapping for Gemini 2.5 models.
+# Flash max is 24576, Pro max is 32768 — use the lower bound so the same
+# mapping works for both without model-specific branching.
 _GOOGLE_EFFORT_TO_BUDGET: dict[str, int] = {
     'low': 1024,
     'medium': 8192,
-    'high': 32768,
+    'high': 24576,
 }
 
 

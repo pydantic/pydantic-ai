@@ -294,7 +294,7 @@ class TestGoogleUnifiedThinking:
 
     @pytest.mark.parametrize(
         'effort,expected_budget',
-        [('low', 1024), ('medium', 8192), ('high', 32768)],
+        [('low', 1024), ('medium', 8192), ('high', 24576)],
     )
     def test_effort_maps_to_budget_gemini25(
         self, google_thinking_profile: ModelProfile, effort: str, expected_budget: int
@@ -406,7 +406,13 @@ class TestGoogleUnifiedThinking:
         settings: GoogleModelSettings = {'thinking_effort': 'high'}
         result = model._resolve_thinking_config(settings)
 
-        assert result == {'thinking_budget': 32768}
+        assert result == {'thinking_budget': 24576}
+
+    def test_high_budget_within_flash_limit(self, google_thinking_profile: ModelProfile):
+        """Gemini 2.5 Flash max thinking_budget is 24576 — 'high' must not exceed it."""
+        from pydantic_ai.models.google import _GOOGLE_EFFORT_TO_BUDGET
+
+        assert _GOOGLE_EFFORT_TO_BUDGET['high'] <= 24576
 
     def test_silent_drop_unsupported_model(self, non_thinking_profile: ModelProfile):
         """thinking=True on unsupported model → None (silent drop)."""
