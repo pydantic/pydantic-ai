@@ -194,7 +194,7 @@ class CohereEmbeddingModel(EmbeddingModel):
         if 'float' not in embedding_types:
             raise UserError(
                 f"'float' must be included in cohere_embedding_types because "
-                f"CohereEmbeddingModel only reads float embeddings from the response. "
+                f'CohereEmbeddingModel only reads float embeddings from the response. '
                 f"Got: {embedding_types!r}. Add 'float' to the list or remove the override."
             )
 
