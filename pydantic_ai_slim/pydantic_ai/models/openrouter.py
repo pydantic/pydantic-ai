@@ -486,7 +486,8 @@ def _map_openrouter_provider_details(
 ) -> dict[str, Any]:
     provider_details: dict[str, Any] = {}
 
-    provider_details['downstream_provider'] = response.provider
+    if response.provider is not None:
+        provider_details['downstream_provider'] = response.provider
     if native_finish_reason := response.choices[0].native_finish_reason:
         provider_details['finish_reason'] = native_finish_reason
 
@@ -591,7 +592,11 @@ class OpenRouterModel(OpenAIChatModel):
                     model_name=response_dict.get('model') or self.model_name,
                     body=error.message,
                 )
-            except (TypeError, ValueError):
+            except ModelHTTPError:
+                raise
+            except Exception:
+                # Malformed error_data (ValidationError, TypeError, ValueError, etc.) — fall through
+                # to the full model_validate() below which will produce a clearer error message.
                 pass
 
         response = _OpenRouterChatCompletion.model_validate(response_dict)
