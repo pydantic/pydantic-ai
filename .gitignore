@@ -25,6 +25,8 @@ node_modules/
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/pytest-vcr/
+!.claude/skills/address-feedback
+!.claude/skills/pre-push-review
 .github/.review-context/
 /.cursor/
 /.devcontainer/

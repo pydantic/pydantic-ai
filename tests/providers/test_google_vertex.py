@@ -9,12 +9,12 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.models.gemini import GeminiModel
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:

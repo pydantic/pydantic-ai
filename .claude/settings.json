@@ -23,14 +23,6 @@
       "Bash(uv run:*)",
       "Bash(make:*)",
       "Skill(pytest-vcr:*)"
-    ],
-    "ask": [
-      "Bash(git add:*)",
-      "Bash(git checkout:*)",
-      "Bash(git commit:*)",
-      "Bash(git -C * commit:*)",
-      "Bash(git push:*)",
-      "Bash(gh pr create:*)"
     ]
   }
 }

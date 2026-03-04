@@ -3,7 +3,6 @@ import os
 from dataclasses import dataclass
 
 import pytest
-from inline_snapshot import Is, snapshot
 from pytest_mock import MockerFixture
 
 from pydantic_ai import (
@@ -20,6 +19,7 @@ from pydantic_ai import (
 from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import Is, snapshot
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
