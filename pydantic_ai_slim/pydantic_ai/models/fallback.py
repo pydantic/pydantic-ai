@@ -32,6 +32,7 @@ class FallbackModel(Model):
 
     _model_name: str = field(repr=False)
     _fallback_on: Callable[[Exception], bool]
+    _exit_stack: AsyncExitStack | None = field(default=None, repr=False)
 
     def __init__(
         self,
@@ -56,14 +57,17 @@ class FallbackModel(Model):
 
     async def __aenter__(self) -> Self:
         """Enter the context for all wrapped models, managing their provider lifecycles."""
-        for model in self.models:
-            await model.__aenter__()
+        async with AsyncExitStack() as exit_stack:
+            for model in self.models:
+                await exit_stack.enter_async_context(model)
+            self._exit_stack = exit_stack.pop_all()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
         """Exit the context for all wrapped models, closing their providers' HTTP clients."""
-        for model in self.models:
-            await model.__aexit__(*args)
+        if self._exit_stack is not None:
+            await self._exit_stack.aclose()
+            self._exit_stack = None
 
     @property
     def model_name(self) -> str:

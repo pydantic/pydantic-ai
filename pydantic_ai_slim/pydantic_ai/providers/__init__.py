@@ -5,6 +5,7 @@ The providers are in charge of providing an authenticated client to the API.
 
 from __future__ import annotations as _annotations
 
+import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
 from contextlib import AsyncExitStack
@@ -78,6 +79,17 @@ class Provider(ABC, Generic[InterfaceClient]):
             if self._entered_count == 0 and self._exit_stack is not None:
                 await self._exit_stack.aclose()
                 self._exit_stack = None
+
+    def __del__(self) -> None:
+        http_client = self._own_http_client
+        if http_client is not None and not http_client.is_closed:
+            warnings.warn(
+                f'{self!r} was garbage collected with an open HTTP client. '
+                'Use the provider (or its model/agent) as an async context manager to ensure proper cleanup. '
+                'See: https://ai.pydantic.dev/models/#http-client-lifecycle',
+                ResourceWarning,
+                stacklevel=1,
+            )
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}(name={self.name}, base_url={self.base_url})'  # pragma: lax no cover

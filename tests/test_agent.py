@@ -5865,6 +5865,25 @@ async def test_provider_aexit_without_aenter():
     """
     provider = OpenAIProvider(api_key='test-key')
     await provider.__aexit__(None, None, None)
+    # Clean up the owned http client to avoid ResourceWarning from __del__
+    assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+    await provider._own_http_client.aclose()  # pyright: ignore[reportPrivateUsage]
+
+
+@requires_openai
+async def test_provider_del_warns_on_unclosed_client():
+    """Provider.__del__ warns if the HTTP client was never closed.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider = OpenAIProvider(api_key='test-key')
+    assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+    assert not provider._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    with pytest.warns(ResourceWarning, match='was garbage collected with an open HTTP client'):
+        provider.__del__()
+    # Clean up
+    await provider._own_http_client.aclose()  # pyright: ignore[reportPrivateUsage]
 
 
 @requires_openai

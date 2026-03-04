@@ -660,16 +660,23 @@ class Model(ABC):
         self._settings = settings
         self._profile = profile
 
+    def _get_provider(self) -> Provider[Any] | None:
+        """Get the provider for this model, if any.
+
+        Override this method in subclasses that manage providers differently (e.g. FallbackModel).
+        """
+        return getattr(self, '_provider', None)
+
     async def __aenter__(self) -> Self:
         """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""
-        provider = getattr(self, '_provider', None)
+        provider = self._get_provider()
         if provider is not None:
             await provider.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
         """Exit the model context, closing the provider's HTTP client if it owns one."""
-        provider = getattr(self, '_provider', None)
+        provider = self._get_provider()
         if provider is not None:
             await provider.__aexit__(*args)
 

@@ -1631,8 +1631,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     await exit_stack.enter_async_context(toolset)
 
                     if self.model is not None:
-                        model = models.infer_model(self.model)
-                        self.model = model
+                        model = self._get_model(None)
                         await exit_stack.enter_async_context(model)
 
                     self._exit_stack = exit_stack.pop_all()
