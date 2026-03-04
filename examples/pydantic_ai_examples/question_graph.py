@@ -115,16 +115,13 @@ async def run_as_continuous():
     print('END:', end.output)
 
 
-async def run_as_cli(answer: str | None):
+async def run_as_cli():
     persistence = FileStatePersistence(Path('question_graph.json'))
     persistence.set_graph_types(question_graph)
 
     if snapshot := await persistence.load_next():
         state = snapshot.state
-        assert answer is not None, (
-            'answer required, usage "uv run -m pydantic_ai_examples.question_graph cli <answer>"'
-        )
-        node = Evaluate(answer)
+        node = snapshot.node
     else:
         state = QuestionState()
         node = Ask()
@@ -133,16 +130,13 @@ async def run_as_cli(answer: str | None):
     async with question_graph.iter(node, state=state, persistence=persistence) as run:
         while True:
             node = await run.next()
-            if isinstance(node, End):
-                print('END:', node.data)
-                history = await persistence.load_all()
-                print('history:', '\n'.join(str(e.node) for e in history), sep='\n')
-                print('Finished!')
-                break
-            elif isinstance(node, Answer):
-                print(node.question)
-                break
-            # otherwise just continue
+            if not isinstance(node, End):
+                continue
+            print('END:', node.data)
+            history = await persistence.load_all()
+            print('history:', '\n'.join(str(e.node) for e in history), sep='\n')
+            print('Finished!')
+            break
 
 
 if __name__ == '__main__':
@@ -159,7 +153,7 @@ if __name__ == '__main__':
             'or:\n'
             '  uv run -m pydantic_ai_examples.question_graph continuous\n'
             'or:\n'
-            '  uv run -m pydantic_ai_examples.question_graph cli [answer]',
+            '  uv run -m pydantic_ai_examples.question_graph cli',
             file=sys.stderr,
         )
         sys.exit(1)
@@ -169,5 +163,4 @@ if __name__ == '__main__':
     elif sub_command == 'continuous':
         asyncio.run(run_as_continuous())
     else:
-        a = sys.argv[2] if len(sys.argv) > 2 else None
-        asyncio.run(run_as_cli(a))
+        asyncio.run(run_as_cli())
