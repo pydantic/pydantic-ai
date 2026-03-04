@@ -438,8 +438,9 @@ async def test_cohere_embedding_types_must_include_float() -> None:
     provider = _CP(cohere_client=mock_client)
     model = CohereEmbeddingModel('embed-v4.0', provider=provider)
     embedder = Embedder(model)
+    bad_settings: CohereEmbeddingSettings = {'cohere_embedding_types': ['int8']}
     with pytest.raises(UserError, match="'float' must be included in cohere_embedding_types"):
-        await embedder.embed_query('Hello', settings={'cohere_embedding_types': ['int8']})
+        await embedder.embed_query('Hello', settings=bad_settings)
     # Verify the mock was never called — validation fires before the SDK call.
     mock_client.embed.assert_not_called()
 
