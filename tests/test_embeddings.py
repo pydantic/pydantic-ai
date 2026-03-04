@@ -418,10 +418,14 @@ class TestCohere:
         )
 
 
-
 @pytest.mark.skipif(not cohere_imports_successful(), reason='Cohere not installed')
 async def test_cohere_embedding_types_must_include_float() -> None:
-    """cohere_embedding_types without 'float' should raise a clear UserError before any API call."""
+    """cohere_embedding_types without 'float' should raise a clear UserError before any API call.
+
+    This test lives outside TestCohere (which carries @pytest.mark.vcr) because it uses
+    mock objects and never makes any real HTTP requests.  Placing it inside a VCR-decorated
+    class would cause pytest-recording to attempt cassette lookup unnecessarily.
+    """
     from unittest.mock import AsyncMock
 
     from pydantic_ai.exceptions import UserError
