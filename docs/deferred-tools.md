@@ -169,7 +169,7 @@ print(result.all_messages())
                 content='Deleting files is not allowed',
                 tool_call_id='delete_file',
                 timestamp=datetime.datetime(...),
-                status='denied',
+                outcome='denied',
             ),
             UserPromptPart(
                 content='Now create a backup of README.md',
