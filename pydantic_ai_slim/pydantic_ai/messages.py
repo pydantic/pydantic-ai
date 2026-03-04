@@ -1024,7 +1024,7 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
-    status: Literal['success', 'error', 'denied'] = 'success'
+    outcome: Literal['success', 'error', 'denied'] = 'success'
     """The outcome of the tool call.
 
     - `'success'`: The tool executed successfully.
