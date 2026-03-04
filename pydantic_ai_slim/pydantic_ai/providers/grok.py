@@ -62,7 +62,8 @@ class GrokProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         profile = grok_model_profile(model_name)
 
         # As the Grok API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,

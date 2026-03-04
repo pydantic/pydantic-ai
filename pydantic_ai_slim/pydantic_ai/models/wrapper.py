@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from functools import cached_property
 from typing import Any
 
 from typing_extensions import Self
@@ -67,7 +66,7 @@ class WrapperModel(Model):
             yield response_stream
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
-        return self.wrapped.customize_request_parameters(model_request_parameters)  # pragma: no cover
+        return self.wrapped.customize_request_parameters(model_request_parameters)
 
     def prepare_request(
         self,
@@ -84,8 +83,8 @@ class WrapperModel(Model):
     def system(self) -> str:
         return self.wrapped.system
 
-    @cached_property
-    def profile(self) -> ModelProfile:
+    @property
+    def profile(self) -> ModelProfile:  # type: ignore[override]
         return self.wrapped.profile
 
     @property
