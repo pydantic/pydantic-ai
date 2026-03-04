@@ -896,41 +896,6 @@ async def test_openrouter_web_search_prepare_request(openrouter_api_key: str) ->
     assert extra_body['web_search_options'] == {'search_context_size': 'high'}
 
 
-async def test_openrouter_web_search_with_settings(openrouter_api_key: str) -> None:
-    """Test that OpenRouter-specific WebSearchTool fields are applied to the plugin."""
-
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
-
-    model_request_parameters = ModelRequestParameters(
-        builtin_tools=[
-            WebSearchTool(
-                provider_metadata={
-                    'openrouter': {
-                        'engine': 'exa',
-                        'max_results': 3,
-                        'search_prompt': 'Search for recent news',
-                    }
-                }
-            )
-        ],
-    )
-
-    new_settings, _ = model.prepare_request(None, model_request_parameters)
-
-    assert new_settings is not None
-    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
-    assert 'plugins' in extra_body
-    assert extra_body['plugins'] == [
-        {
-            'id': 'web',
-            'engine': 'exa',
-            'max_results': 3,
-            'search_prompt': 'Search for recent news',
-        }
-    ]
-
-
 async def test_openrouter_no_web_search_without_tool(openrouter_api_key: str) -> None:
     """Test that no plugins are added when WebSearchTool is not present."""
 
@@ -948,7 +913,7 @@ async def test_openrouter_no_web_search_without_tool(openrouter_api_key: str) ->
 
 
 async def test_openrouter_settings_to_openai_settings_no_web_search_options() -> None:
-    """Test _openrouter_settings_to_openai_settings when WebSearchTool has no provider_metadata."""
+    """Test _openrouter_settings_to_openai_settings when WebSearchTool is configured."""
     settings = OpenRouterModelSettings()
     model_request_parameters = ModelRequestParameters(
         builtin_tools=[WebSearchTool(search_context_size='high')],
@@ -974,7 +939,7 @@ async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrout
     model = OpenRouterModel('openai/gpt-4.1', provider=provider)
 
     non_web_tool = Mock(spec=[])
-    web_tool = WebSearchTool(search_context_size='medium', provider_metadata={'openrouter': {'engine': 'native'}})
+    web_tool = WebSearchTool(search_context_size='medium')
 
     model_request_parameters = ModelRequestParameters(
         builtin_tools=[non_web_tool, web_tool],
@@ -986,5 +951,5 @@ async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrout
     assert new_settings is not None
     extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
     assert 'plugins' in extra_body
-    assert extra_body['plugins'] == [{'id': 'web', 'engine': 'native'}]
+    assert extra_body['plugins'] == [{'id': 'web'}]
     assert extra_body['web_search_options'] == {'search_context_size': 'medium'}

@@ -80,7 +80,6 @@ def test_model_request_parameters_are_serializable():
                     'blocked_domains': None,
                     'allowed_domains': None,
                     'max_uses': None,
-                    'provider_metadata': None,
                 },
                 {'kind': 'code_execution'},
                 {
