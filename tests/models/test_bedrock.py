@@ -3246,24 +3246,6 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
     )
 
 
-async def test_bedrock_empty_user_message_synthesized(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    """Test that an empty user message is synthesized when there are no user messages.
-
-    Bedrock requires conversations to start with a user message, so when agent.run() is
-    called with only a system prompt or instructions, we need to synthesize one.
-    See: https://github.com/pydantic/pydantic-ai/issues/4495
-    """
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    # Only system prompt, no user messages
-    messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart(content='You are a helpful assistant.')])]
-    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages,
-        ModelRequestParameters(),
-        None,
-    )
-    assert bedrock_messages == [{'role': 'user', 'content': [{'text': ''}]}]
-
-
 @pytest.mark.vcr()
 async def test_bedrock_model_with_instructions_only(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that agent.run() works without a user prompt, using only a system prompt.
@@ -3277,3 +3259,23 @@ async def test_bedrock_model_with_instructions_only(allow_model_requests: None, 
 
     result = await agent.run()
     assert result.output == snapshot('Hello! How can I help you today?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello! How can I help you today?')],
+                usage=RequestUsage(input_tokens=6, output_tokens=9),
+                model_name='us.amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
