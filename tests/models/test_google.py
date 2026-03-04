@@ -45,6 +45,7 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolDefinition,
     ToolReturnPart,
     UsageLimitExceeded,
     UserPromptPart,
@@ -3805,6 +3806,36 @@ async def test_google_image_generation_tool_aspect_ratio(google_provider: Google
     tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'aspect_ratio': '16:9'}
+
+
+async def test_google_get_tools_batches_function_declarations(google_provider: GoogleProvider) -> None:
+    """Multiple function tools are batched into one ToolDict for Gemini parallel function calling."""
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='tool_a',
+                description='Tool A',
+                parameters_json_schema={'type': 'object', 'properties': {}},
+            ),
+            ToolDefinition(
+                name='tool_b',
+                description='Tool B',
+                parameters_json_schema={'type': 'object', 'properties': {}},
+            ),
+        ]
+    )
+    params = model.customize_request_parameters(params)
+
+    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert image_config is None
+    assert tools is not None
+    assert len(tools) == 1
+    decls = tools[0].get('function_declarations') or []
+    assert len(decls) == 2
+    assert [d['name'] for d in decls] == ['tool_a', 'tool_b']
+    assert decls[0]['description'] == 'Tool A'
+    assert decls[1]['description'] == 'Tool B'
 
 
 async def test_google_image_generation_resolution(google_provider: GoogleProvider) -> None:

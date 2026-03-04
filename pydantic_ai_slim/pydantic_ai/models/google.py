@@ -430,10 +430,13 @@ class GoogleModel(Model):
     def _get_tools(
         self, model_request_parameters: ModelRequestParameters
     ) -> tuple[list[ToolDict] | None, ImageConfigDict | None]:
-        tools: list[ToolDict] = [
-            ToolDict(function_declarations=[_function_declaration_from_tool(t)])
-            for t in model_request_parameters.tool_defs.values()
+        # Batch all custom function declarations in one Tool for Gemini parallel function calling.
+        function_declarations = [
+            _function_declaration_from_tool(t) for t in model_request_parameters.tool_defs.values()
         ]
+        tools: list[ToolDict] = []
+        if function_declarations:
+            tools.append(ToolDict(function_declarations=function_declarations))
 
         image_config: ImageConfigDict | None = None
 
