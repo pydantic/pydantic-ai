@@ -410,6 +410,8 @@ class ToolManager(Generic[AgentDepsT]):
         with tracer.start_as_current_span(
             instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=span_attributes,
+            record_exception=False,
+            set_status_on_exception=False,
         ) as span:
             try:
                 tool_result = await self._execute_tool_call_impl(validated, usage=usage)
@@ -417,12 +419,20 @@ class ToolManager(Generic[AgentDepsT]):
                 part = e.tool_retry
                 if include_content and span.is_recording():
                     span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
+                span.record_exception(e)
+                span.set_status(_OtelStatusCode.ERROR)
                 raise
             except (CallDeferred, ApprovalRequired):
                 # CallDeferred and ApprovalRequired are control-flow signals, not errors.
                 # Explicitly mark the span as OK so it doesn't appear as a failure in
                 # tracing UIs (e.g. Logfire), then re-raise to let the agent handle them.
+                # record_exception=False on the span ensures no exception event is recorded,
+                # keeping the span consistent with its OK status.
                 span.set_status(_OtelStatusCode.OK)
+                raise
+            except Exception as exc:
+                span.record_exception(exc)
+                span.set_status(_OtelStatusCode.ERROR)
                 raise
 
             if include_content and span.is_recording():
