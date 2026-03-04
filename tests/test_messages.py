@@ -1,6 +1,7 @@
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from pydantic import TypeAdapter
@@ -18,6 +19,7 @@ from pydantic_ai import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    MultiModalContent,
     RequestUsage,
     TextPart,
     ThinkingPart,
@@ -27,6 +29,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
@@ -953,13 +956,22 @@ def test_tool_return_content_nested_multimodal():
 
 
 def test_multi_modal_content_types_matches_union():
-    """Validate that MULTI_MODAL_CONTENT_TYPES matches the MultiModalContent union members."""
-    from typing import get_args
-
-    from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES, MultiModalContent
-
+    """Validate that MULTI_MODAL_CONTENT_TYPES matches the MultiModalContent union members,
+    and that is_multi_modal_content correctly narrows types."""
     union_members = set(get_args(get_args(MultiModalContent)[0]))
     assert set(MULTI_MODAL_CONTENT_TYPES) == union_members
+
+    # Positive cases: each multimodal type is recognized
+    assert is_multi_modal_content(ImageUrl(url='https://example.com/image.png'))
+    assert is_multi_modal_content(AudioUrl(url='https://example.com/audio.mp3'))
+    assert is_multi_modal_content(DocumentUrl(url='https://example.com/doc.pdf'))
+    assert is_multi_modal_content(VideoUrl(url='https://example.com/video.mp4'))
+    assert is_multi_modal_content(BinaryContent(data=b'\x89PNG', media_type='image/png'))
+
+    # Negative cases: non-multimodal types
+    assert not is_multi_modal_content('a string')
+    assert not is_multi_modal_content({'key': 'value'})
+    assert not is_multi_modal_content(42)
 
 
 def test_tool_return_part_binary_content_serialization():

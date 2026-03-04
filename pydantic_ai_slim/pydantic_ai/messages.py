@@ -899,7 +899,7 @@ class BaseToolReturnPart:
         """Split content into non-file and file parts.
 
         Returns:
-            A 3-tuple of (data_parts, file_parts, was_list) where was_list indicates
+            A 3-tuple of (`data_parts`, `file_parts`, `was_list`) where `was_list` indicates
             whether the original content was a list.
         """
         if is_multi_modal_content(self.content):

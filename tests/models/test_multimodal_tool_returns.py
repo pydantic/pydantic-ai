@@ -149,16 +149,14 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
     # OpenAI Chat: images and documents as_user_content, audio/video unsupported
     ('openai_chat', 'image'): 'as_user_content',
     ('openai_chat', 'document'): 'as_user_content',
-    ('openai_chat', 'audio'): ExpectError(
-        NotImplementedError, r'AudioUrl is not supported in OpenAI Chat Completions tool returns'
-    ),
+    ('openai_chat', 'audio'): ExpectError(ModelHTTPError, r'expected to be either text or image_url'),
     ('openai_chat', 'video'): ExpectError(
-        NotImplementedError, r'VideoUrl is not supported in OpenAI Chat Completions tool returns'
+        NotImplementedError, r'VideoUrl is not supported in OpenAI Chat Completions user prompts'
     ),
     # OpenAI Responses: images and documents in_tool_result, audio/video unsupported
     ('openai_responses', 'image'): 'in_tool_result',
     ('openai_responses', 'document'): 'in_tool_result',
-    ('openai_responses', 'audio'): ExpectError(NotImplementedError, r'(?i)audio.*openai responses|unsupported binary'),
+    ('openai_responses', 'audio'): ExpectError(ModelHTTPError, r'unsupported'),
     ('openai_responses', 'video'): ExpectError(NotImplementedError, r'(?i)video.*not supported in OpenAI Responses'),
     # xAI: images and documents as_user_content, audio/video unsupported
     ('xai', 'image'): 'as_user_content',
@@ -185,20 +183,9 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
 # the behavior differs from the general SUPPORT_MATRIX entry. Keys use None to match all
 # values of that dimension.
 ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, ReturnStyle | None], ExpectError] = {
-    ('bedrock_claude', 'audio', 'binary', 'tool_return_content'): ExpectError(
-        NotImplementedError, r'Unsupported content type for Bedrock user prompts'
+    ('openai_responses', 'audio', 'binary', None): ExpectError(
+        NotImplementedError, r'(?i)audio.*openai responses|unsupported binary'
     ),
-    # tool_return_content routes through UserPromptPart which uses different error messages
-    ('openai_chat', 'audio', None, 'tool_return_content'): ExpectError(
-        ModelHTTPError, r'expected to be either text or image_url'
-    ),
-    ('openai_chat', 'video', None, 'tool_return_content'): ExpectError(
-        NotImplementedError, r'VideoUrl is not supported in OpenAI Chat Completions user prompts'
-    ),
-    ('openai_responses', 'audio', 'url', None): ExpectError(ModelHTTPError, r'unsupported'),
-    ('openai_responses', 'audio', 'url_force_download', None): ExpectError(ModelHTTPError, r'unsupported'),
-    # Groq: tool_return_content errors match the base SUPPORT_MATRIX (all go through _map_user_prompt)
-    # Mistral: tool_return_content errors match the base SUPPORT_MATRIX (all go through _map_user_prompt)
     # Vertex AI can't crawl certain URLs blocked by robots.txt (gstatic.com, test-videos.co.uk).
     # force_download variants work since the client downloads locally before sending to Vertex.
     ('google_vertex', 'image', 'url', None): ExpectError(ModelHTTPError, r'URL_ROBOTED|ROBOTED_DENIED'),
