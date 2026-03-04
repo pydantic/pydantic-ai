@@ -270,6 +270,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
         elif isinstance(part, RetryPromptPart):
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
+        elif isinstance(part, ToolReturnPart) and part.outcome == 'error':
+            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response_str())
         else:
             yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=tool_return_output(part))
 
