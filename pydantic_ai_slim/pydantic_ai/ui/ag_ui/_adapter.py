@@ -61,7 +61,7 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from ._event_stream import BUILTIN_TOOL_CALL_ID_PREFIX, AGUIEventStream
+    from ._event_stream import BUILTIN_TOOL_CALL_ID_PREFIX, AGUIEventStream, thinking_encrypted_metadata
 except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install the `ag-ui-protocol` package to use AG-UI integration, '
@@ -355,20 +355,43 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     @staticmethod
     def _dump_response_parts(msg: ModelResponse) -> list[Message]:
-        """Convert a `ModelResponse` into AG-UI messages."""
+        """Convert a `ModelResponse` into AG-UI messages.
+
+        Uses a flush pattern to preserve part ordering: text that appears after tool calls
+        gets its own AssistantMessage, and ThinkingPart/FilePart boundaries trigger a flush
+        so content on either side doesn't get merged.
+        """
         result: list[Message] = []
         text_content: list[str] = []
         tool_calls_list: list[ToolCall] = []
-        builtin_tool_returns: list[BuiltinToolReturnPart] = []
+        tool_messages: list[ToolMessage] = []
+
+        builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, BuiltinToolReturnPart)}
+
+        def flush() -> None:
+            nonlocal text_content, tool_calls_list, tool_messages
+            if not text_content and not tool_calls_list:
+                return
+            result.append(
+                AssistantMessage(
+                    id=_new_message_id(),
+                    content='\n'.join(text_content) if text_content else None,
+                    tool_calls=tool_calls_list if tool_calls_list else None,
+                )
+            )
+            result.extend(tool_messages)
+            text_content = []
+            tool_calls_list = []
+            tool_messages = []
 
         for part in msg.parts:
             if isinstance(part, TextPart):
+                if tool_calls_list:
+                    flush()
                 text_content.append(part.content)
             elif isinstance(part, ThinkingPart):
-                encrypted: dict[str, Any] = {}
-                for attr in ('id', 'signature', 'provider_name', 'provider_details'):
-                    if (value := getattr(part, attr)) is not None:
-                        encrypted[attr] = value
+                flush()
+                encrypted = thinking_encrypted_metadata(part)
                 result.append(
                     ReasoningMessage(
                         id=_new_message_id(),
@@ -391,9 +414,19 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
                     )
                 )
+                if builtin_return := builtin_returns.get(part.tool_call_id):
+                    tool_messages.append(
+                        ToolMessage(
+                            id=_new_message_id(),
+                            content=builtin_return.model_response_str(),
+                            tool_call_id=prefixed_id,
+                        )
+                    )
             elif isinstance(part, BuiltinToolReturnPart):
-                builtin_tool_returns.append(part)
+                # Emitted when matching BuiltinToolCallPart is processed above.
+                pass
             elif isinstance(part, FilePart):
+                flush()
                 file_content: dict[str, Any] = {
                     'url': part.content.data_uri,
                     'media_type': part.content.media_type,
@@ -411,25 +444,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             else:
                 assert_never(part)
 
-        if text_content or tool_calls_list:
-            result.append(
-                AssistantMessage(
-                    id=_new_message_id(),
-                    content='\n'.join(text_content) if text_content else None,
-                    tool_calls=tool_calls_list if tool_calls_list else None,
-                )
-            )
-
-        for part in builtin_tool_returns:
-            prefixed_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', part.tool_call_id])
-            result.append(
-                ToolMessage(
-                    id=_new_message_id(),
-                    content=part.model_response_str(),
-                    tool_call_id=prefixed_id,
-                )
-            )
-
+        flush()
         return result
 
     @classmethod

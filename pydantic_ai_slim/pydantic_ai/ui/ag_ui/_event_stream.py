@@ -69,6 +69,16 @@ __all__ = [
 
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
+_THINKING_METADATA_ATTRS: Final[tuple[str, ...]] = ('id', 'signature', 'provider_name', 'provider_details')
+
+
+def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
+    """Collect non-None metadata fields from a ThinkingPart for AG-UI encrypted_value."""
+    encrypted: dict[str, Any] = {
+        attr: value for attr in _THINKING_METADATA_ATTRS if (value := getattr(part, attr)) is not None
+    }
+    return encrypted
+
 
 @dataclass
 class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
@@ -176,10 +186,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_thinking_end(self, part: ThinkingPart) -> AsyncIterator[BaseEvent]:
         message_id = self._reasoning_message_id or ''
 
-        encrypted: dict[str, Any] = {}
-        for attr in ('id', 'signature', 'provider_name', 'provider_details'):
-            if (value := getattr(part, attr)) is not None:
-                encrypted[attr] = value
+        encrypted = thinking_encrypted_metadata(part)
 
         if not self._reasoning_started and not encrypted:
             self._reasoning_message_id = None

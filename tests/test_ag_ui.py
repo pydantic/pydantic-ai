@@ -1693,6 +1693,99 @@ def test_dump_load_roundtrip_file_part_only() -> None:
     assert reloaded == original
 
 
+def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
+    """Test round-trip for response with text interleaved around tool calls.
+
+    When text appears after tool calls, the flush pattern splits them into
+    separate AssistantMessages to preserve ordering on round-trip.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do things')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Before tools'),
+                ToolCallPart(tool_name='search', args='{"q": "test"}', tool_call_id='call_1'),
+                TextPart(content='After tools'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+
+    # Text before tools shares an AssistantMessage with the tool call;
+    # text after tools gets its own AssistantMessage.
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in ag_ui_msgs] == snapshot(
+        [
+            {'role': 'user', 'content': 'Do things'},
+            {
+                'role': 'assistant',
+                'content': 'Before tools',
+                'tool_calls': [
+                    {
+                        'id': 'call_1',
+                        'type': 'function',
+                        'function': {'name': 'search', 'arguments': '{"q": "test"}'},
+                    },
+                ],
+            },
+            {'role': 'assistant', 'content': 'After tools'},
+        ]
+    )
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    # Round-trip splits into two ModelResponses due to the two AssistantMessages
+    assert reloaded == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Do things', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Before tools'),
+                    ToolCallPart(tool_name='search', args='{"q": "test"}', tool_call_id='call_1'),
+                    TextPart(content='After tools'),
+                ],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+async def test_reasoning_events_empty_content_with_metadata() -> None:
+    """Test REASONING_* events for ThinkingPart with no content but with metadata.
+
+    This exercises the path in handle_thinking_end where _reasoning_started is False
+    (no content was streamed) but encrypted metadata is present — e.g. redacted thinking.
+    """
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE)
+
+    part = ThinkingPart(
+        content='',
+        id='think_redacted',
+        signature='sig_redacted',
+    )
+
+    events: list[BaseEvent] = []
+    async for e in event_stream.handle_thinking_start(part):  # pragma: no branch
+        events.append(e)
+    async for e in event_stream.handle_thinking_end(part):
+        events.append(e)
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'REASONING_START', 'message_id': IsStr()},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'subtype': 'message',
+                'entity_id': IsStr(),
+                'encrypted_value': '{"id": "think_redacted", "signature": "sig_redacted"}',
+            },
+            {'type': 'REASONING_END', 'message_id': IsStr()},
+        ]
+    )
+
+
 @pytest.mark.vcr()
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropic_api_key: str) -> None:
