@@ -83,13 +83,16 @@ agent = Agent(TestModel())
 @agent.tool_plain
 def click_and_capture(x: int, y: int) -> ToolReturn:
     """Click at coordinates and show before/after screenshots."""
+    before_screenshot = BinaryContent(data=b'\x89PNG', media_type='image/png')
+    # perform_click(x, y)
+    after_screenshot = BinaryContent(data=b'\x89PNG', media_type='image/png')
     return ToolReturn(
         return_value=f'Successfully clicked at ({x}, {y})',
         content=[
             'Before:',
-            BinaryContent(data=b'\x89PNG', media_type='image/png'),
+            before_screenshot,
             'After:',
-            BinaryContent(data=b'\x89PNG', media_type='image/png'),
+            after_screenshot,
         ],
         metadata={
             'coordinates': {'x': x, 'y': y},
