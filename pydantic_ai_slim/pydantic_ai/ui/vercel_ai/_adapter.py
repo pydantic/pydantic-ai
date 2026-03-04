@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
@@ -32,6 +32,8 @@ from ...messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
+    UploadedFileProviderName,
     UserContent,
     UserPromptPart,
     VideoUrl,
@@ -237,16 +239,29 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         try:
                             file = BinaryContent.from_data_uri(part.url)
                         except ValueError:
-                            media_type_prefix = part.media_type.split('/', 1)[0]
-                            match media_type_prefix:
-                                case 'image':
-                                    file = ImageUrl(url=part.url, media_type=part.media_type)
-                                case 'video':
-                                    file = VideoUrl(url=part.url, media_type=part.media_type)
-                                case 'audio':
-                                    file = AudioUrl(url=part.url, media_type=part.media_type)
-                                case _:
-                                    file = DocumentUrl(url=part.url, media_type=part.media_type)
+                            # Check provider_metadata for UploadedFile data
+                            provider_meta = load_provider_metadata(part.provider_metadata)
+                            uploaded_file_id = provider_meta.get('file_id')
+                            uploaded_file_provider = provider_meta.get('provider_name')
+                            if uploaded_file_id and uploaded_file_provider:
+                                file = UploadedFile(
+                                    file_id=uploaded_file_id,
+                                    provider_name=cast(UploadedFileProviderName, uploaded_file_provider),
+                                    media_type=part.media_type,
+                                    vendor_metadata=provider_meta.get('vendor_metadata'),
+                                    identifier=provider_meta.get('identifier'),
+                                )
+                            else:
+                                media_type_prefix = part.media_type.split('/', 1)[0]
+                                match media_type_prefix:
+                                    case 'image':
+                                        file = ImageUrl(url=part.url, media_type=part.media_type)
+                                    case 'video':
+                                        file = VideoUrl(url=part.url, media_type=part.media_type)
+                                    case 'audio':
+                                        file = AudioUrl(url=part.url, media_type=part.media_type)
+                                    case _:
+                                        file = DocumentUrl(url=part.url, media_type=part.media_type)
                         user_prompt_content.append(file)
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported user message part type: {type(part)}')
@@ -682,6 +697,17 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 ui_parts.append(FileUIPart(url=item.data_uri, media_type=item.media_type))
             elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):
                 ui_parts.append(FileUIPart(url=item.url, media_type=item.media_type))
+            elif isinstance(item, UploadedFile):
+                # Store uploaded file info in provider_metadata for round-trip support
+                provider_metadata = dump_provider_metadata(
+                    file_id=item.file_id,
+                    provider_name=item.provider_name,
+                    vendor_metadata=item.vendor_metadata,
+                    identifier=item._identifier,  # pyright: ignore[reportPrivateUsage]
+                )
+                ui_parts.append(
+                    FileUIPart(url=item.file_id, media_type=item.media_type, provider_metadata=provider_metadata)
+                )
             elif isinstance(item, CachePoint):
                 # CachePoint is metadata for prompt caching, skip for UI conversion
                 pass

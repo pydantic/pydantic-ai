@@ -38,6 +38,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserContent,
     UserPromptPart,
     VideoUrl,
@@ -529,6 +530,8 @@ class GroqModel(Model):
                     raise NotImplementedError('AudioUrl is not supported in Groq user prompts')
                 elif isinstance(item, VideoUrl):
                     raise NotImplementedError('VideoUrl is not supported in Groq user prompts')
+                elif isinstance(item, UploadedFile):
+                    raise NotImplementedError('UploadedFile is not supported in Groq user prompts')
                 elif isinstance(item, CachePoint):
                     pass
                 else:

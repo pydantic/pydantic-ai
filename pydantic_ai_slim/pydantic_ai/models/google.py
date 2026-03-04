@@ -42,6 +42,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -126,6 +127,7 @@ LatestGoogleModelNames = Literal[
     'gemini-3-flash-preview',
     'gemini-3-pro-preview',
     'gemini-3-pro-image-preview',
+    'gemini-3.1-flash-lite-preview',
     'gemini-3.1-pro-preview',
 ]
 """Latest Gemini models."""
@@ -781,7 +783,7 @@ class GoogleModel(Model):
 
         return result
 
-    async def _map_file_to_part(self, file: FileUrl | BinaryContent) -> PartDict:
+    async def _map_file_to_part(self, file: FileUrl | BinaryContent | UploadedFile) -> PartDict:
         """Map a multimodal file directly to a Google API part.
 
         See also `_map_file_to_function_response_part` which uses the same resolution
@@ -795,15 +797,24 @@ class GoogleModel(Model):
             if file.vendor_metadata:
                 part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
             return part_dict
+        elif isinstance(file, UploadedFile):
+            if file.provider_name != self.system:
+                raise UserError(
+                    f'UploadedFile with `provider_name={file.provider_name!r}` cannot be used with GoogleModel. '
+                    f'Expected `provider_name` to be `{self.system!r}`.'
+                )
+            if not file.file_id.startswith('https://'):
+                raise UserError(
+                    f'UploadedFile for GoogleModel must use a file URI from the Google Files API, got: {file.file_id}'
+                )
+            file_data_dict = {'file_uri': file.file_id, 'mime_type': file.media_type}
+            part_dict = {'file_data': file_data_dict}
+            if file.vendor_metadata:
+                part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+            return part_dict
         elif isinstance(file, VideoUrl) and (
             file.is_youtube or (file.url.startswith('gs://') and self.system == 'google-vertex')
         ):
-            # YouTube URLs work on both google-gla and google-vertex
-            # GCS URIs (gs://...) only work on google-vertex (Vertex AI can access GCS buckets)
-            # GCS on google-gla falls through to FileUrl which raises clear error on download attempt
-            # Other URLs fall through to FileUrl handling (download for google-gla)
-            # Note: force_download is not checked here, mirroring the original YouTube behavior.
-            # GCS URIs cannot be downloaded anyway ("gs://" protocol not supported for download).
             file_data_dict = {'file_uri': file.url, 'mime_type': file.media_type}
             part_dict = {'file_data': file_data_dict}
             if file.vendor_metadata:
@@ -811,8 +822,6 @@ class GoogleModel(Model):
             return part_dict
         elif isinstance(file, FileUrl):
             if file.force_download or (
-                # google-gla does not support passing file urls directly, except for youtube videos
-                # (see above) and files uploaded to the file API (which cannot be downloaded anyway)
                 self.system == 'google-gla'
                 and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
             ):
@@ -822,21 +831,21 @@ class GoogleModel(Model):
                     'mime_type': downloaded_item['data_type'],
                 }
                 part_dict = {'inline_data': inline_data}
-                # VideoUrl is a subclass of FileUrl - include video_metadata if present
                 if isinstance(file, VideoUrl) and file.vendor_metadata:
                     part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
                 return part_dict
             else:
                 file_data_dict = {'file_uri': file.url, 'mime_type': file.media_type}
                 part_dict = {'file_data': file_data_dict}
-                # VideoUrl is a subclass of FileUrl - include video_metadata if present
                 if isinstance(file, VideoUrl) and file.vendor_metadata:
                     part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
                 return part_dict  # pragma: lax no cover
         else:
             assert_never(file)
 
-    async def _map_file_to_function_response_part(self, file: FileUrl | BinaryContent) -> FunctionResponsePartDict:
+    async def _map_file_to_function_response_part(
+        self, file: FileUrl | BinaryContent | UploadedFile
+    ) -> FunctionResponsePartDict:
         """Map a multimodal file to `FunctionResponsePartDict` for Gemini 3+ native tool returns.
 
         Uses the same resolution logic as `_map_file_to_part` but returns the simpler
@@ -854,6 +863,21 @@ class GoogleModel(Model):
                 'mime_type': file.media_type,
             }
             return FunctionResponsePartDict(inline_data=blob_dict)
+        elif isinstance(file, UploadedFile):
+            if file.provider_name != self.system:
+                raise UserError(
+                    f'UploadedFile with `provider_name={file.provider_name!r}` cannot be used with GoogleModel. '
+                    f'Expected `provider_name` to be `{self.system!r}`.'
+                )
+            if not file.file_id.startswith('https://'):
+                raise UserError(
+                    f'UploadedFile for GoogleModel must use a file URI from the Google Files API, got: {file.file_id}'
+                )
+            file_data_dict = {
+                'file_uri': file.file_id,
+                'mime_type': file.media_type,
+            }
+            return FunctionResponsePartDict(file_data=file_data_dict)
         elif isinstance(file, VideoUrl) and (
             file.is_youtube or (file.url.startswith('gs://') and self.system == 'google-vertex')
         ):
@@ -890,7 +914,7 @@ class GoogleModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append({'text': item})
-                elif isinstance(item, (BinaryContent, FileUrl)):
+                elif isinstance(item, (BinaryContent, FileUrl, UploadedFile)):
                     file_part = await self._map_file_to_part(item)
                     content.append(file_part)
                 elif isinstance(item, CachePoint):

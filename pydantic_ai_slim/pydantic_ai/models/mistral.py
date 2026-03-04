@@ -35,6 +35,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserContent,
     UserPromptPart,
     VideoUrl,
@@ -578,7 +579,7 @@ class MistralModel(Model):
 
         return processed_messages
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:
+    async def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:  # noqa: C901
         content: str | list[MistralContentChunk]
         if isinstance(part.content, str):
             content = part.content
@@ -619,6 +620,8 @@ class MistralModel(Model):
                     raise NotImplementedError('AudioUrl is not supported in Mistral user prompts')
                 elif isinstance(item, VideoUrl):
                     raise NotImplementedError('VideoUrl is not supported in Mistral user prompts')
+                elif isinstance(item, UploadedFile):
+                    raise NotImplementedError('UploadedFile is not supported in Mistral user prompts')
                 elif isinstance(item, CachePoint):
                     pass
                 else:

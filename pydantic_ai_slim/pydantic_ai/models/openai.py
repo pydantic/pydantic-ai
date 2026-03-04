@@ -58,6 +58,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserContent,
     UserPromptPart,
     VideoUrl,
@@ -1269,7 +1270,7 @@ class OpenAIChatModel(Model):
         raise NotImplementedError('VideoUrl is not supported in OpenAI Chat Completions user prompts')
 
     async def _map_content_item(
-        self, item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | CachePoint
+        self, item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | UploadedFile | CachePoint
     ) -> ChatCompletionContentPartParam | None:
         """Map a single content item to a chat completion content part, or None to filter it out."""
         if isinstance(item, str):
@@ -1284,6 +1285,17 @@ class OpenAIChatModel(Model):
             return await self._map_document_url_item(item)
         elif isinstance(item, VideoUrl):
             return await self._map_video_url_item(item)
+        elif isinstance(item, UploadedFile):
+            # Verify provider matches
+            if item.provider_name != self.system:
+                raise UserError(
+                    f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIChatModel. '
+                    f'Expected `provider_name` to be `{self.system!r}`.'
+                )
+            return File(
+                file=FileFile(file_id=item.file_id),
+                type='file',
+            )
         elif isinstance(item, CachePoint):
             # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
             return None
@@ -2162,8 +2174,7 @@ class OpenAIResponsesModel(Model):
             response_format_param['strict'] = o.strict
         return response_format_param
 
-    @staticmethod
-    async def _map_user_prompt(part: UserPromptPart) -> responses.EasyInputMessageParam:
+    async def _map_user_prompt(self, part: UserPromptPart) -> responses.EasyInputMessageParam:
         content: str | list[responses.ResponseInputContentParam]
         if isinstance(part.content, str):
             content = part.content
@@ -2172,6 +2183,18 @@ class OpenAIResponsesModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append(responses.ResponseInputTextParam(text=item, type='input_text'))
+                elif isinstance(item, UploadedFile):
+                    if item.provider_name != self.system:
+                        raise UserError(
+                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIResponsesModel. '
+                            f'Expected `provider_name` to be `{self.system!r}`.'
+                        )
+                    content.append(
+                        responses.ResponseInputFileParam(
+                            type='input_file',
+                            file_id=item.file_id,
+                        )
+                    )
                 elif isinstance(item, CachePoint):
                     pass
                 elif is_multi_modal_content(item):
@@ -2252,8 +2275,15 @@ class OpenAIResponsesModel(Model):
         ] = []
 
         for item in part.content_items(mode='str'):
-            if is_multi_modal_content(item):
-                output.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns'))
+            if isinstance(item, UploadedFile):
+                output.append(
+                    ResponseInputFileContentParam(
+                        type='input_file',
+                        file_id=item.file_id,
+                    )
+                )
+            elif is_multi_modal_content(item):
+                output.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns'))  # pyright: ignore[reportArgumentType]
             elif isinstance(item, str):  # pragma: no branch
                 output.append(ResponseInputTextContentParam(type='input_text', text=item))
 

@@ -43,6 +43,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
     is_multi_modal_content,
@@ -89,6 +90,8 @@ try:
         BetaContainerParams,
         BetaContentBlock,
         BetaContentBlockParam,
+        BetaFileDocumentSourceParam,
+        BetaFileImageSourceParam,
         BetaImageBlockParam,
         BetaInputJSONDelta,
         BetaJSONOutputFormatParam,
@@ -757,8 +760,33 @@ class AnthropicModel(Model):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
 
                         for item in request_part.content_items(mode='str'):
-                            if is_multi_modal_content(item):
-                                tool_result_content.append(await self._map_file_to_content_block(item, 'tool returns'))
+                            if isinstance(item, UploadedFile):
+                                if item.provider_name != self.system:
+                                    raise UserError(
+                                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
+                                        f'Expected `provider_name` to be `{self.system!r}`.'
+                                    )
+                                if item.media_type.startswith('image/'):
+                                    tool_result_content.append(
+                                        BetaImageBlockParam(
+                                            source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
+                                            type='image',
+                                        )
+                                    )
+                                elif item.media_type.startswith(('text/', 'application/')):
+                                    tool_result_content.append(
+                                        BetaRequestDocumentBlockParam(
+                                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                                            type='document',
+                                        )
+                                    )
+                                else:
+                                    raise UserError(
+                                        f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
+                                        'Only image and document (text/application) types are supported.'
+                                    )
+                            elif is_multi_modal_content(item):
+                                tool_result_content.append(await self._map_file_to_content_block(item, 'tool returns'))  # pyright: ignore[reportArgumentType]
                             elif isinstance(item, str):  # pragma: no branch
                                 tool_result_content.append(BetaTextBlockParam(text=item, type='text'))
 
@@ -1156,8 +1184,8 @@ class AnthropicModel(Model):
         else:
             raise NotImplementedError(f'VideoUrl is not supported in Anthropic {context}')
 
-    @staticmethod
     async def _map_user_prompt(
+        self,
         part: UserPromptPart,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):
@@ -1170,8 +1198,29 @@ class AnthropicModel(Model):
                         yield BetaTextBlockParam(text=item, type='text')
                 elif isinstance(item, CachePoint):
                     yield item
+                elif isinstance(item, UploadedFile):
+                    if item.provider_name != self.system:
+                        raise UserError(
+                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
+                            f'Expected `provider_name` to be `{self.system!r}`.'
+                        )
+                    if item.media_type.startswith('image/'):
+                        yield BetaImageBlockParam(
+                            source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
+                            type='image',
+                        )
+                    elif item.media_type.startswith(('text/', 'application/')):
+                        yield BetaRequestDocumentBlockParam(
+                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                            type='document',
+                        )
+                    else:
+                        raise UserError(
+                            f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
+                            'Only image and document (text/application) types are supported.'
+                        )
                 elif is_multi_modal_content(item):
-                    yield await AnthropicModel._map_file_to_content_block(item, 'user prompts')
+                    yield await AnthropicModel._map_file_to_content_block(item, 'user prompts')  # pyright: ignore[reportArgumentType]
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 

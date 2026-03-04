@@ -34,6 +34,7 @@ from ..messages import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UploadedFile,
 )
 from ..output import OutputDataT
 from ..run import AgentRunResult, AgentRunResultEvent
@@ -606,5 +607,7 @@ def describe_file(file: MultiModalContent) -> str:
         return f'[File: {file.url}]'
     elif isinstance(file, BinaryContent):
         return f'[File: {file.media_type}]'
+    elif isinstance(file, UploadedFile):
+        return f'[File: {file.file_id}]'
     else:
         assert_never(file)
