@@ -216,11 +216,11 @@ You can use this with a `history_processor`. The last message should always be M
 It is recommended to use compaction together with [Referencing earlier responses](#referencing-earlier-responses) so compaction has access to full conversation state, including reasoning items.
 
 ```python
-from pydantic_ai import Agent, ModelMessage, ModelRequest, RunContext
+from pydantic_ai import Agent, ModelMessage, ModelRequest, HistoryProcessorContext
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 
-async def context_aware_processor(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+async def context_aware_processor(ctx: HistoryProcessorContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
     if len(messages) > 4:
         compacted_messages = await ctx.model.compact_messages(
             messages[:-1],
