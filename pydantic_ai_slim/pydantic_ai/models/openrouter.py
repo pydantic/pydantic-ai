@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, Discriminator
+from pydantic import BaseModel, Discriminator, ValidationError
 from typing_extensions import TypedDict, assert_never, override
 
 from ..exceptions import ModelHTTPError
@@ -594,7 +594,7 @@ class OpenRouterModel(OpenAIChatModel):
                 )
             except ModelHTTPError:
                 raise
-            except Exception:
+            except (TypeError, ValueError, ValidationError):
                 # Malformed error_data (ValidationError, TypeError, ValueError, etc.) — fall through
                 # to the full model_validate() below which will produce a clearer error message.
                 pass
