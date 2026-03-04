@@ -1149,7 +1149,7 @@ class ThinkingPart:
 
 @dataclass(repr=False)
 class CompactionPart:
-    """A thinking response from a model."""
+    """A compaction part that summarizes previous conversation history."""
 
     content: str | None = None
     """The compaction content, if available. """
