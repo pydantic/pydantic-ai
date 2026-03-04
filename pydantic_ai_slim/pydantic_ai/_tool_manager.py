@@ -420,7 +420,7 @@ class ToolManager(Generic[AgentDepsT]):
                 if include_content and span.is_recording():
                     span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
                 span.record_exception(e)
-                span.set_status(_OtelStatusCode.ERROR)
+                span.set_status(_OtelStatusCode.ERROR, str(e))
                 raise
             except (CallDeferred, ApprovalRequired) as exc:
                 # Always record deferral info as span attributes (queryable regardless of version)
@@ -438,11 +438,11 @@ class ToolManager(Generic[AgentDepsT]):
                     span.set_status(_OtelStatusCode.OK)
                 else:
                     span.record_exception(exc)
-                    span.set_status(_OtelStatusCode.ERROR)
+                    span.set_status(_OtelStatusCode.ERROR, str(exc))
                 raise
             except Exception as exc:
                 span.record_exception(exc)
-                span.set_status(_OtelStatusCode.ERROR)
+                span.set_status(_OtelStatusCode.ERROR, str(exc))
                 raise
 
             if include_content and span.is_recording():
