@@ -196,6 +196,10 @@ def _map_fastmcp_tool_results(parts: list[ContentBlock]) -> list[FastMCPToolResu
     """Map FastMCP tool results to toolset tool results."""
     mapped_results = [_map_fastmcp_tool_result(part) for part in parts]
 
+    if not mapped_results:
+        # All content blocks were filtered out (audience=['user'] only).
+        return 'Tool executed successfully. (No model-visible content in result.)'
+
     if len(mapped_results) == 1:
         return mapped_results[0]
 
