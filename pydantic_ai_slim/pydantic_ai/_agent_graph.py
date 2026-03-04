@@ -1281,7 +1281,14 @@ async def _call_tools(  # noqa: C901
             except asyncio.CancelledError as e:
                 for task in tasks:
                     task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
-
+                raise
+            except BaseException:
+                # Cancel any still-running sibling tasks so they don't become
+                # orphaned asyncio tasks when a non-CancelledError exception
+                # (e.g. RuntimeError, ConnectionError) propagates out of
+                # handle_call_or_result().
+                for task in tasks:
+                    task.cancel()
                 raise
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
