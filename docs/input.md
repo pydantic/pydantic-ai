@@ -1,4 +1,54 @@
-# Image, Audio, Video & Document Input
+# Text, Image, Audio, Video & Document Input
+
+## Text Input
+
+This is the most common and rudimentary form of input for LLMs, and is supported by all models in Pydantic AI.
+The most direct use of text input is a single user message:
+
+```py {title="image_input.py" test="skip" lint="skip"}
+from pydantic_ai import Agent
+
+agent = Agent(model='openai:gpt-5.2')
+result = agent.run_sync('What is the capital of India?')
+print(result.output)
+#> The capital of India is New Delhi.
+```
+
+Or a sequence of user messages:
+
+```py {title="image_input.py" test="skip" lint="skip"}
+from pydantic_ai import Agent
+
+agent = Agent(model='openai:gpt-5.2')
+result = agent.run_sync([
+    'What is the capital of India?',
+    'What is the capital of France?',
+])
+print(result.output)
+#> The capital of India is New Delhi. The capital of France is Paris.
+```
+
+You can also use [`TextContent`][pydantic_ai.TextContent] to provide text input with additional metadata:
+
+```py {title="text_content_input.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, TextContent
+
+agent = Agent(model='openai:gpt-5.2')
+result = agent.run_sync([
+    'Summarize the key points from this text.',
+    TextContent(
+        content=(
+            'Pydantic AI is a Python agent framework. '
+            'It supports text, image, audio, video, and document input.'
+        ),
+        metadata={'source': 'pydantic_ai_inputs.txt'},
+    ),
+])
+```
+
+Note: The `content` field is treated as input to the model, but the **metadata is not sent to the model** but is
+preserved in the run messages and can be programmatically accessed.
+---
 
 Some LLMs are now capable of understanding audio, video, image and document content.
 
@@ -101,6 +151,11 @@ result = agent.run_sync(
 print(result.output)
 #> The document discusses...
 ```
+
+If neither `DocumentUrl` nor `BinaryContent` is suitable for your use case (e.g., the model doesn't support
+`DocumentUrl`, or you want to provide a document in a non-binary format), you can still provide document content as
+text input by extracting the text yourself and passing it as a string or [`TextContent`][pydantic_ai.TextContent].
+*However, this approach may lose formatting and non-textual information.*
 
 ## User-side download vs. direct file URL
 

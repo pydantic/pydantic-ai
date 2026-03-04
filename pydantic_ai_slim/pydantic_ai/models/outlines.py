@@ -31,6 +31,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -442,6 +443,8 @@ class OutlinesModel(Model):
                             for item in part.content:
                                 if isinstance(item, str):
                                     outlines_input.append(item)
+                                elif isinstance(item, TextContent):
+                                    outlines_input.append(item.content)
                                 elif isinstance(item, ImageUrl):
                                     image_content: DownloadedItem[bytes] = await download_item(
                                         item, data_format='bytes', type_format='mime'

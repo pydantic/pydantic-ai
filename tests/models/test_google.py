@@ -4994,7 +4994,7 @@ async def test_http_video_url_uses_file_uri_on_google_vertex(mocker: MockerFixtu
     }
 
 
-async def test_map_user_prompt_with_text_content_and_video_url(mocker: MockerFixture):
+async def test_map_user_prompt_with_text_content(mocker: MockerFixture):
     """Test that _map_user_prompt correctly handles a mix of text content and str."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-gla')

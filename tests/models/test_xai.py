@@ -5442,7 +5442,7 @@ async def test_xai_file_part_in_history_skipped(allow_model_requests: None):
     )
 
 
-async def test_map_user_prompt_with_text_content():
+async def test_map_user_prompt_with_text_content(allow_model_requests: None):
     response = create_response(content='test response')
     mock_client = MockXai.create_mock([response])
     model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))

@@ -950,7 +950,7 @@ Since this is a test document, it probably doesn't contain any meaningful or spe
     )
 
 
-async def test_map_user_prompt_with_text_content_input(bedrock_provider: BedrockProvider):
+async def test_map_user_prompt_with_text_content_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     m = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
         part=UserPromptPart(

@@ -1575,7 +1575,7 @@ async def test_uploaded_file_wrong_provider_responses(allow_model_requests: None
         await agent.run(['Analyze this file', UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
 
 
-async def test_text_content_input():
+async def test_text_content_input(allow_model_requests: None):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
     res = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
         part=UserPromptPart(content=['hello', TextContent(content='world', metadata={'id': 1})])

@@ -10228,7 +10228,7 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     assert response_msg['provider_details']['refusal'] == "I can't help with that."
 
 
-async def test_openai_responses_text_content_input(openai_api_key: str):
+async def test_openai_responses_text_content_input(allow_model_requests: None, openai_api_key: str):
     """Test that text content in ModelRequest is correctly mapped to OpenAI messages."""
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     m = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]

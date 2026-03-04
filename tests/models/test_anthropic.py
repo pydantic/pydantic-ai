@@ -34,6 +34,7 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -1592,6 +1593,48 @@ async def test_stream_structured(allow_model_requests: None):
                         finish_reason='stop',
                     )
                 )
+
+
+async def test_text_content_input(allow_model_requests: None, anthropic_api_key: str):
+    """Test that _map_message correctly maps a user message with TextContent."""
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System instructions.'),
+                UserPromptPart(
+                    content=[
+                        'Hello Pydantic AI!',
+                        TextContent(content='This is awesome', metadata={'font': 'bold'}),
+                        TextContent(content='', metadata={'font': 'italic'}),  # Empty content would be filtered out
+                    ]
+                ),
+            ],
+        ),
+        ModelResponse(
+            parts=[TextPart(content='Hello Human!')],
+        ),
+    ]
+    m = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        {},
+    )
+    assert m == snapshot(
+        (
+            'System instructions.',
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {'text': 'Hello Pydantic AI!', 'type': 'text'},
+                        {'text': 'This is awesome', 'type': 'text'},
+                    ],
+                },
+                {'role': 'assistant', 'content': [{'text': 'Hello Human!', 'type': 'text'}]},
+            ],
+        )
+    )
 
 
 async def test_image_url_input(allow_model_requests: None, anthropic_api_key: str):

@@ -29,6 +29,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -580,6 +581,8 @@ class MistralModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append(MistralTextChunk(text=item))
+                elif isinstance(item, TextContent):
+                    content.append(MistralTextChunk(text=item.content))
                 elif isinstance(item, ImageUrl):
                     if item.force_download:
                         downloaded = await download_item(item, data_format='base64_uri')
