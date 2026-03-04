@@ -541,6 +541,7 @@ def _patch_hf_provider_mappings():
 
     models: list[tuple[str, str, str]] = [
         ('together', 'deepseek-ai/DeepSeek-R1', 'conversational'),
+        ('together', 'meta-llama/Llama-4-Scout-17B-16E-Instruct', 'conversational'),
         ('nebius', 'Qwen/Qwen2.5-VL-72B-Instruct', 'conversational'),
         ('nebius', 'Qwen/Qwen2.5-72B-Instruct', 'conversational'),
     ]
