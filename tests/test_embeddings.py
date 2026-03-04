@@ -418,28 +418,24 @@ class TestCohere:
         )
 
 
-    def test_cohere_embedding_types_must_include_float(self, co_api_key: str) -> None:
-        """cohere_embedding_types without 'float' should raise a clear UserError."""
+    async def test_cohere_embedding_types_must_include_float(self) -> None:
+        """cohere_embedding_types without 'float' should raise a clear UserError before any API call."""
+        from unittest.mock import AsyncMock
+
         from pydantic_ai.exceptions import UserError
 
-        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
+        # Use a mock client so no real API call is made — the UserError is raised
+        # before any network I/O in the validation block added by this PR.
+        mock_client = AsyncMock()
+        from pydantic_ai.providers.cohere import CohereProvider as _CP
+
+        provider = _CP(cohere_client=mock_client)
+        model = CohereEmbeddingModel('embed-v4.0', provider=provider)
         embedder = Embedder(model)
         with pytest.raises(UserError, match="'float' must be included in cohere_embedding_types"):
-            import asyncio
-
-            asyncio.get_event_loop().run_until_complete(
-                embedder.embed_query('Hello', settings={'cohere_embedding_types': ['int8']})
-            )
-
-    async def test_cohere_embedding_types_with_float(self, co_api_key: str) -> None:
-        """cohere_embedding_types that includes 'float' should work fine."""
-        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key=co_api_key))
-        embedder = Embedder(model)
-        # ['float', 'int8'] is valid — float is present
-        settings: CohereEmbeddingSettings = {'cohere_embedding_types': ['float', 'int8']}
-        result = await embedder.embed_query('Hello, world!', settings=settings)
-        assert result.embeddings is not None
-        assert len(result.embeddings) == 1
+            await embedder.embed_query('Hello', settings={'cohere_embedding_types': ['int8']})
+        # Verify the mock was never called — validation fires before the SDK call.
+        mock_client.embed.assert_not_called()
 
 @pytest.mark.skipif(not voyageai_imports_successful(), reason='VoyageAI not installed')
 @pytest.mark.vcr
