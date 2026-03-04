@@ -232,22 +232,28 @@ async def test_has_attributes_json_serialised_values():
     Regression test for https://github.com/pydantic/pydantic-ai/issues/4448.
     """
     import json
+    from datetime import datetime, timezone
 
-    from pydantic_evals.otel.span_tree import SpanNode, SpanTree, SpanQuery
+    from pydantic_evals.otel.span_tree import SpanNode, SpanQuery
 
     data = {'foo': 1, 'bar': True}
     tags = ['alpha', 'beta']
 
+    _ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
     # Build a minimal SpanNode with JSON-serialised attributes (as Logfire would store them)
     node = SpanNode(
         name='test',
+        trace_id=1,
+        span_id=1,
+        parent_span_id=None,
+        start_timestamp=_ts,
+        end_timestamp=_ts,
         attributes={
             'data': json.dumps(data, separators=(',', ':')),  # '{"foo":1,"bar":true}'
             'tags': json.dumps(tags),  # '["alpha", "beta"]'
             'level': '3',  # plain string, not JSON-serialised
         },
-        start_time=None,  # type: ignore[arg-type]
-        end_time=None,  # type: ignore[arg-type]
     )
 
     # Plain string still works
@@ -267,6 +273,7 @@ async def test_has_attributes_json_serialised_values():
     assert node.matches(SpanQuery(has_attributes={'data': json.dumps(data, separators=(',', ':'))}))
 
 
+async def test_span_tree_repr(span_tree: SpanTree):
     assert repr(SpanTree()) == snapshot('<SpanTree />')
     assert str(span_tree) == snapshot('<SpanTree num_roots=1 total_spans=6 />')
     assert repr(span_tree) == snapshot("""\
