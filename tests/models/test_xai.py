@@ -1759,7 +1759,8 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                 usage=RequestUsage(
                     input_tokens=2332,
                     output_tokens=38,
-                    cache_read_tokens=1540, details={'reasoning_tokens': 310, 'server_side_tools_web_search': 1},
+                    cache_read_tokens=1540,
+                    details={'reasoning_tokens': 310, 'server_side_tools_web_search': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -1849,7 +1850,8 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 usage=RequestUsage(
                     input_tokens=4441,
                     output_tokens=135,
-                    cache_read_tokens=2530, details={'reasoning_tokens': 631, 'server_side_tools_web_search': 2},
+                    cache_read_tokens=2530,
+                    details={'reasoning_tokens': 631, 'server_side_tools_web_search': 2},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2101,7 +2103,8 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                 usage=RequestUsage(
                     input_tokens=1889,
                     output_tokens=52,
-                    cache_read_tokens=1347, details={'reasoning_tokens': 161, 'server_side_tools_code_execution': 1},
+                    cache_read_tokens=1347,
+                    details={'reasoning_tokens': 161, 'server_side_tools_code_execution': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2168,7 +2171,8 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                 usage=RequestUsage(
                     input_tokens=1718,
                     output_tokens=31,
-                    cache_read_tokens=1037, details={'server_side_tools_code_execution': 1},
+                    cache_read_tokens=1037,
+                    details={'server_side_tools_code_execution': 1},
                 ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
@@ -2314,7 +2318,8 @@ Return just the final number with no other text.\
                 usage=RequestUsage(
                     input_tokens=11140,
                     output_tokens=68,
-                    cache_read_tokens=6347, details={'server_side_tools_web_search': 1, 'server_side_tools_code_execution': 1},
+                    cache_read_tokens=6347,
+                    details={'server_side_tools_web_search': 1, 'server_side_tools_code_execution': 1},
                 ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
@@ -2450,7 +2455,8 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 usage=RequestUsage(
                     input_tokens=2973,
                     output_tokens=150,
-                    cache_read_tokens=1506, details={'reasoning_tokens': 168, 'server_side_tools_web_search': 1},
+                    cache_read_tokens=1506,
+                    details={'reasoning_tokens': 168, 'server_side_tools_web_search': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2585,7 +2591,8 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
                 usage=RequestUsage(
                     input_tokens=1844,
                     output_tokens=140,
-                    cache_read_tokens=771, details={'reasoning_tokens': 202, 'server_side_tools_mcp_server': 1},
+                    cache_read_tokens=771,
+                    details={'reasoning_tokens': 202, 'server_side_tools_mcp_server': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2704,7 +2711,8 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 usage=RequestUsage(
                     input_tokens=1783,
                     output_tokens=141,
-                    cache_read_tokens=853, details={'reasoning_tokens': 262, 'server_side_tools_mcp_server': 1},
+                    cache_read_tokens=853,
+                    details={'reasoning_tokens': 262, 'server_side_tools_mcp_server': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
