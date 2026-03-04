@@ -1087,6 +1087,15 @@ def _extract_usage(
     if extracted.output_tokens == 0 and usage_data['completion_tokens']:
         extracted.output_tokens = usage_data['completion_tokens']
 
+    # Promote cache token fields from details to the top-level fields if genai-prices
+    # did not already map them.  xAI's `cached_prompt_text_tokens` is stored as
+    # `cache_read_tokens` in `usage_data` and therefore lands in `details`; without
+    # this step `usage.cache_read_tokens` would always be 0.
+    if not extracted.cache_read_tokens and details.get('cache_read_tokens'):
+        extracted.cache_read_tokens = details['cache_read_tokens']
+    if not extracted.cache_write_tokens and details.get('cache_write_tokens'):
+        extracted.cache_write_tokens = details['cache_write_tokens']
+
     return extracted
 
 

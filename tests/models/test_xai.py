@@ -255,7 +255,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=420, output_tokens=16, details={'cache_read_tokens': 157}),
+                usage=RequestUsage(input_tokens=420, output_tokens=16, cache_read_tokens=157, details={'cache_read_tokens': 157}),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -285,7 +285,7 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=RequestUsage(input_tokens=448, output_tokens=36, details={'cache_read_tokens': 436}),
+                usage=RequestUsage(input_tokens=448, output_tokens=36, cache_read_tokens=436, details={'cache_read_tokens': 436}),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -558,7 +558,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=439, output_tokens=16, details={'cache_read_tokens': 314}),
+                usage=RequestUsage(input_tokens=439, output_tokens=16, cache_read_tokens=314, details={'cache_read_tokens': 314}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -581,7 +581,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=467, output_tokens=13, details={'cache_read_tokens': 455}),
+                usage=RequestUsage(input_tokens=467, output_tokens=13, cache_read_tokens=455, details={'cache_read_tokens': 455}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -620,7 +620,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                     ToolCallPart(tool_name='get_location', args='{"loc_name":"London"}', tool_call_id=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=351, output_tokens=53, details={'reasoning_tokens': 223, 'cache_read_tokens': 148}
+                    input_tokens=351, output_tokens=53, cache_read_tokens=148, details={'reasoning_tokens': 223, 'cache_read_tokens': 148}
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -655,7 +655,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=670, output_tokens=63, details={'reasoning_tokens': 83, 'cache_read_tokens': 601}
+                    input_tokens=670, output_tokens=63, cache_read_tokens=601, details={'reasoning_tokens': 83, 'cache_read_tokens': 601}
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -671,6 +671,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
         RunUsage(
             requests=2,
             input_tokens=1021,
+            cache_read_tokens=749,
             details={'reasoning_tokens': 306, 'cache_read_tokens': 749},
             output_tokens=116,
             tool_calls=1,
@@ -1066,7 +1067,7 @@ async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiPro
                         content="Paris is the capital of France. It's the largest city in the country and a major global center for art, fashion, and culture."
                     )
                 ],
-                usage=RequestUsage(input_tokens=181, output_tokens=27, details={'cache_read_tokens': 162}),
+                usage=RequestUsage(input_tokens=181, output_tokens=27, cache_read_tokens=162, details={'cache_read_tokens': 162}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1102,7 +1103,7 @@ async def test_xai_system_prompt(allow_model_requests: None, xai_provider: XaiPr
                         content="Paris is the capital of France. It's the largest city in the country and a major global center for art, fashion, and culture."
                     )
                 ],
-                usage=RequestUsage(input_tokens=181, output_tokens=27, details={'cache_read_tokens': 180}),
+                usage=RequestUsage(input_tokens=181, output_tokens=27, cache_read_tokens=180, details={'cache_read_tokens': 180}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1223,7 +1224,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=356, output_tokens=15, details={'cache_read_tokens': 314}),
+                usage=RequestUsage(input_tokens=356, output_tokens=15, cache_read_tokens=314, details={'cache_read_tokens': 314}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1255,7 +1256,7 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a single raw potato.')],
-                usage=RequestUsage(input_tokens=657, output_tokens=8, details={'cache_read_tokens': 371}),
+                usage=RequestUsage(input_tokens=657, output_tokens=8, cache_read_tokens=371, details={'cache_read_tokens': 371}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1296,7 +1297,7 @@ async def test_xai_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=356, output_tokens=15, details={'cache_read_tokens': 314}),
+                usage=RequestUsage(input_tokens=356, output_tokens=15, cache_read_tokens=314, details={'cache_read_tokens': 314}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1326,7 +1327,7 @@ async def test_xai_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[TextPart(content='Kiwi')],
-                usage=RequestUsage(input_tokens=657, output_tokens=2, details={'cache_read_tokens': 371}),
+                usage=RequestUsage(input_tokens=657, output_tokens=2, cache_read_tokens=371, details={'cache_read_tokens': 371}),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1758,6 +1759,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                 usage=RequestUsage(
                     input_tokens=2332,
                     output_tokens=38,
+                    cache_read_tokens=1540,
                     details={'reasoning_tokens': 310, 'cache_read_tokens': 1540, 'server_side_tools_web_search': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
@@ -1848,6 +1850,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 usage=RequestUsage(
                     input_tokens=4441,
                     output_tokens=135,
+                    cache_read_tokens=2530,
                     details={'reasoning_tokens': 631, 'cache_read_tokens': 2530, 'server_side_tools_web_search': 2},
                 ),
                 model_name='grok-4-fast-reasoning',
@@ -2100,6 +2103,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                 usage=RequestUsage(
                     input_tokens=1889,
                     output_tokens=52,
+                    cache_read_tokens=1347,
                     details={'reasoning_tokens': 161, 'cache_read_tokens': 1347, 'server_side_tools_code_execution': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
@@ -2167,6 +2171,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                 usage=RequestUsage(
                     input_tokens=1718,
                     output_tokens=31,
+                    cache_read_tokens=1037,
                     details={'cache_read_tokens': 1037, 'server_side_tools_code_execution': 1},
                 ),
                 model_name='grok-4-fast-non-reasoning',
@@ -2313,6 +2318,7 @@ Return just the final number with no other text.\
                 usage=RequestUsage(
                     input_tokens=11140,
                     output_tokens=68,
+                    cache_read_tokens=6347,
                     details={
                         'cache_read_tokens': 6347,
                         'server_side_tools_web_search': 1,
@@ -2393,7 +2399,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                     ToolCallPart(tool_name='guess_city', args='{}', tool_call_id=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=743, output_tokens=15, details={'reasoning_tokens': 483, 'cache_read_tokens': 170}
+                    input_tokens=743, output_tokens=15, cache_read_tokens=170, details={'reasoning_tokens': 483, 'cache_read_tokens': 170}
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2453,6 +2459,7 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 usage=RequestUsage(
                     input_tokens=2973,
                     output_tokens=150,
+                    cache_read_tokens=1506,
                     details={'reasoning_tokens': 168, 'cache_read_tokens': 1506, 'server_side_tools_web_search': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
@@ -2588,6 +2595,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
                 usage=RequestUsage(
                     input_tokens=1844,
                     output_tokens=140,
+                    cache_read_tokens=771,
                     details={'reasoning_tokens': 202, 'cache_read_tokens': 771, 'server_side_tools_mcp_server': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
@@ -2707,6 +2715,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 usage=RequestUsage(
                     input_tokens=1783,
                     output_tokens=141,
+                    cache_read_tokens=853,
                     details={'reasoning_tokens': 262, 'cache_read_tokens': 853, 'server_side_tools_mcp_server': 1},
                 ),
                 model_name='grok-4-fast-reasoning',
@@ -3179,7 +3188,7 @@ The first 10 prime numbers are: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29.\
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=165, output_tokens=40, details={'reasoning_tokens': 121, 'cache_read_tokens': 151}
+                    input_tokens=165, output_tokens=40, cache_read_tokens=151, details={'reasoning_tokens': 121, 'cache_read_tokens': 151}
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
