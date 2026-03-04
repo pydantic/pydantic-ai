@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -190,6 +190,14 @@ class CohereEmbeddingModel(EmbeddingModel):
         else:
             truncate = 'NONE'
 
+        embedding_types: list[str] = settings.get('cohere_embedding_types', ['float'])
+        if 'float' not in embedding_types:
+            raise UserError(
+                f"'float' must be included in cohere_embedding_types because "
+                f"CohereEmbeddingModel only reads float embeddings from the response. "
+                f"Got: {embedding_types!r}. Add 'float' to the list or remove the override."
+            )
+
         try:
             response = await self._client.embed(
                 model=self.model_name,
@@ -205,7 +213,7 @@ class CohereEmbeddingModel(EmbeddingModel):
                 # is a list.  Passing ["float"] avoids that code path and matches the
                 # response.embeddings.float_ field we read below.  Users who need a different
                 # representation can override this via the cohere_embedding_types setting.
-                embedding_types=settings.get('cohere_embedding_types', ['float']),
+                embedding_types=embedding_types,
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
