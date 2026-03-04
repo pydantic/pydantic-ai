@@ -80,13 +80,11 @@ For detailed workflows see `.claude/skills/pytest-vcr/SKILL.md`.
 #### Model requests
 - `allow_model_requests` - bypasses the default `ALLOW_MODEL_REQUESTS = False`
 
-#### API key and provider fixtures
-
-API key fixtures are session-scoped and default to `'mock-api-key'` (real keys loaded from env when recording).
-Provider fixtures handle auth setup for providers that need more than an API key.
-See `tests/conftest.py` for the full list and the `model` fixture for supported `indirect=True` values.
-
 #### The `model` fixture (use with `indirect=True`)
+
+The `model` fixture takes a string param (e.g. `'openai'`, `'anthropic'`, `'google'`) and returns a configured `Model` instance, using session-scoped API key fixtures that default to `'mock-api-key'` (real keys loaded from env when recording).
+See `tests/conftest.py` for the full list of supported param values.
+
 ```python
 @pytest.mark.parametrize('model', ['openai', 'anthropic'], indirect=True)
 async def test_something(model: Model):
@@ -126,7 +124,7 @@ async def test_something(model: Model):
 - `IsList()` - any list
 - `IsInstance(SomeClass)` - instance of class
 
-### Custom helpers
+### Additional helpers
 - `IsSameStr()` - asserts same string value across multiple uses in one assertion
   ```python
   assert events == [
