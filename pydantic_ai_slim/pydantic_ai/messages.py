@@ -1152,20 +1152,20 @@ class CompactionPart:
     """A thinking response from a model."""
 
     content: str | None = None
-    """The thinking content of the response."""
+    """The compaction content, if available. """
 
     _: KW_ONLY
 
     id: str | None = None
-    """The identifier of the thinking part.
+    """The identifier of the compaction part.
 
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
     provider_name: str | None = None
-    """The name of the provider that generated the response.
+    """The name of the provider that generated the compaction.
 
-    Signatures are only sent back to the same provider.
+    Compaction data is only sent back to the same provider.
     Required to be set when `provider_details`, `id` or `signature` is set.
     """
 
@@ -1180,7 +1180,7 @@ class CompactionPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def has_content(self) -> bool:
-        """Return `True` if the thinking content is non-empty."""
+        """Return `True` if the compaction content is non-empty."""
         return bool(self.content)  # pragma: no cover
 
     __repr__ = _utils.dataclasses_no_defaults_repr

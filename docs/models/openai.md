@@ -211,12 +211,12 @@ print(result2.output)
 ### OpenAI compaction
 
 The Responses API supports [compaction](https://platform.openai.com/docs/guides/conversation-state#compaction-advanced) to reduce the size of message history sent in requests.
-You can use this with a `history_processor`.
+You can use this with a `history_processor`. The last message should always be ModelRequest.
 
 It is recommended to use compaction together with [Referencing earlier responses](#referencing-earlier-responses) so compaction has access to full conversation state, including reasoning items.
 
 ```python
-from pydantic_ai import Agent, ModelMessage, RunContext
+from pydantic_ai import Agent, ModelMessage, ModelRequest, RunContext
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 
@@ -227,6 +227,7 @@ async def context_aware_processor(ctx: RunContext[None], messages: list[ModelMes
             model_settings=ctx.model_settings,
             model_request_parameters=ctx.model_request_parameters
         )
+        assert isinstance(messages[-1], ModelRequest)
         return [compacted_messages, messages[-1]]
 
     return messages
