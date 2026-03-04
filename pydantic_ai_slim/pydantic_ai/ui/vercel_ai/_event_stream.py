@@ -240,7 +240,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield ToolInputAvailableChunk(
             tool_call_id=part.tool_call_id,
             tool_name=part.tool_name,
-            input=part.args_as_dict(),
+            input=part.args_as_dict(allow_partial=True),
             provider_metadata=dump_provider_metadata(
                 id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
             ),
@@ -250,7 +250,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield ToolInputAvailableChunk(
             tool_call_id=part.tool_call_id,
             tool_name=part.tool_name,
-            input=part.args_as_dict(),
+            input=part.args_as_dict(allow_partial=True),
             provider_executed=True,
             provider_metadata=dump_provider_metadata(
                 id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
