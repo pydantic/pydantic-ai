@@ -1004,6 +1004,16 @@ async def process_tool_calls(  # noqa: C901
                 continue
 
             # Validation passed - execute the tool
+            # Override ctx.retry with the global output-validation retry counter so that
+            # @agent.output_validator functions see the correct attempt number regardless
+            # of how many per-tool retries occurred for other tools.  The global counter
+            # (ctx.state.retries) tracks all retry-consuming events (empty responses,
+            # unknown tool calls, text validation failures), giving the validator an
+            # accurate picture of how much of the retry budget has been consumed.
+            validated = replace(
+                validated,
+                ctx=replace(validated.ctx, retry=ctx.state.retries, max_retries=ctx.deps.max_result_retries),
+            )
             try:
                 result_data = await tool_manager.execute_tool_call(validated)
             except exceptions.UnexpectedModelBehavior as e:

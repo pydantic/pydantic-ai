@@ -455,6 +455,47 @@ def test_tool_output_function_retries():
     assert max_retries_log == [target_retries] * (target_retries + 1)
 
 
+def test_output_validator_sees_global_retry_count():
+    """output_validator ctx.retry should reflect the global retry counter, not a per-tool counter.
+
+    When an empty response (or another retry-consuming event) happens *before* the output tool
+    is called, the global ctx.state.retries is already > 0.  Before the fix the validator
+    received ctx.retry = 0 (per-tool count), while the actual attempt number was 1.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4385.
+    """
+    retry_values_seen: list[int] = []
+
+    call_count = 0
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        # First call: return empty response → global retries increments to 1
+        if call_count == 1:
+            return ModelResponse(parts=[])
+        # Second call: return the output tool call
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "foo"}')])
+
+    agent = Agent(FunctionModel(return_model), output_type=Foo, output_retries=3)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        retry_values_seen.append(ctx.retry)
+        return o
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+
+    # The output validator is called once, after one empty-response retry.
+    # With the fix, ctx.retry reflects the global counter (=1), not the per-tool counter (=0).
+    assert retry_values_seen == [1], (
+        f'Expected ctx.retry=[1] (global counter), got {retry_values_seen}. '
+        'output_validator should receive the global retry count, not the per-tool count.'
+    )
+
+
 class TestPartialOutput:
     """Tests for `ctx.partial_output` flag in output validators and output functions."""
 
