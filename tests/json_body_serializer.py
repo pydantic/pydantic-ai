@@ -158,10 +158,10 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                         headers['content-length'] = [str(len(new_body.encode('utf-8')))]
             if content_type == ['application/x-www-form-urlencoded']:
                 query_params = urllib.parse.parse_qs(data['body'])
-                for key in ['client_id', 'client_secret', 'refresh_token']:  # pragma: no cover
+                for key in ['assertion', 'client_id', 'client_secret', 'refresh_token']:  # pragma: no cover
                     if key in query_params:
                         query_params[key] = ['scrubbed']
-                        data['body'] = urllib.parse.urlencode(query_params)
+                        data['body'] = urllib.parse.urlencode(query_params, doseq=True)
 
     # Use our custom dumper
     return yaml.dump(cassette_dict, Dumper=LiteralDumper, allow_unicode=True, width=120)
