@@ -8428,8 +8428,7 @@ async def test_anthropic_tool_definition_examples(allow_model_requests: None):
     assert mapped.get('input_examples') == examples
 
 
-@pytest.mark.vcr()
-async def test_anthropic_tool_examples_vcr(allow_model_requests: None, anthropic_api_key: str):
+async def test_anthropic_tool_examples(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
