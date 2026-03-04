@@ -112,7 +112,16 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
-from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
+from .tools import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    HistoryProcessorContext,
+    RunContext,
+    Tool,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from .toolsets import (
     AbstractToolset,
     ApprovalRequiredToolset,
@@ -175,6 +184,7 @@ __all__ = (
     'BuiltinToolCallPart',
     'BuiltinToolReturnPart',
     'CachePoint',
+    'CompactionPart',
     'DocumentFormat',
     'DocumentMediaType',
     'DocumentUrl',
@@ -226,6 +236,7 @@ __all__ = (
     'Tool',
     'ToolDefinition',
     'RunContext',
+    'HistoryProcessorContext',
     'DeferredToolRequests',
     'DeferredToolResults',
     'ToolApproved',
@@ -271,6 +282,5 @@ __all__ = (
     'AgentRun',
     'AgentRunResult',
     'AgentRunResultEvent',
-    'CompactionPart',
 )
 __version__ = _metadata_version('pydantic_ai_slim')

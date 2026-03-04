@@ -21,7 +21,7 @@ from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
 
 from ._griffe import doc_descriptions
-from ._run_context import RunContext
+from ._run_context import HistoryProcessorContext, RunContext
 from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
 
 if TYPE_CHECKING:
@@ -228,13 +228,13 @@ P = ParamSpec('P')
 R = TypeVar('R')
 
 
-WithCtx = Callable[Concatenate[RunContext[Any], P], R]
+WithCtx = Callable[Concatenate[HistoryProcessorContext[Any], P], R]
 WithoutCtx = Callable[P, R]
 TargetCallable = WithCtx[P, R] | WithoutCtx[P, R]
 
 
-def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:  # pyright: ignore[reportUnusedFunction]
-    """Check if a callable takes a `RunContext` first argument.
+def _takes_history_processor_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:  # pyright: ignore[reportUnusedFunction]
+    """Check if a callable takes a `HistoryProcessorContext` first argument.
 
     Args:
         callable_obj: The callable to check.
@@ -263,7 +263,7 @@ def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:  # 
         annotation = type_hints.get(first_param_name)
         if annotation is None:
             return False
-        return True is not sig.empty and _is_call_ctx(annotation)
+        return True is not sig.empty and _is_call_history_processor_ctx(annotation)
 
 
 def _build_schema(
@@ -300,3 +300,8 @@ def _build_schema(
 def _is_call_ctx(annotation: Any) -> bool:
     """Return whether the annotation is the `RunContext` class, parameterized or not."""
     return annotation is RunContext or get_origin(annotation) is RunContext
+
+
+def _is_call_history_processor_ctx(annotation: Any) -> bool:
+    """Return whether the annotation is the `HistoryProcessorContext` class, parameterized or not."""
+    return annotation is HistoryProcessorContext or get_origin(annotation) is HistoryProcessorContext

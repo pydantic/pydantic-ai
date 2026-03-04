@@ -19,6 +19,7 @@ from pydantic_ai import (
     DocumentUrl,
     FilePart,
     FinalResultEvent,
+    HistoryProcessorContext,
     ImageGenerationTool,
     ImageUrl,
     ModelMessage,
@@ -28,7 +29,6 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
-    RunContext,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -292,7 +292,9 @@ async def test_openai_responses_system_prompt(allow_model_requests: None, openai
 
 
 async def test_openai_responses_compact_messages(allow_model_requests: None, openai_api_key: str):
-    async def context_aware_processor(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+    async def context_aware_processor(
+        ctx: HistoryProcessorContext[None], messages: list[ModelMessage]
+    ) -> list[ModelMessage]:
         if len(messages) > 4:
             assert isinstance(ctx.model, OpenAIResponsesModel)
             assert isinstance(ctx.model_request_parameters, ModelRequestParameters)
@@ -367,7 +369,9 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
 async def test_openai_responses_compact_messages_with_previous_response_id(
     allow_model_requests: None, openai_api_key: str
 ):
-    async def context_aware_processor(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+    async def context_aware_processor(
+        ctx: HistoryProcessorContext[None], messages: list[ModelMessage]
+    ) -> list[ModelMessage]:
         if len(messages) > 4:
             assert isinstance(ctx.model, OpenAIResponsesModel)
             assert isinstance(ctx.model_request_parameters, ModelRequestParameters)
@@ -444,7 +448,9 @@ async def test_openai_responses_compact_messages_with_previous_response_id(
 
 
 async def test_openai_responses_compact_messages_output_type(allow_model_requests: None, openai_api_key: str):
-    async def context_aware_processor(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+    async def context_aware_processor(
+        ctx: HistoryProcessorContext[None], messages: list[ModelMessage]
+    ) -> list[ModelMessage]:
         if len(messages) > 4:
             assert isinstance(ctx.model, OpenAIResponsesModel)
             assert isinstance(ctx.model_request_parameters, ModelRequestParameters)

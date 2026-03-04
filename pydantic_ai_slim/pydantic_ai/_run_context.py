@@ -40,10 +40,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
     """Messages exchanged in the conversation so far."""
-    model_settings: ModelSettings | None = None
-    """The model settings used for this run."""
-    model_request_parameters: ModelRequestParameters | None = None
-    """The model request parameters used for this run."""
     validation_context: Any = None
     """Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) for tool args and run outputs."""
     tracer: Tracer = field(default_factory=NoOpTracer)
@@ -122,3 +118,13 @@ def set_current_run_context(run_context: RunContext[Any]) -> Iterator[None]:
         yield
     finally:
         _CURRENT_RUN_CONTEXT.reset(token)
+
+
+@dataclasses.dataclass(repr=False, kw_only=True)
+class HistoryProcessorContext(RunContext[RunContextAgentDepsT]):
+    """Information about the current call, specific to history processing."""
+
+    model_settings: ModelSettings | None = None
+    """The model settings used for this run."""
+    model_request_parameters: ModelRequestParameters | None = None
+    """The model request parameters used for this run."""

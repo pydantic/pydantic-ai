@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
-from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
+from pydantic_ai._function_schema import _takes_history_processor_ctx as is_takes_history_processor_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
@@ -35,6 +35,7 @@ from .tools import (
     DeferredToolCallResult,
     DeferredToolResult,
     DeferredToolResults,
+    HistoryProcessorContext,
     RunContext,
     ToolApproved,
     ToolDefinition,
@@ -66,9 +67,11 @@ OutputT = TypeVar('OutputT')
 
 _HistoryProcessorSync = Callable[[list[_messages.ModelMessage]], list[_messages.ModelMessage]]
 _HistoryProcessorAsync = Callable[[list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]]
-_HistoryProcessorSyncWithCtx = Callable[[RunContext[DepsT], list[_messages.ModelMessage]], list[_messages.ModelMessage]]
+_HistoryProcessorSyncWithCtx = Callable[
+    [HistoryProcessorContext[DepsT], list[_messages.ModelMessage]], list[_messages.ModelMessage]
+]
 _HistoryProcessorAsyncWithCtx = Callable[
-    [RunContext[DepsT], list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]
+    [HistoryProcessorContext[DepsT], list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]
 ]
 HistoryProcessor = (
     _HistoryProcessorSync
@@ -517,15 +520,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        # Add model_settings and model_request_parameters to run_context
+        # Add model_settings and model_request_parameters to history_processor_context
         model_settings = ctx.deps.model_settings
         model_request_parameters = await _prepare_request_parameters(ctx)
-        run_context = replace(
-            run_context, model_settings=model_settings, model_request_parameters=model_request_parameters
+
+        history_processor_context = build_history_processor_context(
+            run_context, model_settings, model_request_parameters
         )
 
         original_history = ctx.state.message_history[:]
-        message_history = await _process_message_history(original_history, ctx.deps.history_processors, run_context)
+        message_history = await _process_message_history(
+            original_history, ctx.deps.history_processors, history_processor_context
+        )
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = message_history
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
@@ -879,6 +885,21 @@ def build_validation_context(
         return fn(run_context)
     else:
         return validation_ctx
+
+
+def build_history_processor_context(
+    run_context: RunContext[DepsT],
+    model_settings: ModelSettings | None,
+    model_request_parameters: models.ModelRequestParameters,
+) -> HistoryProcessorContext[DepsT]:
+    """Build a HistoryProcessorContext from an existing RunContext."""
+    context_kwargs = {f.name: getattr(run_context, f.name) for f in dataclasses.fields(run_context)}
+
+    return HistoryProcessorContext(
+        **context_kwargs,
+        model_settings=model_settings,
+        model_request_parameters=model_request_parameters,
+    )
 
 
 async def process_tool_calls(  # noqa: C901
@@ -1376,21 +1397,21 @@ def build_agent_graph(
 async def _process_message_history(
     messages: list[_messages.ModelMessage],
     processors: Sequence[HistoryProcessor[DepsT]],
-    run_context: RunContext[DepsT],
+    history_processor_context: HistoryProcessorContext[DepsT],
 ) -> list[_messages.ModelMessage]:
     """Process message history through a sequence of processors."""
     for processor in processors:
-        takes_ctx = is_takes_ctx(processor)
+        takes_ctx = is_takes_history_processor_ctx(processor)
 
         if is_async_callable(processor):
             if takes_ctx:
-                messages = await processor(run_context, messages)
+                messages = await processor(history_processor_context, messages)
             else:
                 messages = await processor(messages)
         else:
             if takes_ctx:
                 sync_processor_with_ctx = cast(_HistoryProcessorSyncWithCtx[DepsT], processor)
-                messages = await run_in_executor(sync_processor_with_ctx, run_context, messages)
+                messages = await run_in_executor(sync_processor_with_ctx, history_processor_context, messages)
             else:
                 sync_processor = cast(_HistoryProcessorSync, processor)
                 messages = await run_in_executor(sync_processor, messages)

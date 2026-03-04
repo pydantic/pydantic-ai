@@ -17,7 +17,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import HistoryProcessorContext
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
@@ -500,9 +500,9 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
 
 
 async def test_history_processor_with_context(function_model: FunctionModel, received_messages: list[ModelMessage]):
-    """Test history processor that takes RunContext."""
+    """Test history processor that takes HistoryProcessorContext."""
 
-    def context_processor(ctx: RunContext[str], messages: list[ModelMessage]) -> list[ModelMessage]:
+    def context_processor(ctx: HistoryProcessorContext[str], messages: list[ModelMessage]) -> list[ModelMessage]:
         # Access deps from context
         prefix = ctx.deps
         processed: list[ModelMessage] = []
@@ -563,9 +563,11 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
 async def test_history_processor_with_context_async(
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
-    """Test async history processor that takes RunContext."""
+    """Test async history processor that takes HistoryProcessorContext."""
 
-    async def async_context_processor(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
+    async def async_context_processor(
+        ctx: HistoryProcessorContext[Any], messages: list[ModelMessage]
+    ) -> list[ModelMessage]:
         return messages[-1:]  # Keep only the last message
 
     message_history = [
@@ -625,7 +627,7 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
         # Filter out responses
         return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
-    def context_processor(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
+    def context_processor(ctx: HistoryProcessorContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
         # Add prefix based on deps
         prefix = getattr(ctx.deps, 'prefix', 'DEFAULT')
         processed: list[ModelMessage] = []
@@ -835,7 +837,7 @@ async def test_callable_class_history_processor_with_ctx_no_op(
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
     class NoOpHistoryProcessorWithCtx:
-        def __call__(self, _: RunContext, messages: list[ModelMessage]) -> list[ModelMessage]:
+        def __call__(self, _: HistoryProcessorContext, messages: list[ModelMessage]) -> list[ModelMessage]:
             return messages
 
     agent = Agent(function_model, history_processors=[NoOpHistoryProcessorWithCtx()])
