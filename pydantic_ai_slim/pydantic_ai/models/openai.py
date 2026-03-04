@@ -1794,8 +1794,11 @@ class OpenAIResponsesModel(Model):
             elif isinstance(tool, CodeExecutionTool):
                 has_image_generating_tool = True
                 container: responses.tool_param.CodeInterpreterContainerCodeInterpreterToolAuto = {'type': 'auto'}
-                if tool.file_ids:
-                    container['file_ids'] = tool.file_ids
+                if tool.files:
+                    # Filter files to only include those for this provider
+                    provider_files = [f.file_id for f in tool.files if f.provider_name == self.system]
+                    if provider_files:
+                        container['file_ids'] = provider_files
                 tools.append(responses.tool_param.CodeInterpreter(type='code_interpreter', container=container))
             elif isinstance(tool, MCPServerTool):
                 tools.append(self._map_mcp_server_tool(tool))

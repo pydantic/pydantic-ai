@@ -680,7 +680,8 @@ class AnthropicModel(Model):
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(BetaCodeExecutionTool20250825Param(name='code_execution', type='code_execution_20250825'))
                 beta_features.add('code-execution-2025-08-25')
-                if tool.file_ids:
+                # Check if any files are for this provider
+                if tool.files and any(f.provider_name == self.system for f in tool.files):
                     beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
@@ -759,11 +760,14 @@ class AnthropicModel(Model):
         # to the first user message in the history. This is intentional - Anthropic's API is
         # stateless and requires files to be declared in the messages on every request.
         # We keep container_upload blocks out of ModelRequest/ModelResponse to maintain
-        # provider-agnostic message history - they're regenerated from CodeExecutionTool.file_ids.
+        # provider-agnostic message history - they're regenerated from CodeExecutionTool.files.
         pending_container_uploads: list[str] = []
         for tool in model_request_parameters.builtin_tools:
-            if isinstance(tool, CodeExecutionTool) and tool.file_ids:
-                pending_container_uploads.extend(tool.file_ids)
+            if isinstance(tool, CodeExecutionTool) and tool.files:
+                # Filter files to only include those for this provider
+                for uploaded_file in tool.files:
+                    if uploaded_file.provider_name == self.system:
+                        pending_container_uploads.append(uploaded_file.file_id)
         for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []

@@ -249,6 +249,7 @@ import asyncio
 import anthropic
 
 from pydantic_ai import Agent, CodeExecutionTool
+from pydantic_ai.messages import UploadedFile
 
 
 async def main():
@@ -260,7 +261,9 @@ async def main():
     # Create an agent with CodeExecutionTool that has access to the uploaded file
     agent = Agent(
         'anthropic:claude-sonnet-4-5',
-        builtin_tools=[CodeExecutionTool(file_ids=[file.id])],
+        builtin_tools=[
+            CodeExecutionTool(files=[UploadedFile(file_id=file.id, provider_name='anthropic')])
+        ],
     )
 
     result = await agent.run('Analyze the data.csv file and summarize the key statistics.')
@@ -281,6 +284,7 @@ import asyncio
 from openai import AsyncOpenAI
 
 from pydantic_ai import Agent, CodeExecutionTool
+from pydantic_ai.messages import UploadedFile
 
 
 async def main():
@@ -292,7 +296,9 @@ async def main():
     # Create an agent with CodeExecutionTool that has access to the uploaded file
     agent = Agent(
         'openai-responses:gpt-5.2',
-        builtin_tools=[CodeExecutionTool(file_ids=[file.id])],
+        builtin_tools=[
+            CodeExecutionTool(files=[UploadedFile(file_id=file.id, provider_name='openai')])
+        ],
     )
 
     result = await agent.run('Analyze the data.csv file and summarize the key statistics.')
@@ -309,7 +315,7 @@ For details on file management, container lifecycle, and persistence behavior, s
 
 | Parameter | Anthropic | OpenAI | Google | xAI |
 |-----------|-----------|--------|--------|-----|
-| `file_ids` | ✅ | ✅ | ❌ | ❌ |
+| `files` | ✅ | ✅ | ❌ | ❌ |
 
 ## Image Generation Tool
 

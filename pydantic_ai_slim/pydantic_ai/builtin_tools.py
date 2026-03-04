@@ -3,11 +3,14 @@ from __future__ import annotations as _annotations
 from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Union
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict, deprecated
+
+if TYPE_CHECKING:
+    from .messages import UploadedFile
 
 __all__ = (
     'AbstractBuiltinTool',
@@ -188,10 +191,11 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * xAI
     """
 
-    file_ids: list[str] | None = None
-    """Optional list of file IDs to make available in the code execution environment.
+    files: list[UploadedFile] | None = None
+    """Optional list of uploaded files to make available in the code execution environment.
 
     Files must be uploaded via the provider's Files API before use.
+    Only files matching the model's provider will be used; files from other providers are ignored.
 
     Supported by:
 

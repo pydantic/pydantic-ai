@@ -5502,15 +5502,21 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
 
 
 async def test_anthropic_code_execution_tool_with_file_ids():
-    """Test that CodeExecutionTool with file_ids adds container_upload blocks and files-api beta."""
+    """Test that CodeExecutionTool with files adds container_upload blocks and files-api beta."""
+    from pydantic_ai.messages import UploadedFile
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
     # Create a model instance
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
 
-    # Create CodeExecutionTool with file_ids
-    code_exec_tool = CodeExecutionTool(file_ids=['file_123', 'file_456'])
+    # Create CodeExecutionTool with files
+    code_exec_tool = CodeExecutionTool(
+        files=[
+            UploadedFile(file_id='file_123', provider_name='anthropic'),
+            UploadedFile(file_id='file_456', provider_name='anthropic'),
+        ]
+    )
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
@@ -5562,14 +5568,20 @@ async def test_anthropic_code_execution_tool_without_file_ids():
 
 async def test_anthropic_container_upload_blocks_in_messages():
     """Test that container_upload blocks are added to the first user message."""
+    from pydantic_ai.messages import UploadedFile
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
     # Create a model instance
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
 
-    # Create CodeExecutionTool with file_ids so that _map_message can extract them
-    code_exec_tool = CodeExecutionTool(file_ids=['file_abc', 'file_xyz'])
+    # Create CodeExecutionTool with files so that _map_message can extract them
+    code_exec_tool = CodeExecutionTool(
+        files=[
+            UploadedFile(file_id='file_abc', provider_name='anthropic'),
+            UploadedFile(file_id='file_xyz', provider_name='anthropic'),
+        ]
+    )
 
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
@@ -5582,7 +5594,7 @@ async def test_anthropic_container_upload_blocks_in_messages():
     # Create test messages
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Test message')])]
 
-    # Call _map_message which will extract file_ids from builtin_tools
+    # Call _map_message which will extract file IDs from builtin_tools
     _, anthropic_messages = await m._map_message(  # pyright: ignore[reportPrivateUsage]
         messages, model_request_parameters, model_settings
     )
@@ -5610,6 +5622,64 @@ async def test_anthropic_container_upload_blocks_in_messages():
 
     # Last should be the text
     text_block = content[2]
+    assert isinstance(text_block, dict)
+    assert text_block['type'] == 'text'
+    assert text_block['text'] == 'Test message'
+
+
+async def test_anthropic_filters_files_from_other_providers():
+    """Test that files from other providers are filtered out."""
+    from pydantic_ai.messages import UploadedFile
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    # Create a model instance
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key='test-key'))
+
+    # Create CodeExecutionTool with files from multiple providers
+    code_exec_tool = CodeExecutionTool(
+        files=[
+            UploadedFile(file_id='file_anthropic', provider_name='anthropic'),
+            UploadedFile(file_id='file_openai', provider_name='openai'),
+            UploadedFile(file_id='file_google', provider_name='google-gla'),
+        ]
+    )
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[code_exec_tool],
+        output_tools=[],
+    )
+
+    model_settings = AnthropicModelSettings()
+
+    # Create test messages
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Test message')])]
+
+    # Call _map_message which will extract file IDs from builtin_tools
+    _, anthropic_messages = await m._map_message(  # pyright: ignore[reportPrivateUsage]
+        messages, model_request_parameters, model_settings
+    )
+
+    # Verify container_upload blocks are in the user message content
+    assert len(anthropic_messages) == 1
+    user_message = anthropic_messages[0]
+    assert user_message['role'] == 'user'
+
+    content = user_message['content']
+    assert isinstance(content, list)
+
+    # Should have: 1 container_upload block (only anthropic file) + text block
+    assert len(content) == 2
+
+    # First should be the anthropic container_upload block
+    upload_block = content[0]
+    assert isinstance(upload_block, dict)
+    assert upload_block['type'] == 'container_upload'
+    assert upload_block['file_id'] == 'file_anthropic'
+
+    # Last should be the text
+    text_block = content[1]
     assert isinstance(text_block, dict)
     assert text_block['type'] == 'text'
     assert text_block['text'] == 'Test message'
