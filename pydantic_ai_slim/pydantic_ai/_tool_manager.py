@@ -9,13 +9,14 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Generic, Literal
 
 from opentelemetry.trace import Tracer
+from opentelemetry.trace import StatusCode as _OtelStatusCode
 from pydantic import ValidationError
 from typing_extensions import deprecated
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
+from .exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -417,6 +418,13 @@ class ToolManager(Generic[AgentDepsT]):
                 part = e.tool_retry
                 if include_content and span.is_recording():
                     span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
+                raise
+            except (CallDeferred, ApprovalRequired):
+                # CallDeferred and ApprovalRequired are control-flow signals, not errors.
+                # Explicitly mark the span as OK so it doesn't appear as a failure in
+                # tracing UIs (e.g. Logfire), then re-raise to let the agent handle them.
+                if span.is_recording():
+                    span.set_status(_OtelStatusCode.OK)
                 raise
 
             if include_content and span.is_recording():
