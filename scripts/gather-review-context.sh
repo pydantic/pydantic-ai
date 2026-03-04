@@ -312,7 +312,7 @@ gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" --paginate \
 # Gather directory-specific AGENTS.md files for changed directories
 echo "  - Directory AGENTS.md files"
 > "$CTX/agents-md.txt"
-for agents_file in docs/AGENTS.md pydantic_ai_slim/pydantic_ai/models/AGENTS.md tests/AGENTS.md; do
+for agents_file in $(find . -name AGENTS.md -not -path './.venv/*' -not -path ./AGENTS.md | sed 's|^\./||' | sort); do
   dir=$(dirname "$agents_file")
   if grep -q "^${dir}/" "$CTX/changed-files.txt" 2>/dev/null && [ -f "$agents_file" ]; then
     echo "=== ${agents_file} ==="

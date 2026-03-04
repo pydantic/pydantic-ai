@@ -54,6 +54,15 @@ class UriPart(TypedDict):
     mime_type: NotRequired[str]
 
 
+class FilePart(TypedDict):
+    """Represents an external referenced file sent to the model by file id (OTel GenAI spec)."""
+
+    type: Literal['file']
+    modality: str
+    file_id: NotRequired[str]
+    mime_type: NotRequired[str]
+
+
 class BinaryDataPart(TypedDict):
     type: Literal['binary']
     media_type: str
@@ -81,9 +90,7 @@ class ThinkingPart(TypedDict):
     content: NotRequired[str]
 
 
-MessagePart: TypeAlias = (
-    'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | UriPart | BinaryDataPart | BlobPart | ThinkingPart'
-)
+MessagePart: TypeAlias = 'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | UriPart | FilePart | BinaryDataPart | BlobPart | ThinkingPart'
 
 
 Role = Literal['system', 'user', 'assistant']

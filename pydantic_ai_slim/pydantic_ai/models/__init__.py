@@ -251,6 +251,7 @@ KnownModelName = TypeAliasType(
         'gateway/google-vertex:gemini-3-flash-preview',
         'gateway/google-vertex:gemini-3-pro-image-preview',
         'gateway/google-vertex:gemini-3-pro-preview',
+        'gateway/google-vertex:gemini-3.1-flash-lite-preview',
         'gateway/google-vertex:gemini-3.1-pro-preview',
         'gateway/google-vertex:gemini-flash-latest',
         'gateway/google-vertex:gemini-flash-lite-latest',
@@ -367,6 +368,7 @@ KnownModelName = TypeAliasType(
         'google-gla:gemini-3-flash-preview',
         'google-gla:gemini-3-pro-image-preview',
         'google-gla:gemini-3-pro-preview',
+        'google-gla:gemini-3.1-flash-lite-preview',
         'google-gla:gemini-3.1-pro-preview',
         'google-gla:gemini-flash-latest',
         'google-gla:gemini-flash-lite-latest',
@@ -381,6 +383,7 @@ KnownModelName = TypeAliasType(
         'google-vertex:gemini-3-flash-preview',
         'google-vertex:gemini-3-pro-image-preview',
         'google-vertex:gemini-3-pro-preview',
+        'google-vertex:gemini-3.1-flash-lite-preview',
         'google-vertex:gemini-3.1-pro-preview',
         'google-vertex:gemini-flash-latest',
         'google-vertex:gemini-flash-lite-latest',
@@ -616,7 +619,7 @@ class ModelRequestParameters:
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
-    prompted_output_template: str | None = None
+    prompted_output_template: str | Literal[False] | None = None
     allow_text_output: bool = True
     allow_image_output: bool = False
 
@@ -762,7 +765,7 @@ class Model(ABC):
         if (
             params.output_mode == 'prompted'
             or (params.output_mode == 'native' and self.profile.native_output_requires_schema_in_instructions)
-        ) and not params.prompted_output_template:
+        ) and params.prompted_output_template is None:
             params = replace(params, prompted_output_template=self.profile.prompted_output_template)
 
         # Check if output mode is supported
