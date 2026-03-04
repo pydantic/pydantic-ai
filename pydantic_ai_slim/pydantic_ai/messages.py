@@ -895,10 +895,15 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
-    def _split_content(self) -> tuple[list[Any], list[MultiModalContent]]:
-        """Split content into non-file and file parts."""
+    def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:
+        """Split content into non-file and file parts.
+
+        Returns:
+            A 3-tuple of (data_parts, file_parts, was_list) where was_list indicates
+            whether the original content was a list.
+        """
         if is_multi_modal_content(self.content):
-            return [], [self.content]
+            return [], [self.content], False
         elif isinstance(self.content, list):
             non_files: list[Any] = []
             files: list[MultiModalContent] = []
@@ -907,15 +912,27 @@ class BaseToolReturnPart:
                     files.append(p)
                 else:
                     non_files.append(p)
-            return non_files, files
-        return [self.content], []
+            return non_files, files, True
+        return [self.content], [], False
 
     @property
     def files(self) -> list[MultiModalContent]:
         """The multimodal file parts from `content` (`ImageUrl`, `AudioUrl`, `DocumentUrl`, `VideoUrl`, `BinaryContent`)."""
-        return self._split_content()[1]
+        _, files, _ = self._split_content()
+        return files
 
-    def content_items(self, *, mode: Literal['raw', 'str', 'json'] = 'raw') -> list[ToolReturnContent]:
+    @overload
+    def content_items(self, *, mode: Literal['raw'] = 'raw') -> list[ToolReturnContent]: ...
+
+    @overload
+    def content_items(self, *, mode: Literal['str']) -> list[str | MultiModalContent]: ...
+
+    @overload
+    def content_items(self, *, mode: Literal['jsonable']) -> list[Any | MultiModalContent]: ...
+
+    def content_items(
+        self, *, mode: Literal['raw', 'str', 'jsonable'] = 'raw'
+    ) -> list[ToolReturnContent] | list[str | MultiModalContent] | list[Any | MultiModalContent]:
         """Return content as a flat list for iteration, with optional serialization.
 
         Args:
@@ -923,7 +940,7 @@ class BaseToolReturnPart:
                 - `'raw'`: No serialization. Returns items as-is.
                 - `'str'`: Non-file items are serialized to strings via `tool_return_ta`.
                   File items (`MultiModalContent`) pass through unchanged.
-                - `'json'`: Non-file items are serialized to JSON-compatible Python objects
+                - `'jsonable'`: Non-file items are serialized to JSON-compatible Python objects
                   via `tool_return_ta`. File items pass through unchanged.
         """
         items: list[ToolReturnContent]
@@ -935,14 +952,16 @@ class BaseToolReturnPart:
         if mode == 'raw':
             return items
 
-        result: list[ToolReturnContent] = []
+        result: list[str | MultiModalContent] | list[Any | MultiModalContent] = []
         for item in items:
             if is_multi_modal_content(item):
                 result.append(item)
+            elif isinstance(item, str):
+                result.append(item)
             elif mode == 'str':
-                result.append(item if isinstance(item, str) else tool_return_ta.dump_json(item).decode())
+                result.append(tool_return_ta.dump_json(item).decode())
             else:
-                result.append(item if isinstance(item, str) else tool_return_ta.dump_python(item, mode='json'))
+                result.append(tool_return_ta.dump_python(item, mode='json'))
         return result
 
     def model_response_str(self) -> str:
@@ -950,12 +969,12 @@ class BaseToolReturnPart:
 
         This excludes multimodal files - use `.files` to get those separately.
         """
-        data, files = self._split_content()
+        data, files, was_list = self._split_content()
         if not data:
             return ''
         # Unwrap single-item list when content was scalar or when files were filtered out,
         # since the list may have only existed to bundle data alongside files
-        if len(data) == 1 and (not isinstance(self.content, list) or files):
+        if len(data) == 1 and (not was_list or bool(files)):
             value = data[0]
         else:
             value = data
@@ -969,12 +988,12 @@ class BaseToolReturnPart:
         This excludes multimodal files - use `.files` to get those separately.
         Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
         """
-        data, files = self._split_content()
+        data, files, was_list = self._split_content()
         if not data:
             return {}
         # Unwrap single-item list when content was scalar or when files were filtered out,
         # since the list may have only existed to bundle data alongside files
-        if len(data) == 1 and (not isinstance(self.content, list) or files):
+        if len(data) == 1 and (not was_list or bool(files)):
             value = data[0]
         else:
             value = data
@@ -984,7 +1003,7 @@ class BaseToolReturnPart:
         else:
             return {RETURN_VALUE_KEY: json_content}
 
-    def fallback_tool_return(self) -> tuple[str, list[UserContent]]:
+    def model_response_str_and_user_content(self) -> tuple[str, list[UserContent]]:
         """Build a text-only tool result with multimodal files extracted for a trailing user message.
 
         For providers whose tool result API only accepts text. Multimodal files are referenced
@@ -994,6 +1013,7 @@ class BaseToolReturnPart:
         if not self.files:
             return self.model_response_str(), []
 
+        _, _, was_list = self._split_content()
         tool_content_parts: list[str] = []
         file_content: list[UserContent] = []
 
@@ -1002,11 +1022,14 @@ class BaseToolReturnPart:
                 tool_content_parts.append(f'See file {item.identifier}.')
                 file_content.append(f'This is file {item.identifier}:')
                 file_content.append(item)
-            else:
-                assert isinstance(item, str)
+            elif isinstance(item, str):
                 tool_content_parts.append(item)
 
-        return '\n'.join(tool_content_parts) if tool_content_parts else '', file_content
+        if not tool_content_parts:
+            return '', file_content
+        if was_list:
+            return tool_return_ta.dump_json(tool_content_parts).decode(), file_content
+        return tool_content_parts[0], file_content
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         body: AnyValue = {

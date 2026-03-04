@@ -2010,7 +2010,7 @@ async def test_run_stream_tool_return_with_files():
             {
                 'type': 'tool-output-available',
                 'toolCallId': 'img_1',
-                'output': 'Image description\n[File: image/png]',
+                'output': [{'return_value': 'Image description'}, '[File: image/png]'],
             },
             {'type': 'finish-step'},
             {'type': 'start-step'},
@@ -2068,7 +2068,7 @@ async def test_run_stream_tool_return_files_only():
         {
             'type': 'tool-output-available',
             'toolCallId': 'file_1',
-            'output': '[File: audio/wav]',
+            'output': [{}, '[File: audio/wav]'],
         }
     )
 
@@ -2117,7 +2117,7 @@ async def test_run_stream_tool_return_with_file_url():
         {
             'type': 'tool-output-available',
             'toolCallId': 'url_1',
-            'output': '[File: https://example.com/image.png]',
+            'output': [{}, '[File: https://example.com/image.png]'],
         }
     )
 
@@ -5927,8 +5927,7 @@ def _sync_timestamps(original: list[ModelMessage], new: list[ModelMessage]) -> N
         for orig_part, new_part in zip(orig_msg.parts, new_msg.parts):
             if hasattr(orig_part, 'timestamp') and hasattr(new_part, 'timestamp'):
                 new_part.timestamp = orig_part.timestamp  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-        if hasattr(orig_msg, 'timestamp') and hasattr(new_msg, 'timestamp'):
-            new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
+        new_msg.timestamp = orig_msg.timestamp  # pyright: ignore[reportAttributeAccessIssue]
 
 
 class TestDumpProviderMetadata:
@@ -6061,19 +6060,19 @@ class TestSdkVersion:
         pytest.param(
             {'return_value': 'hello'},
             [BinaryContent(data=b'x', media_type='image/png')],
-            snapshot('hello\n[File: image/png]'),
+            snapshot([{'return_value': 'hello'}, '[File: image/png]']),
             id='string_with_files',
         ),
         pytest.param(
             {},
             [BinaryContent(data=b'x', media_type='audio/wav')],
-            snapshot('[File: audio/wav]'),
+            snapshot([{}, '[File: audio/wav]']),
             id='empty_with_files',
         ),
         pytest.param(
             {'return_value': [1, 2]},
             [BinaryContent(data=b'x', media_type='image/png')],
-            snapshot('[1, 2]\n[File: image/png]'),
+            snapshot([{'return_value': [1, 2]}, '[File: image/png]']),
             id='list_with_files',
         ),
         pytest.param(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
@@ -83,8 +82,7 @@ def _tool_return_with_files(part: BaseToolReturnPart) -> Any:
     """Wrap tool_return_output with file descriptions for multimodal tool returns."""
     output = tool_return_output(part)
     if file_descriptions := [describe_file(f) for f in part.files]:
-        text = output if isinstance(output, str) else json.dumps(output) if output else ''
-        return (text + '\n' + '\n'.join(file_descriptions)).strip() if text else '\n'.join(file_descriptions)
+        return [part.model_response_object(), *file_descriptions]
     return output
 
 
