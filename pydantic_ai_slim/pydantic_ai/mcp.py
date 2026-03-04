@@ -553,7 +553,11 @@ class MCPServer(AbstractToolset[Any], ABC):
                 return structured['result']
             return structured
 
-        mapped = [await self._map_tool_result_part(part) for part in result.content]
+        mapped = [
+            await self._map_tool_result_part(part)
+            for part in result.content
+            if _include_content_for_assistant(part)
+        ]
         return mapped[0] if len(mapped) == 1 else mapped
 
     async def call_tool(
@@ -1314,6 +1318,25 @@ It accepts a run context, the original tool call function, a tool name, and argu
 Allows wrapping an MCP server tool call to customize it, including adding extra request
 metadata.
 """
+
+
+def _include_content_for_assistant(part: mcp_types.ContentBlock) -> bool:
+    """Return True if this content block should be forwarded to the model (assistant).
+
+    Per the MCP specification, content blocks may carry ``annotations.audience`` which
+    lists the intended recipients of that content.  When the list is absent (``None``)
+    the content is intended for *all* audiences.  When it is present, the content should
+    only be forwarded to the audiences listed.
+
+    See: https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-result
+    """
+    annotations = getattr(part, 'annotations', None)
+    if annotations is None:
+        return True
+    audience = getattr(annotations, 'audience', None)
+    if audience is None:
+        return True
+    return 'assistant' in audience
 
 
 def _mcp_server_discriminator(value: dict[str, Any]) -> str | None:

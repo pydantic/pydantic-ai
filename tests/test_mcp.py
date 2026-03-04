@@ -2447,3 +2447,59 @@ async def test_server_capabilities_list_changed_fields() -> None:
         assert isinstance(caps.prompts_list_changed, bool)
         assert isinstance(caps.tools_list_changed, bool)
         assert isinstance(caps.resources_list_changed, bool)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tests for MCP audience annotation filtering (issue #4353)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_include_content_for_assistant_no_annotations():
+    """Content with no annotations should always be included (implicit 'all' audience)."""
+    from mcp.types import TextContent
+
+    from pydantic_ai.mcp import _include_content_for_assistant  # type: ignore[reportPrivateUsage]
+
+    part = TextContent(type='text', text='hello')
+    assert part.annotations is None
+    assert _include_content_for_assistant(part) is True
+
+
+def test_include_content_for_assistant_empty_audience():
+    """Content with annotations but no audience should always be included."""
+    from mcp.types import Annotations, TextContent
+
+    from pydantic_ai.mcp import _include_content_for_assistant  # type: ignore[reportPrivateUsage]
+
+    part = TextContent(type='text', text='hello', annotations=Annotations(audience=None))
+    assert _include_content_for_assistant(part) is True
+
+
+def test_include_content_for_assistant_assistant_audience():
+    """Content with audience=['assistant'] should be included."""
+    from mcp.types import Annotations, TextContent
+
+    from pydantic_ai.mcp import _include_content_for_assistant  # type: ignore[reportPrivateUsage]
+
+    part = TextContent(type='text', text='for model', annotations=Annotations(audience=['assistant']))
+    assert _include_content_for_assistant(part) is True
+
+
+def test_include_content_for_assistant_user_audience_excluded():
+    """Content with audience=['user'] should be excluded (not sent to model)."""
+    from mcp.types import Annotations, TextContent
+
+    from pydantic_ai.mcp import _include_content_for_assistant  # type: ignore[reportPrivateUsage]
+
+    part = TextContent(type='text', text='user-only', annotations=Annotations(audience=['user']))
+    assert _include_content_for_assistant(part) is False
+
+
+def test_include_content_for_assistant_mixed_audience():
+    """Content with audience=['user', 'assistant'] should be included."""
+    from mcp.types import Annotations, TextContent
+
+    from pydantic_ai.mcp import _include_content_for_assistant  # type: ignore[reportPrivateUsage]
+
+    part = TextContent(type='text', text='for all', annotations=Annotations(audience=['user', 'assistant']))
+    assert _include_content_for_assistant(part) is True

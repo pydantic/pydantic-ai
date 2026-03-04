@@ -163,7 +163,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             return call_tool_result.structured_content
 
         # Otherwise, return the content
-        return _map_fastmcp_tool_results(parts=call_tool_result.content)
+        return _map_fastmcp_tool_results(parts=[p for p in call_tool_result.content if _include_for_assistant(p)])
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
         return ToolsetTool[AgentDepsT](
@@ -172,6 +172,24 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             max_retries=self.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
+
+
+def _include_for_assistant(part: ContentBlock) -> bool:
+    """Return True if this content block should be forwarded to the model (assistant).
+
+    Per the MCP specification, content blocks may carry ``annotations.audience`` listing
+    the intended recipients.  An absent audience means *all* audiences; when present, only
+    the listed audiences should receive the content.
+
+    See: https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-result
+    """
+    annotations = getattr(part, 'annotations', None)
+    if annotations is None:
+        return True
+    audience = getattr(annotations, 'audience', None)
+    if audience is None:
+        return True
+    return 'assistant' in audience
 
 
 def _map_fastmcp_tool_results(parts: list[ContentBlock]) -> list[FastMCPToolResult] | FastMCPToolResult:
