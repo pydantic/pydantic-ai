@@ -1098,9 +1098,6 @@ def _extract_usage(
     if not extracted.cache_write_tokens and 'cache_write_tokens' in usage_data:
         extracted.cache_write_tokens = usage_data['cache_write_tokens']
         extracted.details.pop('cache_write_tokens', None)
-    # Clean up empty details dict
-    if extracted.details == {}:
-        extracted.details = {}
 
     return extracted
 
