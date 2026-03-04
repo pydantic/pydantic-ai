@@ -425,20 +425,18 @@ class ToolManager(Generic[AgentDepsT]):
             except (CallDeferred, ApprovalRequired) as exc:
                 # Always record deferral info as span attributes (queryable regardless of version)
                 if span.is_recording():
-                    span.set_attribute('pydantic_ai.tool.deferral.name', type(exc).__name__)
-                    metadata = getattr(exc, 'metadata', None)
-                    if metadata is not None:
+                    span.set_attribute(instrumentation_names.tool_deferral_name_attr, type(exc).__name__)
+                    if exc.metadata is not None:
                         try:
-                            span.set_attribute('pydantic_ai.tool.deferral.metadata', json.dumps(metadata))
+                            span.set_attribute(instrumentation_names.tool_deferral_metadata_attr, json.dumps(exc.metadata))
                         except (TypeError, ValueError):
-                            span.set_attribute('pydantic_ai.tool.deferral.metadata', str(metadata))
+                            span.set_attribute(instrumentation_names.tool_deferral_metadata_attr, str(exc.metadata))
 
-                # Gate error-suppression behind instrumentation version 3+ for backwards compat.
-                # Versions 1 and 2 keep the old behaviour where these exceptions appear as errors.
-                if instrumentation_version >= 3:
+                # Gate error-suppression behind version 4+ (new dedicated version for this change).
+                # Versions 1-3 preserve the old behaviour where these exceptions appear as errors.
+                if instrumentation_version >= 4:
                     span.set_status(_OtelStatusCode.OK)
                 else:
-                    # Preserve old behaviour: record exception event + ERROR status.
                     span.record_exception(exc)
                     span.set_status(_OtelStatusCode.ERROR)
                 raise
