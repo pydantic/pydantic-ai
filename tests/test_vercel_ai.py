@@ -49,8 +49,6 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
-from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
-from pydantic_ai.ui.vercel_ai._utils import dump_provider_metadata, iter_tool_approval_responses, load_provider_metadata
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
@@ -60,6 +58,12 @@ with try_import() as starlette_import_successful:
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
+    from pydantic_ai.ui.vercel_ai._utils import (
+        dump_provider_metadata,
+        iter_tool_approval_responses,
+        load_provider_metadata,
+    )
     from pydantic_ai.ui.vercel_ai.request_types import (
         DynamicToolApprovalRespondedPart,
         DynamicToolInputAvailablePart,
