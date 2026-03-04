@@ -1584,6 +1584,32 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
     assert reloaded == original
 
 
+def test_dump_builtin_tool_call_without_return() -> None:
+    """Test that BuiltinToolCallPart without a matching BuiltinToolReturnPart still dumps correctly."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search for info')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    tool_call_id='call_orphan',
+                    args='{"query": "test"}',
+                    provider_name='anthropic',
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages)
+
+    assert len(ag_ui_msgs) == 2
+    assistant_msg = ag_ui_msgs[1]
+    assert isinstance(assistant_msg, AssistantMessage)
+    assert assistant_msg.tool_calls is not None
+    assert len(assistant_msg.tool_calls) == 1
+    assert assistant_msg.tool_calls[0].id == 'pyd_ai_builtin|anthropic|call_orphan'
+
+
 def test_dump_load_roundtrip_cache_point() -> None:
     """Test that CachePoint is filtered out during round-trip (it's metadata only)."""
     original: list[ModelMessage] = [
@@ -1766,9 +1792,7 @@ async def test_reasoning_events_empty_content_with_metadata() -> None:
         signature='sig_redacted',
     )
 
-    events: list[BaseEvent] = []
-    async for e in event_stream.handle_thinking_start(part):  # pragma: no branch
-        events.append(e)
+    events: list[BaseEvent] = [e async for e in event_stream.handle_thinking_start(part)]
     async for e in event_stream.handle_thinking_end(part):
         events.append(e)
 

@@ -34,6 +34,7 @@ from ...messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -109,7 +110,7 @@ def _new_message_id() -> str:
 
 
 def _user_content_to_input(
-    item: str | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | CachePoint,
+    item: str | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
 ) -> TextInputContent | BinaryInputContent | None:
     """Convert a user content item to AG-UI input content."""
     if isinstance(item, str):
@@ -118,6 +119,10 @@ def _user_content_to_input(
         return BinaryInputContent(type='binary', url=item.url, mime_type=item.media_type or '')
     elif isinstance(item, BinaryContent):
         return BinaryInputContent(type='binary', data=item.base64, mime_type=item.media_type)
+    elif isinstance(item, UploadedFile):
+        # UploadedFile holds an opaque provider file_id (e.g. 'file-abc123'), not a URL or
+        # binary data, so it can't be mapped to AG-UI's BinaryInputContent. Skipped like CachePoint.
+        return None
     elif isinstance(item, CachePoint):
         return None
     else:
