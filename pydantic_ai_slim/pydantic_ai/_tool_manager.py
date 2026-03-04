@@ -438,6 +438,8 @@ class ToolManager(Generic[AgentDepsT]):
                 if instrumentation_version >= 3:
                     span.set_status(_OtelStatusCode.OK)
                 else:
+                    # Preserve old behaviour: record exception event + ERROR status.
+                    span.record_exception(exc)
                     span.set_status(_OtelStatusCode.ERROR)
                 raise
             except Exception as exc:
