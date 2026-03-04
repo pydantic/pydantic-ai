@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -267,7 +268,7 @@ class SpanNode:
 
         # Attribute conditions
         if (has_attributes := query.get('has_attributes')) and not all(
-            self.attributes.get(key) == value for key, value in has_attributes.items()
+            _attribute_matches(self.attributes.get(key), value) for key, value in has_attributes.items()
         ):
             return False
         if (has_attributes_keys := query.get('has_attribute_keys')) and not all(
@@ -539,3 +540,27 @@ class SpanTree:
 
 SPAN_TREE_ADAPTER = TypeAdapter(SpanTree)
 """This adapter can be used to serialize and deserialize `SpanTree` objects to and from JSON."""
+
+
+def _attribute_matches(attribute_value: Any, query_value: Any) -> bool:
+    """Check if a span attribute value matches the given query value.
+
+    Logfire (and the OTEL SDK) serialises complex Python objects (dicts, lists of
+    dicts, etc.) to JSON strings before storing them as span attributes.  A
+    ``SpanQuery(has_attributes={"key": {"foo": 1}})`` therefore needs to compare
+    against the JSON-serialised form of the attribute, not the raw Python object.
+
+    This function first tries a direct equality comparison, and then — when the
+    attribute is a string and the query value is a non-string — attempts to
+    JSON-deserialise the attribute and compare the result to the query value.
+    """
+    if attribute_value == query_value:
+        return True
+    # If the attribute is stored as a JSON string but the query value is a
+    # Python object, try to parse the attribute for comparison.
+    if isinstance(attribute_value, str) and not isinstance(query_value, str):
+        try:
+            return json.loads(attribute_value) == query_value
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return False
