@@ -89,7 +89,7 @@ def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], except
     if provider in ('google-vertex', 'vertexai'):
         try:
             infer_provider(provider)
-        except (GoogleAuthError, ValueError):  # pragma: no branch
+        except (GoogleAuthError, UserError, ValueError):  # pragma: no branch
             pytest.skip('Google credentials not available')
 
     if exception_has is not None:
