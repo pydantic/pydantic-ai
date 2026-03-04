@@ -1,16 +1,16 @@
 interactions:
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": ""}]}], "system": [{"text": "Generate a short greeting."}], "inferenceConfig":
-      {}}'
+    body: '{"messages": [{"role": "user", "content": [{"text": "."}]}], "system": [{"text": "Generate a short greeting."}],
+      "inferenceConfig": {}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        YWJjZGVmMTItMzQ1Ni03ODkwLWFiY2QtZWYxMjM0NTY3ODkw
+        Y2VjZGRkMzctNmUwZC00YTdhLTliNDgtNmQxNWFhOGZmMjFl
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '126'
+      - '135'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -26,17 +26,17 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 312
+        latencyMs: 404
       output:
         message:
           content:
-          - text: Hello! How can I help you today?
+          - text: Hello! How can I assist you today?
           role: assistant
       stopReason: end_turn
       usage:
-        inputTokens: 6
-        outputTokens: 9
-        totalTokens: 15
+        inputTokens: 7
+        outputTokens: 10
+        totalTokens: 17
     status:
       code: 200
       message: OK

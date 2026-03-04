@@ -3258,7 +3258,7 @@ async def test_bedrock_model_with_instructions_only(allow_model_requests: None, 
     agent = Agent(model=model, system_prompt='Generate a short greeting.')
 
     result = await agent.run()
-    assert result.output == snapshot('Hello! How can I help you today?')
+    assert result.output == snapshot('Hello! How can I assist you today?')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -3267,8 +3267,69 @@ async def test_bedrock_model_with_instructions_only(allow_model_requests: None, 
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='Hello! How can I help you today?')],
-                usage=RequestUsage(input_tokens=6, output_tokens=9),
+                parts=[TextPart(content='Hello! How can I assist you today?')],
+                usage=RequestUsage(input_tokens=7, output_tokens=10),
+                model_name='us.amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_model_instructions_only_then_message_history(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that message_history from a system-prompt-only run works in a follow-up run.
+
+    Verifies the scenario where a first run with only instructions produces a history
+    starting with an assistant message (after system parts are extracted), and a second
+    run using that history doesn't fail.
+    See: https://github.com/pydantic/pydantic-ai/issues/4495
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='Generate a short greeting.')
+
+    first_result = await agent.run()
+    second_result = await agent.run('Now say goodbye.', message_history=first_result.all_messages())
+    assert second_result.output == snapshot(
+        'Farewell for now! It was a pleasure chatting with you. Have a fantastic day ahead!'
+    )
+    assert second_result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello there! How are you doing today?')],
+                usage=RequestUsage(input_tokens=7, output_tokens=10),
+                model_name='us.amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Now say goodbye.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='Farewell for now! It was a pleasure chatting with you. Have a fantastic day ahead!'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=25, output_tokens=19),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
