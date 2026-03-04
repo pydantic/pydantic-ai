@@ -41,7 +41,8 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
     def client(self) -> AsyncAnthropicClient:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         profile = anthropic_model_profile(model_name)
         return ModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
 
