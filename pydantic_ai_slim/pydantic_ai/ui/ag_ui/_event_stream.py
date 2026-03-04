@@ -156,7 +156,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if not followed_by_text:
             yield TextMessageEndEvent(message_id=self.message_id)
 
-    async def handle_thinking_start(self, part: ThinkingPart) -> AsyncIterator[BaseEvent]:
+    async def handle_thinking_start(
+        self, part: ThinkingPart, follows_thinking: bool = False
+    ) -> AsyncIterator[BaseEvent]:
         self._reasoning_message_id = str(uuid4())
         self._reasoning_started = False
 
@@ -183,7 +185,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
         yield ReasoningMessageContentEvent(message_id=message_id, delta=delta.content_delta)
 
-    async def handle_thinking_end(self, part: ThinkingPart) -> AsyncIterator[BaseEvent]:
+    async def handle_thinking_end(
+        self, part: ThinkingPart, followed_by_thinking: bool = False
+    ) -> AsyncIterator[BaseEvent]:
         message_id = self._reasoning_message_id or ''
 
         encrypted = thinking_encrypted_metadata(part)

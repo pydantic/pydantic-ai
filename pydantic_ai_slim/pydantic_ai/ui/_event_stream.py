@@ -295,7 +295,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 async for e in self.handle_text_start(part, follows_text=previous_part_kind == 'text'):
                     yield e
             case ThinkingPart():
-                async for e in self.handle_thinking_start(part):
+                async for e in self.handle_thinking_start(part, follows_thinking=previous_part_kind == 'thinking'):
                     yield e
             case ToolCallPart():
                 async for e in self.handle_tool_call_start(part):
@@ -360,7 +360,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 async for e in self.handle_text_end(part, followed_by_text=next_part_kind == 'text'):
                     yield e
             case ThinkingPart():
-                async for e in self.handle_thinking_end(part):
+                async for e in self.handle_thinking_end(part, followed_by_thinking=next_part_kind == 'thinking'):
                     yield e
             case ToolCallPart():
                 async for e in self.handle_tool_call_end(part):
@@ -460,11 +460,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
-    async def handle_thinking_start(self, part: ThinkingPart) -> AsyncIterator[EventT]:
+    async def handle_thinking_start(self, part: ThinkingPart, follows_thinking: bool = False) -> AsyncIterator[EventT]:
         """Handle the start of a `ThinkingPart`.
 
         Args:
             part: The thinking part.
+            follows_thinking: Whether the part is directly preceded by another thinking part. In this case, you may want to yield a "thinking-delta" event instead of a "thinking-start" event.
         """
         return  # pragma: no cover
         yield  # Make this an async generator
@@ -478,11 +479,14 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
-    async def handle_thinking_end(self, part: ThinkingPart) -> AsyncIterator[EventT]:
+    async def handle_thinking_end(
+        self, part: ThinkingPart, followed_by_thinking: bool = False
+    ) -> AsyncIterator[EventT]:
         """Handle the end of a `ThinkingPart`.
 
         Args:
             part: The thinking part.
+            followed_by_thinking: Whether the part is directly followed by another thinking part. In this case, you may not want to yield a "thinking-end" event yet.
         """
         return  # pragma: no cover
         yield  # Make this an async generator

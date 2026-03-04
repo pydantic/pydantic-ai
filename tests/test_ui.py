@@ -148,14 +148,14 @@ class DummyUIEventStream(UIEventStream[DummyUIRunInput, str, AgentDepsT, OutputD
     async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[str]:
         yield f'</text followed_by_text={followed_by_text!r}>'
 
-    async def handle_thinking_start(self, part: ThinkingPart) -> AsyncIterator[str]:
-        yield f'<thinking>{part.content}'
+    async def handle_thinking_start(self, part: ThinkingPart, follows_thinking: bool = False) -> AsyncIterator[str]:
+        yield f'<thinking follows_thinking={follows_thinking!r}>{part.content}'
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[str]:
         yield str(delta.content_delta)
 
-    async def handle_thinking_end(self, part: ThinkingPart) -> AsyncIterator[str]:
-        yield '</thinking>'
+    async def handle_thinking_end(self, part: ThinkingPart, followed_by_thinking: bool = False) -> AsyncIterator[str]:
+        yield f'</thinking followed_by_thinking={followed_by_thinking!r}>'
 
     async def handle_tool_call_start(self, part: ToolCallPart) -> AsyncIterator[str]:
         yield f'<tool-call name={part.tool_name!r}>{part.args}'
@@ -234,19 +234,19 @@ async def test_run_stream_text_and_thinking():
         [
             '<stream>',
             '<response>',
-            '<thinking>Half of ',
+            '<thinking follows_thinking=False>Half of ',
             'a thought',
-            '</thinking>',
-            '<thinking>Another thought',
-            '</thinking>',
-            '<thinking>And one more',
-            '</thinking>',
+            '</thinking followed_by_thinking=True>',
+            '<thinking follows_thinking=True>Another thought',
+            '</thinking followed_by_thinking=True>',
+            '<thinking follows_thinking=True>And one more',
+            '</thinking followed_by_thinking=False>',
             '<text follows_text=False>Half of ',
             '<final-result tool_name=None />',
             'some text',
             '</text followed_by_text=False>',
-            '<thinking>More thinking',
-            '</thinking>',
+            '<thinking follows_thinking=False>More thinking',
+            '</thinking followed_by_thinking=False>',
             '</response>',
             '<run-result>Half of some text</run-result>',
             '</stream>',
