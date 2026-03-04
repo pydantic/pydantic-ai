@@ -193,10 +193,10 @@ def infer_provider(provider: str) -> Provider[Any]:
 
         upstream_provider = provider.removeprefix('gateway/')
         return gateway_provider(upstream_provider)
-    elif provider in ('google-vertex', 'google-gla'):
+    elif provider in ('google-vertex', 'google-gla', 'vertexai'):
         from .google import GoogleProvider
 
-        return GoogleProvider(vertexai=provider == 'google-vertex')
+        return GoogleProvider(vertexai=provider in ('google-vertex', 'vertexai'))
     else:
         provider_class = infer_provider_class(provider)
         return provider_class()
