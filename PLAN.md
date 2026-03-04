@@ -20,9 +20,12 @@ Matches `AbstractBuiltinTool.unique_id` (e.g. `'web_search'`, `'code_execution'`
 ### 2. `Tool` — add `prefer_builtin` param
 **File**: `pydantic_ai_slim/pydantic_ai/tools.py`
 
-- Add field: `prefer_builtin: str | None`
-- Add `__init__` param: `prefer_builtin: AbstractBuiltinTool | None = None`
-- Resolve: `self.prefer_builtin = prefer_builtin.unique_id if prefer_builtin is not None else None`
+- Store field: `prefer_builtin: str | None` (resolved from the input)
+- Add `__init__` param: `prefer_builtin: AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT] | None = None`
+  - `BuiltinToolFunc` (already at `tools.py:129`) is `Callable[[RunContext[AgentDepsT]], Awaitable[AbstractBuiltinTool | None] | AbstractBuiltinTool | None]`
+- Resolve in `prepare_tool_def()` (async, already handles `ToolPrepareFunc`):
+  - If `AbstractBuiltinTool` instance: `prefer_builtin = inst.unique_id`
+  - If `Callable`: invoke with `RunContext` to get `AbstractBuiltinTool | None`, then `prefer_builtin = result.unique_id if result else None`
   - `unique_id` defaults to `kind` for most builtins, but `MCPServerTool` returns `f'mcp_server:{id}'`
 - Flow to `tool_def` property: `prefer_builtin=self.prefer_builtin`
 
@@ -57,11 +60,11 @@ if params.builtin_tools:
 ### 4. Thread `prefer_builtin` through decorators
 
 **`FunctionToolset.tool()`** + **`FunctionToolset.add_function()`** in `pydantic_ai_slim/pydantic_ai/toolsets/function.py`:
-- Add `prefer_builtin: AbstractBuiltinTool | None = None` param to both overloads + implementation
+- Add `prefer_builtin: AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT] | None = None` param to both overloads + implementation
 - Pass through to `Tool(...)` constructor
 
 **`Agent.tool()`** + **`Agent.tool_plain()`** in `pydantic_ai_slim/pydantic_ai/agent/__init__.py`:
-- Add `prefer_builtin: AbstractBuiltinTool | None = None` param to keyword overloads + implementation
+- Add `prefer_builtin: AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT] | None = None` param to keyword overloads + implementation
 - Pass through to `self._function_toolset.add_function(...)`
 - NOT added to the bare-decorator overload (no-parens: `@agent.tool` — no kwargs possible)
 
@@ -83,13 +86,18 @@ if params.builtin_tools:
 
 ## Testing
 
-- Unit tests for `prepare_request` swap logic:
-  - Supported builtin + fallback -> builtin kept, fallback removed
-  - Unsupported builtin + fallback -> builtin removed, fallback kept
-  - Unsupported builtin + no fallback -> `UserError` (backward compat)
-  - Mix of supported/unsupported with partial fallbacks
-- Integration test with `FallbackModel` + `FunctionModel`/`TestModel` end-to-end
-- `make typecheck`, `make lint`
+Integration tests via `Agent.run()` using `TestModel`/`FunctionModel` with custom `ModelProfile(supported_builtin_tools=frozenset())` to simulate unsupported builtins. Snapshot `all_messages()` for assertions.
+
+**Cases**:
+- Model supports builtin → builtin used, fallback tool removed from request
+- Model doesn't support builtin + fallback exists → fallback tool used, no error
+- Model doesn't support builtin + no fallback → `UserError` (backward compat)
+- `FallbackModel` with mixed-support inner models → each model handles independently
+- Callable `prefer_builtin` → dynamic resolution via `RunContext`
+
+**Reference patterns**: `tests/models/test_fallback.py`, `tests/test_builtin_tools.py`
+
+**Also**: `make typecheck`, `make lint`
 
 ## Docs/memory
 
