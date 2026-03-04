@@ -3,14 +3,13 @@ from __future__ import annotations as _annotations
 from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
 from typing_extensions import TypedDict, deprecated
 
-if TYPE_CHECKING:
-    from .messages import UploadedFile
+from pydantic_ai.messages import UploadedFile
 
 __all__ = (
     'AbstractBuiltinTool',
