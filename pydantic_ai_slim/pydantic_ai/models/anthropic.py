@@ -46,9 +46,15 @@ from ..messages import (
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
+from ..profiles.anthropic import (
+    DEFAULT_THINKING_BUDGET,
+    EFFORT_TO_BUDGET,
+    AnthropicModelProfile,
+)
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
+from ..thinking import resolve_thinking_config
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
@@ -301,6 +307,28 @@ class AnthropicModel(Model):
         """The set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 
+    def _resolve_thinking_config(self, model_settings: AnthropicModelSettings) -> BetaThinkingConfigParam | None:
+        """Resolve unified thinking settings to Anthropic thinking config.
+
+        Uses silent-drop semantics for unsupported settings.
+        """
+        resolved = resolve_thinking_config(model_settings, self.profile)
+        if resolved is None:
+            return None
+
+        if not resolved.enabled:
+            return {'type': 'disabled'}
+
+        # Adaptive models (Opus 4.6, Sonnet 4.6): effort flows through output_config, not thinking config
+        if AnthropicModelProfile.from_profile(self.profile).anthropic_supports_adaptive_thinking:
+            return {'type': 'adaptive'}
+
+        # Budget-based models (3.7, Sonnet 4/4.5, Opus 4/4.1/4.5, Haiku 4.5): map effort to budget_tokens
+        budget = DEFAULT_THINKING_BUDGET
+        if resolved.effort:
+            budget = EFFORT_TO_BUDGET.get(resolved.effort, DEFAULT_THINKING_BUDGET)
+        return {'type': 'enabled', 'budget_tokens': budget}
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -367,12 +395,28 @@ class AnthropicModel(Model):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        settings = merge_model_settings(self.settings, model_settings)
+        # Merge settings early to resolve thinking config for validation
+        merged_settings = cast(AnthropicModelSettings, merge_model_settings(self.settings, model_settings) or {})
+
+        # Resolve thinking config (provider-specific takes precedence)
+        if 'anthropic_thinking' not in merged_settings:
+            thinking_config = self._resolve_thinking_config(merged_settings)
+            if thinking_config is not None:
+                merged_settings['anthropic_thinking'] = thinking_config
+                # For adaptive models, map unified thinking_effort → anthropic_effort
+                # so _build_output_config doesn't need to re-resolve thinking.
+                if (
+                    thinking_config.get('type') == 'adaptive'
+                    and 'anthropic_effort' not in merged_settings
+                    and (effort := merged_settings.get('thinking_effort'))
+                ):
+                    merged_settings['anthropic_effort'] = effort
+
+        thinking_config = merged_settings.get('anthropic_thinking')
         if (
             model_request_parameters.output_tools
-            and settings
-            and (thinking := settings.get('anthropic_thinking'))
-            and thinking.get('type') in ('enabled', 'adaptive')
+            and thinking_config
+            and thinking_config.get('type') in ('enabled', 'adaptive')
         ):
             if model_request_parameters.output_mode == 'auto':
                 output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
@@ -395,7 +439,8 @@ class AnthropicModel(Model):
             model_request_parameters = replace(
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
-        return super().prepare_request(model_settings, model_request_parameters)
+        # Pass merged_settings so super() picks up the resolved anthropic_thinking
+        return super().prepare_request(merged_settings, model_request_parameters)
 
     @overload
     async def _messages_create(
@@ -1184,9 +1229,8 @@ class AnthropicModel(Model):
             tool_param['strict'] = f.strict
         return tool_param
 
-    @staticmethod
     def _build_output_config(
-        model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
+        self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
     ) -> BetaOutputConfigParam | None:
         output_format: BetaJSONOutputFormatParam | None = None
         if model_request_parameters.output_mode == 'native':

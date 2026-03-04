@@ -42,8 +42,9 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
+        base = ModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer)
         profile = anthropic_model_profile(model_name)
-        return ModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
+        return profile.update(base) if profile is not None else base
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...
