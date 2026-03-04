@@ -6013,6 +6013,50 @@ async def test_event_stream_builtin_tool_return_denied():
     )
 
 
+async def test_event_stream_builtin_tool_return_error():
+    async def event_generator():
+        yield PartStartEvent(
+            index=0,
+            part=BuiltinToolReturnPart(
+                tool_name='web_search',
+                tool_call_id='tc_err',
+                content='Search failed',
+                outcome='error',
+            ),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Search')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-output-error',
+                'toolCallId': 'tc_err',
+                'errorText': 'Search failed',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 async def test_adapter_dump_messages_tool_return_error():
     """Test that ToolReturnPart(outcome='error') dumps as ToolOutputErrorPart."""
     messages: list[ModelMessage] = [
