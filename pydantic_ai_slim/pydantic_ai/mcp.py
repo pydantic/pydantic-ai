@@ -558,8 +558,8 @@ class MCPServer(AbstractToolset[Any], ABC):
             for part in result.content
             if _include_content_for_assistant(part)
         ]
-        if not mapped:
-            # All content blocks were filtered out (audience=['user'] only).
+        if not mapped and result.content:
+            # All content blocks were filtered out by audience annotations (audience=['user'] only).
             # Return an informative placeholder so the model knows the tool ran.
             return 'Tool executed successfully. (No model-visible content in result.)'
         return mapped[0] if len(mapped) == 1 else mapped
