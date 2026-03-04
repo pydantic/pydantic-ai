@@ -163,7 +163,12 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             return call_tool_result.structured_content
 
         # Otherwise, return the content
-        return _map_fastmcp_tool_results(parts=[p for p in call_tool_result.content if _include_for_assistant(p)])
+        filtered = [p for p in call_tool_result.content if _include_for_assistant(p)]
+        # If the original content was empty (tool returned nothing), return an empty list rather
+        # than the audience-filtered placeholder that _map_fastmcp_tool_results([]) would produce.
+        if not filtered and not call_tool_result.content:
+            return []
+        return _map_fastmcp_tool_results(parts=filtered)
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
         return ToolsetTool[AgentDepsT](
