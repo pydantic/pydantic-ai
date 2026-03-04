@@ -550,15 +550,22 @@ def _attribute_matches(attribute_value: Any, query_value: Any) -> bool:
     ``SpanQuery(has_attributes={"key": {"foo": 1}})`` therefore needs to compare
     against the JSON-serialised form of the attribute, not the raw Python object.
 
-    This function first tries a direct equality comparison, and then — when the
-    attribute is a string and the query value is a non-string — attempts to
-    JSON-deserialise the attribute and compare the result to the query value.
+    This function first tries a direct equality comparison.  When the attribute is
+    a JSON string and the query value is a ``dict`` or ``list`` (i.e. a complex
+    object that Logfire would have serialised), it attempts to JSON-deserialise
+    the attribute and compare the result to the query value.
+
+    The JSON fallback is intentionally limited to ``dict``/``list`` query values
+    to avoid surprising matches between plain strings and scalar JSON values
+    (e.g. ``"5"`` matching ``5``, or ``"true"`` matching ``True``).
     """
     if attribute_value == query_value:
         return True
-    # If the attribute is stored as a JSON string but the query value is a
-    # Python object, try to parse the attribute for comparison.
-    if isinstance(attribute_value, str) and not isinstance(query_value, str):
+    # Only try JSON deserialization when the query value is a complex type that
+    # Logfire serialises to a JSON string (dict, list).  Scalars (int, float,
+    # bool) are stored as their native OTEL attribute types, not JSON strings,
+    # so no fallback is needed and we avoid unexpected cross-type matches.
+    if isinstance(attribute_value, str) and isinstance(query_value, (dict, list)):
         try:
             return json.loads(attribute_value) == query_value
         except (json.JSONDecodeError, ValueError):

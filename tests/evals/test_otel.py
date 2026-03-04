@@ -223,7 +223,50 @@ async def test_span_node_matches(span_tree: SpanTree):
     assert not child1_node.matches(SpanQuery(name_equals='child1', has_attributes={'type': 'normal'}))
 
 
-async def test_span_tree_repr(span_tree: SpanTree):
+async def test_has_attributes_json_serialised_values():
+    """Test that has_attributes matches dict/list values stored as JSON-serialised strings.
+
+    Logfire serialises complex attributes (dicts, lists) to JSON strings.
+    SpanQuery should be able to match the original Python objects, not just the raw strings.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4448.
+    """
+    import json
+
+    from pydantic_evals.otel.span_tree import SpanNode, SpanTree, SpanQuery
+
+    data = {'foo': 1, 'bar': True}
+    tags = ['alpha', 'beta']
+
+    # Build a minimal SpanNode with JSON-serialised attributes (as Logfire would store them)
+    node = SpanNode(
+        name='test',
+        attributes={
+            'data': json.dumps(data, separators=(',', ':')),  # '{"foo":1,"bar":true}'
+            'tags': json.dumps(tags),  # '["alpha", "beta"]'
+            'level': '3',  # plain string, not JSON-serialised
+        },
+        start_time=None,  # type: ignore[arg-type]
+        end_time=None,  # type: ignore[arg-type]
+    )
+
+    # Plain string still works
+    assert node.matches(SpanQuery(has_attributes={'level': '3'}))
+    assert not node.matches(SpanQuery(has_attributes={'level': 3}))  # int ≠ plain str
+
+    # Dict query matches JSON-serialised string
+    assert node.matches(SpanQuery(has_attributes={'data': data}))
+    assert node.matches(SpanQuery(has_attributes={'data': {'foo': 1, 'bar': True}}))
+    assert not node.matches(SpanQuery(has_attributes={'data': {'foo': 2, 'bar': True}}))
+
+    # List query matches JSON-serialised string
+    assert node.matches(SpanQuery(has_attributes={'tags': tags}))
+    assert not node.matches(SpanQuery(has_attributes={'tags': ['alpha']}))
+
+    # String form of the JSON also still matches (backward-compatible)
+    assert node.matches(SpanQuery(has_attributes={'data': json.dumps(data, separators=(',', ':'))}))
+
+
     assert repr(SpanTree()) == snapshot('<SpanTree />')
     assert str(span_tree) == snapshot('<SpanTree num_roots=1 total_spans=6 />')
     assert repr(span_tree) == snapshot("""\
