@@ -707,8 +707,12 @@ class _OpenRouterChunkChoice(chat_completion_chunk.Choice):
 class _OpenRouterChatCompletionChunk(chat.ChatCompletionChunk):
     """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
-    provider: str
-    """The downstream provider that was used by OpenRouter."""
+    provider: str | None = None
+    """The downstream provider that was used by OpenRouter.
+
+    May be absent in early streaming chunks; only the final chunk typically carries
+    the provider name.
+    """
 
     choices: list[_OpenRouterChunkChoice]  # type: ignore[reportIncompatibleVariableOverride]
     """A list of chat completion chunk choices modified with OpenRouter specific attributes."""

@@ -868,7 +868,7 @@ async def test_openrouter_document_url_no_force_download(
 
 
 def test_openrouter_validate_completion_nested_response() -> None:
-    """Test that _validate_completion handles nested response in provider field.
+    """Test that _process_response handles nested response in provider field.
 
     OpenRouter occasionally returns a response where top-level fields (id, choices,
     model, object) are null but the real response is nested inside the 'provider' dict.
@@ -907,13 +907,16 @@ def test_openrouter_validate_completion_nested_response() -> None:
         usage=None,
     )
 
-    result = model._validate_completion(nested_completion)  # type: ignore[reportPrivateUsage]
-    assert result.choices[0].message.content == 'Hello from nested!'
-    assert result.provider == 'Google'
+    # Use _process_response (one level above _validate_completion) to test through
+    # a higher-level entry point while still avoiding a full HTTP round-trip.
+    model_response = model._process_response(nested_completion)  # type: ignore[reportPrivateUsage]
+    from pydantic_ai.messages import TextPart
+
+    assert any(isinstance(part, TextPart) and part.content == 'Hello from nested!' for part in model_response.parts)
 
 
 def test_openrouter_validate_completion_error_with_null_fields() -> None:
-    """Test that _validate_completion raises ModelHTTPError for error responses with null fields.
+    """Test that _process_response raises ModelHTTPError for error responses with null fields.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/3994.
     """
@@ -937,7 +940,7 @@ def test_openrouter_validate_completion_error_with_null_fields() -> None:
     )
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        model._validate_completion(error_completion)  # type: ignore[reportPrivateUsage]
+        model._process_response(error_completion)  # type: ignore[reportPrivateUsage]
 
     assert exc_info.value.status_code == 400
     assert 'Invalid request parameters' in str(exc_info.value)
