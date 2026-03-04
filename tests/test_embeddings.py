@@ -418,24 +418,27 @@ class TestCohere:
         )
 
 
-    async def test_cohere_embedding_types_must_include_float(self) -> None:
-        """cohere_embedding_types without 'float' should raise a clear UserError before any API call."""
-        from unittest.mock import AsyncMock
 
-        from pydantic_ai.exceptions import UserError
+@pytest.mark.skipif(not cohere_imports_successful(), reason='Cohere not installed')
+async def test_cohere_embedding_types_must_include_float() -> None:
+    """cohere_embedding_types without 'float' should raise a clear UserError before any API call."""
+    from unittest.mock import AsyncMock
 
-        # Use a mock client so no real API call is made — the UserError is raised
-        # before any network I/O in the validation block added by this PR.
-        mock_client = AsyncMock()
-        from pydantic_ai.providers.cohere import CohereProvider as _CP
+    from pydantic_ai.exceptions import UserError
 
-        provider = _CP(cohere_client=mock_client)
-        model = CohereEmbeddingModel('embed-v4.0', provider=provider)
-        embedder = Embedder(model)
-        with pytest.raises(UserError, match="'float' must be included in cohere_embedding_types"):
-            await embedder.embed_query('Hello', settings={'cohere_embedding_types': ['int8']})
-        # Verify the mock was never called — validation fires before the SDK call.
-        mock_client.embed.assert_not_called()
+    # Use a mock client so no real API call is made — the UserError is raised
+    # before any network I/O in the validation block added by this PR.
+    mock_client = AsyncMock()
+    from pydantic_ai.providers.cohere import CohereProvider as _CP
+
+    provider = _CP(cohere_client=mock_client)
+    model = CohereEmbeddingModel('embed-v4.0', provider=provider)
+    embedder = Embedder(model)
+    with pytest.raises(UserError, match="'float' must be included in cohere_embedding_types"):
+        await embedder.embed_query('Hello', settings={'cohere_embedding_types': ['int8']})
+    # Verify the mock was never called — validation fires before the SDK call.
+    mock_client.embed.assert_not_called()
+
 
 @pytest.mark.skipif(not voyageai_imports_successful(), reason='VoyageAI not installed')
 @pytest.mark.vcr
