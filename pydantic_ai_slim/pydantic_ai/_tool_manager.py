@@ -8,8 +8,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic, Literal
 
-from opentelemetry.trace import Tracer
-from opentelemetry.trace import StatusCode as _OtelStatusCode
+from opentelemetry.trace import StatusCode as _OtelStatusCode, Tracer
 from pydantic import ValidationError
 from typing_extensions import deprecated
 
@@ -423,8 +422,7 @@ class ToolManager(Generic[AgentDepsT]):
                 # CallDeferred and ApprovalRequired are control-flow signals, not errors.
                 # Explicitly mark the span as OK so it doesn't appear as a failure in
                 # tracing UIs (e.g. Logfire), then re-raise to let the agent handle them.
-                if span.is_recording():
-                    span.set_status(_OtelStatusCode.OK)
+                span.set_status(_OtelStatusCode.OK)
                 raise
 
             if include_content and span.is_recording():
