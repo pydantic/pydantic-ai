@@ -1087,6 +1087,21 @@ def _extract_usage(
     if extracted.output_tokens == 0 and usage_data['completion_tokens']:
         extracted.output_tokens = usage_data['completion_tokens']
 
+    # Ensure cache tokens are promoted to top-level fields and removed from details.
+    # RequestUsage.extract() uses genai-prices which may not map xAI-specific field names,
+    # leaving cache_read_tokens / cache_write_tokens only in the details dict.  We copy
+    # them to the canonical top-level fields and remove the duplicate details entry.
+    # See: https://github.com/pydantic/pydantic-ai/issues/4360
+    if not extracted.cache_read_tokens and 'cache_read_tokens' in usage_data:
+        extracted.cache_read_tokens = usage_data['cache_read_tokens']
+        extracted.details.pop('cache_read_tokens', None)
+    if not extracted.cache_write_tokens and 'cache_write_tokens' in usage_data:
+        extracted.cache_write_tokens = usage_data['cache_write_tokens']
+        extracted.details.pop('cache_write_tokens', None)
+    # Clean up empty details dict
+    if extracted.details == {}:
+        extracted.details = {}
+
     return extracted
 
 
