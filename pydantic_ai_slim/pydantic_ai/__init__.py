@@ -203,6 +203,7 @@ __all__ = (
     'PartStartEvent',
     'RetryPromptPart',
     'SystemPromptPart',
+    'TextContent',
     'TextPart',
     'TextPartDelta',
     'ThinkingPart',
@@ -271,6 +272,5 @@ __all__ = (
     'AgentRun',
     'AgentRunResult',
     'AgentRunResultEvent',
-    'TextContent',
 )
 __version__ = _metadata_version('pydantic_ai_slim')

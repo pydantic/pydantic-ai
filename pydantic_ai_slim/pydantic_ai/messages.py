@@ -457,7 +457,7 @@ class DocumentUrl(FileUrl):
             raise ValueError(f'Unknown document media type: {media_type}') from e
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+@pydantic_dataclass(repr=False)
 class TextContent:
     """String content that is tagged with additional metadata.
 
@@ -467,8 +467,15 @@ class TextContent:
     content: str
     """The content that is sent to the LLM."""
 
+    _: KW_ONLY
+
     metadata: JsonValue
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+
+    kind: Literal['text-content'] = 'text-content'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @pydantic_dataclass(
@@ -815,18 +822,10 @@ class UserPromptPart:
         for part in content:
             if part['kind'] == 'binary' and 'content' in part:
                 part['binary_content'] = part.pop('content')
+        content = [
+            part['content'] if part == {'kind': 'text', 'content': part.get('content')} else part for part in content
+        ]
 
-        # Collapse text-only parts to strings, but preserve metadata if present
-        normalized: Any = []
-        for part in content:
-            if part.get('kind') == 'text':
-                if set(part.keys()) == {'kind', 'content'}:
-                    normalized.append(part.get('content'))
-                else:
-                    normalized.append(part)
-            else:
-                normalized.append(part)
-        content = normalized
         if content in ([{'kind': 'text'}], [self.content]):
             content = content[0]
         return LogRecord(attributes={'event.name': 'gen_ai.user.message'}, body={'content': content, 'role': 'user'})
@@ -842,7 +841,8 @@ class UserPromptPart:
             elif isinstance(part, TextContent):
                 tp: _otel_messages.TextPart = {'type': 'text'}
                 if settings.include_content:
-                    tp.update({'content': part.content, 'metadata': part.metadata})
+                    tp['content'] = part.content
+                    tp['metadata'] = part.metadata
                 parts.append(tp)
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
                 if settings.version >= 4:
