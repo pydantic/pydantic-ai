@@ -11,12 +11,12 @@ from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._utils import get_traceparent
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import DeferredToolRequests, RunContext
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
@@ -3247,3 +3247,73 @@ async def test_run_stream(
                 ]
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests for pydantic_ai.tool.deferral span attributes (issue #4530)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('version', [2, 3])
+def test_call_deferred_span_attributes(capfire: CaptureLogfire, version: int) -> None:
+    """pydantic_ai.tool.deferral.name/.metadata are always set; error status is version-gated."""
+    settings = InstrumentationSettings(version=version)
+    my_agent = Agent(model=TestModel(), instrument=settings, output_type=[str, DeferredToolRequests])
+
+    @my_agent.tool_plain
+    def deferred_tool(x: int) -> str:
+        raise CallDeferred(metadata={'x': x, 'reason': 'needs review'})
+
+    result = my_agent.run_sync('call deferred_tool')
+    assert isinstance(result.output, DeferredToolRequests)
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    tool_span = next(
+        (s for s in spans if s.get('attributes', {}).get('gen_ai.tool.name') == 'deferred_tool'),
+        None,
+    )
+    assert tool_span is not None, 'expected a tool span for deferred_tool'
+    attrs = tool_span['attributes']
+
+    # Deferral attributes must always be present regardless of version
+    assert attrs.get('pydantic_ai.tool.deferral.name') == 'CallDeferred'
+    assert attrs.get('pydantic_ai.tool.deferral.metadata') == {'x': 0, 'reason': 'needs review'}
+
+    # Error status is only suppressed for version >= 3; version <= 2 uses logfire.level_num=17 (error)
+    if version >= 3:
+        assert attrs.get('logfire.level_num') != 17
+    else:
+        assert attrs.get('logfire.level_num') == 17
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('version', [2, 3])
+def test_approval_required_span_attributes(capfire: CaptureLogfire, version: int) -> None:
+    """pydantic_ai.tool.deferral.name/.metadata are set for ApprovalRequired too."""
+    settings = InstrumentationSettings(version=version)
+    my_agent = Agent(model=TestModel(), instrument=settings, output_type=[str, DeferredToolRequests])
+
+    @my_agent.tool_plain
+    def approval_tool(x: int) -> str:
+        raise ApprovalRequired(metadata={'x': x, 'reason': 'sensitive op'})
+
+    result = my_agent.run_sync('call approval_tool')
+    assert isinstance(result.output, DeferredToolRequests)
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    tool_span = next(
+        (s for s in spans if s.get('attributes', {}).get('gen_ai.tool.name') == 'approval_tool'),
+        None,
+    )
+    assert tool_span is not None, 'expected a tool span for approval_tool'
+    attrs = tool_span['attributes']
+
+    assert attrs.get('pydantic_ai.tool.deferral.name') == 'ApprovalRequired'
+    assert attrs.get('pydantic_ai.tool.deferral.metadata') == {'x': 0, 'reason': 'sensitive op'}
+
+    if version >= 3:
+        assert attrs.get('logfire.level_num') != 17
+    else:
+        assert attrs.get('logfire.level_num') == 17
+

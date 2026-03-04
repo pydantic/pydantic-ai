@@ -422,13 +422,22 @@ class ToolManager(Generic[AgentDepsT]):
                 span.record_exception(e)
                 span.set_status(_OtelStatusCode.ERROR)
                 raise
-            except (CallDeferred, ApprovalRequired):
-                # CallDeferred and ApprovalRequired are control-flow signals, not errors.
-                # Explicitly mark the span as OK so it doesn't appear as a failure in
-                # tracing UIs (e.g. Logfire), then re-raise to let the agent handle them.
-                # record_exception=False on the span ensures no exception event is recorded,
-                # keeping the span consistent with its OK status.
-                span.set_status(_OtelStatusCode.OK)
+            except (CallDeferred, ApprovalRequired) as exc:
+                # Always record deferral info as span attributes (queryable regardless of version)
+                if span.is_recording():
+                    import json as _json
+
+                    span.set_attribute('pydantic_ai.tool.deferral.name', type(exc).__name__)
+                    metadata = getattr(exc, 'metadata', None)
+                    if metadata is not None:
+                        span.set_attribute('pydantic_ai.tool.deferral.metadata', _json.dumps(metadata))
+
+                # Gate error-suppression behind instrumentation version 3+ for backwards compat.
+                # Versions 1 and 2 keep the old behaviour where these exceptions appear as errors.
+                if instrumentation_version >= 3:
+                    span.set_status(_OtelStatusCode.OK)
+                else:
+                    span.set_status(_OtelStatusCode.ERROR)
                 raise
             except Exception as exc:
                 span.record_exception(exc)
