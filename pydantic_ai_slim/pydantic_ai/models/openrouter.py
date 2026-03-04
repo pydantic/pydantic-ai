@@ -565,7 +565,36 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
-        response = _OpenRouterChatCompletion.model_validate(response.model_dump())
+        response_dict = response.model_dump()
+
+        # OpenRouter occasionally wraps the real completion inside the `provider` field when the
+        # top-level fields (id, choices, model, object) are null.  Unwrap it so validation succeeds.
+        # See: https://github.com/pydantic/pydantic-ai/issues/3994
+        provider_data = response_dict.get('provider')
+        if (
+            isinstance(provider_data, dict)
+            and isinstance(provider_data.get('choices'), list)
+            and response_dict.get('choices') is None
+        ):
+            # The nested dict's 'provider' key holds the downstream provider name (str).
+            nested_provider_name = provider_data.pop('provider', 'unknown')
+            response_dict.update(provider_data)
+            # Restore the string provider name expected by _OpenRouterChatCompletion.
+            response_dict['provider'] = nested_provider_name
+
+        # If the response contains an error field and choices are still null, surface the error.
+        if response_dict.get('choices') is None and (error_data := response_dict.get('error')):
+            try:
+                error = _OpenRouterError.model_validate(error_data)
+                raise ModelHTTPError(
+                    status_code=error.code,
+                    model_name=response_dict.get('model') or self.model_name,
+                    body=error.message,
+                )
+            except (TypeError, ValueError):
+                pass
+
+        response = _OpenRouterChatCompletion.model_validate(response_dict)
 
         if error := response.error:
             raise ModelHTTPError(status_code=error.code, model_name=response.model, body=error.message)

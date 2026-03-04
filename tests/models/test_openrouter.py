@@ -865,3 +865,79 @@ async def test_openrouter_document_url_no_force_download(
             'type': 'file',
         }
     )
+
+
+def test_openrouter_validate_completion_nested_response() -> None:
+    """Test that _validate_completion handles nested response in provider field.
+
+    OpenRouter occasionally returns a response where top-level fields (id, choices,
+    model, object) are null but the real response is nested inside the 'provider' dict.
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/3994.
+    """
+    from openai.types.chat import ChatCompletion
+
+    from pydantic_ai.models.openrouter import OpenRouterModel
+
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    # Simulate the nested-response format: top-level fields are null,
+    # real data is nested inside 'provider'.
+    nested_completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider={
+            'id': 'gen-123',
+            'choices': [
+                {
+                    'index': 0,
+                    'message': {'role': 'assistant', 'content': 'Hello from nested!'},
+                    'finish_reason': 'stop',
+                    'native_finish_reason': 'STOP',
+                    'logprobs': None,
+                }
+            ],
+            'model': 'google/gemini-3-flash-preview',
+            'object': 'chat.completion',
+            'provider': 'Google',
+        },
+        created=1234567890,
+        usage=None,
+    )
+
+    result = model._validate_completion(nested_completion)  # type: ignore[reportPrivateUsage]
+    assert result.choices[0].message.content == 'Hello from nested!'
+    assert result.provider == 'Google'
+
+
+def test_openrouter_validate_completion_error_with_null_fields() -> None:
+    """Test that _validate_completion raises ModelHTTPError for error responses with null fields.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/3994.
+    """
+    from openai.types.chat import ChatCompletion
+
+    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai.models.openrouter import OpenRouterModel
+
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    error_completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider=None,
+        created=1234567890,
+        usage=None,
+        error={'code': 400, 'message': 'Invalid request parameters'},
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        model._validate_completion(error_completion)  # type: ignore[reportPrivateUsage]
+
+    assert exc_info.value.status_code == 400
+    assert 'Invalid request parameters' in str(exc_info.value)
