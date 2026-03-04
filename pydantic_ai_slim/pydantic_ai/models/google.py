@@ -766,7 +766,7 @@ class GoogleModel(Model):
 
         response = part.model_response_object()
         if fallback_refs:
-            response.setdefault('files', fallback_refs)
+            response = {'output': [response, *fallback_refs]}
 
         function_response_dict: FunctionResponseDict = {
             'name': part.tool_name,

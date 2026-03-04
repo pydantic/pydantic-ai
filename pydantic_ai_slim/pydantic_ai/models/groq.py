@@ -482,7 +482,7 @@ class GroqModel(Model):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
-                tool_text, tool_file_content = part.fallback_tool_return()
+                tool_text, tool_file_content = part.model_response_str_and_user_content()
                 file_content.extend(tool_file_content)
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',

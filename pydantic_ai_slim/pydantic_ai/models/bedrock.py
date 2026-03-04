@@ -717,8 +717,8 @@ class BedrockConverseModel(Model):
                         tool_result_content: list[Any] = []
                         sibling_content: list[ContentBlockUnionTypeDef] = []
 
-                        content_mode: Literal['str', 'json'] = (
-                            'str' if profile.bedrock_tool_result_format == 'text' else 'json'
+                        content_mode: Literal['str', 'jsonable'] = (
+                            'str' if profile.bedrock_tool_result_format == 'text' else 'jsonable'
                         )
                         for item in part.content_items(mode=content_mode):
                             if is_multi_modal_content(item):
@@ -737,8 +737,7 @@ class BedrockConverseModel(Model):
                                     raise NotImplementedError(
                                         f'Unsupported binary content type in Bedrock tool returns: {item.media_type}'
                                     )
-                            elif content_mode == 'str':
-                                assert isinstance(item, str)
+                            elif isinstance(item, str):
                                 tool_result_content.append({'text': item})
                             else:
                                 tool_result_content.append({'json': item})
@@ -977,7 +976,8 @@ class BedrockConverseModel(Model):
                     _insert_cache_point_before_trailing_documents(content, raise_if_cannot_insert=True)
                 else:
                     assert_never(item)
-        # Bedrock requires a text block when documents are present in the content
+        # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Message.html
+        # "If you include a ContentBlock with a document field, you must also include a ContentBlock with a text field."
         has_document = any('document' in block for block in content)
         has_text = any('text' in block for block in content)
         if has_document and not has_text:
