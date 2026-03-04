@@ -10,40 +10,26 @@ Use this skill when recording or re-recording VCR cassettes for tests, or when d
 
 ## Prerequisites
 
-- Verify the required API key env var is set (do NOT read `.env` - it contains secrets):
-  ```bash
-  source .env && printenv | grep -q '^OPENAI_API_KEY=' && echo 'ok' || echo 'missing'
-  ```
-- Tests must be using VCR for HTTP recording
+- Verify `.env` exists: `test -f .env && echo 'ok' || echo 'missing'`
+- Missing API keys will cause clear test errors at runtime
 
 ## Important flags
+- `--record-mode=rewrite` : Record cassettes (works for both new and existing)
 - `--lf` : Run only the last failed tests
-- `--record-mode=new_episodes` : Record new cassettes only
-- `--record-mode=rewrite` : Rewrite existing cassettes (deletes and re-records)
 - `-vv` : Verbose output
 - `--tb=line` : Short traceback output
 - `-k=""` : Run tests matching the given substring expression
-- `-n 1` : Run tests in parallel with a single worker. Increase the number of workers for faster execution.
-	- particularly useful when running a large number of tests
 
 ## Recording Cassettes
 
 ### Step 1: Record cassettes
 
-**For NEW cassettes** (tests that don't have recordings yet):
-```bash
-source .env && uv run pytest path/to/test.py::test_function_name -v --tb=line --record-mode=new_episodes
-```
-
-**To REWRITE cassettes** (tests with updated expectations):
 ```bash
 source .env && uv run pytest path/to/test.py::test_function_name -v --tb=line --record-mode=rewrite
 ```
 
 Multiple tests can be specified:
 ```bash
-# we use `rewrite` here because it works with both new and existing cassettes
-# and because we're selecting a specific set of tests there's no danger of overwriting unrelated cassettes
 source .env && uv run pytest path/to/test.py::test_one path/to/test.py::test_two -v --tb=line --record-mode=rewrite
 ```
 
@@ -95,38 +81,31 @@ Base64 strings longer than 100 chars are truncated for readability.
 
 Vertex tests use the `skip_unless_vertex` fixture from `tests/conftest.py` — they only run in CI or when `ENABLE_VERTEX=1` is set. `ENABLE_VERTEX=1` is only needed when recording/rewriting cassettes locally; during playback, cassettes replay without live auth. Add `skip_unless_vertex: None` as a parameter to any new vertex test.
 
-Vertex tests require special auth setup. Use the provided script:
+Vertex auth works two ways:
+- **`GOOGLE_APPLICATION_CREDENTIALS`**: set this env var to a service account JSON path — no gcloud needed
+- **gcloud**: the script auto-detects project and checks auth via `gcloud`
+
+Use the provided script:
 
 ```bash
-# Record new Vertex cassettes
-.claude/skills/pytest-vcr/run-vertex-tests.sh tests/path/to/test.py -v --tb=line --record-mode=new_episodes
+# Record Vertex cassettes
+.claude/skills/pytest-vcr/run-vertex-tests.sh tests/path/to/test.py -v --tb=line --record-mode=rewrite
 
 # Verify playback
 .claude/skills/pytest-vcr/run-vertex-tests.sh tests/path/to/test.py -vv --tb=line
 ```
 
-The script auto-detects project from gcloud and checks auth. If auth fails:
+If using gcloud and auth fails:
 ```bash
 gcloud auth application-default login
 gcloud config set project <your-project-id>
 ```
 
-## SSRF Protection
-
-VCR tests that download URL content (e.g. `ImageUrl(url=..., force_download=True)`) need the `disable_ssrf_protection_for_vcr` fixture. Without it, SSRF protection resolves hostnames to IPs, breaking cassette matching. An autouse guard will raise `RuntimeError` if you forget it.
-
-```python
-@pytest.mark.vcr()
-async def test_with_url(allow_model_requests: None, api_key: str, disable_ssrf_protection_for_vcr: None):
-    agent = Agent(model)
-    result = await agent.run([ImageUrl(url='https://example.com/img.jpg', force_download=True)])
-```
-
 ## Full Workflow Example
 
 ```bash
-# 1. Record new cassette
-source .env && uv run pytest tests/models/test_openai.py::test_chat_completion -v --tb=line --record-mode=new_episodes
+# 1. Record cassette
+source .env && uv run pytest tests/models/test_openai.py::test_chat_completion -v --tb=line --record-mode=rewrite
 
 # 2. Verify playback and fill snapshots
 source .env && uv run pytest tests/models/test_openai.py::test_chat_completion -vv --tb=line

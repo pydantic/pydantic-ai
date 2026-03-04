@@ -1,12 +1,5 @@
 # Testing Guidelines
 
-## Philosophy
-
-1. **VCR-first**: prefer cassette-based integration tests over unit tests - provider APIs are the ultimate judges of correctness
-2. **Centralized feature tests**: one file tests one feature across all providers (e.g., `test_multimodal_vcr.py`)
-3. **Stacked `@pytest.mark.parametrize`**: use cartesian products for comprehensive coverage (provider x feature x config)
-4. **Snapshots**: use `snapshot()` empty, fill via test run - never write contents manually
-
 ## Test File Structure
 
 ```python
@@ -16,6 +9,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.models import Model
 # ... other imports
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
@@ -74,32 +68,10 @@ async def test_feature(model: Model, stream: bool, request: pytest.FixtureReques
     assert output == expected
 ```
 
-For snapshot-based expectations per case:
-
-```python
-from inline_snapshot import snapshot
-
-EXPECTATIONS: dict[tuple[str, bool], str] = {
-    ('openai', False): snapshot(),
-    ('openai', True): snapshot(),
-    ('anthropic', False): snapshot(),
-    ('anthropic', True): snapshot(),
-}
-
-@pytest.mark.parametrize('model', ['openai', 'anthropic'], indirect=True)
-@pytest.mark.parametrize('stream', [False, True])
-async def test_feature_with_snapshots(model: Model, stream: bool, request: pytest.FixtureRequest):
-    agent = Agent(model)
-    result = await agent.run('hello')
-
-    model_name = request.node.callspec.params['model']
-    # snapshots auto-fill per parameter combination
-    assert result.all_messages() == EXPECTATIONS[(model_name, stream)]
-```
-
 ## VCR Workflow
 
-> Use the `/pytest-vcr` skill for guided cassette recording, debugging, and cassette inspection workflows.
+Record cassettes with `--record-mode=rewrite`, verify playback without the flag, and review diffs.
+For detailed workflows see `.claude/skills/pytest-vcr/SKILL.md`.
 
 ## Key Fixtures
 
@@ -138,9 +110,6 @@ async def test_something(model: Model):
 - `document_content` - `BinaryContent` (dummy.pdf)
 - `text_document_content` - `BinaryContent` (dummy.txt)
 
-#### VCR configuration
-- `vcr_config` - module-scoped, configures header filtering and localhost ignore
-
 #### SSRF protection for URL downloads
 - `disable_ssrf_protection_for_vcr` - required for VCR tests that download URL content (`ImageUrl`, `AudioUrl`, `DocumentUrl`, `VideoUrl` with `force_download=True`)
 - An autouse guard raises a `RuntimeError` if a VCR test triggers SSRF validation without this fixture
@@ -165,13 +134,6 @@ async def test_something(model: Model):
       {'id': msg_id},  # must match first
   ]
   ```
-
-## Anti-patterns
-
-- **Don't** create provider-specific test files for new features - centralize in feature files
-- **Don't** write snapshot contents manually - let tests fill them
-- **Don't** use unit tests when VCR can cover the logic
-- **Don't** instantiate providers inline - use fixtures
 
 ## Directory Structure
 

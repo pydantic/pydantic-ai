@@ -2,12 +2,12 @@
 """Parse VCR cassette files and pretty-print request/response bodies."""
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
 
 import yaml
-from pydantic_core import from_json, to_json
 
 
 def truncate_base64(obj: object, max_len: int = 100) -> object:
@@ -26,20 +26,21 @@ def truncate_base64(obj: object, max_len: int = 100) -> object:
 
 
 def _extract_body(part: dict[str, object]) -> object | None:
-    """Extract body from a request/response, handling both custom and standard VCR formats.
-
-    Custom serializer (json_body_serializer.py) stores parsed JSON as `parsed_body`.
-    Standard VCR stores raw strings: `body` (requests) or `body.string` (responses).
-    """
+    """Extract body from a request/response, trying parsed_body first, then standard VCR body.string."""
     if 'parsed_body' in part:
         return part['parsed_body']
     body = part.get('body')
     if isinstance(body, dict):
-        body = body.get('string')
-    if isinstance(body, str):
+        body_str = body.get('string')
+        if isinstance(body_str, str) and body_str:
+            try:
+                return json.loads(body_str)
+            except json.JSONDecodeError:
+                return body_str
+    elif isinstance(body, str) and body:
         try:
-            return from_json(body)
-        except ValueError:
+            return json.loads(body)
+        except json.JSONDecodeError:
             return body
     return None
 
@@ -48,10 +49,6 @@ def parse_cassette(path: Path, interaction_idx: int | None = None) -> None:
     """Parse and print cassette contents."""
     with open(path) as f:
         data = yaml.safe_load(f)
-
-    if data is None:
-        print('Empty or invalid cassette file')
-        return
 
     interactions = data.get('interactions', [])
     if not interactions:
@@ -79,7 +76,7 @@ def parse_cassette(path: Path, interaction_idx: int | None = None) -> None:
         req_body = _extract_body(req)
         if req_body is not None:
             truncated = truncate_base64(req_body)
-            print(f'Body:\n{to_json(truncated, indent=2).decode() if not isinstance(truncated, str) else truncated}')
+            print(f'Body:\n{json.dumps(truncated, indent=2)}')
 
         print(f'\n--- RESPONSE ---')
         status = resp.get('status', {})
@@ -87,13 +84,13 @@ def parse_cassette(path: Path, interaction_idx: int | None = None) -> None:
         resp_body = _extract_body(resp)
         if resp_body is not None:
             truncated = truncate_base64(resp_body)
-            print(f'Body:\n{to_json(truncated, indent=2).decode() if not isinstance(truncated, str) else truncated}')
+            print(f'Body:\n{json.dumps(truncated, indent=2)}')
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Parse VCR cassette files')
     parser.add_argument('cassette', type=Path, help='Path to cassette YAML file')
-    parser.add_argument('--interaction', '-i', type=int, help='Specific interaction index (0-based). Omit to list all interactions.')
+    parser.add_argument('--interaction', '-i', type=int, help='Specific interaction index (0-based)')
     args = parser.parse_args()
 
     if not args.cassette.exists():
