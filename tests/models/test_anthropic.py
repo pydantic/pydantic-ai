@@ -8456,8 +8456,8 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
         ),
     ]
 
-    # This should NOT raise ValueError — the fix ensures _safe_args_as_dict
-    # returns {} for the malformed tool call, allowing the retry to proceed.
+    # This should NOT raise ValueError — args_as_dict(allow_partial=True)
+    # returns {'INVALID_JSON': ...} for the malformed tool call, allowing the retry to proceed.
     result = await agent.run(
         'Please fix the tool call and try again.',
         message_history=message_history,
@@ -8465,28 +8465,36 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
     assert result.output == 'Here is the corrected result.'
 
 
-def test_safe_args_as_dict_valid_json():
-    """safe_args_as_dict should return parsed dict for valid JSON args."""
+def test_args_as_dict_allow_partial_valid_json():
+    """args_as_dict(allow_partial=True) should return parsed dict for valid JSON args."""
     part = ToolCallPart(tool_name='test_tool', args='{"key": "value"}')
-    assert part.safe_args_as_dict() == {'key': 'value'}
+    assert part.args_as_dict(allow_partial=True) == {'key': 'value'}
 
 
-def test_safe_args_as_dict_dict_args():
-    """safe_args_as_dict should return the dict directly when args is already a dict."""
+def test_args_as_dict_allow_partial_dict_args():
+    """args_as_dict(allow_partial=True) should return the dict directly when args is already a dict."""
     part = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
-    assert part.safe_args_as_dict() == {'key': 'value'}
+    assert part.args_as_dict(allow_partial=True) == {'key': 'value'}
 
 
-def test_safe_args_as_dict_malformed_json():
-    """safe_args_as_dict should return {} for malformed JSON instead of raising."""
+def test_args_as_dict_allow_partial_malformed_json():
+    """args_as_dict(allow_partial=True) should return INVALID_JSON wrapper for malformed JSON."""
     malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
     part = ToolCallPart(tool_name='test_tool', args=malformed)
     # Should NOT raise ValueError
-    result = part.safe_args_as_dict()
-    assert result == {}
+    result = part.args_as_dict(allow_partial=True)
+    assert result == {'INVALID_JSON': malformed}
 
 
-def test_safe_args_as_dict_empty_args():
-    """safe_args_as_dict should return {} when args is None/empty."""
+def test_args_as_dict_allow_partial_empty_args():
+    """args_as_dict(allow_partial=True) should return {} when args is None/empty."""
     part = ToolCallPart(tool_name='test_tool', args=None)
-    assert part.safe_args_as_dict() == {}
+    assert part.args_as_dict(allow_partial=True) == {}
+
+
+def test_args_as_dict_raises_on_malformed_json_by_default():
+    """args_as_dict() without allow_partial should still raise on malformed JSON."""
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    with pytest.raises(ValueError):
+        part.args_as_dict()

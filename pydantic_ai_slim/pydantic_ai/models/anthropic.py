@@ -784,7 +784,7 @@ class AnthropicModel(Model):
                             id=_guard_tool_call_id(t=response_part),
                             type='tool_use',
                             name=response_part.tool_name,
-                            input=response_part.safe_args_as_dict(),
+                            input=response_part.args_as_dict(allow_partial=True),
                         )
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):

@@ -925,7 +925,7 @@ class BedrockConverseModel(Model):
             'toolUse': {
                 'toolUseId': _utils.guard_tool_call_id(t=t),
                 'name': t.tool_name,
-                'input': t.safe_args_as_dict(),
+                'input': t.args_as_dict(allow_partial=True),
             }
         }
 

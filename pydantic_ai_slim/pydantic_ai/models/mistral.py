@@ -664,7 +664,7 @@ class MistralStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_tool_call_part(
                             vendor_part_id='output',
                             tool_name=maybe_tool_call_part.tool_name,
-                            args=maybe_tool_call_part.safe_args_as_dict(),
+                            args=maybe_tool_call_part.args_as_dict(allow_partial=True),
                             tool_call_id=maybe_tool_call_part.tool_call_id,
                         )
                 else:

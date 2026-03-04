@@ -1276,38 +1276,34 @@ class BaseToolCallPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
-    def args_as_dict(self) -> dict[str, Any]:
+    def args_as_dict(self, *, allow_partial: bool = False) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
         This is just for convenience with models that require dicts as input.
+
+        Args:
+            allow_partial: If ``True``, malformed JSON in ``args`` will not
+                raise an exception.  Instead, ``{'INVALID_JSON': '<raw args>'}``
+                is returned so that the value can still be sent to a model API
+                (e.g. during a retry flow) without crashing.
         """
         if not self.args:
             return {}
         if isinstance(self.args, dict):
             return self.args
-        args = pydantic_core.from_json(self.args)
-        assert isinstance(args, dict), 'args should be a dict'
-        return cast(dict[str, Any], args)
-
-    def safe_args_as_dict(self) -> dict[str, Any]:
-        """Return the arguments as a Python dictionary, returning ``{}`` on malformed JSON.
-
-        Unlike :meth:`args_as_dict`, this method catches ``ValueError`` and
-        ``AssertionError`` raised when ``args`` contains an invalid JSON string
-        and falls back to an empty dict.  This is intended for model providers
-        that need to re-send a previous ``ToolCallPart`` in the conversation
-        history even when the original tool call had malformed arguments
-        (which already triggered a ``RetryPromptPart``).
-        """
         try:
-            return self.args_as_dict()
+            args = pydantic_core.from_json(self.args)
+            assert isinstance(args, dict), 'args should be a dict'
+            return cast(dict[str, Any], args)
         except (ValueError, AssertionError):
+            if not allow_partial:
+                raise
             _logger.debug(
-                'Malformed tool call args for %r, falling back to empty dict: %s',
+                'Malformed tool call args for %r, falling back to INVALID_JSON wrapper: %s',
                 self.tool_name,
                 self.args,
             )
-            return {}
+            return {'INVALID_JSON': self.args}
 
     def args_as_json_str(self) -> str:
         """Return the arguments as a JSON string.
