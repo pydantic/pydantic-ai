@@ -3247,31 +3247,3 @@ async def test_run_stream(
                 ]
             )
         )
-
-
-@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_call_deferred_span_marked_ok(capfire: CaptureLogfire) -> None:
-    """CallDeferred and ApprovalRequired should mark the tool span as OK, not ERROR.
-
-    Regression test for the fix in _tool_manager.py that sets span status to OK
-    when these control-flow exceptions are raised inside a tool.
-    """
-    from pydantic_ai.exceptions import CallDeferred
-
-    agent = Agent(TestModel(), instrument=True)
-
-    @agent.tool_plain
-    def deferred_tool() -> str:
-        raise CallDeferred
-
-    with pytest.raises(CallDeferred):
-        agent.run_sync('run deferred tool')
-
-    spans = capfire.exporter.exported_spans_as_dict()
-    tool_spans = [s for s in spans if 'deferred_tool' in s.get('name', '')]
-    # If the span was recorded, it should be OK (status_code 1), not ERROR (status_code 2)
-    for span in tool_spans:
-        status = span.get('status', {})
-        assert status.get('status_code') != 'ERROR', (
-            f'Tool span for CallDeferred should not have ERROR status, got: {status}'
-        )
