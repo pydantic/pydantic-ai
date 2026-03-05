@@ -383,6 +383,12 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
+### Lazy Tools
+
+[`LazyToolset`][pydantic_ai.toolsets.LazyToolset] wraps a toolset and marks its tools as lazy, hiding them from the model until discovered via [tool search](tools-advanced.md#tool-search). This is useful for large toolsets (e.g. MCP servers with many endpoints) where loading all tool definitions into the model's context would be wasteful.
+
+To easily chain different modifications, you can also call [`.lazy()`][pydantic_ai.toolsets.AbstractToolset.lazy] on any toolset instead of directly constructing a `LazyToolset`. Pass a list of tool names to hide only specific tools, or `None` (the default) to hide all.
+
 ### Changing Tool Execution
 
 [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] wraps another toolset and delegates all responsibility to it.

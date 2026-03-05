@@ -6,11 +6,6 @@ There are a few scenarios where the model should be able to call a tool that sho
 - it may depend on an upstream service, frontend, or user to provide the result
 - the result could take longer to generate than it's reasonable to keep the agent process running
 
-!!! note "Looking for tool search?"
-    If you want to hide tools from the model and let it discover them via search,
-    see [Tool Search](tools-advanced.md#tool-search). This page covers tools whose
-    *execution* is deferred (requiring approval or external results).
-
 To support these use cases, Pydantic AI provides the concept of deferred tools, which come in two flavors documented below:
 
 - tools that [require approval](#human-in-the-loop-tool-approval)

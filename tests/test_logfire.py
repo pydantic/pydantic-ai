@@ -557,7 +557,7 @@ def test_logfire(
                                 'kind': 'function',
                                 'metadata': None,
                                 'timeout': None,
-                                'hidden_until_found': False,
+                                'lazy': False,
                             }
                         ],
                         'builtin_tools': [],
@@ -1042,7 +1042,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'kind': 'output',
                                 'metadata': None,
                                 'timeout': None,
-                                'hidden_until_found': False,
+                                'lazy': False,
                             }
                         ],
                         'prompted_output_template': None,

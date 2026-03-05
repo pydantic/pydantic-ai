@@ -14,7 +14,6 @@ from pydantic_ai import messages
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai.toolsets._searchable import should_hide
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
 try:
@@ -75,16 +74,6 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     max_retries: int
     """The maximum number of retries to attempt if a tool call fails."""
 
-    hidden_until_found: bool | list[str]
-    """Whether to hide tools from the model until they are discovered via tool search.
-
-    See [Tool Search](tools-advanced.md#tool-search) for more info.
-
-    - `False` (default): All tools are loaded immediately.
-    - `True`: All tools have `hidden_until_found=True`.
-    - `list[str]`: Only the named tools have `hidden_until_found=True`.
-    """
-
     _id: str | None
 
     def __init__(
@@ -101,7 +90,6 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         *,
         max_retries: int = 1,
         tool_error_behavior: Literal['model_retry', 'error'] = 'model_retry',
-        hidden_until_found: bool | list[str] = False,
         id: str | None = None,
     ) -> None:
         if isinstance(client, Client):
@@ -112,7 +100,6 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         self._id = id
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
-        self.hidden_until_found = hidden_until_found
 
         self._enter_lock: Lock = Lock()
         self._running_count: int = 0
@@ -150,7 +137,6 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                         name=mcp_tool.name,
                         description=mcp_tool.description,
                         parameters_json_schema=mcp_tool.inputSchema,
-                        hidden_until_found=should_hide(self.hidden_until_found, mcp_tool.name),
                         metadata={
                             'meta': mcp_tool.meta,
                             'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,

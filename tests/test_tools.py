@@ -157,7 +157,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'hidden_until_found': False,
+            'lazy': False,
         }
     )
 
@@ -193,7 +193,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'hidden_until_found': False,
+            'lazy': False,
         }
     )
 
@@ -237,7 +237,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'hidden_until_found': False,
+            'lazy': False,
         }
     )
 
@@ -281,7 +281,7 @@ def test_google_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'hidden_until_found': False,
+            'lazy': False,
         }
     )
 
@@ -323,7 +323,7 @@ def test_sphinx_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'hidden_until_found': False,
+            'lazy': False,
         }
     )
 
@@ -371,7 +371,7 @@ def test_numpy_style_with_returns():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'hidden_until_found': False,
+            'lazy': False,
         }
     )
 
@@ -407,7 +407,7 @@ def test_only_returns_type():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'hidden_until_found': False,
+            'lazy': False,
         }
     )
 
@@ -434,7 +434,7 @@ def test_docstring_unknown():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'hidden_until_found': False,
+            'lazy': False,
         }
     )
 
@@ -479,7 +479,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'hidden_until_found': False,
+            'lazy': False,
         }
     )
 
@@ -517,7 +517,7 @@ def test_takes_just_model():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'hidden_until_found': False,
+            'lazy': False,
         }
     )
 
@@ -564,7 +564,7 @@ def test_takes_model_and_int():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'hidden_until_found': False,
+            'lazy': False,
         }
     )
 
@@ -931,7 +931,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'hidden_until_found': False,
+            'lazy': False,
         }
     )
 
@@ -1005,7 +1005,7 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
-                'hidden_until_found': False,
+                'lazy': False,
             },
             {
                 'description': None,
@@ -1022,7 +1022,7 @@ def test_json_schema_required_parameters():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
-                'hidden_until_found': False,
+                'lazy': False,
             },
         ]
     )
@@ -1112,7 +1112,7 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
-                'hidden_until_found': False,
+                'lazy': False,
             },
             {
                 'description': None,
@@ -1128,7 +1128,7 @@ def test_schema_generator():
                 'sequential': False,
                 'metadata': None,
                 'timeout': None,
-                'hidden_until_found': False,
+                'lazy': False,
             },
         ]
     )
@@ -1167,7 +1167,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'sequential': False,
             'metadata': None,
             'timeout': None,
-            'hidden_until_found': False,
+            'lazy': False,
         }
     )
 

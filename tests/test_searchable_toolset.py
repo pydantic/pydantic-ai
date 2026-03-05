@@ -14,7 +14,10 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturn, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets._searchable import (
+    _DISCOVERED_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
+    _SEARCH_TOOL_DEF,  # pyright: ignore[reportPrivateUsage]
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
+    _SEARCH_TOOLS_VALIDATOR,  # pyright: ignore[reportPrivateUsage]
     SearchableToolset,
 )
 from pydantic_ai.usage import RunUsage
@@ -48,17 +51,17 @@ def create_function_toolset() -> FunctionToolset[None]:
         """Get the current time in a timezone."""
         return f'Time in {timezone}'
 
-    @toolset.tool(hidden_until_found=True)
+    @toolset.tool(lazy=True)
     def calculate_mortgage(principal: float, rate: float, years: int) -> str:  # pragma: no cover
         """Calculate monthly mortgage payment for a loan."""
         return 'Mortgage calculated'
 
-    @toolset.tool(hidden_until_found=True)
+    @toolset.tool(lazy=True)
     def stock_price(symbol: str) -> str:  # pragma: no cover
         """Get the current stock price for a symbol."""
         return f'Stock price for {symbol}'
 
-    @toolset.tool(hidden_until_found=True)
+    @toolset.tool(lazy=True)
     def crypto_price(coin: str) -> str:  # pragma: no cover
         """Get the current cryptocurrency price."""
         return f'Crypto price for {coin}'
@@ -66,8 +69,8 @@ def create_function_toolset() -> FunctionToolset[None]:
     return toolset
 
 
-async def test_searchable_toolset_filters_deferred_tools():
-    """Test that deferred tools are not exposed initially."""
+async def test_searchable_toolset_filters_lazy_tools():
+    """Test that lazy tools are not exposed initially."""
     toolset = create_function_toolset()
     searchable = SearchableToolset(wrapped=toolset)
     ctx = build_run_context(None)
@@ -82,7 +85,7 @@ async def test_searchable_toolset_filters_deferred_tools():
 
 
 async def test_searchable_toolset_search_returns_matching_tools():
-    """Test that search_tools returns matching deferred tools."""
+    """Test that search_tools returns matching lazy tools."""
     toolset = create_function_toolset()
     searchable = SearchableToolset(wrapped=toolset)
     ctx = build_run_context(None)
@@ -98,7 +101,7 @@ async def test_searchable_toolset_search_returns_matching_tools():
             'tools': [{'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}],
         }
     )
-    assert result.metadata == snapshot(['calculate_mortgage'])
+    assert result.metadata == snapshot({'discovered_tools': ['calculate_mortgage']})
 
 
 async def test_searchable_toolset_search_is_case_insensitive():
@@ -145,7 +148,7 @@ async def test_searchable_toolset_search_returns_no_matches():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'nonexistent'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     assert result.return_value == snapshot({'message': "No tools found matching 'nonexistent'", 'tools': []})
-    assert result.metadata == snapshot([])
+    assert result.metadata == snapshot({'discovered_tools': []})
 
 
 async def test_searchable_toolset_search_empty_query():
@@ -190,7 +193,7 @@ async def test_searchable_toolset_discovered_tools_available():
                         'message': "Found 1 tool(s) matching 'mortgage'",
                         'tools': [{'name': 'calculate_mortgage'}],
                     },
-                    metadata=['calculate_mortgage'],
+                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
                 ),
             ]
         )
@@ -205,7 +208,7 @@ async def test_searchable_toolset_discovered_tools_available():
 
 
 async def test_searchable_toolset_reserved_name_collision():
-    """Test that `UserError` is raised if a tool is named 'search_tools' and deferred tools exist."""
+    """Test that `UserError` is raised if a tool is named 'search_tools' and lazy tools exist."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool
@@ -213,10 +216,10 @@ async def test_searchable_toolset_reserved_name_collision():
         """Search for tools."""
         return 'search result'
 
-    @toolset.tool(hidden_until_found=True)
-    def deferred_tool() -> str:  # pragma: no cover
-        """A deferred tool to trigger search injection."""
-        return 'deferred'
+    @toolset.tool(lazy=True)
+    def lazy_tool() -> str:  # pragma: no cover
+        """A lazy tool to trigger search injection."""
+        return 'lazy'
 
     searchable = SearchableToolset(wrapped=toolset)
     ctx = build_run_context(None)
@@ -225,8 +228,8 @@ async def test_searchable_toolset_reserved_name_collision():
         await searchable.get_tools(ctx)
 
 
-async def test_searchable_toolset_no_deferred_tools_returns_all():
-    """Test that when there are no deferred tools, all tools are returned without search_tools."""
+async def test_searchable_toolset_no_lazy_tools_returns_all():
+    """Test that when there are no lazy tools, all tools are returned without search_tools."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool
@@ -262,8 +265,8 @@ async def test_agent_always_wraps_in_searchable_toolset():
     assert isinstance(toolset, SearchableToolset)
 
 
-async def test_agent_wraps_in_searchable_with_deferred():
-    """Test that agent wraps with SearchableToolset when there are deferred tools."""
+async def test_agent_wraps_in_searchable_with_lazy():
+    """Test that agent wraps with SearchableToolset when there are lazy tools."""
     agent = Agent('test')
 
     @agent.tool_plain
@@ -271,7 +274,7 @@ async def test_agent_wraps_in_searchable_with_deferred():
         """Get the current weather for a city."""
         return f'Weather in {city}'
 
-    @agent.tool_plain(hidden_until_found=True)
+    @agent.tool_plain(lazy=True)
     def calculate_mortgage(principal: float) -> str:  # pragma: no cover
         """Calculate mortgage payment."""
         return 'Calculated'
@@ -302,7 +305,7 @@ async def test_searchable_toolset_tool_with_none_description():
     """Test that tools with None description are handled correctly in search."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
-    @toolset.tool(hidden_until_found=True)
+    @toolset.tool(lazy=True)
     def no_desc_tool() -> str:  # pragma: no cover
         return 'no description'
 
@@ -333,7 +336,7 @@ async def test_searchable_toolset_multiple_searches_accumulate():
                         'message': "Found 1 tool(s) matching 'mortgage'",
                         'tools': [{'name': 'calculate_mortgage'}],
                     },
-                    metadata=['calculate_mortgage'],
+                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
                 ),
             ]
         ),
@@ -342,7 +345,7 @@ async def test_searchable_toolset_multiple_searches_accumulate():
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
                     content={'message': "Found 1 tool(s) matching 'stock'", 'tools': [{'name': 'stock_price'}]},
-                    metadata=['stock_price'],
+                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: ['stock_price']},
                 ),
             ]
         ),
@@ -357,18 +360,18 @@ async def test_searchable_toolset_multiple_searches_accumulate():
     assert 'crypto_price' not in tool_names
 
 
-async def test_function_toolset_all_deferred():
-    """Test FunctionToolset with all tools having hidden_until_found=True."""
+async def test_function_toolset_all_lazy():
+    """Test FunctionToolset with all tools having lazy=True."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
-    @toolset.tool(hidden_until_found=True)
-    def deferred_tool1() -> str:  # pragma: no cover
-        """First deferred tool."""
+    @toolset.tool(lazy=True)
+    def lazy_tool1() -> str:  # pragma: no cover
+        """First lazy tool."""
         return 'result1'
 
-    @toolset.tool(hidden_until_found=True)
-    def deferred_tool2() -> str:  # pragma: no cover
-        """Second deferred tool."""
+    @toolset.tool(lazy=True)
+    def lazy_tool2() -> str:  # pragma: no cover
+        """Second lazy tool."""
         return 'result2'
 
     searchable = SearchableToolset(wrapped=toolset)
@@ -378,25 +381,36 @@ async def test_function_toolset_all_deferred():
     tool_names = list(tools.keys())
 
     assert tool_names == snapshot(['search_tools'])
-    assert 'deferred_tool1' not in tool_names
-    assert 'deferred_tool2' not in tool_names
+    assert 'lazy_tool1' not in tool_names
+    assert 'lazy_tool2' not in tool_names
 
 
-async def test_searchable_toolset_search_no_deferred_tools():
-    """Covers the defensive branch in _search_tools that returns early when no deferred tools exist.
+async def test_searchable_toolset_search_no_lazy_tools():
+    """Covers the defensive branch in _search_tools that returns early when no lazy tools exist.
 
-    This branch is unreachable via call_tool (get_tools won't inject search_tools without deferred tools),
+    This branch is unreachable via call_tool (get_tools won't inject search_tools without lazy tools),
     so we call the private method directly.
     """
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool
     def normal_tool() -> str:  # pragma: no cover
-        """A normal non-deferred tool."""
+        """A normal non-lazy tool."""
         return 'normal'
 
     searchable = SearchableToolset(wrapped=toolset)
-    result = await searchable._search_tools({'query': 'anything'}, {})  # pyright: ignore[reportPrivateUsage]
+
+    from pydantic_ai.toolsets._searchable import _SearchTool  # pyright: ignore[reportPrivateUsage]
+
+    mock_search_tool = _SearchTool(
+        toolset=searchable,
+        tool_def=_SEARCH_TOOL_DEF,
+        max_retries=1,
+        args_validator=_SEARCH_TOOLS_VALIDATOR,
+        lazy_tools={},
+        search_index=[],
+    )
+    result = await searchable._search_tools({'query': 'anything'}, mock_search_tool)  # pyright: ignore[reportPrivateUsage]
     assert isinstance(result, ToolReturn)
     assert result.return_value == snapshot({'message': 'No searchable tools available.', 'tools': []})
 
@@ -409,19 +423,37 @@ async def test_searchable_toolset_ignores_non_metadata_history():
     messages: list[ModelMessage] = [
         # metadata is None (no discovered tools)
         ModelRequest(parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content={'message': 'hi'})]),
-        # metadata is not a list
+        # metadata is not a dict
         ModelRequest(
-            parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content={'tools': 'not a list'}, metadata='not a list')]
+            parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content={'tools': 'not a list'}, metadata='not a dict')]
         ),
-        # metadata contains non-string items
-        ModelRequest(parts=[ToolReturnPart(tool_name=_SEARCH_TOOLS_NAME, content={'tools': []}, metadata=[123, None])]),
+        # metadata is a dict but value is not a list
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=_SEARCH_TOOLS_NAME,
+                    content={'tools': []},
+                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: 'not a list'},
+                )
+            ]
+        ),
+        # metadata contains non-string items in the list
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name=_SEARCH_TOOLS_NAME,
+                    content={'tools': []},
+                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: [123, None]},
+                )
+            ]
+        ),
         # valid metadata
         ModelRequest(
             parts=[
                 ToolReturnPart(
                     tool_name=_SEARCH_TOOLS_NAME,
                     content={'message': 'found', 'tools': [{'name': 'calculate_mortgage'}]},
-                    metadata=['calculate_mortgage'],
+                    metadata={_DISCOVERED_TOOLS_METADATA_KEY: ['calculate_mortgage']},
                 ),
             ]
         ),
@@ -452,6 +484,6 @@ async def test_call_tool_returns_tool_return_with_metadata():
                     {'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}
                 ],
             },
-            metadata=['calculate_mortgage'],
+            metadata={'discovered_tools': ['calculate_mortgage']},
         )
     )

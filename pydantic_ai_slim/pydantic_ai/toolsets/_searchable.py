@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic_core import SchemaValidator, core_schema
@@ -13,6 +13,8 @@ from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
 _SEARCH_TOOLS_NAME = 'search_tools'
+
+_DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
 
 # TODO: make this user-configurable via SearchableToolset
 _MAX_SEARCH_RESULTS = 10
@@ -42,14 +44,18 @@ _SEARCH_TOOL_DEF = ToolDefinition(
 )
 
 
-def should_hide(hidden_until_found: bool | list[str], tool_name: str) -> bool:
-    """Check whether a tool should be hidden until found based on the hidden_until_found setting."""
-    return hidden_until_found is True or (isinstance(hidden_until_found, list) and tool_name in hidden_until_found)
+@dataclass(kw_only=True)
+class _SearchToolIndex:
+    name: str
+    name_lower: str
+    description: str | None
+    description_lower: str | None
 
 
 @dataclass(kw_only=True)
 class _SearchTool(ToolsetTool[AgentDepsT]):
-    deferred_tools: dict[str, ToolsetTool[AgentDepsT]]
+    lazy_tools: dict[str, ToolsetTool[AgentDepsT]]
+    search_index: list[_SearchToolIndex]
 
 
 @dataclass
@@ -57,24 +63,24 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
     """A toolset that enables tool discovery for large toolsets.
 
     This toolset wraps another toolset and provides a `search_tools` tool that allows
-    the model to discover tools marked with `hidden_until_found=True`.
+    the model to discover tools marked with `lazy=True`.
 
-    Tools with `hidden_until_found=True` are not initially presented to the model.
+    Tools with `lazy=True` are not initially presented to the model.
     Instead, they become available after the model discovers them via the search tool.
     """
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
-        deferred: dict[str, ToolsetTool[AgentDepsT]] = {}
-        non_deferred: dict[str, ToolsetTool[AgentDepsT]] = {}
+        lazy: dict[str, ToolsetTool[AgentDepsT]] = {}
+        visible: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in all_tools.items():
-            if tool.tool_def.hidden_until_found:
-                deferred[name] = tool
+            if tool.tool_def.lazy:
+                lazy[name] = tool
             else:
-                non_deferred[name] = tool
+                visible[name] = tool
 
-        if not deferred:
+        if not lazy:
             return all_tools
 
         if _SEARCH_TOOLS_NAME in all_tools:
@@ -84,19 +90,28 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
 
         discovered = self._parse_discovered_tools(ctx)
 
-        # max_retries=1: search_tools shouldn't realistically fail, but we set an explicit
-        # limit rather than 0 as a safeguard. TODO: participate in the agent's retry pool instead.
+        search_index = [
+            _SearchToolIndex(
+                name=name,
+                name_lower=name.lower(),
+                description=tool.tool_def.description,
+                description_lower=tool.tool_def.description.lower() if tool.tool_def.description else None,
+            )
+            for name, tool in lazy.items()
+        ]
+
         search_tool = _SearchTool(
             toolset=self,
-            tool_def=replace(_SEARCH_TOOL_DEF),
+            tool_def=_SEARCH_TOOL_DEF,
             max_retries=1,
             args_validator=_SEARCH_TOOLS_VALIDATOR,
-            deferred_tools=deferred,
+            lazy_tools=lazy,
+            search_index=search_index,
         )
 
         result: dict[str, ToolsetTool[AgentDepsT]] = {_SEARCH_TOOLS_NAME: search_tool}
-        result.update(non_deferred)
-        for name, tool in deferred.items():
+        result.update(visible)
+        for name, tool in lazy.items():
             if name in discovered:
                 result[name] = tool
 
@@ -110,55 +125,53 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
                 for part in msg.parts:
                     if isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
                         metadata = part.metadata
-                        if isinstance(metadata, list):
-                            for item in metadata:  # pyright: ignore[reportUnknownVariableType]
-                                if isinstance(item, str):
-                                    discovered.add(item)
+                        if isinstance(metadata, dict):
+                            tool_names = metadata.get(_DISCOVERED_TOOLS_METADATA_KEY)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                            if isinstance(tool_names, list):
+                                for item in tool_names:  # pyright: ignore[reportUnknownVariableType]
+                                    if isinstance(item, str):
+                                        discovered.add(item)
         return discovered
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         if name == _SEARCH_TOOLS_NAME and isinstance(tool, _SearchTool):
-            return await self._search_tools(tool_args, tool.deferred_tools)
+            return await self._search_tools(tool_args, tool)
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
-    async def _search_tools(
-        self, tool_args: dict[str, Any], deferred_tools: dict[str, ToolsetTool[AgentDepsT]]
-    ) -> ToolReturn:
+    async def _search_tools(self, tool_args: dict[str, Any], search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
         """Search for tools matching the query."""
         query = tool_args['query']
         if not query:
             raise ModelRetry('Please provide a search query.')
 
-        if not deferred_tools:
+        if not search_tool.lazy_tools:
             return ToolReturn(
                 return_value={'message': 'No searchable tools available.', 'tools': []},
-                metadata=[],
+                metadata={_DISCOVERED_TOOLS_METADATA_KEY: []},
             )
 
         query_lower = query.lower()
 
-        matches: list[tuple[str, str | None]] = []
-        for name, tool in deferred_tools.items():
-            tool_def = tool.tool_def
-            name_match = query_lower in name.lower()
-            desc_match = query_lower in tool_def.description.lower() if tool_def.description else False
+        matches: list[dict[str, str | None]] = []
+        for entry in search_tool.search_index:
+            name_match = query_lower in entry.name_lower
+            desc_match = query_lower in entry.description_lower if entry.description_lower else False
 
             if name_match or desc_match:
-                matches.append((name, tool_def.description))
-
-        matches = matches[:_MAX_SEARCH_RESULTS]
+                matches.append({'name': entry.name, 'description': entry.description})
+                if len(matches) >= _MAX_SEARCH_RESULTS:
+                    break
 
         if matches:
             message = f"Found {len(matches)} tool(s) matching '{query}'"
         else:
             message = f"No tools found matching '{query}'"
 
-        tool_names = [name for name, _ in matches]
-        tools = [{'name': name, 'description': desc} for name, desc in matches]
+        tool_names = [match['name'] for match in matches]
 
         return ToolReturn(
-            return_value={'message': message, 'tools': tools},
-            metadata=tool_names,
+            return_value={'message': message, 'tools': matches},
+            metadata={_DISCOVERED_TOOLS_METADATA_KEY: tool_names},
         )

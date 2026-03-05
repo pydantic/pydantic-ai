@@ -1179,7 +1179,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        hidden_until_found: bool = False,
+        lazy: bool = False,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -1200,7 +1200,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        hidden_until_found: bool = False,
+        lazy: bool = False,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1258,7 +1258,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
-            hidden_until_found: Whether to hide this tool until it's discovered via tool search. Defaults to False.
+            lazy: Whether to hide this tool until it's discovered via tool search. Defaults to False.
                 See [Tool Search](tools-advanced.md#tool-search) for more info.
         """
 
@@ -1282,7 +1282,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
-                hidden_until_found=hidden_until_found,
+                lazy=lazy,
             )
             return func_
 
@@ -1309,7 +1309,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        hidden_until_found: bool = False,
+        lazy: bool = False,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1330,7 +1330,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-        hidden_until_found: bool = False,
+        lazy: bool = False,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1389,7 +1389,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
-            hidden_until_found: Whether to hide this tool until it's discovered via tool search. Defaults to False.
+            lazy: Whether to hide this tool until it's discovered via tool search. Defaults to False.
                 See [Tool Search](tools-advanced.md#tool-search) for more info.
         """
 
@@ -1411,7 +1411,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
-                hidden_until_found=hidden_until_found,
+                lazy=lazy,
             )
             return func_
 
@@ -1574,9 +1574,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
 
-        # Always wraps; short-circuits when no deferred tools.
+        # Always wraps; short-circuits when no lazy tools.
         # Wraps outside PreparedToolset so search_tools is always available regardless of prepare_tools.
-        # TODO: an event-driven approach (wrapping only when deferred tools exist) would be more performant.
         toolset = SearchableToolset(wrapped=toolset)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset

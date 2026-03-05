@@ -14,6 +14,7 @@ from ..tools import ToolDefinition, ToolsPrepareFunc
 if TYPE_CHECKING:
     from .approval_required import ApprovalRequiredToolset
     from .filtered import FilteredToolset
+    from .lazy import LazyToolset
     from .prefixed import PrefixedToolset
     from .prepared import PreparedToolset
     from .renamed import RenamedToolset
@@ -197,3 +198,16 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         from .approval_required import ApprovalRequiredToolset
 
         return ApprovalRequiredToolset(self, approval_required_func)
+
+    def lazy(self, tool_names: list[str] | None = None) -> LazyToolset[AgentDepsT]:
+        """Returns a new toolset that marks tools as lazy, hiding them until discovered via tool search.
+
+        See [toolset docs](../toolsets.md#lazy-tools) for more information.
+
+        Args:
+            tool_names: Optional list of tool names to mark as lazy.
+                If `None`, all tools are marked as lazy.
+        """
+        from .lazy import LazyToolset
+
+        return LazyToolset(self, tool_names=tool_names)
