@@ -313,4 +313,12 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                     for k in schema['properties'].keys():
                         if k not in required:
                             self.is_strict_compatible = False
+
+        if schema_type == 'array':
+            items = schema.get('items')
+            if items == {}:
+                if self.strict is True:
+                    schema.pop('items')
+                elif self.strict is None:  # pragma: no branch
+                    self.is_strict_compatible = False
         return schema
