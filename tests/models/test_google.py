@@ -1338,16 +1338,12 @@ async def test_google_model_maps_tool_with_location(allow_model_requests: None, 
     assert isinstance(result.output, str)
 
 
-def test_google_maps_tool_partial_location_raises():
+def test_google_maps_tool_partial_location_raises(google_provider: GoogleProvider) -> None:
     """GoogleMapsTool must raise UserError when only one of latitude/longitude is set."""
-    # Call _get_tool_config directly to test validation without needing allow_model_requests
-    model = GoogleModel('gemini-2.5-flash')
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
     # Only latitude provided (no longitude) — should raise UserError
     partial_params = ModelRequestParameters(
-        function_tools={},
-        allow_text_output=True,
-        output_tools={},
         builtin_tools=[GoogleMapsTool(latitude=37.0)],
     )
     with pytest.raises(UserError, match='requires both .latitude. and .longitude. to be set'):
@@ -1355,9 +1351,6 @@ def test_google_maps_tool_partial_location_raises():
 
     # Only longitude provided (no latitude) — should also raise UserError
     partial_params2 = ModelRequestParameters(
-        function_tools={},
-        allow_text_output=True,
-        output_tools={},
         builtin_tools=[GoogleMapsTool(longitude=-122.4)],
     )
     with pytest.raises(UserError, match='requires both .latitude. and .longitude. to be set'):
@@ -1365,18 +1358,12 @@ def test_google_maps_tool_partial_location_raises():
 
     # Both provided — should NOT raise
     full_params = ModelRequestParameters(
-        function_tools={},
-        allow_text_output=True,
-        output_tools={},
         builtin_tools=[GoogleMapsTool(latitude=37.0, longitude=-122.4)],
     )
     model._get_tool_config(full_params, None)  # pyright: ignore[reportPrivateUsage]
 
     # Neither provided — should NOT raise
     no_loc_params = ModelRequestParameters(
-        function_tools={},
-        allow_text_output=True,
-        output_tools={},
         builtin_tools=[GoogleMapsTool()],
     )
     model._get_tool_config(no_loc_params, None)  # pyright: ignore[reportPrivateUsage]
