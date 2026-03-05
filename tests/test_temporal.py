@@ -1299,6 +1299,43 @@ async def test_dynamic_toolset_args_validator_runs_in_temporal_activity():
         )
 
 
+async def test_dynamic_toolset_async_args_validator_runs_in_temporal_activity():
+    toolset = FunctionToolset[None](id='async_validator_dynamic_function_toolset')
+    validator_calls = 0
+
+    async def args_validator(run_ctx: RunContext[None], location: str) -> None:
+        nonlocal validator_calls
+        del run_ctx
+        validator_calls += 1
+        assert location == 'paris'
+
+    @toolset.tool(args_validator=args_validator, retries=0)
+    def guarded_weather(location: str) -> str:
+        return f'Weather in {location}: sunny.'
+
+    temporal_toolset = TemporalFunctionToolset(
+        toolset,
+        activity_name_prefix='test_agent',
+        activity_config=BASE_ACTIVITY_CONFIG,
+        tool_activity_config={},
+        deps_type=type(None),
+    )
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+    )
+    tool = (await toolset.get_tools(ctx))['guarded_weather']
+
+    result = temporal_toolset._unwrap_call_tool_result(
+        await temporal_toolset._call_tool_in_activity('guarded_weather', {'location': 'paris'}, ctx, tool)
+    )
+
+    assert validator_calls == 1
+    assert result == 'Weather in paris: sunny.'
+
+
 # --- MCP-based DynamicToolset test ---
 # Tests that @agent.toolset with an MCP toolset works with Temporal workflows.
 # Uses MCPServerStreamableHTTP (HTTP-based) rather than subprocess-based MCP servers.
