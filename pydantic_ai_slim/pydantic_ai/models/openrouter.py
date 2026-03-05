@@ -504,6 +504,44 @@ def _map_openrouter_provider_details(
     return provider_details
 
 
+def _normalize_openrouter_response(
+    response_dict: dict[str, Any], model_name: str, fallback_object_type: str
+) -> dict[str, Any]:
+    """Normalize an OpenRouter response dict before Pydantic validation.
+
+    Handles two known quirks:
+    1. Some providers (e.g. Google via OpenRouter) nest the real completion inside
+       the ``provider`` field when top-level ``choices`` is null.
+    2. Metadata fields (``id``, ``model``, ``object``, ``provider``) can be null
+       in early or error responses; fill them with safe fallbacks so Pydantic validation
+       doesn't reject the response outright.
+
+    Works for both regular completions and streaming chunks.
+    """
+    # 1. Unwrap nested provider data
+    provider_data = response_dict.get('provider')
+    if (
+        isinstance(provider_data, dict)
+        and isinstance(provider_data.get('choices'), list)
+        and response_dict.get('choices') is None
+    ):
+        nested_provider_name = provider_data.pop('provider', 'unknown')
+        response_dict.update(provider_data)
+        response_dict['provider'] = nested_provider_name
+
+    # 2. Sanitize missing metadata
+    if response_dict.get('id') is None:
+        response_dict['id'] = 'openrouter-fallback-id'
+    if response_dict.get('model') is None:
+        response_dict['model'] = model_name
+    if response_dict.get('object') is None:
+        response_dict['object'] = fallback_object_type
+    if not isinstance(response_dict.get('provider'), str):
+        response_dict['provider'] = 'unknown'
+
+    return response_dict
+
+
 def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSettings) -> OpenAIChatModelSettings:
     """Transforms a 'OpenRouterModelSettings' object into an 'OpenAIChatModelSettings' object.
 
@@ -564,43 +602,6 @@ class OpenRouterModel(OpenAIChatModel):
         new_settings = _openrouter_settings_to_openai_settings(cast(OpenRouterModelSettings, merged_settings or {}))
         return new_settings, customized_parameters
 
-    def _normalize_openrouter_response(
-        self, response_dict: dict[str, Any], fallback_object_type: str
-    ) -> dict[str, Any]:
-        """Normalize an OpenRouter response dict before Pydantic validation.
-
-        Handles two known quirks:
-        1. Some providers (e.g. Google via OpenRouter) nest the real completion inside
-           the ``provider`` field when top-level ``choices`` is null.
-        2. Metadata fields (``id``, ``model``, ``object``, ``provider``) can be null
-           in early or error responses; fill them with safe fallbacks so Pydantic validation
-           doesn't reject the response outright.
-
-        Works for both regular completions and streaming chunks.
-        """
-        # 1. Unwrap nested provider data
-        provider_data = response_dict.get('provider')
-        if (
-            isinstance(provider_data, dict)
-            and isinstance(provider_data.get('choices'), list)
-            and response_dict.get('choices') is None
-        ):
-            nested_provider_name = provider_data.pop('provider', 'unknown')
-            response_dict.update(provider_data)
-            response_dict['provider'] = nested_provider_name
-
-        # 2. Sanitize missing metadata
-        if response_dict.get('id') is None:
-            response_dict['id'] = 'openrouter-fallback-id'
-        if response_dict.get('model') is None:
-            response_dict['model'] = self.model_name
-        if response_dict.get('object') is None:
-            response_dict['object'] = fallback_object_type
-        if not isinstance(response_dict.get('provider'), str):
-            response_dict['provider'] = 'unknown'
-
-        return response_dict
-
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
         response_dict = response.model_dump()
@@ -620,7 +621,7 @@ class OpenRouterModel(OpenAIChatModel):
                 # Malformed error_data — fall through and let model_validate produce a clearer error.
                 pass
 
-        response_dict = self._normalize_openrouter_response(response_dict, 'chat.completion')
+        response_dict = _normalize_openrouter_response(response_dict, self.model_name, 'chat.completion')
         validated = _OpenRouterChatCompletion.model_validate(response_dict)
 
         if error := validated.error:
@@ -756,7 +757,10 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
     async def _validate_response(self):
         try:
             async for chunk in self._response:
-                yield _OpenRouterChatCompletionChunk.model_validate(chunk.model_dump())
+                chunk_dict = _normalize_openrouter_response(
+                    chunk.model_dump(), self._model_name, 'chat.completion.chunk'
+                )
+                yield _OpenRouterChatCompletionChunk.model_validate(chunk_dict)
         except APIError as e:
             error = _OpenRouterError.model_validate(e.body)
             raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message)

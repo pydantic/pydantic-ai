@@ -5,7 +5,7 @@ from typing import Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from vcr.cassette import Cassette
 
 from pydantic_ai import (
@@ -1040,7 +1040,7 @@ def test_openrouter_validate_completion_malformed_error_fallthrough() -> None:
         error='something went wrong',
     )
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         model._process_response(completion)  # type: ignore[reportPrivateUsage]
 
 
@@ -1049,8 +1049,10 @@ def test_openrouter_map_provider_details_null_provider_skips_key() -> None:
 
     This covers the if response.provider is not None: false branch (line 489→491).
     """
-    from pydantic_ai.models.openrouter import _OpenRouterChatCompletion  # type: ignore[reportPrivateUsage]
-    from pydantic_ai.models.openrouter import _map_openrouter_provider_details  # type: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openrouter import (
+        _map_openrouter_provider_details,  # type: ignore[reportPrivateUsage]
+        _OpenRouterChatCompletion,  # type: ignore[reportPrivateUsage]
+    )
 
     # Build a minimal _OpenRouterChatCompletion with provider=None
     resp = _OpenRouterChatCompletion.model_construct(
@@ -1073,3 +1075,18 @@ def test_openrouter_map_provider_details_null_provider_skips_key() -> None:
 
     details = _map_openrouter_provider_details(resp)
     assert 'downstream_provider' not in details
+
+
+def test_openrouter_normalize_openrouter_response_module_function() -> None:
+    """_normalize_openrouter_response (module-level) is accessible and fills null metadata."""
+    from pydantic_ai.models.openrouter import _normalize_openrouter_response  # type: ignore[reportPrivateUsage]
+
+    result = _normalize_openrouter_response(
+        {'id': None, 'model': None, 'object': None, 'provider': None, 'choices': []},
+        model_name='openai/gpt-4.1-mini',
+        fallback_object_type='chat.completion',
+    )
+    assert result['id'] == 'openrouter-fallback-id'
+    assert result['model'] == 'openai/gpt-4.1-mini'
+    assert result['object'] == 'chat.completion'
+    assert result['provider'] == 'unknown'
