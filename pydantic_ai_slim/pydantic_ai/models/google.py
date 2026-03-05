@@ -281,7 +281,9 @@ class GoogleModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool, GoogleMapsTool})
+        return frozenset(
+            {WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool, GoogleMapsTool}
+        )
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -488,7 +490,9 @@ class GoogleModel(Model):
             None,
         )
         if maps_tool and maps_tool.latitude is not None and maps_tool.longitude is not None:
-            retrieval_config = RetrievalConfigDict(lat_lng=LatLngDict(latitude=maps_tool.latitude, longitude=maps_tool.longitude))
+            retrieval_config = RetrievalConfigDict(
+                lat_lng=LatLngDict(latitude=maps_tool.latitude, longitude=maps_tool.longitude)
+            )
             if tool_config is None:
                 tool_config = ToolConfigDict(retrieval_config=retrieval_config)
             else:
