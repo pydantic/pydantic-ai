@@ -70,7 +70,11 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
         # when Temporal re-validates deserialized args inside the activity.
         sanitized: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in tools.items():
-            if isinstance(tool, FunctionToolsetTool) and tool.args_validator_func is not None:
+            # If a tool's activity is explicitly disabled, keep validator on the workflow-side tool.
+            # In that path, call_tool delegates directly to wrapped call_tool and does not go through
+            # _call_tool_in_activity where validator execution is otherwise enforced.
+            activity_disabled = self.tool_activity_config.get(name) is False
+            if isinstance(tool, FunctionToolsetTool) and tool.args_validator_func is not None and not activity_disabled:
                 sanitized[name] = replace(tool, args_validator_func=None)
             else:
                 sanitized[name] = tool
