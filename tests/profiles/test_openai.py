@@ -47,6 +47,7 @@ SAMPLING_PARAMS_CASES = [
     SamplingParamsCase(model='gpt-5.2', supports_reasoning=True, supports_reasoning_effort_none=True),
     SamplingParamsCase(model='gpt-5.2-turbo', supports_reasoning=True, supports_reasoning_effort_none=True),
     SamplingParamsCase(model='gpt-5.2-mini', supports_reasoning=True, supports_reasoning_effort_none=True),
+    SamplingParamsCase(model='gpt-5.3-chat-latest', supports_reasoning=True, supports_reasoning_effort_none=True),
     SamplingParamsCase(model='gpt-5.4', supports_reasoning=True, supports_reasoning_effort_none=True),
     SamplingParamsCase(model='gpt-5.4-pro', supports_reasoning=True, supports_reasoning_effort_none=True),
     # no reasoning
@@ -71,7 +72,7 @@ class TestEncryptedReasoningContent:
 
     def test_reasoning_models_support_encrypted_content(self):
         """Models with reasoning support encrypted reasoning content."""
-        for model in ['o1', 'o3', 'gpt-5', 'gpt-5.1', 'gpt-5.2', 'gpt-5.4']:
+        for model in ['o1', 'o3', 'gpt-5', 'gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4']:
             profile = openai_model_profile(model)
             assert isinstance(profile, OpenAIModelProfile)
             assert profile.openai_supports_encrypted_reasoning_content is True
