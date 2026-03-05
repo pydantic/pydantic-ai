@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import struct
 import tarfile
 from pathlib import Path
@@ -20,6 +21,7 @@ from pydantic_ai.environments import (
     EnvCapability,
     ExecutionEnvironment as BaseEnv,
     ExecutionResult,
+    TextFileReadResult,
 )
 from pydantic_ai.environments._base import apply_replace_str
 from pydantic_ai.environments.local import LocalEnvironment, _LocalEnvironmentProcess
@@ -159,6 +161,13 @@ async def test_local_write_and_read(tmp_path: Path):
         content = await env.read_file('test.txt')
         assert isinstance(content, bytes)
         assert content == b'line one\nline two\n'
+
+
+async def test_local_read_text_file_paged(tmp_path: Path):
+    async with LocalEnvironment(tmp_path) as env:
+        await env.write_file('test.txt', 'zero\none\ntwo\nthree\n')
+        result = await env.read_text_file('test.txt', offset=1, limit=2)
+    assert result == TextFileReadResult(text='one\ntwo\n', offset=1, total_lines=4)
 
 
 async def test_local_read_directory_error(tmp_path: Path):
@@ -485,6 +494,34 @@ async def test_toolset_read_offset_out_of_bounds_returns_error(tmp_path: Path):
         assert 'Offset 100 exceeds' in str(result)
 
 
+async def test_toolset_read_negative_offset_returns_error(tmp_path: Path):
+    """read_file with a negative offset returns an error string."""
+    env = LocalEnvironment(tmp_path)
+    toolset = ExecutionEnvironmentToolset(env)
+    ctx = build_run_context(None)
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+
+    async with env:
+        await env.write_file('short.txt', 'one\ntwo\n')
+        result = await manager.handle_call(
+            ToolCallPart(tool_name='read_file', args={'path': 'short.txt', 'offset': -1})
+        )
+        assert result == 'Error: offset must be non-negative, got -1.'
+
+
+async def test_toolset_read_non_positive_limit_returns_error(tmp_path: Path):
+    """read_file with a non-positive limit returns an error string."""
+    env = LocalEnvironment(tmp_path)
+    toolset = ExecutionEnvironmentToolset(env)
+    ctx = build_run_context(None)
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+
+    async with env:
+        await env.write_file('short.txt', 'one\ntwo\n')
+        result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'short.txt', 'limit': 0}))
+        assert result == 'Error: limit must be positive, got 0.'
+
+
 async def test_toolset_read_continuation_hint(tmp_path: Path):
     """read_file includes continuation hint when there are more lines."""
     env = LocalEnvironment(tmp_path)
@@ -616,6 +653,45 @@ async def test_toolset_use_environment_no_default():
         assert toolset.environment is env
 
     assert toolset.environment is None
+
+
+async def test_toolset_use_environment_allows_context_entry_without_default():
+    """An override environment is enough to enter the toolset context."""
+    env = MemoryEnvironment()
+    toolset = ExecutionEnvironmentToolset()
+
+    with toolset.use_environment(env):
+        async with toolset:
+            assert toolset.environment is env
+
+
+async def test_toolset_use_environment_does_not_enter_default_environment():
+    """An override should not start the shared default environment."""
+
+    class TrackingEnv(MemoryEnvironment):
+        def __init__(self):
+            super().__init__()
+            self.entered = 0
+            self.exited = 0
+
+        async def __aenter__(self):
+            self.entered += 1
+            return await super().__aenter__()
+
+        async def __aexit__(self, *args: Any):
+            self.exited += 1
+            return await super().__aexit__(*args)
+
+    default_env = TrackingEnv()
+    override_env = MemoryEnvironment()
+    toolset = ExecutionEnvironmentToolset(default_env)
+
+    with toolset.use_environment(override_env):
+        async with toolset:
+            assert toolset.environment is override_env
+
+    assert default_env.entered == 0
+    assert default_env.exited == 0
 
 
 async def test_toolset_tool_name_conflict_hint():
@@ -751,6 +827,13 @@ async def test_memory_read_file_bytes():
         assert result == png_data
 
 
+async def test_memory_read_text_file_paged():
+    env = MemoryEnvironment(files={'notes.txt': 'zero\none\ntwo\nthree\n'})
+    async with env:
+        result = await env.read_text_file('notes.txt', offset=1, limit=2)
+    assert result == TextFileReadResult(text='one\ntwo\n', offset=1, total_lines=4)
+
+
 # --- MemoryEnvironment with ExecutionEnvironmentToolset ---
 
 
@@ -801,13 +884,13 @@ async def test_agent_with_execution_toolset():
 
 def test__format_lines_empty_file():
     """_format_lines on empty string returns just a newline."""
-    result = _format_lines('', 0, 2000)
+    result = _format_lines(TextFileReadResult(text='', offset=0, total_lines=0))
     assert result == '\n'
 
 
 def test__format_lines_trailing_newline():
     """_format_lines adds trailing newline when text doesn't end with one."""
-    result = _format_lines('no trailing newline', 0, 2000)
+    result = _format_lines(TextFileReadResult(text='no trailing newline', offset=0, total_lines=1))
     assert result.endswith('\n')
     assert '1\tno trailing newline' in result
 
@@ -1025,50 +1108,69 @@ class MockContainer:
         **kwargs: Any,
     ) -> tuple[int, bytes]:
         """Simulate exec_run by executing simple commands."""
-        if isinstance(cmd, list):
-            cmd_str = ' '.join(cmd)
-        else:
-            cmd_str = cmd  # pragma: no cover
+        del environment, kwargs
+        cmd_str = ' '.join(cmd) if isinstance(cmd, list) else cmd  # pragma: no branch
 
-        # Handle mkdir -p
         if 'mkdir -p' in cmd_str:
             return 0, b''
-
-        # Handle find (glob)
         if 'find' in cmd_str:
-            # Extract the search path from: find '<path>' ...
-            import shlex as _shlex
-
-            find_part = cmd_str.split('|')[0].strip()
-            # Remove the 'sh -c' wrapper if present
-            if find_part.startswith('sh -c '):  # pragma: no branch
-                find_part = find_part[len('sh -c ') :]
-            tokens = _shlex.split(find_part)
-            # tokens[0] is 'find', tokens[1] is the path
-            search_path = tokens[1] if len(tokens) > 1 else '.'
-            wd = workdir or '/workspace'
-            matches = []
-            for fpath in sorted(self._files):
-                # Make path relative to workdir
-                if not fpath.startswith(wd + '/'):
-                    continue
-                rel = fpath[len(wd) + 1 :]
-                if search_path == '.':
-                    matches.append(f'./{rel}')
-                elif rel.startswith(search_path + '/') or rel == search_path:
-                    matches.append(rel)
-            return 0, '\n'.join(matches).encode('utf-8')
-
-        # Handle general commands
+            return self._handle_find(cmd_str, workdir=workdir)
+        if "awk 'END { print NR }'" in cmd_str:
+            return self._handle_awk_line_count(cmd_str)
+        if 'sed -n' in cmd_str:
+            return self._handle_sed_lines(cmd_str)
         if 'echo' in cmd_str:
-            # Extract the echo argument
             msg = cmd_str.split('echo ', 1)[-1] if 'echo ' in cmd_str else ''
             return 0, (msg + '\n').encode('utf-8')
-
         if 'exit' in cmd_str:  # pragma: no cover
             return 1, b''
-
         return 0, b''  # pragma: no cover
+
+    def _handle_find(self, cmd_str: str, *, workdir: str | None) -> tuple[int, bytes]:
+        """Handle `find` commands used by Docker glob tests."""
+        import shlex as _shlex
+
+        find_part = cmd_str.split('|')[0].strip()
+        if find_part.startswith('sh -c '):  # pragma: no branch
+            find_part = find_part[len('sh -c ') :]
+        tokens = _shlex.split(find_part)
+        search_path = tokens[1] if len(tokens) > 1 else '.'
+        wd = workdir or '/workspace'
+        matches = []
+        for fpath in sorted(self._files):
+            if not fpath.startswith(wd + '/'):
+                continue
+            rel = fpath[len(wd) + 1 :]
+            if search_path == '.':
+                matches.append(f'./{rel}')
+            elif rel.startswith(search_path + '/') or rel == search_path:
+                matches.append(rel)
+        return 0, '\n'.join(matches).encode('utf-8')
+
+    def _handle_awk_line_count(self, cmd_str: str) -> tuple[int, bytes]:
+        """Handle the line-count command used by `DockerEnvironment.read_text_file()`."""
+        match = re.search(r"'(/[^']+)'", cmd_str)
+        assert match is not None
+        path = match.group(1)
+        if path in self._files:
+            text = self._files[path].decode('utf-8')
+            return 0, str(len(text.splitlines())).encode('utf-8')
+        if any(fpath.startswith(path + '/') for fpath in self._files):
+            return 5, b''
+        return 4, b''
+
+    def _handle_sed_lines(self, cmd_str: str) -> tuple[int, bytes]:
+        """Handle the line-slice command used by `DockerEnvironment.read_text_file()`."""
+        match = re.search(r"sed -n (\d+),(\d+)p '(/[^']+)'", cmd_str)
+        assert match is not None
+        start_line = int(match.group(1))
+        end_line = int(match.group(2))
+        path = match.group(3)
+        if path not in self._files:
+            return 1, b''
+        text = self._files[path].decode('utf-8')
+        lines = text.splitlines(keepends=True)
+        return 0, ''.join(lines[start_line - 1 : end_line]).encode('utf-8')
 
     def put_archive(self, path: str, data: Any) -> bool:
         """Simulate file upload by extracting tar data."""
@@ -1151,6 +1253,12 @@ class TestDocker:
         await mock_docker_sandbox.write_file('test.txt', 'hello world\n')
         content = await mock_docker_sandbox.read_file('test.txt')
         assert isinstance(content, bytes)
+
+    async def test_docker_read_text_file(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+        """DockerEnvironment.read_text_file reads a paginated text range in-container."""
+        mock_container._files['/workspace/test.txt'] = b'zero\none\ntwo\nthree\n'
+        result = await mock_docker_sandbox.read_text_file('test.txt', offset=1, limit=2)
+        assert result == TextFileReadResult(text='one\ntwo\n', offset=1, total_lines=4)
 
     async def test_docker_write_file_binary(self, mock_docker_sandbox: Any) -> None:
         """DockerEnvironment write binary file."""

@@ -21,6 +21,8 @@ from ._base import (
     ExecutionEnvironment,
     ExecutionProcess,
     ExecutionResult,
+    TextFileReadResult,
+    validate_text_read_range,
 )
 
 try:
@@ -454,6 +456,10 @@ class DockerEnvironment(ExecutionEnvironment):
         *,
         env: dict[str, str] | None = None,
     ) -> ExecutionProcess:
+        """Create an interactive process inside the container.
+
+        Use the returned process as an async context manager.
+        """
         return _DockerEnvironmentProcess(self._required_container, command, self._work_dir, env=env)
 
     async def shell(
@@ -492,6 +498,53 @@ class DockerEnvironment(ExecutionEnvironment):
 
     async def read_file(self, path: str) -> bytes:
         return await anyio.to_thread.run_sync(self._read_file_bytes_sync, path)
+
+    async def read_text_file(
+        self,
+        path: str,
+        *,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> TextFileReadResult:
+        """Read a UTF-8 text file using line slicing inside the container."""
+
+        def _read() -> TextFileReadResult:
+            resolved_path = self._resolve_path(path)
+            escaped_path = _shell_escape(resolved_path)
+            check_cmd = (
+                f'if [ ! -e {escaped_path} ]; then exit 4; fi; '
+                f'if [ -d {escaped_path} ]; then exit 5; fi; '
+                f"awk 'END {{ print NR }}' {escaped_path}"
+            )
+            check_exit_code, check_output = self._required_container.exec_run(
+                ['sh', '-c', check_cmd], workdir=self._work_dir
+            )
+
+            if check_exit_code == 4:
+                raise FileNotFoundError(f'File not found: {path}')
+            if check_exit_code == 5:
+                raise FileNotFoundError(f"'{path}' is a directory, not a file.")
+
+            total_lines_text = check_output.decode('utf-8', errors='replace').strip()
+            total_lines = int(total_lines_text) if total_lines_text else 0
+            validate_text_read_range(offset=offset, limit=limit, total_lines=total_lines)
+
+            start_line = offset + 1
+            end_line = offset + limit
+            read_cmd = f'sed -n {start_line},{end_line}p {escaped_path}'
+            read_exit_code, read_output = self._required_container.exec_run(
+                ['sh', '-c', read_cmd], workdir=self._work_dir
+            )
+            if read_exit_code != 0:  # pragma: no cover
+                raise OSError(f'Failed to read file: {path}')
+
+            return TextFileReadResult(
+                text=read_output.decode('utf-8'),
+                offset=offset,
+                total_lines=total_lines,
+            )
+
+        return await anyio.to_thread.run_sync(_read)
 
     def _read_file_bytes_sync(self, path: str) -> bytes:
         """Read raw file bytes using Docker's get_archive API."""

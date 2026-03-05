@@ -21,10 +21,10 @@ EnvCapability = Literal[
     'replace_str',
     'create_process',
 ]
-"""Tool name for an environment capability.
+"""Execution environment capability.
 
-Used in `capabilities` to declare which methods an environment implements,
-and by `ExecutionEnvironmentToolset` for `include`/`exclude` filtering.
+Used in `capabilities` to declare which operations an environment implements.
+`ExecutionEnvironmentToolset` maps its tool names onto these capabilities.
 """
 
 
@@ -40,6 +40,20 @@ class ExecutionResult:
 
     exit_code: int
     """The exit code of the command."""
+
+
+@dataclass
+class TextFileReadResult:
+    """A paginated UTF-8 text file read."""
+
+    text: str
+    """The selected text content, without line numbers."""
+
+    offset: int
+    """The zero-based line offset used for this read."""
+
+    total_lines: int
+    """The total number of lines in the file."""
 
 
 class ExecutionProcess(ABC):
@@ -104,8 +118,8 @@ class ExecutionEnvironment(ABC):
     Docker containers, and cloud-hosted VMs.
 
     Subclasses implement `capabilities`, `read_file`, `write_file`,
-    and `shell` as needed. `replace_str` has a default built on
-    `read_file` and `write_file`.
+    and `shell` as needed. `replace_str` and `read_text_file` have
+    defaults built on `read_file` and `write_file`.
     """
 
     # --- Capability introspection ---
@@ -144,6 +158,28 @@ class ExecutionEnvironment(ABC):
             The raw bytes of the file.
         """
         raise NotImplementedError(f'{type(self).__name__} does not support read_file.')
+
+    async def read_text_file(
+        self,
+        path: str,
+        *,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> TextFileReadResult:
+        """Read a UTF-8 text file, optionally paginated by line number.
+
+        Implementations can override this to efficiently fetch just the
+        requested line range from remote environments. The default
+        implementation falls back to `read_file`.
+
+        Args:
+            path: The file path within the environment.
+            offset: The zero-based line number to start reading from.
+            limit: The maximum number of lines to read.
+        """
+        raw = await self.read_file(path)
+        text = raw.decode('utf-8')
+        return _slice_text_file(text, offset=offset, limit=limit)
 
     async def write_file(self, path: str, content: str | bytes) -> None:
         """Create or overwrite a file in the environment."""
@@ -233,3 +269,28 @@ def apply_replace_str(text: str, old_string: str, new_string: str, path: str, *,
         new_text = text.replace(old_string, new_string, 1)
 
     return new_text, count if replace_all else 1
+
+
+def _slice_text_file(text: str, *, offset: int, limit: int) -> TextFileReadResult:
+    """Slice UTF-8 text by line number."""
+    lines = text.splitlines(keepends=True)
+    total_lines = len(lines)
+    validate_text_read_range(offset=offset, limit=limit, total_lines=total_lines)
+    return TextFileReadResult(
+        text=''.join(lines[offset : offset + limit]),
+        offset=offset,
+        total_lines=total_lines,
+    )
+
+
+def validate_text_read_range(*, offset: int, limit: int, total_lines: int) -> None:
+    """Validate a line-based text read."""
+    if offset < 0:
+        raise ValueError(f'offset must be non-negative, got {offset}.')
+    if limit <= 0:
+        raise ValueError(f'limit must be positive, got {limit}.')
+    if total_lines == 0:
+        if offset != 0:
+            raise ValueError(f'Offset {offset} exceeds file length ({total_lines} lines).')
+    elif offset >= total_lines:
+        raise ValueError(f'Offset {offset} exceeds file length ({total_lines} lines).')

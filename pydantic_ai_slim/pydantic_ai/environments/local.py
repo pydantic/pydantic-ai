@@ -21,6 +21,8 @@ from ._base import (
     ExecutionEnvironment,
     ExecutionProcess,
     ExecutionResult,
+    TextFileReadResult,
+    validate_text_read_range,
 )
 
 
@@ -163,6 +165,10 @@ class LocalEnvironment(ExecutionEnvironment):
         *,
         env: dict[str, str] | None = None,
     ) -> ExecutionProcess:
+        """Create an interactive local process.
+
+        Use the returned process as an async context manager.
+        """
         proc = await anyio.open_process(
             command,
             stdin=subprocess.PIPE,
@@ -226,6 +232,41 @@ class LocalEnvironment(ExecutionEnvironment):
                     raise FileNotFoundError(f"'{path}' is a directory, not a file.")
                 raise FileNotFoundError(f'File not found: {path}')
             return resolved.read_bytes()
+
+        return await anyio.to_thread.run_sync(_read)
+
+    async def read_text_file(
+        self,
+        path: str,
+        *,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> TextFileReadResult:
+        """Read a UTF-8 text file without loading the whole file into the toolset."""
+        resolved = self._resolve_path(path)
+
+        def _read() -> TextFileReadResult:
+            if not resolved.is_file():
+                if resolved.is_dir():
+                    raise FileNotFoundError(f"'{path}' is a directory, not a file.")
+                raise FileNotFoundError(f'File not found: {path}')
+
+            lines: list[str] = []
+            total_lines = 0
+            with resolved.open(encoding='utf-8') as file:
+                for line_number, line in enumerate(file):
+                    total_lines = line_number + 1
+                    if line_number < offset:
+                        continue
+                    if len(lines) < limit:
+                        lines.append(line)
+
+            validate_text_read_range(offset=offset, limit=limit, total_lines=total_lines)
+            return TextFileReadResult(
+                text=''.join(lines),
+                offset=offset,
+                total_lines=total_lines,
+            )
 
         return await anyio.to_thread.run_sync(_read)
 

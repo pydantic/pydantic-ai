@@ -7,6 +7,7 @@
         - ExecutionEnvironment
         - ExecutionProcess
         - ExecutionResult
+        - TextFileReadResult
 
 ## `pydantic_ai.toolsets.execution_environment`
 

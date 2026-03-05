@@ -6,7 +6,8 @@ import mimetypes as _mime_types
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AsyncExitStack, contextmanager
 from contextvars import ContextVar, Token
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
 from typing_extensions import Self
@@ -14,6 +15,7 @@ from typing_extensions import Self
 from ..environments._base import (
     EnvCapability,
     ExecutionEnvironment,
+    TextFileReadResult,
 )
 from ..exceptions import ModelRetry
 from ..messages import BinaryContent
@@ -22,6 +24,24 @@ from ..toolsets.function import FunctionToolset
 if TYPE_CHECKING:
     from .._run_context import AgentDepsT, RunContext
     from ..toolsets.abstract import ToolsetTool
+
+
+ExecutionEnvironmentToolName = Literal['shell', 'read_file', 'write_file', 'replace_str']
+"""Tool names exposed by `ExecutionEnvironmentToolset`."""
+
+_TOOL_ENV_CAPABILITIES: dict[ExecutionEnvironmentToolName, EnvCapability] = {
+    'shell': 'shell',
+    'read_file': 'read_file',
+    'write_file': 'write_file',
+    'replace_str': 'replace_str',
+}
+
+
+@dataclass(frozen=True)
+class _EnterState:
+    kind: Literal['external_override', 'factory', 'shared']
+    stack: AsyncExitStack | None = None
+    token: Token[ExecutionEnvironment | None] | None = None
 
 
 class ExecutionEnvironmentToolset(FunctionToolset[Any]):
@@ -41,8 +61,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
     Usage:
         ```python {test="skip" lint="skip"}
         from pydantic_ai import Agent
-        from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
         from pydantic_ai.environments.docker import DockerEnvironment
+        from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset
 
         toolset = ExecutionEnvironmentToolset(DockerEnvironment(image='python:3.12-slim'))
 
@@ -55,8 +75,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         self,
         environment: ExecutionEnvironment | Callable[[], ExecutionEnvironment] | None = None,
         *,
-        include: Sequence[EnvCapability] | None = None,
-        exclude: Sequence[EnvCapability] | None = None,
+        include: Sequence[ExecutionEnvironmentToolName] | None = None,
+        exclude: Sequence[ExecutionEnvironmentToolName] | None = None,
         require_shell_approval: bool = False,
         require_write_approval: bool = False,
         max_binary_content_bytes: int = 50 * 1024 * 1024,
@@ -99,11 +119,13 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         self._environment_override: ContextVar[ExecutionEnvironment | None] = ContextVar(
             f'_environment_override_{id or "environment"}', default=None
         )
-        self._per_run_state: ContextVar[tuple[AsyncExitStack, Token[ExecutionEnvironment | None]] | None] = ContextVar(
-            f'_per_run_state_{id or "environment"}', default=None
+        self._enter_states: ContextVar[tuple[_EnterState, ...]] = ContextVar(
+            f'_enter_states_{id or "environment"}', default=()
         )
-        self._include: frozenset[EnvCapability] | None = frozenset(include) if include is not None else None
-        self._exclude: frozenset[EnvCapability] = frozenset(exclude) if exclude else frozenset()
+        self._include: frozenset[ExecutionEnvironmentToolName] | None = (
+            frozenset(include) if include is not None else None
+        )
+        self._exclude: frozenset[ExecutionEnvironmentToolName] = frozenset(exclude) if exclude else frozenset()
         self._max_binary_content_bytes = max_binary_content_bytes
         self._require_shell_approval = require_shell_approval
         self._require_write_approval = require_write_approval
@@ -116,9 +138,11 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         # get_tools() filters at runtime based on the current environment's capabilities.
         self._register_tools()
 
-    def _resolve_tool_names(self, env: ExecutionEnvironment) -> frozenset[str]:
+    def _resolve_tool_names(self, env: ExecutionEnvironment) -> frozenset[ExecutionEnvironmentToolName]:
         """Determine which tool names to expose, based on the environment's capabilities and include/exclude."""
-        tool_names: set[str] = set(env.capabilities)
+        tool_names: set[ExecutionEnvironmentToolName] = {
+            tool_name for tool_name, capability in _TOOL_ENV_CAPABILITIES.items() if capability in env.capabilities
+        }
 
         if self._include is not None:
             tool_names &= self._include
@@ -152,7 +176,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             exit_line = f'\nExit code: {result.exit_code}'
             output = result.output or ''
             # Truncate command output first, reserving space for the exit code line
-            max_output = self._max_output_chars - len(exit_line)
+            max_output = max(self._max_output_chars - len(exit_line), 0)
             if len(output) > max_output:
                 output = output[:max_output] + '\n... (truncated)'
             return (output + exit_line).strip()
@@ -172,22 +196,22 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                 limit: Maximum number of lines to read.
             """
             try:
-                raw = await self.required_environment.read_file(path)
-
-                # Try to decode as text
                 try:
-                    text = raw.decode('utf-8')
+                    text_result = await self.required_environment.read_text_file(path, offset=offset, limit=limit)
                 except UnicodeDecodeError:
-                    # If it fails, try to convert to a binary content format
+                    raw = await self.required_environment.read_file(path)
+
                     media_type, _ = _mime_types.guess_type(path)
                     if media_type is None:
                         return f'[Binary file: {path} — cannot display as text]'
                     if len(raw) > self._max_binary_content_bytes:
-                        return f'Error: Binary content too large ({len(raw)} bytes, max {self._max_binary_content_bytes} bytes).'
+                        return (
+                            f'Error: Binary content too large ({len(raw)} bytes, '
+                            f'max {self._max_binary_content_bytes} bytes).'
+                        )
                     return BinaryContent(data=raw, media_type=media_type)
 
-                # Format with line numbers and pagination
-                content = _format_lines(text, offset, limit)
+                content = _format_lines(text_result)
                 if len(content) > self._max_output_chars:
                     content = content[: self._max_output_chars] + '\n... (truncated)'
                 return content
@@ -277,6 +301,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         """Override the execution environment for the current context.
 
         Useful for testing or using different environments at different call sites.
+        The override environment's lifecycle is managed externally.
 
         Usage:
             ```python {test="skip" lint="skip"}
@@ -296,12 +321,16 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
     # --- Lifecycle ---
 
     async def __aenter__(self) -> Self:
+        if self._environment_override.get() is not None:
+            self._push_enter_state(_EnterState(kind='external_override'))
+            return self
+
         if self._environment_factory is not None:
             env = self._environment_factory()
             stack = AsyncExitStack()
             await stack.enter_async_context(env)
             token = self._environment_override.set(env)
-            self._per_run_state.set((stack, token))
+            self._push_enter_state(_EnterState(kind='factory', stack=stack, token=token))
         else:
             async with self._enter_lock:
                 self._running_count += 1
@@ -320,16 +349,19 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                     except Exception:
                         self._running_count -= 1
                         raise
+            self._push_enter_state(_EnterState(kind='shared'))
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        if self._environment_factory is not None:
-            state = self._per_run_state.get()
-            if state is not None:  # pragma: no branch
-                stack, token = state
-                await stack.aclose()
-                self._environment_override.reset(token)
-                self._per_run_state.set(None)
+        state = self._pop_enter_state()
+        if state.kind == 'external_override':
+            return None
+
+        if state.kind == 'factory':
+            assert state.stack is not None
+            assert state.token is not None
+            await state.stack.aclose()
+            self._environment_override.reset(state.token)
         else:
             async with self._enter_lock:
                 self._running_count -= 1
@@ -338,25 +370,29 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                     self._exit_stack = None
         return None
 
+    def _push_enter_state(self, state: _EnterState) -> None:
+        states = self._enter_states.get()
+        self._enter_states.set(states + (state,))
 
-def _format_lines(text: str, offset: int, limit: int) -> str:
-    """Format text with line numbers and pagination hints."""
-    lines = text.splitlines(keepends=True)
-    total_lines = len(lines)
+    def _pop_enter_state(self) -> _EnterState:
+        states = self._enter_states.get()
+        assert states
+        state = states[-1]
+        self._enter_states.set(states[:-1])
+        return state
 
-    if offset >= total_lines and total_lines > 0:
-        raise ValueError(f'Offset {offset} exceeds file length ({total_lines} lines).')
 
-    selected = lines[offset : offset + limit]
-
-    numbered = [f'{i}\t{line}' for i, line in enumerate(selected, start=offset + 1)]
+def _format_lines(read_result: TextFileReadResult) -> str:
+    """Format a paginated text file read with line numbers and pagination hints."""
+    lines = read_result.text.splitlines(keepends=True)
+    numbered = [f'{i}\t{line}' for i, line in enumerate(lines, start=read_result.offset + 1)]
     result = ''.join(numbered)
     if not result.endswith('\n'):
         result += '\n'
 
-    remaining = total_lines - (offset + len(selected))
+    remaining = read_result.total_lines - (read_result.offset + len(lines))
     if remaining > 0:
-        next_offset = offset + len(selected)
+        next_offset = read_result.offset + len(lines)
         result += f'... ({remaining} more lines. Use offset={next_offset} to continue reading.)\n'
 
     return result
