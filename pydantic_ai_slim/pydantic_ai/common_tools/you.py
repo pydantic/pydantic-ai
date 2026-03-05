@@ -349,9 +349,6 @@ class YouSearchTool:
             return None
         if isinstance(value, str):
             return value
-        enum_value = getattr(value, 'value', None)
-        if isinstance(enum_value, str):
-            return enum_value
         return str(value)
 
     @staticmethod
