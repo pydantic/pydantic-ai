@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-import importlib.util
 import logging
 import os
 import re
@@ -12,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
+from importlib import util as importlib_util
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
@@ -22,8 +22,7 @@ from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
-import pydantic_ai.models
-from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
+from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder, models as pydantic_ai_models
 from pydantic_ai.models import Model
 
 from ._inline_snapshot import customize_repr  # pyright: ignore[reportUnknownVariableType]
@@ -49,7 +48,7 @@ __all__ = (
 # GitHub action to fail.
 logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
 
-pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
+pydantic_ai_models.ALLOW_MODEL_REQUESTS = False
 
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
@@ -178,7 +177,7 @@ def anyio_backend():
 
 @pytest.fixture
 def allow_model_requests():
-    with pydantic_ai.models.override_allow_model_requests(True):
+    with pydantic_ai_models.override_allow_model_requests(True):
         yield
 
 
@@ -240,8 +239,8 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
         else:  # pragma: no cover
             loader = None
 
-        spec = importlib.util.spec_from_file_location(module_name, filename, loader=loader)
-        sys.modules[module_name] = module = importlib.util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
+        spec = importlib_util.spec_from_file_location(module_name, filename, loader=loader)
+        sys.modules[module_name] = module = importlib_util.module_from_spec(spec)  # pyright: ignore[reportArgumentType]
         spec.loader.exec_module(module)  # pyright: ignore[reportOptionalMemberAccess]
         return module
 
@@ -354,14 +353,14 @@ async def close_cached_httpx_client(anyio_backend: str, monkeypatch: pytest.Monk
     created_clients: set[httpx.AsyncClient] = set()
 
     # Patch the cached factory to record returned clients while preserving caching.
-    original_cached_func = pydantic_ai.models._cached_async_http_client  # type: ignore[reportPrivateUsage]
+    original_cached_func = pydantic_ai_models._cached_async_http_client  # type: ignore[reportPrivateUsage]
 
     def tracked_cached_async_http_client(*args: Any, **kwargs: Any):
         client = original_cached_func(*args, **kwargs)
         created_clients.add(client)
         return client
 
-    monkeypatch.setattr(pydantic_ai.models, '_cached_async_http_client', tracked_cached_async_http_client)
+    monkeypatch.setattr(pydantic_ai_models, '_cached_async_http_client', tracked_cached_async_http_client)
 
     yield
 

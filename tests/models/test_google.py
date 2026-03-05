@@ -810,6 +810,46 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
     )
 
 
+@pytest.mark.parametrize(
+    ('parallel_tool_calls', 'expected_tool_dicts', 'expected_decls_per_dict'),
+    [
+        (True, 1, 2),  # batched into one ToolDict with all declarations
+        (False, 2, 1),  # one ToolDict per function
+        (None, 2, 1),  # default: one ToolDict per function
+    ],
+)
+async def test_google_parallel_tool_calls(
+    google_provider: GoogleProvider,
+    parallel_tool_calls: bool | None,
+    expected_tool_dicts: int,
+    expected_decls_per_dict: int,
+) -> None:
+    """parallel_tool_calls=True batches all functions into one ToolDict; False/None puts each in its own."""
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='tool_a',
+                description='Tool A',
+                parameters_json_schema={'type': 'object', 'properties': {}},
+            ),
+            ToolDefinition(
+                name='tool_b',
+                description='Tool B',
+                parameters_json_schema={'type': 'object', 'properties': {}},
+            ),
+        ]
+    )
+    params = model.customize_request_parameters(params)
+    settings = GoogleModelSettings(parallel_tool_calls=parallel_tool_calls) if parallel_tool_calls is not None else None
+
+    tools, _ = model._get_tools(params, settings)  # pyright: ignore[reportPrivateUsage]
+
+    assert tools is not None
+    assert len(tools) == expected_tool_dicts
+    assert all(len(t.get('function_declarations') or []) == expected_decls_per_dict for t in tools)
+
+
 async def test_google_model_image_as_binary_content_input(
     allow_model_requests: None, image_content: BinaryContent, google_provider: GoogleProvider
 ):
@@ -3806,36 +3846,6 @@ async def test_google_image_generation_tool_aspect_ratio(google_provider: Google
     tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
     assert tools is None
     assert image_config == {'aspect_ratio': '16:9'}
-
-
-async def test_google_get_tools_batches_function_declarations(google_provider: GoogleProvider) -> None:
-    """Multiple function tools are batched into one ToolDict for Gemini parallel function calling."""
-    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
-    params = ModelRequestParameters(
-        function_tools=[
-            ToolDefinition(
-                name='tool_a',
-                description='Tool A',
-                parameters_json_schema={'type': 'object', 'properties': {}},
-            ),
-            ToolDefinition(
-                name='tool_b',
-                description='Tool B',
-                parameters_json_schema={'type': 'object', 'properties': {}},
-            ),
-        ]
-    )
-    params = model.customize_request_parameters(params)
-
-    tools, image_config = model._get_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert image_config is None
-    assert tools is not None
-    assert len(tools) == 1
-    decls = tools[0].get('function_declarations') or []
-    assert len(decls) == 2
-    assert [d['name'] for d in decls] == ['tool_a', 'tool_b']
-    assert decls[0]['description'] == 'Tool A'
-    assert decls[1]['description'] == 'Tool B'
 
 
 async def test_google_image_generation_resolution(google_provider: GoogleProvider) -> None:

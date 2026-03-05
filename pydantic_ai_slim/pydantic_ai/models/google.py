@@ -428,15 +428,20 @@ class GoogleModel(Model):
         return image_config
 
     def _get_tools(
-        self, model_request_parameters: ModelRequestParameters
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: GoogleModelSettings | None = None,
     ) -> tuple[list[ToolDict] | None, ImageConfigDict | None]:
-        # Batch all custom function declarations in one Tool for Gemini parallel function calling.
+        parallel = model_settings is not None and model_settings.get('parallel_tool_calls', False) is True
         function_declarations = [
             _function_declaration_from_tool(t) for t in model_request_parameters.tool_defs.values()
         ]
         tools: list[ToolDict] = []
         if function_declarations:
-            tools.append(ToolDict(function_declarations=function_declarations))
+            if parallel:
+                tools.append(ToolDict(function_declarations=function_declarations))
+            else:
+                tools.extend(ToolDict(function_declarations=[fd]) for fd in function_declarations)
 
         image_config: ImageConfigDict | None = None
 
@@ -527,7 +532,7 @@ class GoogleModel(Model):
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
-        tools, image_config = self._get_tools(model_request_parameters)
+        tools, image_config = self._get_tools(model_request_parameters, model_settings)
         if model_request_parameters.function_tools and not self.profile.supports_tools:
             raise UserError('Tools are not supported by this model.')
 
