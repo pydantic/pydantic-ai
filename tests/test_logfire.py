@@ -3345,9 +3345,7 @@ def test_call_deferred_span_attributes(capfire: CaptureLogfire, version: int) ->
 
     if is_error:
         # v1-3: exception event must be recorded on the span
-        assert tool_span.get('events') == snapshot(
-            [_exception_event('pydantic_ai.exceptions.CallDeferred')]
-        )
+        assert tool_span.get('events') == snapshot([_exception_event('pydantic_ai.exceptions.CallDeferred')])
     else:
         # v4+: OK status, no exception event
         assert tool_span.get('events', []) == snapshot([])
@@ -3387,14 +3385,9 @@ def test_approval_required_span_attributes(capfire: CaptureLogfire, version: int
     )
 
     if is_error:
-        assert tool_span.get('events') == snapshot(
-            [_exception_event('pydantic_ai.exceptions.ApprovalRequired')]
-        )
+        assert tool_span.get('events') == snapshot([_exception_event('pydantic_ai.exceptions.ApprovalRequired')])
     else:
         assert tool_span.get('events', []) == snapshot([])
-
-
-
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
