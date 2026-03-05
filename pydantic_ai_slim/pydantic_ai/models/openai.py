@@ -1385,7 +1385,7 @@ class OpenAIResponsesModel(Model):
         item = CompactionPart(
             content=None, id=compaction.id, provider_name=self.system, provider_details=compaction.model_dump()
         )
-        return ModelResponse(parts=[item], provider_name=self.system, provider_details=compaction.model_dump())
+        return ModelResponse(parts=[item], provider_name=self.system)
 
     async def request(
         self,
