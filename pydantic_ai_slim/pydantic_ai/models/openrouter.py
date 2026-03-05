@@ -574,6 +574,7 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     def prepare_request(
+    def prepare_request(
         self,
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
