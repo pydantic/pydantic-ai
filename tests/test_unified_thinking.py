@@ -408,12 +408,6 @@ class TestGoogleUnifiedThinking:
 
         assert result == {'thinking_budget': 24576}
 
-    def test_high_budget_within_flash_limit(self, google_thinking_profile: ModelProfile):
-        """Gemini 2.5 Flash max thinking_budget is 24576 — 'high' must not exceed it."""
-        from pydantic_ai.models.google import _GOOGLE_EFFORT_TO_BUDGET
-
-        assert _GOOGLE_EFFORT_TO_BUDGET['high'] <= 24576
-
     def test_silent_drop_unsupported_model(self, non_thinking_profile: ModelProfile):
         """thinking=True on unsupported model → None (silent drop)."""
         model = GoogleModel.__new__(GoogleModel)
@@ -423,6 +417,142 @@ class TestGoogleUnifiedThinking:
         settings: GoogleModelSettings = {'thinking': True}
         result = model._resolve_thinking_config(settings)
 
+        assert result is None
+
+
+class TestGoogleBudgetApiConstraints:
+    """Validate budget values respect the Google API's documented limits.
+
+    Gemini 2.5 Flash: thinking_budget range [0, 24576]
+    Gemini 2.5 Pro:   thinking_budget range [128, 32768]
+
+    These tests use the actual _GOOGLE_EFFORT_TO_BUDGET constant to catch
+    out-of-range values at test time rather than at API call time.
+    """
+
+    def test_all_budgets_within_flash_range(self):
+        """Every effort budget must be within Gemini 2.5 Flash's [0, 24576] range."""
+        from pydantic_ai.models.google import _GOOGLE_EFFORT_TO_BUDGET
+
+        for effort, budget in _GOOGLE_EFFORT_TO_BUDGET.items():
+            assert 0 <= budget <= 24576, f"effort='{effort}' budget={budget} exceeds Flash max 24576"
+
+    def test_all_budgets_within_pro_range(self):
+        """Every effort budget must also be within Gemini 2.5 Pro's [128, 32768] range."""
+        from pydantic_ai.models.google import _GOOGLE_EFFORT_TO_BUDGET
+
+        for effort, budget in _GOOGLE_EFFORT_TO_BUDGET.items():
+            assert 128 <= budget <= 32768, f"effort='{effort}' budget={budget} outside Pro range [128, 32768]"
+
+    def test_budgets_are_monotonically_increasing(self):
+        """low < medium < high — effort levels should map to increasing budgets."""
+        from pydantic_ai.models.google import _GOOGLE_EFFORT_TO_BUDGET
+
+        assert _GOOGLE_EFFORT_TO_BUDGET['low'] < _GOOGLE_EFFORT_TO_BUDGET['medium']
+        assert _GOOGLE_EFFORT_TO_BUDGET['medium'] < _GOOGLE_EFFORT_TO_BUDGET['high']
+
+
+class TestGoogleEndToEndWithRealProfiles:
+    """End-to-end tests using google_model_profile() + resolver together.
+
+    These catch mismatches between profile flags and resolver behavior that
+    synthetic-profile tests miss. Each test wires the real profile into the
+    model and calls the resolver or prepare_request, verifying the combined
+    behavior matches the API spec.
+    """
+
+    @staticmethod
+    def _make_google_model(model_name: str) -> GoogleModel:
+        """Create a GoogleModel with the real profile from google_model_profile()."""
+        from pydantic_ai.profiles.google import google_model_profile
+
+        model = GoogleModel.__new__(GoogleModel)
+        model._model_name = model_name
+        model._profile = google_model_profile(model_name)
+        model._settings = None
+        return model
+
+    # -- Gemini 2.5 Flash (budget-based, can disable) --
+
+    def test_flash_25_thinking_false_disables(self):
+        """thinking=False on real Flash profile → thinking_budget: 0."""
+        model = self._make_google_model('gemini-2.5-flash')
+        result = model._resolve_thinking_config({'thinking': False})
+        assert result == {'thinking_budget': 0}
+
+    def test_flash_25_effort_high_within_limits(self):
+        """effort='high' on real Flash profile → budget within [0, 24576]."""
+        model = self._make_google_model('gemini-2.5-flash')
+        result = model._resolve_thinking_config({'thinking_effort': 'high'})
+        assert result is not None
+        budget = result.get('thinking_budget')
+        assert budget is not None
+        assert 0 <= budget <= 24576
+
+    def test_flash_25_prepare_request_effort(self):
+        """Full prepare_request pipeline on Flash with effort."""
+        model = self._make_google_model('gemini-2.5-flash')
+        merged, _ = model.prepare_request({'thinking_effort': 'medium'}, ModelRequestParameters())
+        config = cast(GoogleModelSettings, merged).get('google_thinking_config')
+        assert config == {'thinking_budget': 8192}
+
+    # -- Gemini 2.5 Pro (budget-based, always-on) --
+
+    def test_pro_25_thinking_false_silent_drop(self):
+        """thinking=False on real Pro profile → None (Pro can't disable)."""
+        model = self._make_google_model('gemini-2.5-pro')
+        result = model._resolve_thinking_config({'thinking': False})
+        assert result is None
+
+    def test_pro_25_effort_high_within_limits(self):
+        """effort='high' on real Pro profile → budget within [128, 32768]."""
+        model = self._make_google_model('gemini-2.5-pro')
+        result = model._resolve_thinking_config({'thinking_effort': 'high'})
+        assert result is not None
+        budget = result.get('thinking_budget')
+        assert budget is not None
+        assert 128 <= budget <= 32768
+
+    def test_pro_25_prepare_request_thinking_false_no_config(self):
+        """Full prepare_request on Pro with thinking=False → no google_thinking_config."""
+        model = self._make_google_model('gemini-2.5-pro')
+        merged, _ = model.prepare_request({'thinking': False}, ModelRequestParameters())
+        assert 'google_thinking_config' not in cast(GoogleModelSettings, merged)
+
+    # -- Gemini 3 Flash (level-based, can disable) --
+
+    def test_flash_3_thinking_false_minimal(self):
+        """thinking=False on real Gemini 3 Flash → MINIMAL level."""
+        model = self._make_google_model('gemini-3-flash')
+        result = model._resolve_thinking_config({'thinking': False})
+        assert result == {'thinking_level': ThinkingLevel.MINIMAL, 'include_thoughts': False}
+
+    def test_flash_3_effort_maps_to_level(self):
+        """effort on real Gemini 3 Flash → correct thinking_level."""
+        model = self._make_google_model('gemini-3-flash')
+        result = model._resolve_thinking_config({'thinking_effort': 'low'})
+        assert result == {'thinking_level': ThinkingLevel.LOW}
+
+    # -- Gemini 3 Pro (level-based, always-on) --
+
+    def test_pro_3_thinking_false_silent_drop(self):
+        """thinking=False on real Gemini 3 Pro → None (Pro can't disable)."""
+        model = self._make_google_model('gemini-3-pro')
+        result = model._resolve_thinking_config({'thinking': False})
+        assert result is None
+
+    def test_pro_3_effort_maps_to_level(self):
+        """effort on real Gemini 3 Pro → correct thinking_level."""
+        model = self._make_google_model('gemini-3-pro')
+        result = model._resolve_thinking_config({'thinking_effort': 'high'})
+        assert result == {'thinking_level': ThinkingLevel.HIGH}
+
+    # -- Non-thinking models --
+
+    def test_old_model_thinking_silent_drop(self):
+        """thinking=True on real Gemini 2.0 Flash → None (doesn't support thinking)."""
+        model = self._make_google_model('gemini-2.0-flash')
+        result = model._resolve_thinking_config({'thinking': True})
         assert result is None
 
 
