@@ -36,13 +36,12 @@ from . import Model, ModelRequestParameters, check_allow_model_requests
 try:
     from cohere import (
         AssistantChatMessageV2,
-        AssistantMessageV2ContentItem,
         AsyncClientV2,
         ChatFinishReason,
         ChatMessageV2,
         SystemChatMessageV2,
-        TextAssistantMessageV2ContentItem,
-        ThinkingAssistantMessageV2ContentItem,
+        TextAssistantMessageV2ContentOneItem,
+        ThinkingAssistantMessageV2ContentOneItem,
         ToolCallV2,
         ToolCallV2Function,
         ToolChatMessageV2,
@@ -257,11 +256,11 @@ class CohereModel(Model):
 
                 message_param = AssistantChatMessageV2(role='assistant')
                 if texts or thinking:
-                    contents: list[AssistantMessageV2ContentItem] = []
+                    contents: list[TextAssistantMessageV2ContentOneItem | ThinkingAssistantMessageV2ContentOneItem] = []
                     if thinking:
-                        contents.append(ThinkingAssistantMessageV2ContentItem(thinking='\n\n'.join(thinking)))
+                        contents.append(ThinkingAssistantMessageV2ContentOneItem(thinking='\n\n'.join(thinking)))
                     if texts:  # pragma: no branch
-                        contents.append(TextAssistantMessageV2ContentItem(text='\n\n'.join(texts)))
+                        contents.append(TextAssistantMessageV2ContentOneItem(text='\n\n'.join(texts)))
                     message_param.content = contents
                 if tool_calls:
                     message_param.tool_calls = tool_calls

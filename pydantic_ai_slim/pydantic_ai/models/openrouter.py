@@ -269,8 +269,8 @@ class _BaseReasoningDetail(BaseModel, frozen=True):
         Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1', 'google-gemini-v1']
         | str
         | None
-    )
-    index: int | None
+    ) = None
+    index: int | None = None
     type: Literal['reasoning.text', 'reasoning.summary', 'reasoning.encrypted']
 
 
@@ -662,7 +662,7 @@ class _OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):
 class _OpenRouterChunkChoice(chat_completion_chunk.Choice):
     """Wraps OpenAI chat completion chunk choice with OpenRouter specific attributes."""
 
-    native_finish_reason: str | None
+    native_finish_reason: str | None = None
     """The provided finish reason by the downstream provider from OpenRouter."""
 
     finish_reason: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'] | None  # type: ignore[reportIncompatibleVariableOverride]
