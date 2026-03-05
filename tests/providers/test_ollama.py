@@ -144,3 +144,4 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     assert unknown_profile is not None
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
     assert unknown_profile.supports_json_schema_output is True
+    assert unknown_profile.supports_json_object_output is True
