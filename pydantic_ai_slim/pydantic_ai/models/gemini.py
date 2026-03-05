@@ -167,6 +167,11 @@ class GeminiModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @property
+    def provider(self) -> Provider[httpx.AsyncClient]:
+        """The provider for this model."""
+        return self._provider
+
     async def request(
         self,
         messages: list[ModelMessage],

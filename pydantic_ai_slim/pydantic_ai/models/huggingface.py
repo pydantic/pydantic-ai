@@ -168,6 +168,11 @@ class HuggingFaceModel(Model):
         """The system / model provider."""
         return self._provider.name
 
+    @property
+    def provider(self) -> Provider[AsyncInferenceClient]:
+        """The provider for this model."""
+        return self._provider
+
     async def request(
         self,
         messages: list[ModelMessage],

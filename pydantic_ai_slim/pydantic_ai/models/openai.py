@@ -567,6 +567,11 @@ class OpenAIChatModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @property
+    def provider(self) -> Provider[AsyncOpenAI]:
+        """The provider for this model."""
+        return self._provider
+
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
@@ -1392,6 +1397,11 @@ class OpenAIResponsesModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @property
+    def provider(self) -> Provider[AsyncOpenAI]:
+        """The provider for this model."""
+        return self._provider
 
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:

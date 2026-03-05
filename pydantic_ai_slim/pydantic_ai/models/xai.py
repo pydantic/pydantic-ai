@@ -199,6 +199,11 @@ class XaiModel(Model):
         """The model provider."""
         return 'xai'
 
+    @property
+    def provider(self) -> Provider[AsyncClient]:
+        """The provider for this model."""
+        return self._provider
+
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type]:
         """Return the set of builtin tool types this model can handle."""

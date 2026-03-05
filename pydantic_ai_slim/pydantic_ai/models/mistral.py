@@ -179,6 +179,11 @@ class MistralModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @property
+    def provider(self) -> Provider[Mistral]:
+        """The provider for this model."""
+        return self._provider
+
     async def request(
         self,
         messages: list[ModelMessage],

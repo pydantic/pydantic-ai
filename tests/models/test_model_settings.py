@@ -65,6 +65,7 @@ async def test_wrapper_model_context_manager():
     async with wrapper:
         pass
 
+
 def test_wrapper_model_customize_request_parameters_delegation():
     """Test that WrapperModel delegates request parameter customization to wrapped model."""
 
