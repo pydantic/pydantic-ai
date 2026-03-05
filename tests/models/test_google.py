@@ -1340,20 +1340,46 @@ async def test_google_model_maps_tool_with_location(allow_model_requests: None, 
 
 def test_google_maps_tool_partial_location_raises():
     """GoogleMapsTool must raise UserError when only one of latitude/longitude is set."""
-    from pydantic_ai.exceptions import UserError
-    from pydantic_ai.models.google import GoogleModel
+    # Call _get_tool_config directly to test validation without needing allow_model_requests
+    model = GoogleModel('gemini-2.5-flash')
 
+    # Only latitude provided (no longitude) — should raise UserError
+    partial_params = ModelRequestParameters(
+        function_tools={},
+        allow_text_output=True,
+        output_tools={},
+        builtin_tools=[GoogleMapsTool(latitude=37.0)],
+    )
     with pytest.raises(UserError, match='requires both .latitude. and .longitude. to be set'):
-        model = GoogleModel('gemini-2.5-flash')
-        from pydantic_ai import Agent
-        from pydantic_ai.builtin_tools import GoogleMapsTool
-        import asyncio
+        model._get_tool_config(partial_params, None)  # pyright: ignore[reportPrivateUsage]
 
-        async def run():
-            agent = Agent(model, builtin_tools=[GoogleMapsTool(latitude=37.0)])
-            await agent.run('test')
+    # Only longitude provided (no latitude) — should also raise UserError
+    partial_params2 = ModelRequestParameters(
+        function_tools={},
+        allow_text_output=True,
+        output_tools={},
+        builtin_tools=[GoogleMapsTool(longitude=-122.4)],
+    )
+    with pytest.raises(UserError, match='requires both .latitude. and .longitude. to be set'):
+        model._get_tool_config(partial_params2, None)  # pyright: ignore[reportPrivateUsage]
 
-        asyncio.run(run())
+    # Both provided — should NOT raise
+    full_params = ModelRequestParameters(
+        function_tools={},
+        allow_text_output=True,
+        output_tools={},
+        builtin_tools=[GoogleMapsTool(latitude=37.0, longitude=-122.4)],
+    )
+    model._get_tool_config(full_params, None)  # pyright: ignore[reportPrivateUsage]
+
+    # Neither provided — should NOT raise
+    no_loc_params = ModelRequestParameters(
+        function_tools={},
+        allow_text_output=True,
+        output_tools={},
+        builtin_tools=[GoogleMapsTool()],
+    )
+    model._get_tool_config(no_loc_params, None)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_model_web_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
