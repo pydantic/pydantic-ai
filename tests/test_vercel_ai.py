@@ -6325,7 +6325,7 @@ class TestSdkVersion:
     ('reason', 'expected_content'),
     [
         pytest.param('Too dangerous', 'Too dangerous', id='explicit-reason'),
-        pytest.param(None, 'Tool call was denied.', id='default-reason'),
+        pytest.param(None, 'The tool call was denied.', id='default-reason'),
     ],
 )
 async def test_adapter_load_messages_output_denied(reason: str | None, expected_content: str):
