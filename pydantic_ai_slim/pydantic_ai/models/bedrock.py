@@ -448,6 +448,8 @@ class BedrockConverseModel(Model):
             return 'thinking', self._resolve_thinking_config(model_settings)
         elif 'amazon' in self.model_name:
             return 'reasoningConfig', self._resolve_nova_thinking_config(model_settings)
+        # Other model families (OpenAI GPT-OSS, Qwen, etc.) don't have unified thinking
+        # support yet — use bedrock_additional_model_requests_fields for them.
         return None, None
 
     def _resolve_thinking_config(self, model_settings: BedrockModelSettings) -> dict[str, Any] | None:

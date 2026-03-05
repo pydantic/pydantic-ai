@@ -44,6 +44,8 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
     def model_profile(self, model_name: str) -> ModelProfile | None:
         base = ModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer)
         profile = anthropic_model_profile(model_name)
+        # Direction is profile.update(base) rather than base.update(profile) to
+        # preserve AnthropicModelProfile subclass (needed for adaptive thinking detection).
         return profile.update(base) if profile is not None else base
 
     @overload

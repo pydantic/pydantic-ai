@@ -19,7 +19,7 @@ Here is how to enable thinking with high effort on an Anthropic model:
 ```python {title="unified_thinking.py"}
 from pydantic_ai import Agent
 
-agent = Agent('anthropic:claude-sonnet-4-5')
+agent = Agent('anthropic:claude-sonnet-4-6')
 result = agent.run_sync(
     'What is the meaning of life?',
     model_settings={'thinking': True, 'thinking_effort': 'high'},
@@ -114,7 +114,7 @@ To enable thinking, use the [`AnthropicModelSettings.anthropic_thinking`][pydant
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 
-model = AnthropicModel('claude-sonnet-4-5')
+model = AnthropicModel('claude-sonnet-4-6')
 settings = AnthropicModelSettings(
     anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024},
 )
@@ -130,7 +130,7 @@ To enable [interleaved thinking](https://docs.anthropic.com/en/docs/build-with-c
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 
-model = AnthropicModel('claude-sonnet-4-5')
+model = AnthropicModel('claude-sonnet-4-6')
 settings = AnthropicModelSettings(
     anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000},
     extra_headers={'anthropic-beta': 'interleaved-thinking-2025-05-14'},
@@ -199,7 +199,7 @@ Bedrock supports thinking for Claude, DeepSeek R1, and Amazon Nova models via th
     from pydantic_ai import Agent
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
 
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6-20250929-v1:0')
     model_settings = BedrockModelSettings(
         bedrock_additional_model_requests_fields={
             'thinking': {'type': 'enabled', 'budget_tokens': 1024}

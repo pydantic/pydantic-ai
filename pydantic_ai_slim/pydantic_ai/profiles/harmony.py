@@ -23,4 +23,7 @@ def harmony_model_profile(model_name: str) -> ModelProfile:
         thinking_always_enabled=is_reasoning,  # Only always-on for reasoning models
     )
 
+    # Note: update() skips fields with default values, so harmony_overrides can't
+    # override base_profile fields back to False. This is fine because non-reasoning
+    # models already get supports_thinking=False from openai_model_profile().
     return base_profile.update(harmony_overrides)
