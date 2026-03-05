@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Literal, cast
 
 import httpx
+from pydantic import BaseModel
 from typing_extensions import Any, NotRequired, TypedDict
 
 from pydantic_ai.models import cached_async_http_client
@@ -155,6 +156,69 @@ class YouSearchResult(TypedDict):
     """An array of authors of the search result."""
 
 
+class _RawContents(BaseModel):
+    html: str | None = None
+    markdown: str | None = None
+
+    def to_contents(self) -> YouSearchContents | None:
+        if not self.html and not self.markdown:
+            return None
+        result: YouSearchContents = {}
+        if self.html:
+            result['html'] = self.html
+        if self.markdown:
+            result['markdown'] = self.markdown
+        return result
+
+
+class _RawResult(BaseModel):
+    """Shared fields present in both web and news results."""
+
+    title: str
+    url: str
+    description: str | None = None
+    thumbnail_url: str | None = None
+    page_age: datetime | None = None
+    contents: _RawContents | None = None
+
+    def to_result(self) -> YouSearchResult:
+        result: dict[str, Any] = {'title': self.title, 'url': self.url}
+        if self.description:
+            result['description'] = self.description
+        if self.thumbnail_url:
+            result['thumbnail_url'] = self.thumbnail_url
+        if self.page_age is not None:
+            result['page_age'] = self.page_age
+        if self.contents is not None:
+            contents = self.contents.to_contents()
+            if contents:
+                result['contents'] = contents
+        return cast(YouSearchResult, result)
+
+
+class _RawWebResult(_RawResult):
+    """Web result with additional fields not present in news results."""
+
+    snippets: list[str] | None = None
+    favicon_url: str | None = None
+    authors: list[str] | None = None
+
+    def to_result(self) -> YouSearchResult:
+        result = super().to_result()
+        if self.snippets:
+            result['snippets'] = self.snippets
+        if self.favicon_url:
+            result['favicon_url'] = self.favicon_url
+        if self.authors:
+            result['authors'] = self.authors
+        return result
+
+
+class _RawSearchResponse(BaseModel):
+    web: list[_RawWebResult] | None = None
+    news: list[_RawResult] | None = None
+
+
 @dataclass
 class YouSearchTool:
     """The You.com search tool."""
@@ -286,62 +350,13 @@ class YouSearchTool:
         return {}
 
     def _parse_results(self, payload: dict[str, Any]) -> list[YouSearchResult]:
-        response_results_any = payload.get('results')
-        if not isinstance(response_results_any, dict):
-            return []
-        response_results = cast(dict[str, Any], response_results_any)
-
+        response = _RawSearchResponse.model_validate(payload.get('results', {}))
         results: list[YouSearchResult] = []
-        results.extend(self._parse_web_results(response_results.get('web')))
-        results.extend(self._parse_news_results(response_results.get('news')))
+        for item in response.web or []:
+            results.append(item.to_result())
+        for item in response.news or []:
+            results.append(item.to_result())
         return results
-
-    def _parse_web_results(self, web_results: Any) -> list[YouSearchResult]:
-        if not isinstance(web_results, list):
-            return []
-        web_results_list = cast(list[object], web_results)
-
-        parsed_results: list[YouSearchResult] = []
-        for result in web_results_list:
-            if not isinstance(result, dict):
-                continue
-            result_dict = cast(dict[str, Any], result)
-            search_result = self._build_result(result_dict)
-            snippets = self._string_list(result_dict.get('snippets'))
-            if snippets:
-                search_result['snippets'] = snippets
-            favicon_url = result_dict.get('favicon_url')
-            if isinstance(favicon_url, str) and favicon_url:
-                search_result['favicon_url'] = favicon_url
-            contents = result_dict.get('contents')
-            if isinstance(contents, dict):
-                built_contents = self._build_contents(cast(dict[str, Any], contents))
-                if built_contents:
-                    search_result['contents'] = built_contents
-            authors = self._string_list(result_dict.get('authors'))
-            if authors:
-                search_result['authors'] = authors
-            parsed_results.append(search_result)
-        return parsed_results
-
-    def _parse_news_results(self, news_results: Any) -> list[YouSearchResult]:
-        if not isinstance(news_results, list):
-            return []
-        news_results_list = cast(list[object], news_results)
-
-        parsed_results: list[YouSearchResult] = []
-        for result in news_results_list:
-            if not isinstance(result, dict):
-                continue
-            result_dict = cast(dict[str, Any], result)
-            search_result = self._build_result(result_dict)
-            contents = result_dict.get('contents')
-            if isinstance(contents, dict):
-                built_contents = self._build_contents(cast(dict[str, Any], contents))
-                if built_contents:
-                    search_result['contents'] = built_contents
-            parsed_results.append(search_result)
-        return parsed_results
 
     @staticmethod
     def _normalize_param(value: object | None) -> str | None:
@@ -350,53 +365,6 @@ class YouSearchTool:
         if isinstance(value, str):
             return value
         return str(value)
-
-    @staticmethod
-    def _parse_datetime(value: str) -> datetime | None:
-        normalized = value.replace('Z', '+00:00')
-        try:
-            return datetime.fromisoformat(normalized)
-        except ValueError:
-            return None
-
-    @staticmethod
-    def _string_list(value: Any) -> list[str]:
-        if not isinstance(value, list):
-            return []
-        return [item for item in cast(list[object], value) if isinstance(item, str)]
-
-    def _build_result(self, result: dict[str, Any]) -> YouSearchResult:
-        """Build a YouSearchResult, including only fields with values."""
-        search_result: dict[str, Any] = {}
-        title = result.get('title')
-        if isinstance(title, str) and title:
-            search_result['title'] = title
-        url = result.get('url')
-        if isinstance(url, str) and url:
-            search_result['url'] = url
-        description = result.get('description')
-        if isinstance(description, str) and description:
-            search_result['description'] = description
-        thumbnail_url = result.get('thumbnail_url')
-        if isinstance(thumbnail_url, str) and thumbnail_url:
-            search_result['thumbnail_url'] = thumbnail_url
-        page_age = result.get('page_age')
-        if isinstance(page_age, str):
-            parsed_page_age = self._parse_datetime(page_age)
-            if parsed_page_age is not None:
-                search_result['page_age'] = parsed_page_age
-        return cast(YouSearchResult, search_result)
-
-    def _build_contents(self, contents: dict[str, Any]) -> YouSearchContents:
-        """Build YouSearchContents, including only fields with values."""
-        result: YouSearchContents = {}
-        html = contents.get('html')
-        if isinstance(html, str) and html:
-            result['html'] = html
-        markdown = contents.get('markdown')
-        if isinstance(markdown, str) and markdown:
-            result['markdown'] = markdown
-        return result
 
 
 def you_search_tool(
