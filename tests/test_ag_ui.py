@@ -42,6 +42,7 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -1616,6 +1617,30 @@ def test_dump_load_roundtrip_cache_point() -> None:
         ModelRequest(
             parts=[
                 UserPromptPart(content=['Hello', CachePoint(), 'world']),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+    expected: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Hello', 'world'])]),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(expected, reloaded)
+
+    assert reloaded == expected
+
+
+def test_dump_load_roundtrip_uploaded_file() -> None:
+    """Test that UploadedFile is filtered out during round-trip (opaque provider file_id)."""
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=['Hello', UploadedFile(file_id='file-abc123', provider_name='anthropic'), 'world']
+                ),
             ]
         ),
         ModelResponse(parts=[TextPart(content='Hi!')]),
