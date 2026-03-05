@@ -589,6 +589,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         `'required'` and `list[str]` exclude output tools, so the agent could never
         produce a final response. These settings are only valid for direct model requests.
+
+        Note: `model_settings` already includes model-level defaults, merged by the agent
+        (in `Agent.run` / `Agent.run_stream`) before the graph is executed.
         """
         if model_settings:
             tool_choice = model_settings.get('tool_choice')
