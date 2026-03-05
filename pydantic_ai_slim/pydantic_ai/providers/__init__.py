@@ -84,13 +84,16 @@ class Provider(ABC, Generic[InterfaceClient]):
     def __del__(self) -> None:
         http_client = self._own_http_client
         if http_client is not None and not http_client.is_closed:
-            warnings.warn(
-                f'{self!r} was garbage collected with an open HTTP client. '
-                'Use the provider (or its model/agent) as an async context manager to ensure proper cleanup. '
-                'See: https://ai.pydantic.dev/models/#http-client-lifecycle',
-                ResourceWarning,
-                stacklevel=1,
-            )
+            try:
+                warnings.warn(
+                    f'{self!r} was garbage collected with an open HTTP client. '
+                    'Use the provider (or its model/agent) as an async context manager to ensure proper cleanup. '
+                    'See: https://ai.pydantic.dev/models/#http-client-lifecycle',
+                    ResourceWarning,
+                    stacklevel=1,
+                )
+            except Exception:
+                pass
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}(name={self.name}, base_url={self.base_url})'  # pragma: lax no cover
