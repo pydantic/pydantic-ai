@@ -1294,15 +1294,19 @@ async def test_dynamic_toolset_args_validator_runs_in_temporal_activity():
     tool = (await toolset.get_tools(ctx))['guarded_weather']
 
     assert (
-        temporal_toolset._unwrap_call_tool_result(
-            await temporal_toolset._call_tool_in_activity('guarded_weather', {'location': 'paris'}, ctx, tool)
+        temporal_toolset._unwrap_call_tool_result(  # pyright: ignore[reportPrivateUsage]
+            await temporal_toolset._call_tool_in_activity(  # pyright: ignore[reportPrivateUsage]
+                'guarded_weather', {'location': 'paris'}, ctx, tool
+            )
         )
         == 'Weather in paris: sunny.'
     )
 
     with pytest.raises(ModelRetry, match='location `a` is blocked by validator'):
-        temporal_toolset._unwrap_call_tool_result(
-            await temporal_toolset._call_tool_in_activity('guarded_weather', {'location': 'a'}, ctx, tool)
+        temporal_toolset._unwrap_call_tool_result(  # pyright: ignore[reportPrivateUsage]
+            await temporal_toolset._call_tool_in_activity(  # pyright: ignore[reportPrivateUsage]
+                'guarded_weather', {'location': 'a'}, ctx, tool
+            )
         )
 
 
@@ -1337,15 +1341,19 @@ async def test_dynamic_toolset_async_args_validator_runs_in_temporal_activity():
     tool = (await toolset.get_tools(ctx))['guarded_weather']
 
     assert (
-        temporal_toolset._unwrap_call_tool_result(
-            await temporal_toolset._call_tool_in_activity('guarded_weather', {'location': 'paris'}, ctx, tool)
+        temporal_toolset._unwrap_call_tool_result(  # pyright: ignore[reportPrivateUsage]
+            await temporal_toolset._call_tool_in_activity(  # pyright: ignore[reportPrivateUsage]
+                'guarded_weather', {'location': 'paris'}, ctx, tool
+            )
         )
         == 'Weather in paris: sunny.'
     )
 
     with pytest.raises(ModelRetry, match='location `a` is blocked by async validator'):
-        temporal_toolset._unwrap_call_tool_result(
-            await temporal_toolset._call_tool_in_activity('guarded_weather', {'location': 'a'}, ctx, tool)
+        temporal_toolset._unwrap_call_tool_result(  # pyright: ignore[reportPrivateUsage]
+            await temporal_toolset._call_tool_in_activity(  # pyright: ignore[reportPrivateUsage]
+                'guarded_weather', {'location': 'a'}, ctx, tool
+            )
         )
 
     assert validator_calls == 2
