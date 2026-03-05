@@ -489,6 +489,11 @@ class GoogleModel(Model):
             (t for t in (model_request_parameters.builtin_tools or []) if isinstance(t, GoogleMapsTool)),
             None,
         )
+        if maps_tool and (maps_tool.latitude is None) != (maps_tool.longitude is None):
+            raise UserError(
+                '`GoogleMapsTool` requires both `latitude` and `longitude` to be set, or neither. '
+                f'Got latitude={maps_tool.latitude!r}, longitude={maps_tool.longitude!r}.'
+            )
         if maps_tool and maps_tool.latitude is not None and maps_tool.longitude is not None:
             retrieval_config = RetrievalConfigDict(
                 lat_lng=LatLngDict(latitude=maps_tool.latitude, longitude=maps_tool.longitude)
@@ -928,6 +933,11 @@ class GeminiStreamedResponse(StreamedResponse):
                 #     yield self._parts_manager.handle_part(
                 #         vendor_part_id=uuid4(), part=web_search_return
                 #     )
+                # Maps grounding metadata has the same ordering issue as web search grounding:
+                # it arrives _after_ the text content, causing out-of-order stream events.
+                # For this reason, maps grounding metadata is intentionally not emitted in
+                # the streaming path. Use agent.run() instead of agent.run_stream() if you
+                # need maps grounding metadata (BuiltinToolCallPart/BuiltinToolReturnPart).
 
                 # URL context metadata (for WebFetchTool) is streamed in the first chunk, before the text,
                 # so we can safely yield it here
