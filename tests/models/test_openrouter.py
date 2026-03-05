@@ -30,13 +30,6 @@ from pydantic_ai import (
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.openrouter import (
-    OpenRouterModel,
-    OpenRouterModelSettings,
-    _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
-    _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
-    _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
-)
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -45,7 +38,13 @@ with try_import() as imports_successful:
     from openai.types.chat import ChatCompletion
     from openai.types.chat.chat_completion import Choice
 
-    from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+    from pydantic_ai.models.openrouter import (
+        OpenRouterModel,
+        OpenRouterModelSettings,
+        _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
+        _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
+        _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
@@ -870,8 +869,6 @@ async def test_openrouter_document_url_no_force_download(
 
 async def test_openrouter_supported_builtin_tools() -> None:
     """Test that OpenRouterModel declares support for WebSearchTool."""
-    from pydantic_ai.builtin_tools import WebSearchTool
-
     supported = OpenRouterModel.supported_builtin_tools()
     assert WebSearchTool in supported
 
@@ -912,7 +909,7 @@ async def test_openrouter_no_web_search_without_tool(openrouter_api_key: str) ->
     assert 'web_search_options' not in extra_body
 
 
-async def test_openrouter_settings_to_openai_settings_no_web_search_options() -> None:
+async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
     """Test _openrouter_settings_to_openai_settings when WebSearchTool is configured."""
     settings = OpenRouterModelSettings()
     model_request_parameters = ModelRequestParameters(
@@ -930,10 +927,7 @@ async def test_openrouter_settings_to_openai_settings_no_web_search_options() ->
 
 async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrouter_api_key: str) -> None:
     """Test prepare_request loop continuation when first tool is not WebSearchTool."""
-    from typing import Any
-    from unittest.mock import Mock, patch
-
-    from pydantic_ai.builtin_tools import WebSearchTool
+    from unittest.mock import Mock
 
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/gpt-4.1', provider=provider)
