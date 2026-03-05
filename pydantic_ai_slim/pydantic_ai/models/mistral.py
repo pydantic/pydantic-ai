@@ -579,10 +579,9 @@ class MistralModel(Model):
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(MistralTextChunk(text=item))
-                elif isinstance(item, TextContent):
-                    content.append(MistralTextChunk(text=item.content))
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append(MistralTextChunk(text=text))
                 elif isinstance(item, ImageUrl):
                     if item.force_download:
                         downloaded = await download_item(item, data_format='base64_uri')

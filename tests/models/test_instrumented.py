@@ -1514,7 +1514,7 @@ def test_messages_to_otel_events_with_text_content():
         [
             {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
             {
-                'content': ['user_prompt', {'kind': 'text', 'content': 'text content', 'metadata': {'key': 'value'}}],
+                'content': ['user_prompt', 'text content'],
                 'role': 'user',
                 'gen_ai.message.index': 0,
                 'event.name': 'gen_ai.user.message',
@@ -1533,7 +1533,7 @@ def test_messages_to_otel_events_with_text_content():
                 'role': 'user',
                 'parts': [
                     {'type': 'text', 'content': 'user_prompt'},
-                    {'type': 'text', 'content': 'text content', 'metadata': {'key': 'value'}},
+                    {'type': 'text', 'content': 'text content'},
                 ],
             },
             {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1'}]},

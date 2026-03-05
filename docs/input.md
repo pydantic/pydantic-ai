@@ -48,6 +48,7 @@ result = agent.run_sync([
 
 Note: The `content` field is treated as input to the model, but the **metadata is not sent to the model** but is
 preserved in the run messages and can be programmatically accessed.
+
 ---
 
 Some LLMs are now capable of understanding audio, video, image and document content.

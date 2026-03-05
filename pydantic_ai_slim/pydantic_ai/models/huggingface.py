@@ -431,10 +431,9 @@ class HuggingFaceModel(Model):
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(ChatCompletionInputMessageChunk(type='text', text=item))  # type: ignore
-                elif isinstance(item, TextContent):
-                    content.append(ChatCompletionInputMessageChunk(type='text', text=item.content))  # type: ignore
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append(ChatCompletionInputMessageChunk(type='text', text=text))  # type: ignore
                 elif isinstance(item, ImageUrl):
                     url = ChatCompletionInputURL(url=item.url)
                     content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))  # type: ignore

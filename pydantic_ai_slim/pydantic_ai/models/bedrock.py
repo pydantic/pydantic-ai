@@ -876,10 +876,9 @@ class BedrockConverseModel(Model):
             content.append({'text': part.content})
         else:
             for item in part.content:
-                if isinstance(item, str):
-                    content.append({'text': item})
-                elif isinstance(item, TextContent):
-                    content.append({'text': item.content})
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append({'text': text})
                 elif isinstance(item, BinaryContent):
                     format = item.format
                     source: DocumentSourceTypeDef = {'bytes': item.data}

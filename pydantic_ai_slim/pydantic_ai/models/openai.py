@@ -1266,10 +1266,9 @@ class OpenAIChatModel(Model):
         | CachePoint,
     ) -> ChatCompletionContentPartParam | None:
         """Map a single content item to a chat completion content part, or None to filter it out."""
-        if isinstance(item, str):
-            return ChatCompletionContentPartTextParam(text=item, type='text')
-        elif isinstance(item, TextContent):
-            return ChatCompletionContentPartTextParam(text=item.content, type='text')
+        if isinstance(item, str | TextContent):
+            text = item if isinstance(item, str) else item.content
+            return ChatCompletionContentPartTextParam(text=text, type='text')
         elif isinstance(item, ImageUrl):
             return await self._map_image_url_item(item)
         elif isinstance(item, BinaryContent):
@@ -2176,10 +2175,9 @@ class OpenAIResponsesModel(Model):
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(responses.ResponseInputTextParam(text=item, type='input_text'))
-                elif isinstance(item, TextContent):
-                    content.append(responses.ResponseInputTextParam(text=item.content, type='input_text'))
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append(responses.ResponseInputTextParam(text=text, type='input_text'))
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         detail: Literal['auto', 'low', 'high'] = 'auto'

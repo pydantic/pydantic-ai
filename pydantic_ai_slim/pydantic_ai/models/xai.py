@@ -430,10 +430,9 @@ class XaiModel(Model):
         content_items: list[chat_types.Content] = []
 
         for item in part.content:
-            if isinstance(item, str):
-                content_items.append(item)
-            elif isinstance(item, TextContent):
-                content_items.append(item.content)
+            if isinstance(item, str | TextContent):
+                text = item if isinstance(item, str) else item.content
+                content_items.append(text)
             elif isinstance(item, ImageUrl):
                 # Get detail from vendor_metadata if available
                 detail: chat_types.ImageDetail = 'auto'

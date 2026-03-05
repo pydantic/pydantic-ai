@@ -959,16 +959,13 @@ class UserPromptPart:
         parts: list[_otel_messages.MessagePart] = []
         content: Sequence[UserContent] = [self.content] if isinstance(self.content, str) else self.content
         for part in content:
-            if isinstance(part, str):
+            if isinstance(part, str | TextContent):
+                content_str = part if isinstance(part, str) else part.content
                 parts.append(
-                    _otel_messages.TextPart(type='text', **({'content': part} if settings.include_content else {}))
+                    _otel_messages.TextPart(
+                        type='text', **({'content': content_str} if settings.include_content else {})
+                    )
                 )
-            elif isinstance(part, TextContent):
-                tp: _otel_messages.TextPart = {'type': 'text'}
-                if settings.include_content:
-                    tp['content'] = part.content
-                    tp['metadata'] = part.metadata
-                parts.append(tp)
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
                 if settings.version >= 4:
                     uri_part = _otel_messages.UriPart(type='uri')
