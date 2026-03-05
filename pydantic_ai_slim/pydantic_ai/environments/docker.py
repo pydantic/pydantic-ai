@@ -249,7 +249,7 @@ class DockerEnvironment(ExecutionEnvironment):
     def __init__(
         self,
         *,
-        image: str = 'python:3.12-slim',
+        image: str,
         env_vars: dict[str, str] | None = None,
         work_dir: str = '/workspace',
         volumes: dict[str, dict[str, str]] | None = None,
@@ -309,7 +309,7 @@ class DockerEnvironment(ExecutionEnvironment):
     def hardened(
         cls,
         *,
-        image: str = 'python:3.12-slim',
+        image: str,
         env_vars: dict[str, str] | None = None,
         work_dir: str = '/workspace',
         memory_limit: str = '512m',

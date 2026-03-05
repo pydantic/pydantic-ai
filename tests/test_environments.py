@@ -26,6 +26,7 @@ from pydantic_ai.environments import (
 from pydantic_ai.environments._base import apply_replace_str
 from pydantic_ai.environments.local import LocalEnvironment, _LocalEnvironmentProcess
 from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.messages import infer_binary_media_type_from_path
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentToolset, _format_lines
 from pydantic_ai.usage import RunUsage
@@ -1032,6 +1033,34 @@ async def test_toolset_image_read(tmp_path: Path):
         assert result.media_type == 'image/png'
 
 
+async def test_toolset_known_binary_path_skips_text_read():
+    """Known binary media types are read as bytes without attempting a text decode first."""
+
+    class TrackingEnv(MemoryEnvironment):
+        async def read_text_file(self, path: str, *, offset: int = 0, limit: int = 2000) -> TextFileReadResult:
+            raise AssertionError(f'read_text_file should not be called for {path}')
+
+    env = TrackingEnv(files={'report.pdf': b'%PDF-1.7\n'})
+    toolset = ExecutionEnvironmentToolset(env)
+    ctx = build_run_context(None)
+    manager = await ToolManager[None](toolset).for_run_step(ctx)
+
+    async with env:
+        result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'report.pdf'}))
+
+    assert isinstance(result, BinaryContent)
+    assert result.media_type == 'application/pdf'
+
+
+def test_infer_binary_media_type_from_path():
+    assert infer_binary_media_type_from_path('img.png') == 'image/png'
+    assert infer_binary_media_type_from_path('clip.mp3') == 'audio/mpeg'
+    assert infer_binary_media_type_from_path('movie.mp4') == 'video/mp4'
+    assert infer_binary_media_type_from_path('report.pdf') == 'application/pdf'
+    assert infer_binary_media_type_from_path('notes.md') is None
+    assert infer_binary_media_type_from_path('table.csv') is None
+
+
 async def test_toolset_read_binary_unknown_type():
     """read_file on a binary file with unrecognized extension returns a placeholder message."""
     # Use an extension that mimetypes won't recognize, so guess_type returns None
@@ -1286,7 +1315,7 @@ class TestDocker:
     async def test_docker_container_property(self, mock_docker_sandbox: Any) -> None:
         """DockerEnvironment._required_container raises when not started."""
 
-        sandbox = DockerEnvironment()
+        sandbox = DockerEnvironment(image='python:3.12-slim')
         with pytest.raises(RuntimeError, match='not started'):
             _ = sandbox._required_container
 
@@ -1305,7 +1334,7 @@ class TestDocker:
     ) -> None:
         """DockerEnvironment.is_alive returns False when not started."""
 
-        sandbox = DockerEnvironment()
+        sandbox = DockerEnvironment(image='python:3.12-slim')
         result = await sandbox.is_alive()
         assert result is False
 
@@ -1910,7 +1939,7 @@ class TestDocker:
     ) -> None:
         """DockerEnvironment._teardown handles exceptions gracefully."""
 
-        sandbox = DockerEnvironment()
+        sandbox = DockerEnvironment(image='python:3.12-slim')
         mock_container = MagicMock()
         mock_container.stop.side_effect = DockerException('stop failed')
         mock_container.remove.side_effect = DockerException('remove failed')

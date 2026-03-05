@@ -25,9 +25,6 @@ class MemoryEnvironment(ExecutionEnvironment):
     File operations use an in-memory dictionary, making tests fast and
     isolated with no filesystem access. Shell commands can optionally be
     handled by a user-provided callback.
-
-    This is the testing counterpart to `LocalEnvironment`, analogous to
-    how `TestModel` and `FunctionModel` relate to real model classes.
     """
 
     def __init__(

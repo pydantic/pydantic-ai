@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import mimetypes as _mime_types
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AsyncExitStack, contextmanager
 from contextvars import ContextVar, Token
@@ -18,7 +17,7 @@ from ..environments._base import (
     TextFileReadResult,
 )
 from ..exceptions import ModelRetry
-from ..messages import BinaryContent
+from ..messages import BinaryContent, infer_binary_media_type_from_path
 from ..toolsets.function import FunctionToolset
 
 if TYPE_CHECKING:
@@ -187,8 +186,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         async def read_file(path: str, offset: int = 0, limit: int = 2000) -> Any:
             """Read a file from the filesystem.
 
-            Returns text files with line numbers, or renders image files for visual inspection.
-            Use offset and limit to read specific sections of large files.
+            Returns text files with line numbers, or supported binary files as `BinaryContent`.
+            Use offset and limit to read specific sections of large text files.
 
             Args:
                 path: The file path to read.
@@ -196,20 +195,20 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                 limit: Maximum number of lines to read.
             """
             try:
-                try:
-                    text_result = await self.required_environment.read_text_file(path, offset=offset, limit=limit)
-                except UnicodeDecodeError:
+                binary_media_type = infer_binary_media_type_from_path(path)
+                if binary_media_type is not None:
                     raw = await self.required_environment.read_file(path)
-
-                    media_type, _ = _mime_types.guess_type(path)
-                    if media_type is None:
-                        return f'[Binary file: {path} — cannot display as text]'
                     if len(raw) > self._max_binary_content_bytes:
                         return (
                             f'Error: Binary content too large ({len(raw)} bytes, '
                             f'max {self._max_binary_content_bytes} bytes).'
                         )
-                    return BinaryContent(data=raw, media_type=media_type)
+                    return BinaryContent(data=raw, media_type=binary_media_type)
+
+                try:
+                    text_result = await self.required_environment.read_text_file(path, offset=offset, limit=limit)
+                except UnicodeDecodeError:
+                    return f'[Binary file: {path} — cannot display as text]'
 
                 content = _format_lines(text_result)
                 if len(content) > self._max_output_chars:

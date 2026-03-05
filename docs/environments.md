@@ -74,6 +74,8 @@ File operations (read, write, edit) are confined to the root directory — path 
 
 Requires the `docker` package: `pip install pydantic-ai-slim[docker]`
 
+You must provide the image explicitly. The base constructor is intentionally flexible rather than hardened by default; for untrusted code, start with [`DockerEnvironment.hardened(...)`][pydantic_ai.environments.docker.DockerEnvironment.hardened] or configure the security options yourself.
+
 ```python {title="environments_docker.py"}
 from pydantic_ai.environments.docker import DockerEnvironment
 
@@ -163,7 +165,7 @@ env = DockerEnvironment.hardened(
 | Tool | Description |
 |---|---|
 | `shell` | Execute shell commands |
-| `read_file` | Read files with line numbers (renders images for multimodal models) |
+| `read_file` | Read text files with line numbers, or return supported binary files for multimodal models |
 | `write_file` | Create or overwrite files |
 | `replace_str` | Edit files by exact string replacement |
 
@@ -259,7 +261,7 @@ async def main():
             await agent.run('echo "running locally"')
 
     # Override: Docker environment for untrusted input
-    async with DockerEnvironment() as docker_env:
+    async with DockerEnvironment(image='python:3.12-slim') as docker_env:
         with toolset.use_environment(docker_env):
             await agent.run('echo "running in Docker"')
 ```
