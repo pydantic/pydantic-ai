@@ -5,6 +5,7 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
@@ -304,4 +305,11 @@ def _is_call_ctx(annotation: Any) -> bool:
 
 def _is_call_history_processor_ctx(annotation: Any) -> bool:
     """Return whether the annotation is the `HistoryProcessorContext` class, parameterized or not."""
+    if _is_call_ctx(annotation):
+        warnings.warn(
+            'RunContext is deprecated for history processors, use HistoryProcessorContext instead',
+            DeprecationWarning,
+        )
+        return True
+
     return annotation is HistoryProcessorContext or get_origin(annotation) is HistoryProcessorContext
