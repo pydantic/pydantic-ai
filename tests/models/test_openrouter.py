@@ -981,7 +981,11 @@ def test_openrouter_normalize_null_metadata_fallbacks() -> None:
 
 
 def test_openrouter_provider_details_null_provider() -> None:
-    """_map_openrouter_provider_details skips downstream_provider when provider is None."""
+    """When provider is None, _normalize_openrouter_response fills it with 'unknown'.
+
+    The normalizer always sets a string provider fallback so Pydantic validation passes.
+    _map_openrouter_provider_details then records downstream_provider='unknown'.
+    """
     from openai.types.chat import ChatCompletion
 
     from pydantic_ai.models.openrouter import OpenRouterModel
@@ -1008,7 +1012,10 @@ def test_openrouter_provider_details_null_provider() -> None:
     )
 
     model_response = model._process_response(completion)  # type: ignore[reportPrivateUsage]
-    assert model_response.provider_details is None or 'downstream_provider' not in (model_response.provider_details or {})
+    # The normalizer fills provider=None with the 'unknown' sentinel, so
+    # downstream_provider will be 'unknown' rather than absent.
+    details = model_response.provider_details or {}
+    assert details.get('downstream_provider') == 'unknown'
 
 
 def test_openrouter_validate_completion_malformed_error_fallthrough() -> None:
@@ -1035,3 +1042,34 @@ def test_openrouter_validate_completion_malformed_error_fallthrough() -> None:
 
     with pytest.raises(Exception):
         model._process_response(completion)  # type: ignore[reportPrivateUsage]
+
+
+def test_openrouter_map_provider_details_null_provider_skips_key() -> None:
+    """_map_openrouter_provider_details omits downstream_provider when provider is None.
+
+    This covers the if response.provider is not None: false branch (line 489→491).
+    """
+    from pydantic_ai.models.openrouter import _OpenRouterChatCompletion  # type: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openrouter import _map_openrouter_provider_details  # type: ignore[reportPrivateUsage]
+
+    # Build a minimal _OpenRouterChatCompletion with provider=None
+    resp = _OpenRouterChatCompletion.model_construct(
+        id='gen-direct',
+        choices=[
+            {
+                'index': 0,
+                'message': {'role': 'assistant', 'content': 'Hi'},
+                'finish_reason': 'stop',
+                'native_finish_reason': None,
+                'logprobs': None,
+            }
+        ],
+        model='openai/gpt-4.1-mini',
+        object='chat.completion',
+        provider=None,
+        created=1234567890,
+        usage=None,
+    )
+
+    details = _map_openrouter_provider_details(resp)
+    assert 'downstream_provider' not in details
