@@ -1145,21 +1145,21 @@ async def test_function_toolset_instructions_none_filtered():
 
 
 async def test_function_toolset_empty_string_instructions():
-    """Empty string instructions are included as-is in the list."""
+    """Empty string instructions are filtered out, returning None."""
     toolset = FunctionToolset(instructions='')
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == ['']
+    assert result is None
 
 
 async def test_function_toolset_whitespace_only_instructions():
-    """Whitespace-only instructions are included as-is in the list."""
+    """Whitespace-only instructions are filtered out, returning None."""
     toolset = FunctionToolset(instructions='   \n\n  ')
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == ['   \n\n  ']
+    assert result is None
 
 
 async def test_wrapper_toolset_passes_through_instructions():

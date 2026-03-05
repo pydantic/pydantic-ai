@@ -404,10 +404,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         parts: list[str] = []
         for func in self._instructions:
             if isinstance(func, str):
-                parts.append(func)
+                if func.strip():
+                    parts.append(func)
             else:
                 result = await func.run(ctx)
-                if result:
+                if result and result.strip():
                     parts.append(result)
         return parts or None
 
