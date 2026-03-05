@@ -360,10 +360,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     """
 
     include_instructions: bool
-    """Whether to include the server's instructions in the agent's system prompt.
-
-    When enabled, the instructions sent by the MCP server during initialization
-    will be automatically injected into the agent's system prompt via `instructions()`.
+    """Whether to include the server's instructions in the agent's instructions.
 
     Defaults to `False` for backward compatibility.
     """
@@ -490,7 +487,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             )
         return self._instructions
 
-    async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
+    async def get_instructions(self, ctx: RunContext[Any]) -> str | list[str] | None:
         """Return instructions to inject into the agent's system prompt.
 
         If [`include_instructions`][pydantic_ai.mcp.MCPServer.include_instructions] is ``True``, returns
@@ -1111,7 +1108,7 @@ class _MCPServerHTTP(MCPServer):
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
                 See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
-            include_instructions: Whether to include the server's instructions in the agent's system prompt.
+            include_instructions: Whether to include the server's instructions in the agent's instructions.
                 See [`MCPServer.include_instructions`][pydantic_ai.mcp.MCPServer.include_instructions].
             client_info: Information describing the MCP client implementation.
         """

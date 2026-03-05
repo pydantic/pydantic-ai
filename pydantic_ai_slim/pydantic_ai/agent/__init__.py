@@ -1523,14 +1523,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         additional_instructions: Instructions[AgentDepsT] = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
-        """Prepare instructions from agent configuration.
+        """Prepare agent-level instructions, splitting them into literal strings and functions.
 
-        This method extracts and organizes instructions from the agent's configuration.
-        Note that this only handles agent-level instructions; toolset instructions are
-        collected separately during run execution and combined with these instructions.
-
-        See the `get_instructions` function in `Agent.iter()` for how toolset instructions
-        are collected from all leaf toolsets and combined into the final system prompt.
+        Toolset instructions are collected separately during run execution.
 
         Args:
             additional_instructions: Additional instructions to include for this run.

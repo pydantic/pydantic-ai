@@ -108,15 +108,15 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self.requires_approval = requires_approval
         self.metadata = metadata
 
-        self._instructions_funcs: list[str | SystemPromptRunner[AgentDepsT]] = []
+        self._instructions: list[str | SystemPromptRunner[AgentDepsT]] = []
         if instructions is not None:
             if isinstance(instructions, str) or callable(instructions):
                 instructions = [instructions]
             for instruction in instructions:
                 if isinstance(instruction, str):
-                    self._instructions_funcs.append(instruction)
+                    self._instructions.append(instruction)
                 else:
-                    self._instructions_funcs.append(SystemPromptRunner(instruction))
+                    self._instructions.append(SystemPromptRunner(instruction))
 
         self.tools = {}
         for tool in tools:
@@ -289,7 +289,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         Args:
             func: The instructions function to register.
         """
-        self._instructions_funcs.append(SystemPromptRunner(func))
+        self._instructions.append(SystemPromptRunner(func))
         return func
 
     def add_function(
@@ -398,18 +398,18 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool
 
-    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
-        if not self._instructions_funcs:
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[str] | None:
+        if not self._instructions:
             return None
         parts: list[str] = []
-        for func in self._instructions_funcs:
+        for func in self._instructions:
             if isinstance(func, str):
                 parts.append(func)
             else:
                 result = await func.run(ctx)
                 if result:
                     parts.append(result)
-        return '\n\n'.join(parts).strip() or None
+        return parts or None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}

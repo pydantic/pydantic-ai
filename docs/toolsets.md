@@ -241,8 +241,6 @@ Use calendar tools for scheduling.
 
 _(This example is complete, it can be run "as is")_
 
-Custom toolsets that extend [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] can also provide instructions by overriding the [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] method. Wrapper toolsets (like [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset]) automatically pass through instructions from the wrapped toolset.
-
 ## Toolset Composition
 
 Toolsets can be composed to dynamically filter which tools are available, modify tool definitions, or change tool execution behavior. Multiple toolsets can also be combined into one.
@@ -786,7 +784,7 @@ _(This example is complete, it can be run "as is")_
 
 To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] and implement the [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] and [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] methods.
 
-You can also override the [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] method to provide instructions that will be injected into the agent's system prompt. This is useful for helping the model understand how to effectively use your toolset's tools.
+You can also override the [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] method to provide instructions that will be injected into the agent's instructions. This is useful for helping the model understand how to effectively use your toolset's tools.
 
 If you want to reuse a network connection or session across tool listings and calls during an agent run, you can implement [`__aenter__()`][pydantic_ai.toolsets.AbstractToolset.__aenter__] and [`__aexit__()`][pydantic_ai.toolsets.AbstractToolset.__aexit__].
 

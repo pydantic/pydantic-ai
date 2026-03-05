@@ -1040,7 +1040,7 @@ async def test_function_toolset_get_instructions_string():
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == 'Always use tool X for math.'
+    assert result == ['Always use tool X for math.']
 
 
 async def test_function_toolset_get_instructions_function():
@@ -1049,7 +1049,7 @@ async def test_function_toolset_get_instructions_function():
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == 'Use search for lookups.'
+    assert result == ['Use search for lookups.']
 
 
 async def test_function_toolset_get_instructions_with_ctx():
@@ -1062,7 +1062,7 @@ async def test_function_toolset_get_instructions_with_ctx():
 
     ctx = build_run_context('hello')
     result = await toolset.get_instructions(ctx)
-    assert result == 'Deps are: hello'
+    assert result == ['Deps are: hello']
 
 
 async def test_function_toolset_get_instructions_async():
@@ -1075,16 +1075,16 @@ async def test_function_toolset_get_instructions_async():
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == 'Async instructions here.'
+    assert result == ['Async instructions here.']
 
 
 async def test_function_toolset_get_instructions_multiple():
-    """FunctionToolset with a sequence of instructions joins them."""
+    """FunctionToolset with a sequence of instructions returns them as a list."""
     toolset = FunctionToolset(instructions=['First instruction.', lambda: 'Second instruction.'])
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == 'First instruction.\n\nSecond instruction.'
+    assert result == ['First instruction.', 'Second instruction.']
 
 
 async def test_function_toolset_get_instructions_none_default():
@@ -1320,3 +1320,30 @@ async def test_multiple_toolset_instructions_in_agent():
     result = await agent.run('Hello')
     first_message = result.all_messages()[0]
     assert first_message.instructions == 'Use calculator for math.\n\nUse search for lookups.'  # type: ignore[union-attr]
+
+
+async def test_toolset_instructions_alone_satisfy_validation():
+    """Toolset instructions alone (no user prompt, no agent instructions, no history) are sufficient to run."""
+    from pydantic_ai import Agent
+
+    toolset = FunctionToolset(instructions='Always use my_tool correctly.')
+
+    @toolset.tool
+    def my_tool() -> str:
+        """A simple tool."""
+        return 'done'
+
+    agent = Agent(TestModel(), toolsets=[toolset])
+    result = await agent.run()
+    first_message = result.all_messages()[0]
+    assert first_message.instructions == 'Always use my_tool correctly.'  # type: ignore[union-attr]
+    assert first_message.parts == []  # type: ignore[union-attr]
+
+
+async def test_no_input_raises_without_toolset_instructions():
+    """Without any prompt, instructions, or history, the agent raises UserError."""
+    from pydantic_ai import Agent
+
+    agent = Agent(TestModel())
+    with pytest.raises(UserError, match='No message history, user prompt, or instructions provided'):
+        await agent.run()
