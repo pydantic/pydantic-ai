@@ -1166,7 +1166,7 @@ class CompactionPart:
     """The name of the provider that generated the compaction.
 
     Compaction data is only sent back to the same provider.
-    Required to be set when `provider_details`, `id` or `signature` is set.
+    Required to be set when `provider_details` or `id` is set.
     """
 
     provider_details: dict[str, Any] | None = None
