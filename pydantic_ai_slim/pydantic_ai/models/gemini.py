@@ -43,6 +43,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -399,6 +400,10 @@ class GeminiModel(Model):
                     else:  # pragma: lax no cover
                         file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         content.append(file_data)
+                elif isinstance(item, UploadedFile):  # pragma: no cover
+                    raise NotImplementedError(
+                        'UploadedFile is not supported by GeminiModel. Use GoogleModel with the Files API instead.'
+                    )
                 elif isinstance(item, CachePoint):
                     # Gemini doesn't support inline CachePoint markers. Google's caching requires
                     # pre-creating cache objects via the API, then referencing them by name using

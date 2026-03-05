@@ -69,6 +69,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    UploadedFile,
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -4808,6 +4809,91 @@ async def test_cache_point_filtering():
     assert content[1] == {'text': 'text after'}
 
 
+async def test_uploaded_file_mapping():
+    """Test that UploadedFile is correctly mapped to file_data in Google model."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/abc123'
+    content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(content=['Analyze this file', UploadedFile(file_id=file_uri, provider_name='google-gla')])
+    )
+
+    assert len(content) == 2
+    assert content[0] == {'text': 'Analyze this file'}
+    assert content[1] == {'file_data': {'file_uri': file_uri, 'mime_type': 'application/octet-stream'}}
+
+
+async def test_uploaded_file_mapping_with_media_type():
+    """Test that UploadedFile with media_type is correctly mapped."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/xyz789'
+    content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(
+            content=[UploadedFile(file_id=file_uri, provider_name='google-gla', media_type='application/pdf')]
+        )
+    )
+
+    assert len(content) == 1
+    assert content[0] == {'file_data': {'file_uri': file_uri, 'mime_type': 'application/pdf'}}
+
+
+async def test_uploaded_file_wrong_provider(allow_model_requests: None):
+    """Test that UploadedFile with wrong provider raises an error in GoogleModel."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with GoogleModel"):
+        await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
+
+
+async def test_uploaded_file_invalid_file_id(allow_model_requests: None):
+    """Test that UploadedFile with a non-URI file_id raises an error in GoogleModel."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='must use a file URI from the Google Files API'):
+        await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='google-gla')])
+
+
+async def test_uploaded_file_with_vendor_metadata():
+    """Test that UploadedFile with vendor_metadata includes video_metadata."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/video123'
+    content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(
+            content=[
+                UploadedFile(
+                    file_id=file_uri,
+                    provider_name='google-gla',
+                    media_type='video/mp4',
+                    vendor_metadata={'start_offset': '10s', 'end_offset': '30s'},
+                )
+            ]
+        )
+    )
+
+    assert len(content) == 1
+    assert content[0] == {
+        'file_data': {'file_uri': file_uri, 'mime_type': 'video/mp4'},
+        'video_metadata': {'start_offset': '10s', 'end_offset': '30s'},
+    }
+
+
+async def test_youtube_video_url_without_vendor_metadata():
+    """Test that YouTube VideoUrl without vendor_metadata doesn't include video_metadata."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    video = VideoUrl(url='https://youtu.be/dQw4w9WgXcQ', media_type='video/mp4')  # No vendor_metadata
+    content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
+
+    assert len(content) == 1
+    # Should NOT have 'video_metadata' key when vendor_metadata is None
+    assert 'video_metadata' not in content[0]
+    assert content[0] == {'file_data': {'file_uri': 'https://youtu.be/dQw4w9WgXcQ', 'mime_type': 'video/mp4'}}
+
+
 # =============================================================================
 # GCS VideoUrl tests for google-vertex
 #
@@ -5100,6 +5186,133 @@ async def test_google_api_non_http_error(
         await agent.run('This prompt will trigger the mocked error.')
 
     assert exc_info.value.model_name == 'gemini-1.5-flash'
+
+
+@pytest.mark.parametrize(
+    'error_class,error_response,expected_status',
+    [
+        (
+            errors.ServerError,
+            {'error': {'code': 503, 'message': 'The service is currently unavailable.', 'status': 'UNAVAILABLE'}},
+            503,
+        ),
+        (
+            errors.ClientError,
+            {'error': {'code': 429, 'message': 'Rate limit exceeded', 'status': 'RESOURCE_EXHAUSTED'}},
+            429,
+        ),
+    ],
+)
+async def test_google_stream_api_errors_are_wrapped(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+    error_class: Any,
+    error_response: dict[str, Any],
+    expected_status: int,
+):
+    """Errors raised during stream iteration should be wrapped as ModelHTTPError, not bubble up raw."""
+    model_name = 'gemini-1.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    first_chunk = mocker.Mock(
+        candidates=[
+            mocker.Mock(
+                content=mocker.Mock(
+                    parts=[
+                        mocker.Mock(
+                            text='partial',
+                            thought=False,
+                            thought_signature=None,
+                            function_call=None,
+                            inline_data=None,
+                            executable_code=None,
+                            code_execution_result=None,
+                            function_response=None,
+                        )
+                    ]
+                ),
+                finish_reason=None,
+                safety_ratings=None,
+                grounding_metadata=None,
+                url_context_metadata=None,
+            )
+        ],
+        model_version=model_name,
+        usage_metadata=None,
+        create_time=datetime.datetime.now(),
+        response_id='resp_1',
+    )
+
+    async def failing_stream():
+        yield first_chunk
+        raise error_class(expected_status, error_response)
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=failing_stream())
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with agent.run_stream('test') as stream:
+            async for _text in stream.stream_text():
+                pass
+
+    assert exc_info.value.status_code == expected_status
+    assert error_response['error']['message'] in str(exc_info.value.body)
+
+
+async def test_google_stream_api_non_http_error_is_wrapped(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+):
+    """Non-HTTP API errors during stream iteration should be wrapped as ModelAPIError."""
+    model_name = 'gemini-1.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    first_chunk = mocker.Mock(
+        candidates=[
+            mocker.Mock(
+                content=mocker.Mock(
+                    parts=[
+                        mocker.Mock(
+                            text='partial',
+                            thought=False,
+                            thought_signature=None,
+                            function_call=None,
+                            inline_data=None,
+                            executable_code=None,
+                            code_execution_result=None,
+                            function_response=None,
+                        )
+                    ]
+                ),
+                finish_reason=None,
+                safety_ratings=None,
+                grounding_metadata=None,
+                url_context_metadata=None,
+            )
+        ],
+        model_version=model_name,
+        usage_metadata=None,
+        create_time=datetime.datetime.now(),
+        response_id='resp_1',
+    )
+
+    async def failing_stream():
+        yield first_chunk
+        raise errors.APIError(302, {'error': {'code': 302, 'message': 'Redirect', 'status': 'REDIRECT'}})
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=failing_stream())
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with agent.run_stream('test') as stream:
+            async for _text in stream.stream_text():
+                pass
+
+    assert exc_info.value.model_name == model_name
 
 
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
