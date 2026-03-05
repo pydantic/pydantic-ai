@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+import inspect
 from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Discriminator, with_config
@@ -128,7 +129,15 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
         but `execute_activity` would have turned them into simple Python types again, so we need to re-validate them.
         """
         args_dict = tool.args_validator.validate_python(tool_args)
-        return await self._wrap_call_tool_result(self.wrapped.call_tool(name, args_dict, ctx, tool))
+
+        async def validate_and_call_tool() -> Any:
+            if tool.args_validator_func is not None:
+                maybe_awaitable = tool.args_validator_func(ctx, **args_dict)
+                if inspect.isawaitable(maybe_awaitable):
+                    await maybe_awaitable
+            return await self.wrapped.call_tool(name, args_dict, ctx, tool)
+
+        return await self._wrap_call_tool_result(validate_and_call_tool())
 
 
 def temporalize_toolset(
