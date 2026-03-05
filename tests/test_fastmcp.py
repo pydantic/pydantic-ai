@@ -624,20 +624,20 @@ class TestAudienceFiltering:
 
     def test_include_for_assistant_audience_includes_assistant(self) -> None:
         """Audience includes 'assistant' — include."""
-        from mcp.types import Annotations, Role
+        from mcp.types import Annotations
 
         from pydantic_ai.toolsets.fastmcp import _include_for_assistant  # type: ignore[reportPrivateUsage]
 
-        part = TextContent(type='text', text='hello', annotations=Annotations(audience=[Role.assistant]))
+        part = TextContent(type='text', text='hello', annotations=Annotations(audience=['assistant']))
         assert _include_for_assistant(part) is True
 
     def test_include_for_assistant_audience_excludes_assistant(self) -> None:
         """Audience is user-only — exclude."""
-        from mcp.types import Annotations, Role
+        from mcp.types import Annotations
 
         from pydantic_ai.toolsets.fastmcp import _include_for_assistant  # type: ignore[reportPrivateUsage]
 
-        part = TextContent(type='text', text='hello', annotations=Annotations(audience=[Role.user]))
+        part = TextContent(type='text', text='hello', annotations=Annotations(audience=['user']))
         assert _include_for_assistant(part) is False
 
     def test_map_fastmcp_tool_results_empty_returns_placeholder(self) -> None:
@@ -647,10 +647,10 @@ class TestAudienceFiltering:
         result = _map_fastmcp_tool_results([])
         assert result == 'Tool executed successfully. (No model-visible content in result.)'
 
-    async def test_call_tool_empty_content_returns_empty_list(
+    async def test_call_tool_empty_content_returns_structured_content(
         self, run_context: RunContext[None]
     ) -> None:
-        """A tool that returns empty content (not audience-filtered) returns []."""
+        """A tool that returns an empty list gets wrapped in structured_content by FastMCP."""
         fastmcp_server = FastMCP('test_server')
 
         @fastmcp_server.tool()
@@ -663,4 +663,6 @@ class TestAudienceFiltering:
             result = await toolset.call_tool(
                 name='empty_tool', tool_args={}, ctx=run_context, tool=tools['empty_tool']
             )
-            assert result == []
+            # FastMCP wraps the return value as structured_content; an empty list
+            # becomes {'result': []} so the model knows the tool ran successfully.
+            assert result == {'result': []}

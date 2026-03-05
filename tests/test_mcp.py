@@ -2505,19 +2505,39 @@ def test_include_content_for_assistant_mixed_audience():
     assert _include_content_for_assistant(part) is True
 
 
-def test_mcp_map_result_audience_filtered_returns_placeholder():
-    """When all content blocks are audience-filtered, _map_mcp_result returns the placeholder."""
+def test_mcp_audience_filtered_placeholder_via_include_helper():
+    """_include_content_for_assistant returns False for user-only blocks, covering the placeholder path."""
+    from mcp.types import Annotations, TextContent
+
+    from pydantic_ai.mcp import _include_content_for_assistant  # type: ignore[reportPrivateUsage]
+
+    # user-only block must be excluded
+    user_block = TextContent(type='text', text='for user only', annotations=Annotations(audience=['user']))
+    assert _include_content_for_assistant(user_block) is False
+
+    # assistant block must be included
+    assistant_block = TextContent(
+        type='text', text='for assistant', annotations=Annotations(audience=['assistant'])
+    )
+    assert _include_content_for_assistant(assistant_block) is True
+
+
+async def test_mcp_direct_call_tool_audience_filtered_returns_placeholder(mcp_server: MCPServerStdio) -> None:
+    """When all content is user-only, direct_call_tool returns the audience-filtered placeholder."""
+    from unittest.mock import AsyncMock, patch
+
     from mcp.types import Annotations, CallToolResult, TextContent
 
-    from pydantic_ai.mcp import MCPServerStdio
-
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-
-    # Simulate a CallToolResult where the only content block is user-only
-    result = CallToolResult(
+    user_only_result = CallToolResult(
         content=[TextContent(type='text', text='for user only', annotations=Annotations(audience=['user']))],
         isError=False,
     )
 
-    mapped = server._map_mcp_result(result)  # type: ignore[reportPrivateUsage]
-    assert mapped == 'Tool executed successfully. (No model-visible content in result.)'
+    async with mcp_server:
+        with patch.object(
+            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            'call_tool',
+            new=AsyncMock(return_value=user_only_result),
+        ):
+            result = await mcp_server.direct_call_tool('any_tool', {})
+            assert result == 'Tool executed successfully. (No model-visible content in result.)'
