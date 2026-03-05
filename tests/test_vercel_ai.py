@@ -4320,7 +4320,7 @@ async def test_adapter_dump_messages_with_invalid_json_args():
                         'tool_call_id': 'call_1',
                         'state': 'input-available',
                         'provider_executed': False,
-                        'input': '{invalid json',
+                        'input': {'INVALID_JSON': '{invalid json'},
                         'call_provider_metadata': None,
                         'approval': None,
                     }
