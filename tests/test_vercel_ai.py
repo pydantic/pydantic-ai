@@ -3216,7 +3216,7 @@ async def test_adapter_load_messages():
                         content="Can't do that",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
                         timestamp=IsDatetime(),
-                        outcome='error',
+                        outcome='failed',
                     )
                 ]
             ),
@@ -3247,7 +3247,7 @@ async def test_adapter_load_messages():
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2z',
                         timestamp=IsDatetime(),
                         provider_name='openai',
-                        outcome='error',
+                        outcome='failed',
                     ),
                     TextPart(
                         content='Here are the Table of Contents for both repositories:... Both products are designed to work together - Pydantic AI for building AI agents and Logfire for observing and monitoring them in production.'
@@ -3985,7 +3985,7 @@ Fix the errors and try again.\
         ]
     )
 
-    # Verify roundtrip — load_messages now produces ToolReturnPart(outcome='error')
+    # Verify roundtrip — load_messages now produces ToolReturnPart(outcome='failed')
     # instead of RetryPromptPart for tool errors from the Vercel AI format
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
     tool_error_part = reloaded_messages[2].parts[0]
@@ -3996,7 +3996,7 @@ Fix the errors and try again.\
             content='Tool failed with error\n\nFix the errors and try again.',
             tool_call_id='tool_789',
             timestamp=IsDatetime(),
-            outcome='error',
+            outcome='failed',
         )
     )
 
@@ -5239,7 +5239,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                     tool_call_id='bt_err_123',
                     provider_name='openai',
                     provider_details={'error_code': 'RATE_LIMIT'},
-                    outcome='error',
+                    outcome='failed',
                 ),
             ]
         ),
@@ -5408,7 +5408,7 @@ async def test_adapter_load_messages_builtin_tool_error_with_provider_details():
                         timestamp=IsDatetime(),
                         provider_name='openai',
                         provider_details={'error_code': 'RATE_LIMIT'},
-                        outcome='error',
+                        outcome='failed',
                     ),
                 ],
                 timestamp=IsDatetime(),
@@ -5546,11 +5546,11 @@ Fix the errors and try again.\
         ]
     )
 
-    # Verify roundtrip — load_messages now produces ToolReturnPart(outcome='error')
+    # Verify roundtrip — load_messages now produces ToolReturnPart(outcome='failed')
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
     tool_error_part = reloaded_messages[2].parts[0]
     assert isinstance(tool_error_part, ToolReturnPart)
-    assert tool_error_part.outcome == 'error'
+    assert tool_error_part.outcome == 'failed'
     assert tool_error_part.content == 'Tool execution failed\n\nFix the errors and try again.'
 
 
@@ -6021,7 +6021,7 @@ async def test_event_stream_builtin_tool_return_error():
                 tool_name='web_search',
                 tool_call_id='tc_err',
                 content='Search failed',
-                outcome='error',
+                outcome='failed',
             ),
         )
 
@@ -6058,7 +6058,7 @@ async def test_event_stream_builtin_tool_return_error():
 
 
 async def test_adapter_dump_messages_tool_return_error():
-    """Test that ToolReturnPart(outcome='error') dumps as ToolOutputErrorPart."""
+    """Test that ToolReturnPart(outcome='failed') dumps as ToolOutputErrorPart."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Do something')]),
         ModelResponse(
@@ -6072,7 +6072,7 @@ async def test_adapter_dump_messages_tool_return_error():
                     tool_name='my_tool',
                     content='Something went wrong',
                     tool_call_id='tc_err',
-                    outcome='error',
+                    outcome='failed',
                 ),
             ]
         ),
@@ -6100,7 +6100,7 @@ async def test_adapter_dump_messages_tool_return_error():
     reloaded = VercelAIAdapter.load_messages(ui_messages)
     error_part = reloaded[2].parts[0]
     assert isinstance(error_part, ToolReturnPart)
-    assert error_part.outcome == 'error'
+    assert error_part.outcome == 'failed'
     assert error_part.content == 'Something went wrong'
 
 
@@ -6144,7 +6144,7 @@ async def test_adapter_dump_messages_builtin_tool_error_backward_compat():
 
 
 async def test_event_stream_function_tool_return_error():
-    """Test that ToolOutputErrorChunk is emitted for ToolReturnPart(outcome='error')."""
+    """Test that ToolOutputErrorChunk is emitted for ToolReturnPart(outcome='failed')."""
 
     async def event_generator():
         yield FunctionToolResultEvent(
@@ -6152,7 +6152,7 @@ async def test_event_stream_function_tool_return_error():
                 tool_name='my_tool',
                 content='Something went wrong',
                 tool_call_id='tc_err',
-                outcome='error',
+                outcome='failed',
             ),
         )
 

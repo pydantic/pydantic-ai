@@ -366,7 +366,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             if has_tool_output:
                                 if isinstance(part, ToolOutputErrorPart):
                                     output: Any = part.error_text
-                                    outcome: Literal['success', 'error', 'denied'] = 'error'
+                                    outcome: Literal['success', 'failed', 'denied'] = 'failed'
                                 elif isinstance(part, ToolOutputDeniedPart):
                                     output = _denial_reason(part)
                                     outcome = 'denied'
@@ -405,7 +405,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
                                         content=part.error_text,
-                                        outcome='error',
+                                        outcome='failed',
                                     )
                                 )
                             elif part.state == 'output-denied':
@@ -559,7 +559,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
                     elif (
-                        builtin_return.outcome == 'error'
+                        builtin_return.outcome == 'failed'
                         or builtin_return.model_response_object().get('is_error') is True
                     ):
                         response_obj = builtin_return.model_response_object()
@@ -633,7 +633,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         ),
                     )
                 )
-            elif tool_result.outcome == 'error':
+            elif tool_result.outcome == 'failed':
                 ui_parts.append(
                     ToolOutputErrorPart(
                         type=tool_type,
@@ -784,7 +784,7 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
     """Extract the denial reason from a tool part's approval, or return a default message."""
     if isinstance(part.approval, ToolApprovalResponded) and part.approval.reason:
         return part.approval.reason
-    return 'Tool call was denied.'
+    return ToolDenied().message
 
 
 def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:
