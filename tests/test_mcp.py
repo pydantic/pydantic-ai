@@ -2503,3 +2503,21 @@ def test_include_content_for_assistant_mixed_audience():
 
     part = TextContent(type='text', text='for all', annotations=Annotations(audience=['user', 'assistant']))
     assert _include_content_for_assistant(part) is True
+
+
+def test_mcp_map_result_audience_filtered_returns_placeholder():
+    """When all content blocks are audience-filtered, _map_mcp_result returns the placeholder."""
+    from mcp.types import Annotations, CallToolResult, TextContent
+
+    from pydantic_ai.mcp import MCPServerStdio
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    # Simulate a CallToolResult where the only content block is user-only
+    result = CallToolResult(
+        content=[TextContent(type='text', text='for user only', annotations=Annotations(audience=['user']))],
+        isError=False,
+    )
+
+    mapped = server._map_mcp_result(result)  # type: ignore[reportPrivateUsage]
+    assert mapped == 'Tool executed successfully. (No model-visible content in result.)'
