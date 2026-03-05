@@ -423,14 +423,14 @@ class ToolManager(Generic[AgentDepsT]):
                 span.set_status(_OtelStatusCode.ERROR, str(e))
                 raise
             except (CallDeferred, ApprovalRequired) as exc:
-                # Always record deferral info as span attributes (queryable regardless of version)
-                if span.is_recording():
-                    span.set_attribute(instrumentation_names.tool_deferral_name_attr, type(exc).__name__)
-                    if exc.metadata is not None:
-                        try:
-                            span.set_attribute(instrumentation_names.tool_deferral_metadata_attr, json.dumps(exc.metadata))
-                        except (TypeError, ValueError):
-                            span.set_attribute(instrumentation_names.tool_deferral_metadata_attr, str(exc.metadata))
+                # Always record deferral info as span attributes (queryable regardless of version).
+                # set_attribute is a no-op on non-recording spans, so no is_recording() guard needed.
+                span.set_attribute(instrumentation_names.tool_deferral_name_attr, type(exc).__name__)
+                if exc.metadata is not None:
+                    try:
+                        span.set_attribute(instrumentation_names.tool_deferral_metadata_attr, json.dumps(exc.metadata))
+                    except (TypeError, ValueError):
+                        span.set_attribute(instrumentation_names.tool_deferral_metadata_attr, str(exc.metadata))
 
                 # Gate error-suppression behind version 4+ (new dedicated version for this change).
                 # Versions 1-3 preserve the old behaviour where these exceptions appear as errors.

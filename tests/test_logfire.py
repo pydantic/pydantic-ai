@@ -3395,3 +3395,33 @@ def test_approval_required_span_attributes(capfire: CaptureLogfire, version: int
 
 
 
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_call_deferred_non_serializable_metadata(capfire: CaptureLogfire) -> None:
+    """metadata that can't be JSON-serialized falls back to str() for the span attribute."""
+    settings = InstrumentationSettings(version=4)
+    my_agent = Agent(model=TestModel(), instrument=settings, output_type=[str, DeferredToolRequests])
+
+    class _Unserializable:
+        def __repr__(self) -> str:
+            return 'Unserializable()'
+
+    @my_agent.tool_plain
+    def deferred_tool() -> str:
+        raise CallDeferred(metadata={'obj': _Unserializable()})
+
+    result = my_agent.run_sync('call deferred_tool')
+    assert isinstance(result.output, DeferredToolRequests)
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    tool_span = next(
+        (s for s in spans if 'deferred_tool' in s.get('name', '')),
+        None,
+    )
+    assert tool_span is not None
+    attrs = tool_span.get('attributes', {})
+    assert attrs.get('pydantic_ai.tool.deferral.name') == 'CallDeferred'
+    # metadata fell back to str() since _Unserializable is not JSON-serializable
+    metadata_attr = attrs.get('pydantic_ai.tool.deferral.metadata', '')
+    assert 'Unserializable' in metadata_attr
