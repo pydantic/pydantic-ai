@@ -601,3 +601,66 @@ server.run()"""
         toolset = FastMCPToolset(config_dict)
         client = toolset.client
         assert isinstance(client.transport, MCPConfigTransport)
+
+
+class TestAudienceFiltering:
+    """Unit tests for audience annotation filtering added in fix/mcp-respect-audience-annotations."""
+
+    def test_include_for_assistant_no_annotations(self) -> None:
+        """Content with no annotations is always included."""
+        from pydantic_ai.toolsets.fastmcp import _include_for_assistant  # type: ignore[reportPrivateUsage]
+
+        part = TextContent(type='text', text='hello')
+        assert _include_for_assistant(part) is True
+
+    def test_include_for_assistant_annotations_no_audience(self) -> None:
+        """Annotations present but no audience field means include for all."""
+        from mcp.types import Annotations
+
+        from pydantic_ai.toolsets.fastmcp import _include_for_assistant  # type: ignore[reportPrivateUsage]
+
+        part = TextContent(type='text', text='hello', annotations=Annotations())
+        assert _include_for_assistant(part) is True
+
+    def test_include_for_assistant_audience_includes_assistant(self) -> None:
+        """Audience includes 'assistant' — include."""
+        from mcp.types import Annotations, Role
+
+        from pydantic_ai.toolsets.fastmcp import _include_for_assistant  # type: ignore[reportPrivateUsage]
+
+        part = TextContent(type='text', text='hello', annotations=Annotations(audience=[Role.assistant]))
+        assert _include_for_assistant(part) is True
+
+    def test_include_for_assistant_audience_excludes_assistant(self) -> None:
+        """Audience is user-only — exclude."""
+        from mcp.types import Annotations, Role
+
+        from pydantic_ai.toolsets.fastmcp import _include_for_assistant  # type: ignore[reportPrivateUsage]
+
+        part = TextContent(type='text', text='hello', annotations=Annotations(audience=[Role.user]))
+        assert _include_for_assistant(part) is False
+
+    def test_map_fastmcp_tool_results_empty_returns_placeholder(self) -> None:
+        """_map_fastmcp_tool_results([]) returns the audience-filtered placeholder."""
+        from pydantic_ai.toolsets.fastmcp import _map_fastmcp_tool_results  # type: ignore[reportPrivateUsage]
+
+        result = _map_fastmcp_tool_results([])
+        assert result == 'Tool executed successfully. (No model-visible content in result.)'
+
+    async def test_call_tool_empty_content_returns_empty_list(
+        self, run_context: RunContext[None]
+    ) -> None:
+        """A tool that returns empty content (not audience-filtered) returns []."""
+        fastmcp_server = FastMCP('test_server')
+
+        @fastmcp_server.tool()
+        def empty_tool() -> list[Any]:
+            return []
+
+        toolset = FastMCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool(
+                name='empty_tool', tool_args={}, ctx=run_context, tool=tools['empty_tool']
+            )
+            assert result == []
