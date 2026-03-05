@@ -2,7 +2,9 @@ from functools import partial
 from typing import Any
 from unittest.mock import Mock
 
-from pydantic_ai import HistoryProcessorContext
+import pytest
+
+from pydantic_ai import HistoryProcessorContext, RunContext
 from pydantic_ai._function_schema import _takes_history_processor_ctx  # type: ignore
 
 
@@ -192,6 +194,17 @@ def test_lambda_with_ctx():
 
     # Lambda without annotations should return False
     assert _takes_history_processor_ctx(lambda_with_ctx) is False  # type: ignore
+
+
+def test_callable_class_with_run_ctx():
+    """Test that parameterized RunContext raises deprecation warning."""
+
+    class CallableWithRunCtx:
+        def __call__(self, ctx: RunContext[Any], x: int) -> str: ...  # pragma: no cover
+
+    callable_obj = CallableWithRunCtx()
+    with pytest.warns(DeprecationWarning, match='RunContext is deprecated for history processors'):
+        assert _takes_history_processor_ctx(callable_obj) is True
 
 
 def test_builtin_function():
