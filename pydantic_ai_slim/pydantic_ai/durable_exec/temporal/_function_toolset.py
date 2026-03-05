@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any, Literal
 
 from temporalio import activity, workflow
@@ -58,6 +59,22 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
         return [self.call_tool_activity]
+
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        tools = await super().get_tools(ctx)
+        if not workflow.in_workflow():  # pragma: no cover
+            return tools
+
+        # ToolManager validates args in the workflow before activity dispatch.
+        # Keep custom args validators activity-only to avoid duplicate invocation
+        # when Temporal re-validates deserialized args inside the activity.
+        sanitized: dict[str, ToolsetTool[AgentDepsT]] = {}
+        for name, tool in tools.items():
+            if isinstance(tool, FunctionToolsetTool) and tool.args_validator_func is not None:
+                sanitized[name] = replace(tool, args_validator_func=None)
+            else:
+                sanitized[name] = tool
+        return sanitized
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
