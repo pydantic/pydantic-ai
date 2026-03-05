@@ -107,16 +107,13 @@ def _generate_message_id(
     return str(uuid.uuid5(uuid.NAMESPACE_OID, f'{ts_str}-{msg.kind}-{role}-{message_index}'))
 
 
-def _safe_args_as_dict(part: ToolCallPart | BuiltinToolCallPart) -> dict[str, Any] | str:
-    """Safely convert tool call args to dict, falling back to JSON string on parse failure.
+def _safe_args_as_dict(part: ToolCallPart | BuiltinToolCallPart) -> dict[str, Any]:
+    """Convert tool call args to dict.
 
-    In practice, incomplete tool calls don't reach dump_messages(), but this provides
-    defensive handling for edge cases like interrupted streaming or invalid JSON.
+    ``args_as_dict()`` handles malformed JSON gracefully by default, returning
+    ``{'INVALID_JSON': '<raw args>'}`` instead of raising.
     """
-    try:
-        return part.args_as_dict()
-    except (ValueError, AssertionError):
-        return part.args_as_json_str()
+    return part.args_as_dict()
 
 
 @dataclass
