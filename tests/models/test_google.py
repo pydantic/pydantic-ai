@@ -86,6 +86,7 @@ with try_import() as imports_successful:
     from google.genai.types import (
         BlockedReason,
         FinishReason as GoogleFinishReason,
+        FunctionDeclarationDict,
         GenerateContentResponse,
         GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
@@ -98,6 +99,7 @@ with try_import() as imports_successful:
         MediaModality,
         ModalityTokenCount,
         SafetyRating,
+        ToolDict,
     )
 
     from pydantic_ai.models.google import (
@@ -1367,6 +1369,25 @@ def test_google_maps_tool_partial_location_raises(google_provider: GoogleProvide
         builtin_tools=[GoogleMapsTool()],
     )
     model._get_tool_config(no_loc_params, None)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_google_maps_tool_retrieval_config_merges_into_existing_tool_config(google_provider: GoogleProvider) -> None:
+    """Cover the else branch: retrieval_config is merged into a pre-existing tool_config.
+
+    When allow_text_output=False and function tools are present, _get_tool_config first sets
+    tool_config via _tool_config(names). If GoogleMapsTool also has lat/lng, the retrieval_config
+    must be merged into the already-populated ToolConfigDict rather than creating a new one.
+    """
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    params = ModelRequestParameters(
+        allow_text_output=False,
+        builtin_tools=[GoogleMapsTool(latitude=37.7749, longitude=-122.4194)],
+    )
+    tools = [ToolDict(function_declarations=[FunctionDeclarationDict(name='my_tool')])]
+    result = model._get_tool_config(params, tools)  # pyright: ignore[reportPrivateUsage]
+    assert result is not None
+    assert result.get('function_calling_config') is not None
+    assert result.get('retrieval_config') is not None
 
 
 async def test_google_model_web_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
