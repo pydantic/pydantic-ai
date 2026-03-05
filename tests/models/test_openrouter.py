@@ -1008,7 +1008,7 @@ def test_openrouter_provider_details_null_provider() -> None:
     )
 
     model_response = model._process_response(completion)  # type: ignore[reportPrivateUsage]
-    assert model_response.vendor_details is None or 'downstream_provider' not in (model_response.vendor_details or {})
+    assert model_response.provider_details is None or 'downstream_provider' not in (model_response.provider_details or {})
 
 
 def test_openrouter_validate_completion_malformed_error_fallthrough() -> None:
