@@ -17,7 +17,7 @@ import anyio.to_thread
 from typing_extensions import Self
 
 from ._base import (
-    EnvToolName,
+    EnvCapability,
     ExecutionEnvironment,
     ExecutionProcess,
     ExecutionResult,
@@ -130,8 +130,8 @@ class LocalEnvironment(ExecutionEnvironment):
         self._inherit_env = inherit_env
 
     @property
-    def capabilities(self) -> frozenset[EnvToolName]:
-        return frozenset({'shell', 'read_file', 'write_file', 'edit_file'})
+    def capabilities(self) -> frozenset[EnvCapability]:
+        return frozenset({'shell', 'read_file', 'write_file', 'replace_str', 'create_process'})
 
     async def __aenter__(self) -> Self:
         await anyio.to_thread.run_sync(lambda: self._root_dir.mkdir(parents=True, exist_ok=True))

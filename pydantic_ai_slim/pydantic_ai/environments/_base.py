@@ -14,11 +14,12 @@ from typing_extensions import Self
 
 # --- Type aliases ---
 
-EnvToolName = Literal[
+EnvCapability = Literal[
     'shell',
     'read_file',
     'write_file',
-    'edit_file',
+    'replace_str',
+    'create_process',
 ]
 """Tool name for an environment capability.
 
@@ -92,26 +93,6 @@ class ExecutionProcess(ABC):
             await self.kill()
 
 
-# --- Constants ---
-
-IMAGE_MEDIA_TYPES: dict[str, str] = {
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.bmp': 'image/bmp',
-    '.svg': 'image/svg+xml',
-}
-"""Map image file extensions to MIME types.
-
-Used by `ExecutionEnvironmentToolset` to return images as `BinaryContent`,
-and to identify image files in `read_file` (returning raw bytes instead of text).
-"""
-
-IMAGE_EXTENSIONS = frozenset(IMAGE_MEDIA_TYPES)
-
-
 # --- ExecutionEnvironment ---
 
 
@@ -131,7 +112,7 @@ class ExecutionEnvironment(ABC):
 
     @property
     @abstractmethod
-    def capabilities(self) -> frozenset[EnvToolName]:
+    def capabilities(self) -> frozenset[EnvCapability]:
         """Tool capabilities this environment supports."""
         ...
 

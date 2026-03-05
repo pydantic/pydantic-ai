@@ -165,7 +165,7 @@ env = DockerEnvironment.hardened(
 | `shell` | Execute shell commands |
 | `read_file` | Read files with line numbers (renders images for multimodal models) |
 | `write_file` | Create or overwrite files |
-| `edit_file` | Edit files by exact string replacement |
+| `replace_str` | Edit files by exact string replacement |
 
 Tools are dynamically registered based on the environment's capabilities. You can selectively include or exclude capabilities:
 
@@ -176,7 +176,7 @@ from pydantic_ai.environments.local import LocalEnvironment
 # Only file tools — no shell
 toolset = ExecutionEnvironmentToolset(
     LocalEnvironment(),
-    include=['read_file', 'write_file', 'edit_file'],
+    include=['read_file', 'write_file', 'replace_str'],
 )
 ```
 
@@ -191,7 +191,7 @@ from pydantic_ai.environments.local import LocalEnvironment
 toolset = ExecutionEnvironmentToolset(
     LocalEnvironment('/tmp/workspace'),
     require_shell_approval=True,   # shell commands require approval
-    require_write_approval=True,   # write_file and edit_file require approval
+    require_write_approval=True,   # write_file and replace_str require approval
 )
 ```
 
@@ -202,11 +202,11 @@ With `DockerEnvironment`, commands are already isolated inside a container, so a
 Tool output is truncated to prevent overwhelming the model's context window. You can configure the limits:
 
 - `max_output_chars` (default: 200,000) — Maximum characters of text output from `shell` and `read_file`. Output beyond this limit is truncated with a `... (truncated)` indicator. For `shell`, the exit code is always preserved regardless of truncation.
-- `max_image_bytes` (default: 50 MB) — Maximum image file size that `read_file` will return as binary content for multimodal models. Larger images return an error message instead.
+- `max_binary_content_bytes` (default: 50 MB) — Maximum file size that `read_file` will return as `BinaryContent` for multimodal models. Larger files return an error message instead.
 
 ### Error Handling
 
-The `edit_file` tool raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on errors (e.g., the old string wasn't found, or matched multiple times without `replace_all`). This lets the model automatically retry with corrected arguments — for example, re-reading the file to get the exact text. The `read_file` and `write_file` tools return error messages as strings instead, since retrying with different arguments is less likely to help.
+The `replace_str` tool raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on errors (e.g., the old string wasn't found, or matched multiple times without `replace_all`). This lets the model automatically retry with corrected arguments — for example, re-reading the file to get the exact text. The `read_file` and `write_file` tools return error messages as strings instead, since retrying with different arguments is less likely to help.
 
 ### Using with an Agent
 
@@ -345,12 +345,13 @@ Filesystem changes (created files, installed packages) persist for the lifetime 
 You can implement [`ExecutionEnvironment`][pydantic_ai.environments.ExecutionEnvironment] to integrate with any execution backend. The only abstract member is `capabilities`; override the methods that match your declared capabilities. Override [`create_process()`][pydantic_ai.environments.ExecutionEnvironment.create_process] if you need interactive process support.
 
 ```python {title="environments_custom.py" test="skip" lint="skip"}
-from pydantic_ai.environments import EnvToolName, ExecutionEnvironment, ExecutionProcess, ExecutionResult
+from pydantic_ai.environments import EnvCapability, ExecutionEnvironment, ExecutionProcess, ExecutionResult
+
 
 class MyCloudEnvironment(ExecutionEnvironment):
     @property
-    def capabilities(self) -> frozenset[EnvToolName]:
-        return frozenset({'shell', 'read_file', 'write_file', 'edit_file'})
+    def capabilities(self) -> frozenset[EnvCapability]:
+        return frozenset({'shell', 'read_file', 'write_file', 'replace_str'})
 
     async def shell(
         self, command: str, *, timeout: float | None = 120, env: dict[str, str] | None = None
@@ -358,9 +359,7 @@ class MyCloudEnvironment(ExecutionEnvironment):
         # Run a command in your cloud environment
         ...
 
-    async def read_file(
-        self, path: str, *, offset: int = 0, limit: int = 2000
-    ) -> str | bytes:
+    async def read_file(self, path: str) -> bytes:
         ...
 
     async def write_file(self, path: str, content: str | bytes) -> None:

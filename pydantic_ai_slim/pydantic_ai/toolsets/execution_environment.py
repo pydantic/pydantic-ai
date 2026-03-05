@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import posixpath
+import mimetypes as _mime_types
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AsyncExitStack, contextmanager
 from contextvars import ContextVar, Token
@@ -12,9 +12,7 @@ import anyio
 from typing_extensions import Self
 
 from ..environments._base import (
-    IMAGE_EXTENSIONS,
-    IMAGE_MEDIA_TYPES,
-    EnvToolName,
+    EnvCapability,
     ExecutionEnvironment,
 )
 from ..exceptions import ModelRetry
@@ -57,12 +55,11 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         self,
         environment: ExecutionEnvironment | Callable[[], ExecutionEnvironment] | None = None,
         *,
-        include: Sequence[EnvToolName] | None = None,
-        exclude: Sequence[EnvToolName] | None = None,
+        include: Sequence[EnvCapability] | None = None,
+        exclude: Sequence[EnvCapability] | None = None,
         require_shell_approval: bool = False,
         require_write_approval: bool = False,
-        image_support: bool = True,
-        max_image_bytes: int = 50 * 1024 * 1024,
+        max_binary_content_bytes: int = 50 * 1024 * 1024,
         max_output_chars: int = 200_000,
         max_retries: int = 1,
         id: str | None = None,
@@ -87,9 +84,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                 commands run directly on the host.
             require_write_approval: Whether `write_file` and edit tools require
                 human-in-the-loop approval before execution.
-            image_support: Whether `read_file` should return images as `BinaryContent`
-                for multimodal models (otherwise returns a placeholder message).
-            max_image_bytes: Maximum image file size to return as BinaryContent.
+            max_binary_content_bytes: Maximum file size to return as BinaryContent (for images, etc.).
             max_output_chars: Maximum characters of tool output before truncation.
             max_retries: Maximum retries per tool call.
             id: Optional unique ID for the toolset (required for durable execution).
@@ -107,10 +102,9 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         self._per_run_state: ContextVar[tuple[AsyncExitStack, Token[ExecutionEnvironment | None]] | None] = ContextVar(
             f'_per_run_state_{id or "environment"}', default=None
         )
-        self._include: frozenset[EnvToolName] | None = frozenset(include) if include is not None else None
-        self._exclude: frozenset[EnvToolName] = frozenset(exclude) if exclude else frozenset()
-        self._image_support = image_support
-        self._max_image_bytes = max_image_bytes
+        self._include: frozenset[EnvCapability] | None = frozenset(include) if include is not None else None
+        self._exclude: frozenset[EnvCapability] = frozenset(exclude) if exclude else frozenset()
+        self._max_binary_content_bytes = max_binary_content_bytes
         self._require_shell_approval = require_shell_approval
         self._require_write_approval = require_write_approval
         self._enter_lock = anyio.Lock()
@@ -142,7 +136,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         self._register_shell()
         self._register_read_file()
         self._register_write_file()
-        self._register_edit_file()
+        self._register_replace_str()
 
     def _register_shell(self) -> None:
         async def shell(command: str, timeout: int = 120) -> str:
@@ -179,23 +173,18 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             """
             try:
                 raw = await self.required_environment.read_file(path)
-                ext = posixpath.splitext(path)[1].lower()
-
-                # Image file — return as BinaryContent or placeholder
-                if ext in IMAGE_EXTENSIONS:
-                    if self._image_support:
-                        if len(raw) > self._max_image_bytes:
-                            return f'Error: Image too large ({len(raw)} bytes, max {self._max_image_bytes} bytes).'
-                        media_type = IMAGE_MEDIA_TYPES.get(ext, 'application/octet-stream')
-                        return BinaryContent(data=raw, media_type=media_type)
-                    else:
-                        return f'[Image file: {path} — image_support is disabled on this toolset]'
 
                 # Try to decode as text
                 try:
                     text = raw.decode('utf-8')
                 except UnicodeDecodeError:
-                    return f'[Binary file: {path} — cannot display as text]'
+                    # If it fails, try to convert to a binary content format
+                    media_type, _ = _mime_types.guess_type(path)
+                    if media_type is None:
+                        return f'[Binary file: {path} — cannot display as text]'
+                    if len(raw) > self._max_binary_content_bytes:
+                        return f'Error: Binary content too large ({len(raw)} bytes, max {self._max_binary_content_bytes} bytes).'
+                    return BinaryContent(data=raw, media_type=media_type)
 
                 # Format with line numbers and pagination
                 content = _format_lines(text, offset, limit)
@@ -225,8 +214,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
 
         self.tool(requires_approval=self._require_write_approval)(write_file)
 
-    def _register_edit_file(self) -> None:
-        async def edit_file(path: str, old: str, new: str, replace_all: bool = False) -> str:
+    def _register_replace_str(self) -> None:
+        async def replace_str(path: str, old: str, new: str, replace_all: bool = False) -> str:
             """Edit a file by exact string replacement.
 
             The old string must match exactly (including whitespace and indentation).
@@ -245,7 +234,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             except (FileNotFoundError, PermissionError, ValueError, OSError) as e:
                 raise ModelRetry(str(e))
 
-        self.tool(requires_approval=self._require_write_approval)(edit_file)
+        self.tool(requires_approval=self._require_write_approval)(replace_str)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await super().get_tools(ctx)

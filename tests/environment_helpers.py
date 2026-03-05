@@ -16,7 +16,7 @@ from pydantic_ai.environments._base import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai.environments._base import EnvToolName
+    from pydantic_ai.environments._base import EnvCapability
 
 
 class MemoryEnvironment(ExecutionEnvironment):
@@ -52,8 +52,8 @@ class MemoryEnvironment(ExecutionEnvironment):
         self._command_handler = command_handler
 
     @property
-    def capabilities(self) -> frozenset[EnvToolName]:
-        caps: set[EnvToolName] = {'read_file', 'write_file', 'edit_file'}
+    def capabilities(self) -> frozenset[EnvCapability]:
+        caps: set[EnvCapability] = {'read_file', 'write_file', 'replace_str'}
         if self._command_handler is not None:
             caps.add('shell')
         return frozenset(caps)

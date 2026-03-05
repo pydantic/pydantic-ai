@@ -17,7 +17,7 @@ from pydantic_ai import Agent, BinaryContent, ToolCallPart
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.environments import (
-    EnvToolName,
+    EnvCapability,
     ExecutionEnvironment as BaseEnv,
     ExecutionResult,
 )
@@ -202,7 +202,7 @@ async def test_local_read_file_bytes(tmp_path: Path):
         assert result == png_data
 
 
-# --- LocalEnvironment: edit_file ---
+# --- LocalEnvironment: replace_str ---
 
 
 async def test_local_edit_single_replacement(tmp_path: Path):
@@ -334,7 +334,7 @@ async def test_toolset_tool_names():
     ctx = build_run_context()
     tools = await toolset.get_tools(ctx)
     tool_names = sorted(tools.keys())
-    assert tool_names == snapshot(['edit_file', 'read_file', 'shell', 'write_file'])
+    assert tool_names == snapshot(['read_file', 'replace_str', 'shell', 'write_file'])
 
 
 async def test_toolset_include_flags():
@@ -404,14 +404,14 @@ async def test_toolset_edit_retry_on_error(tmp_path: Path):
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
             await manager.handle_call(
                 ToolCallPart(
-                    tool_name='edit_file',
+                    tool_name='replace_str',
                     args={'path': 'test.txt', 'old': 'nonexistent', 'new': 'replacement'},
                 )
             )
 
 
 async def test_toolset_edit_retry_on_permission_error(tmp_path: Path):
-    """edit_file raises ModelRetry on PermissionError (e.g. path traversal)."""
+    """replace_str raises ModelRetry on PermissionError (e.g. path traversal)."""
     env = LocalEnvironment(tmp_path)
     toolset = ExecutionEnvironmentToolset(env, max_retries=0)
     ctx = build_run_context(None)
@@ -421,7 +421,7 @@ async def test_toolset_edit_retry_on_permission_error(tmp_path: Path):
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
             await manager.handle_call(
                 ToolCallPart(
-                    tool_name='edit_file',
+                    tool_name='replace_str',
                     args={'path': '../../etc/passwd', 'old': 'root', 'new': 'hacked'},
                 )
             )
@@ -524,12 +524,12 @@ async def test_toolset_require_shell_approval():
 
 
 async def test_toolset_require_write_approval():
-    """require_write_approval sets requires_approval on write_file and edit_file."""
+    """require_write_approval sets requires_approval on write_file and replace_str."""
     toolset = ExecutionEnvironmentToolset(MemoryEnvironment(), require_write_approval=True)
     ctx = build_run_context(None)
     tools = await toolset.get_tools(ctx)
     assert tools['write_file'].tool_def.kind == 'unapproved'
-    assert tools['edit_file'].tool_def.kind == 'unapproved'
+    assert tools['replace_str'].tool_def.kind == 'unapproved'
     # read_file should NOT require approval
     assert tools['read_file'].tool_def.kind == 'function'
 
@@ -642,21 +642,6 @@ async def test_toolset_lifecycle(tmp_path: Path):
         assert 'lifecycle' in result.output
 
 
-# --- ExecutionEnvironmentToolset: image support ---
-
-
-async def test_toolset_image_support_disabled(tmp_path: Path):
-    env = LocalEnvironment(tmp_path)
-    toolset = ExecutionEnvironmentToolset(env, image_support=False)
-    ctx = build_run_context(None)
-    manager = await ToolManager[None](toolset).for_run_step(ctx)
-
-    async with env:
-        await env.write_file('photo.png', b'\x89PNG\r\n\x1a\n')
-        result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'photo.png'}))
-        assert result == snapshot('[Image file: photo.png — image_support is disabled on this toolset]')
-
-
 # --- MemoryEnvironment ---
 
 
@@ -690,7 +675,7 @@ async def test_memory_read_directory_error():
             await env.read_file('dir')
 
 
-async def test_memory_edit_file():
+async def test_memory_replace_str():
     env = MemoryEnvironment(files={'code.py': 'old_value = 1'})
     async with env:
         count = await env.replace_str('code.py', 'old_value', 'new_value')
@@ -699,7 +684,7 @@ async def test_memory_edit_file():
         assert content == b'new_value = 1'
 
 
-async def test_memory_edit_file_not_found():
+async def test_memory_replace_str_not_found():
     async with MemoryEnvironment() as env:
         with pytest.raises(FileNotFoundError):
             await env.replace_str('nope.txt', 'a', 'b')
@@ -919,7 +904,7 @@ async def test_memory_read_file_not_found():
 
 
 async def test_memory_edit_binary():
-    """edit_file works on binary content."""
+    """replace_str works on binary content."""
     env = MemoryEnvironment(files={'data.txt': b'hello world'})
     async with env:
         count = await env.replace_str('data.txt', 'world', 'earth')
@@ -929,10 +914,10 @@ async def test_memory_edit_binary():
 # --- ExecutionEnvironmentToolset: additional coverage ---
 
 
-async def test_toolset_image_too_large(tmp_path: Path):
-    """read_file on an image that's too large returns error string."""
+async def test_toolset_binary_too_large(tmp_path: Path):
+    """read_file on a binary file that's too large returns error string."""
     env = LocalEnvironment(tmp_path)
-    toolset = ExecutionEnvironmentToolset(env, max_image_bytes=10)  # Very small limit
+    toolset = ExecutionEnvironmentToolset(env, max_binary_content_bytes=10)  # Very small limit
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
 
@@ -940,7 +925,7 @@ async def test_toolset_image_too_large(tmp_path: Path):
         # Write a PNG file that exceeds the limit
         await env.write_file('big.png', b'\x89PNG\r\n\x1a\n' + b'\x00' * 100)
         result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'big.png'}))
-        assert 'Image too large' in str(result)
+        assert 'Binary content too large' in str(result)
 
 
 async def test_toolset_image_read(tmp_path: Path):
@@ -964,20 +949,20 @@ async def test_toolset_image_read(tmp_path: Path):
         assert result.media_type == 'image/png'
 
 
-async def test_toolset_read_binary_non_image():
-    """read_file on a non-image binary file returns a placeholder message."""
-    # Store invalid UTF-8 bytes under a non-image extension so MemoryEnvironment returns raw bytes
-    env = MemoryEnvironment(files={'data.bin': b'\x80\x81\x82'})
+async def test_toolset_read_binary_unknown_type():
+    """read_file on a binary file with unrecognized extension returns a placeholder message."""
+    # Use an extension that mimetypes won't recognize, so guess_type returns None
+    env = MemoryEnvironment(files={'data.xyzabc': b'\x80\x81\x82'})
     toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
     manager = await ToolManager[None](toolset).for_run_step(ctx)
     async with env:
-        result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'data.bin'}))
-    assert result == '[Binary file: data.bin — cannot display as text]'
+        result = await manager.handle_call(ToolCallPart(tool_name='read_file', args={'path': 'data.xyzabc'}))
+    assert result == '[Binary file: data.xyzabc — cannot display as text]'
 
 
 async def test_toolset_edit_success(tmp_path: Path):
-    """edit_file tool returns success message."""
+    """replace_str tool returns success message."""
     env = LocalEnvironment(tmp_path)
     toolset = ExecutionEnvironmentToolset(env)
     ctx = build_run_context(None)
@@ -987,7 +972,7 @@ async def test_toolset_edit_success(tmp_path: Path):
         await env.write_file('code.py', 'old_value = 1\n')
         result = await manager.handle_call(
             ToolCallPart(
-                tool_name='edit_file',
+                tool_name='replace_str',
                 args={'path': 'code.py', 'old': 'old_value', 'new': 'new_value'},
             )
         )
@@ -1032,7 +1017,7 @@ class MockContainer:
         self.status = 'running'
         self.client = MagicMock()
 
-    def exec_run(  # noqa: C901
+    def exec_run(
         self,
         cmd: list[str] | str,
         workdir: str | None = None,
@@ -1184,8 +1169,8 @@ class TestDocker:
         assert isinstance(result, bytes)
         assert result == png_data
 
-    async def test_docker_edit_file(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
-        """DockerEnvironment.edit_file replaces text."""
+    async def test_docker_replace_str(self, mock_docker_sandbox: Any, mock_container: MockContainer) -> None:
+        """DockerEnvironment.replace_str replaces text."""
         mock_container._files['/workspace/code.py'] = b'old_value = 1'
         count = await mock_docker_sandbox.replace_str('code.py', 'old_value', 'new_value')
         assert count == 1
@@ -2255,7 +2240,7 @@ async def test_toolset_factory_filters_tools_by_capabilities():
 
     class _ShellOnlyEnv(BaseEnv):
         @property
-        def capabilities(self) -> frozenset[EnvToolName]:
+        def capabilities(self) -> frozenset[EnvCapability]:
             return frozenset({'shell'})
 
         async def shell(
@@ -2279,7 +2264,7 @@ async def test_toolset_use_environment_filters_tools():
 
     class _ShellOnlyEnv(BaseEnv):
         @property
-        def capabilities(self) -> frozenset[EnvToolName]:
+        def capabilities(self) -> frozenset[EnvCapability]:
             return frozenset({'shell'})
 
     # Full-capability shared env registers all tools

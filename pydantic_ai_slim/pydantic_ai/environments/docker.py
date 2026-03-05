@@ -17,7 +17,7 @@ import anyio.to_thread
 from typing_extensions import Self
 
 from ._base import (
-    EnvToolName,
+    EnvCapability,
     ExecutionEnvironment,
     ExecutionProcess,
     ExecutionResult,
@@ -348,13 +348,14 @@ class DockerEnvironment(ExecutionEnvironment):
         )
 
     @property
-    def capabilities(self) -> frozenset[EnvToolName]:  # pragma: lax no cover
+    def capabilities(self) -> frozenset[EnvCapability]:  # pragma: lax no cover
         return frozenset(
             {
                 'shell',
                 'read_file',
                 'write_file',
-                'edit_file',
+                'replace_str',
+                'create_process',
             }
         )
 

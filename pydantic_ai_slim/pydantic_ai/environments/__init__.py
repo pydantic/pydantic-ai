@@ -12,10 +12,10 @@ Implementations:
 - `environments.local.LocalEnvironment` — local subprocess environment (no isolation, for dev/testing)
 """
 
-from ._base import EnvToolName, ExecutionEnvironment, ExecutionProcess, ExecutionResult
+from ._base import EnvCapability, ExecutionEnvironment, ExecutionProcess, ExecutionResult
 
 __all__ = (
-    'EnvToolName',
+    'EnvCapability',
     'ExecutionResult',
     'ExecutionEnvironment',
     'ExecutionProcess',
