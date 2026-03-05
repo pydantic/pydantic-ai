@@ -102,7 +102,7 @@ async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(20)
+        assert len(tools) == snapshot(21)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
@@ -206,7 +206,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(20)
+        assert len(tools) == snapshot(21)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
@@ -2451,93 +2451,23 @@ async def test_server_capabilities_list_changed_fields() -> None:
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Tests for MCP audience annotation filtering (issue #4353)
+# All tests exercise public APIs (direct_call_tool / call_tool) against the real
+# tests.mcp_server rather than private helpers or mocks.
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def test_include_content_for_assistant_no_annotations():
-    """Content with no annotations should always be included (implicit 'all' audience)."""
-    from mcp.types import TextContent
+async def test_mcp_user_only_content_returns_placeholder(mcp_server: MCPServerStdio) -> None:
+    """A tool whose content is annotated audience=['user'] returns the assistant placeholder.
 
-    from pydantic_ai.mcp import _include_content_for_assistant  # type: ignore[reportPrivateUsage]
-
-    part = TextContent(type='text', text='hello')
-    assert part.annotations is None
-    assert _include_content_for_assistant(part) is True
-
-
-def test_include_content_for_assistant_empty_audience():
-    """Content with annotations but no audience should always be included."""
-    from mcp.types import Annotations, TextContent
-
-    from pydantic_ai.mcp import _include_content_for_assistant  # type: ignore[reportPrivateUsage]
-
-    part = TextContent(type='text', text='hello', annotations=Annotations(audience=None))
-    assert _include_content_for_assistant(part) is True
-
-
-def test_include_content_for_assistant_assistant_audience():
-    """Content with audience=['assistant'] should be included."""
-    from mcp.types import Annotations, TextContent
-
-    from pydantic_ai.mcp import _include_content_for_assistant  # type: ignore[reportPrivateUsage]
-
-    part = TextContent(type='text', text='for model', annotations=Annotations(audience=['assistant']))
-    assert _include_content_for_assistant(part) is True
-
-
-def test_include_content_for_assistant_user_audience_excluded():
-    """Content with audience=['user'] should be excluded (not sent to model)."""
-    from mcp.types import Annotations, TextContent
-
-    from pydantic_ai.mcp import _include_content_for_assistant  # type: ignore[reportPrivateUsage]
-
-    part = TextContent(type='text', text='user-only', annotations=Annotations(audience=['user']))
-    assert _include_content_for_assistant(part) is False
-
-
-def test_include_content_for_assistant_mixed_audience():
-    """Content with audience=['user', 'assistant'] should be included."""
-    from mcp.types import Annotations, TextContent
-
-    from pydantic_ai.mcp import _include_content_for_assistant  # type: ignore[reportPrivateUsage]
-
-    part = TextContent(type='text', text='for all', annotations=Annotations(audience=['user', 'assistant']))
-    assert _include_content_for_assistant(part) is True
-
-
-def test_mcp_audience_filtered_placeholder_via_include_helper():
-    """_include_content_for_assistant returns False for user-only blocks, covering the placeholder path."""
-    from mcp.types import Annotations, TextContent
-
-    from pydantic_ai.mcp import _include_content_for_assistant  # type: ignore[reportPrivateUsage]
-
-    # user-only block must be excluded
-    user_block = TextContent(type='text', text='for user only', annotations=Annotations(audience=['user']))
-    assert _include_content_for_assistant(user_block) is False
-
-    # assistant block must be included
-    assistant_block = TextContent(
-        type='text', text='for assistant', annotations=Annotations(audience=['assistant'])
-    )
-    assert _include_content_for_assistant(assistant_block) is True
-
-
-async def test_mcp_direct_call_tool_audience_filtered_returns_placeholder(mcp_server: MCPServerStdio) -> None:
-    """When all content is user-only, direct_call_tool returns the audience-filtered placeholder."""
-    from unittest.mock import AsyncMock, patch
-
-    from mcp.types import Annotations, CallToolResult, TextContent
-
-    user_only_result = CallToolResult(
-        content=[TextContent(type='text', text='for user only', annotations=Annotations(audience=['user']))],
-        isError=False,
-    )
-
+    Uses the real ``get_user_only_content`` tool registered in tests/mcp_server.py.
+    """
     async with mcp_server:
-        with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
-            'call_tool',
-            new=AsyncMock(return_value=user_only_result),
-        ):
-            result = await mcp_server.direct_call_tool('any_tool', {})
-            assert result == 'Tool executed successfully. (No model-visible content in result.)'
+        result = await mcp_server.direct_call_tool('get_user_only_content', {})
+    assert result == 'Tool executed successfully. (No model-visible content in result.)'
+
+
+async def test_mcp_no_annotation_content_passes_through(mcp_server: MCPServerStdio) -> None:
+    """A tool with no audience annotation forwards its content to the model."""
+    async with mcp_server:
+        result = await mcp_server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
+    assert result == snapshot(32.0)
