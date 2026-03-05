@@ -389,7 +389,7 @@ class XaiModel(Model):
         elif item.tool_name.startswith(MCPServerTool.kind):
             # Extract server label from tool_name (format: 'mcp_server:server_label')
             server_label = item.tool_name.split(':', 1)[1] if ':' in item.tool_name else item.tool_name
-            args_dict = item.args_as_dict(allow_partial=True) or {}
+            args_dict = item.args_as_dict() or {}
             # Extract tool_name and tool_args from the structured args (matches OpenAI/Anthropic pattern)
             actual_tool_name = args_dict.get('tool_name', '')
             tool_args = args_dict.get('tool_args', {})

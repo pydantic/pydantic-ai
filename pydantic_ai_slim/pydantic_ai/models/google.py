@@ -1080,7 +1080,7 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
 
         if isinstance(item, ToolCallPart):
             function_call = FunctionCallDict(
-                name=item.tool_name, args=item.args_as_dict(allow_partial=True), id=item.tool_call_id
+                name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id
             )
             part['function_call'] = function_call
             if function_call_requires_signature and not part.get('thought_signature'):

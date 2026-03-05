@@ -44,7 +44,13 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -57,7 +63,15 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
+from ..conftest import (
+    IsDatetime,
+    IsInstance,
+    IsNow,
+    IsStr,
+    TestEnv,
+    raise_if_exception,
+    try_import,
+)
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
@@ -104,7 +118,10 @@ with try_import() as imports_successful:
         AnthropicModelSettings,
         _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai import (
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+    )
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -150,7 +167,14 @@ class MockAnthropic:
 
     @cached_property
     def messages(self) -> Any:
-        return type('Messages', (), {'create': self.messages_create, 'count_tokens': self.messages_count_tokens})
+        return type(
+            'Messages',
+            (),
+            {
+                'create': self.messages_create,
+                'count_tokens': self.messages_count_tokens,
+            },
+        )
 
     @classmethod
     def create_mock(cls, messages_: MockAnthropicMessage | Sequence[MockAnthropicMessage]) -> AsyncAnthropic:
@@ -158,7 +182,8 @@ class MockAnthropic:
 
     @classmethod
     def create_stream_mock(
-        cls, stream: Sequence[MockRawMessageStreamEvent] | Sequence[Sequence[MockRawMessageStreamEvent]]
+        cls,
+        stream: Sequence[MockRawMessageStreamEvent] | Sequence[Sequence[MockRawMessageStreamEvent]],
     ) -> AsyncAnthropic:
         return cast(AsyncAnthropic, cls(stream=stream))
 
@@ -208,7 +233,10 @@ def completion_message(content: list[BetaContentBlock], usage: BetaUsage) -> Bet
 
 
 async def test_sync_request_text_response(allow_model_requests: None):
-    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    c = completion_message(
+        [BetaTextBlock(text='world', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
@@ -245,7 +273,11 @@ async def test_sync_request_text_response(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
+                usage=RequestUsage(
+                    input_tokens=5,
+                    output_tokens=10,
+                    details={'input_tokens': 5, 'output_tokens': 10},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -262,7 +294,11 @@ async def test_sync_request_text_response(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
+                usage=RequestUsage(
+                    input_tokens=5,
+                    output_tokens=10,
+                    details={'input_tokens': 5, 'output_tokens': 10},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -366,8 +402,16 @@ async def test_cache_point_multiple_markers(allow_model_requests: None):
     # Default ttl='5m' for non-Bedrock clients
     assert content == snapshot(
         [
-            {'text': 'First chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
-            {'text': 'Second chunk', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+            {
+                'text': 'First chunk',
+                'type': 'text',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'text': 'Second chunk',
+                'type': 'text',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
             {'text': 'Question', 'type': 'text'},
         ]
     )
@@ -438,7 +482,10 @@ async def test_cache_point_in_otel_message_parts(allow_model_requests: None):
 
     # Should have 2 text parts, CachePoint is skipped
     assert otel_parts == snapshot(
-        [{'type': 'text', 'content': 'text before'}, {'type': 'text', 'content': 'text after'}]
+        [
+            {'type': 'text', 'content': 'text before'},
+            {'type': 'text', 'content': 'text after'},
+        ]
     )
 
 
@@ -472,7 +519,10 @@ def test_build_cache_control_bedrock_omits_ttl():
     mock_bedrock_client = MagicMock(spec=AsyncAnthropicBedrock)
     mock_bedrock_client.base_url = 'https://bedrock.amazonaws.com'
 
-    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_bedrock_client))
+    m = AnthropicModel(
+        'claude-haiku-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_bedrock_client),
+    )
 
     # Verify cache_control is built without TTL for Bedrock
     cache_control = m._build_cache_control('5m')  # pyright: ignore[reportPrivateUsage]
@@ -601,12 +651,20 @@ async def test_anthropic_cache_tools(allow_model_requests: None):
             {
                 'name': 'tool_one',
                 'description': '',
-                'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'input_schema': {
+                    'additionalProperties': False,
+                    'properties': {},
+                    'type': 'object',
+                },
             },
             {
                 'name': 'tool_two',
                 'description': '',
-                'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                'input_schema': {
+                    'additionalProperties': False,
+                    'properties': {},
+                    'type': 'object',
+                },
                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
             },
         ]
@@ -688,7 +746,13 @@ async def test_anthropic_cache_tools_and_instructions(allow_model_requests: None
         ]
     )
     assert system == snapshot(
-        [{'type': 'text', 'text': 'System instructions to cache.', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}]
+        [
+            {
+                'type': 'text',
+                'text': 'System instructions to cache.',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            }
+        ]
     )
 
 
@@ -726,7 +790,9 @@ async def test_anthropic_cache_with_custom_ttl(allow_model_requests: None):
     assert system[0]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
 
 
-async def test_anthropic_incompatible_schema_disables_auto_strict(allow_model_requests: None):
+async def test_anthropic_incompatible_schema_disables_auto_strict(
+    allow_model_requests: None,
+):
     """Ensure strict mode is disabled when Anthropic cannot enforce the tool schema."""
     c = completion_message(
         [BetaTextBlock(text='Done', type='text')],
@@ -737,7 +803,9 @@ async def test_anthropic_incompatible_schema_disables_auto_strict(allow_model_re
     agent = Agent(m)
 
     @agent.tool_plain
-    def constrained_tool(value: Annotated[str, Field(min_length=2)]) -> str:  # pragma: no cover
+    def constrained_tool(
+        value: Annotated[str, Field(min_length=2)],
+    ) -> str:  # pragma: no cover
         return value
 
     await agent.run('hello')
@@ -746,7 +814,9 @@ async def test_anthropic_incompatible_schema_disables_auto_strict(allow_model_re
     assert 'strict' not in completion_kwargs['tools'][0]
 
 
-async def test_beta_header_merge_builtin_tools_and_native_output(allow_model_requests: None):
+async def test_beta_header_merge_builtin_tools_and_native_output(
+    allow_model_requests: None,
+):
     """Verify beta headers merge from custom headers, builtin tools, and native output."""
     c = completion_message(
         [BetaTextBlock(text='{"city": "Mexico City", "country": "Mexico"}', type='text')],
@@ -949,7 +1019,11 @@ async def test_anthropic_cache_messages(allow_model_requests: None):
 
     # Last message content should have cache_control
     assert messages[-1]['content'][-1] == snapshot(
-        {'type': 'text', 'text': 'User message', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}
+        {
+            'type': 'text',
+            'text': 'User message',
+            'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+        }
     )
 
 
@@ -1101,7 +1175,14 @@ async def test_async_request_text_response(allow_model_requests: None):
 
 async def test_request_structured_response(allow_model_requests: None):
     c = completion_message(
-        [BetaToolUseBlock(id='123', input={'response': [1, 2, 3]}, name='final_result', type='tool_use')],
+        [
+            BetaToolUseBlock(
+                id='123',
+                input={'response': [1, 2, 3]},
+                name='final_result',
+                type='tool_use',
+            )
+        ],
         usage=BetaUsage(input_tokens=3, output_tokens=5),
     )
     mock_client = MockAnthropic.create_mock(c)
@@ -1125,7 +1206,11 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                usage=RequestUsage(input_tokens=3, output_tokens=5, details={'input_tokens': 3, 'output_tokens': 5}),
+                usage=RequestUsage(
+                    input_tokens=3,
+                    output_tokens=5,
+                    details={'input_tokens': 3, 'output_tokens': 5},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -1154,11 +1239,25 @@ async def test_request_structured_response(allow_model_requests: None):
 async def test_request_tool_call(allow_model_requests: None):
     responses = [
         completion_message(
-            [BetaToolUseBlock(id='1', input={'loc_name': 'San Francisco'}, name='get_location', type='tool_use')],
+            [
+                BetaToolUseBlock(
+                    id='1',
+                    input={'loc_name': 'San Francisco'},
+                    name='get_location',
+                    type='tool_use',
+                )
+            ],
             usage=BetaUsage(input_tokens=2, output_tokens=1),
         ),
         completion_message(
-            [BetaToolUseBlock(id='2', input={'loc_name': 'London'}, name='get_location', type='tool_use')],
+            [
+                BetaToolUseBlock(
+                    id='2',
+                    input={'loc_name': 'London'},
+                    name='get_location',
+                    type='tool_use',
+                )
+            ],
             usage=BetaUsage(input_tokens=3, output_tokens=2),
         ),
         completion_message(
@@ -1198,7 +1297,11 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=RequestUsage(input_tokens=2, output_tokens=1, details={'input_tokens': 2, 'output_tokens': 1}),
+                usage=RequestUsage(
+                    input_tokens=2,
+                    output_tokens=1,
+                    details={'input_tokens': 2, 'output_tokens': 1},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -1229,7 +1332,11 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                usage=RequestUsage(input_tokens=3, output_tokens=2, details={'input_tokens': 3, 'output_tokens': 2}),
+                usage=RequestUsage(
+                    input_tokens=3,
+                    output_tokens=2,
+                    details={'input_tokens': 3, 'output_tokens': 2},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -1254,7 +1361,11 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=RequestUsage(input_tokens=3, output_tokens=5, details={'input_tokens': 3, 'output_tokens': 5}),
+                usage=RequestUsage(
+                    input_tokens=3,
+                    output_tokens=5,
+                    details={'input_tokens': 3, 'output_tokens': 5},
+                ),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
@@ -1268,7 +1379,9 @@ async def test_request_tool_call(allow_model_requests: None):
     )
 
 
-def get_mock_chat_completion_kwargs(async_anthropic: AsyncAnthropic) -> list[dict[str, Any]]:
+def get_mock_chat_completion_kwargs(
+    async_anthropic: AsyncAnthropic,
+) -> list[dict[str, Any]]:
     if isinstance(async_anthropic, MockAnthropic):
         return async_anthropic.chat_completion_kwargs
     else:  # pragma: no cover
@@ -1279,7 +1392,14 @@ def get_mock_chat_completion_kwargs(async_anthropic: AsyncAnthropic) -> list[dic
 async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_calls: bool) -> None:
     responses = [
         completion_message(
-            [BetaToolUseBlock(id='1', input={'loc_name': 'San Francisco'}, name='get_location', type='tool_use')],
+            [
+                BetaToolUseBlock(
+                    id='1',
+                    input={'loc_name': 'San Francisco'},
+                    name='get_location',
+                    type='tool_use',
+                )
+            ],
             usage=BetaUsage(input_tokens=2, output_tokens=1),
         ),
         completion_message(
@@ -1345,16 +1465,28 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
                 part_kind='text',
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Alice'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info',
+                args={'name': 'Alice'},
+                tool_call_id=IsStr(),
+                part_kind='tool-call',
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Bob'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info',
+                args={'name': 'Bob'},
+                tool_call_id=IsStr(),
+                part_kind='tool-call',
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Charlie'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info',
+                args={'name': 'Charlie'},
+                tool_call_id=IsStr(),
+                part_kind='tool-call',
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Daisy'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info',
+                args={'name': 'Daisy'},
+                tool_call_id=IsStr(),
+                part_kind='tool-call',
             ),
         ]
     )
@@ -1399,12 +1531,18 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
 
 
 async def test_anthropic_specific_metadata(allow_model_requests: None) -> None:
-    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    c = completion_message(
+        [BetaTextBlock(text='world', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    result = await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_metadata={'user_id': '123'}))
+    result = await agent.run(
+        'hello',
+        model_settings=AnthropicModelSettings(anthropic_metadata={'user_id': '123'}),
+    )
     assert result.output == 'world'
     assert get_mock_chat_completion_kwargs(mock_client)[0]['metadata']['user_id'] == '123'
 
@@ -1558,7 +1696,9 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
 
 
 async def test_image_url_input_force_download(
-    allow_model_requests: None, anthropic_api_key: str, disable_ssrf_protection_for_vcr: None
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    disable_ssrf_protection_for_vcr: None,
 ):
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -1591,7 +1731,8 @@ async def test_extra_headers(allow_model_requests: None, anthropic_api_key: str)
     agent = Agent(
         m,
         model_settings=AnthropicModelSettings(
-            anthropic_metadata={'user_id': '123'}, extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}
+            anthropic_metadata={'user_id': '123'},
+            extra_headers={'Extra-Header-Key': 'Extra-Header-Value'},
         ),
     )
     await agent.run('hello')
@@ -1774,7 +1915,11 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[
                     TextPart(content="I'll get the image and identify the fruit in it."),
-                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01W2SWpTnHpv1vZaLEknhfkj'),
+                    ToolCallPart(
+                        tool_name='get_image',
+                        args={},
+                        tool_call_id='toolu_01W2SWpTnHpv1vZaLEknhfkj',
+                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=555,
@@ -1803,7 +1948,10 @@ async def test_image_as_binary_content_tool_response(
                         tool_call_id='toolu_01W2SWpTnHpv1vZaLEknhfkj',
                         timestamp=IsDatetime(),
                     ),
-                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
+                    UserPromptPart(
+                        content=['This is file 241a70:', image_content],
+                        timestamp=IsDatetime(),
+                    ),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -1839,7 +1987,10 @@ async def test_image_as_binary_content_tool_response(
 
 @pytest.mark.parametrize('media_type', ('audio/wav', 'audio/mpeg'))
 async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
-    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    c = completion_message(
+        [BetaTextBlock(text='world', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
@@ -1892,7 +2043,10 @@ async def test_count_tokens_connection_error(allow_model_requests: None) -> None
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelAPIError) as exc_info:
-        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+        await agent.run(
+            'hello',
+            usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True),
+        )
     assert exc_info.value.model_name == 'claude-sonnet-4-5'
     assert 'Connection to https://api.anthropic.com timed out' in str(exc_info.value.message)
 
@@ -1922,7 +2076,9 @@ async def test_document_url_input(allow_model_requests: None, anthropic_api_key:
 
 
 async def test_text_document_url_input(
-    allow_model_requests: None, anthropic_api_key: str, disable_ssrf_protection_for_vcr: None
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    disable_ssrf_protection_for_vcr: None,
 ):
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -1942,7 +2098,9 @@ The document also includes metadata about the file itself, including its purpose
 
 
 async def test_text_document_as_binary_content_input(
-    allow_model_requests: None, anthropic_api_key: str, text_document_content: BinaryContent
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    text_document_content: BinaryContent,
 ):
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
@@ -2120,7 +2278,10 @@ I should provide practical advice for different methods of crossing a river.\
 
 
 async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-5-20250929', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel(
+        'claude-sonnet-4-5-20250929',
+        provider=AnthropicProvider(api_key=anthropic_api_key),
+    )
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
     agent = Agent(m, model_settings=settings)
 
@@ -2221,7 +2382,10 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
 
 
 async def test_anthropic_model_thinking_part_redacted_stream(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-sonnet-4-5-20250929', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel(
+        'claude-sonnet-4-5-20250929',
+        provider=AnthropicProvider(api_key=anthropic_api_key),
+    )
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
     agent = Agent(m, model_settings=settings)
 
@@ -2328,15 +2492,26 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                 next_part_kind='text',
             ),
             PartStartEvent(
-                index=2, part=TextPart(content="I notice that you've sent what"), previous_part_kind='thinking'
+                index=2,
+                part=TextPart(content="I notice that you've sent what"),
+                previous_part_kind='thinking',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' appears to be some')),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' kind of test string')),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=" or command. I don't have")),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' any special "magic string"')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' triggers or backdoor commands')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' that would expose internal systems or')),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(content_delta=' any special "magic string"'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(content_delta=' triggers or backdoor commands'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(content_delta=' that would expose internal systems or'),
+            ),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' change my behavior.')),
             PartDeltaEvent(
                 index=2,
@@ -2352,8 +2527,14 @@ I'm Claude\
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='d by Anthropic to')),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' be helpful, harmless')),
             PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=', and honest. How')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' can I assist you today with')),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' a legitimate task or question?')),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(content_delta=' can I assist you today with'),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(content_delta=' a legitimate task or question?'),
+            ),
             PartEndEvent(
                 index=2,
                 part=TextPart(
@@ -2429,7 +2610,11 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=23, output_tokens=2211, details={'reasoning_tokens': 1920}),
+                usage=RequestUsage(
+                    input_tokens=23,
+                    output_tokens=2211,
+                    details={'reasoning_tokens': 1920},
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2558,7 +2743,10 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(content='', signature='', provider_name='anthropic'),
+            ),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
@@ -2569,7 +2757,10 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' This is basic')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' safety information that could')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' safety information that could'),
+            ),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' help prevent')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' accidents.')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='')),
@@ -2588,7 +2779,11 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                 ),
                 next_part_kind='text',
             ),
-            PartStartEvent(index=1, part=TextPart(content='Here are'), previous_part_kind='thinking'),
+            PartStartEvent(
+                index=1,
+                part=TextPart(content='Here are'),
+                previous_part_kind='thinking',
+            ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
@@ -2803,7 +2998,10 @@ The\
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', alert, and predict')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='able in')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' your movements. Always')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' prioritize safety over speed')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(content_delta=' prioritize safety over speed'),
+            ),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' when')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' crossing')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' streets.')),
@@ -2874,7 +3072,9 @@ async def test_anthropic_opus_46_features(
     assert any(isinstance(p, TextPart) for p in response.parts)
 
 
-async def test_anthropic_opus_46_adaptive_thinking_rejects_tool_output(allow_model_requests: None):
+async def test_anthropic_opus_46_adaptive_thinking_rejects_tool_output(
+    allow_model_requests: None,
+):
     """Verified in https://logfire-us.pydantic.dev/public-trace/ca9932da-b5ff-46f0-b277-9aeecc5f41e7?spanId=15a32e26f5020e62"""
     responses = [
         completion_message(
@@ -2893,12 +3093,18 @@ async def test_anthropic_opus_46_adaptive_thinking_rejects_tool_output(allow_mod
         output_type=ToolOutput(CityLocation),
         model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}),
     )
-    with pytest.raises(UserError, match='Anthropic does not support thinking and output tools at the same time'):
+    with pytest.raises(
+        UserError,
+        match='Anthropic does not support thinking and output tools at the same time',
+    ):
         await agent.run('What is the capital of France?')
 
 
 async def test_multiple_system_prompt_formatting(allow_model_requests: None):
-    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    c = completion_message(
+        [BetaTextBlock(text='world', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
     mock_client = MockAnthropic().create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, system_prompt='this is the system prompt')
@@ -2929,12 +3135,23 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
     [
         pytest.param(
             lambda: anth_msg(BetaUsage(input_tokens=1, output_tokens=1)),
-            snapshot(RequestUsage(input_tokens=1, output_tokens=1, details={'input_tokens': 1, 'output_tokens': 1})),
+            snapshot(
+                RequestUsage(
+                    input_tokens=1,
+                    output_tokens=1,
+                    details={'input_tokens': 1, 'output_tokens': 1},
+                )
+            ),
             id='AnthropicMessage',
         ),
         pytest.param(
             lambda: anth_msg(
-                BetaUsage(input_tokens=1, output_tokens=1, cache_creation_input_tokens=2, cache_read_input_tokens=3)
+                BetaUsage(
+                    input_tokens=1,
+                    output_tokens=1,
+                    cache_creation_input_tokens=2,
+                    cache_read_input_tokens=3,
+                )
             ),
             snapshot(
                 RequestUsage(
@@ -2954,26 +3171,45 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
         ),
         pytest.param(
             lambda: BetaRawMessageStartEvent(
-                message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start'
+                message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)),
+                type='message_start',
             ),
-            snapshot(RequestUsage(input_tokens=1, output_tokens=1, details={'input_tokens': 1, 'output_tokens': 1})),
+            snapshot(
+                RequestUsage(
+                    input_tokens=1,
+                    output_tokens=1,
+                    details={'input_tokens': 1, 'output_tokens': 1},
+                )
+            ),
             id='RawMessageStartEvent',
         ),
     ],
 )
 def test_usage(
-    message_callback: Callable[[], BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent], usage: RunUsage
+    message_callback: Callable[[], BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent],
+    usage: RunUsage,
 ):
     assert _map_usage(message_callback(), 'anthropic', '', 'unknown') == usage
 
 
 def test_streaming_usage():
-    start = BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start')
+    start = BetaRawMessageStartEvent(
+        message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)),
+        type='message_start',
+    )
     initial_usage = _map_usage(start, 'anthropic', '', 'unknown')
-    delta = BetaRawMessageDeltaEvent(delta=Delta(), usage=BetaMessageDeltaUsage(output_tokens=5), type='message_delta')
+    delta = BetaRawMessageDeltaEvent(
+        delta=Delta(),
+        usage=BetaMessageDeltaUsage(output_tokens=5),
+        type='message_delta',
+    )
     final_usage = _map_usage(delta, 'anthropic', '', 'unknown', existing_usage=initial_usage)
     assert final_usage == snapshot(
-        RequestUsage(input_tokens=1, output_tokens=5, details={'input_tokens': 1, 'output_tokens': 5})
+        RequestUsage(
+            input_tokens=1,
+            output_tokens=5,
+            details={'input_tokens': 1, 'output_tokens': 5},
+        )
     )
 
 
@@ -2988,7 +3224,12 @@ async def test_anthropic_model_empty_message_on_history(allow_model_requests: No
     result = await agent.run(
         'I need a potato!',
         message_history=[
-            ModelRequest(parts=[], instructions='You are a helpful assistant.', kind='request', timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[],
+                instructions='You are a helpful assistant.',
+                kind='request',
+                timestamp=IsDatetime(),
+            ),
             ModelResponse(parts=[TextPart(content='Hello, how can I help you?')], kind='response'),
         ],
     )
@@ -3013,7 +3254,12 @@ async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_a
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(
+                        content='What is the weather in San Francisco today?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -3701,7 +3947,10 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(content='', signature='', provider_name='anthropic'),
+            ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(content_delta='The user is asking about the weather'),
@@ -3726,7 +3975,10 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
                 index=0,
                 delta=ThinkingPartDelta(content_delta=' information. According to the guidelines, today'),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s date is September 16, ")),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta="'s date is September 16, "),
+            ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
@@ -3768,38 +4020,53 @@ I should search for current weather in San Francisco. I'll include "today" in th
             PartStartEvent(
                 index=1,
                 part=BuiltinToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h', provider_name='anthropic'
+                    tool_name='web_search',
+                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                    provider_name='anthropic',
                 ),
                 previous_part_kind='thinking',
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
+                index=1,
+                delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h'),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='{"query": ', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h'),
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='"Sa', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='n Fr', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='anc', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='isc', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
+                delta=ToolCallPartDelta(
+                    args_delta='{"query": ',
+                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                ),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='o weather', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h'),
+                delta=ToolCallPartDelta(args_delta='"Sa', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h'),
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta=' tod', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
+                index=1,
+                delta=ToolCallPartDelta(args_delta='n Fr', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h'),
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='ay"}', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h')
+                index=1,
+                delta=ToolCallPartDelta(args_delta='anc', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='isc', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='o weather',
+                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta=' tod', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='ay"}', tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h'),
             ),
             PartEndEvent(
                 index=1,
@@ -3893,17 +4160,36 @@ I should search for current weather in San Francisco. I'll include "today" in th
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=3, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(
+                index=3,
+                part=TextPart(content='Base'),
+                previous_part_kind='builtin-tool-return',
+            ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d on the search results, I can see')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' that the information is a bit date')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='d (most results are from about 6')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' days to a week ago), but I can provide')),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(content_delta='d on the search results, I can see'),
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(content_delta=' that the information is a bit date'),
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(content_delta='d (most results are from about 6'),
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(content_delta=' days to a week ago), but I can provide'),
+            ),
             PartDeltaEvent(
                 index=3,
                 delta=TextPartDelta(content_delta=' you with the available weather information for San Francisco.'),
             ),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Let me search for more current')),
+            PartDeltaEvent(
+                index=3,
+                delta=TextPartDelta(content_delta=' Let me search for more current'),
+            ),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' information.')),
             PartEndEvent(
                 index=3,
@@ -3915,47 +4201,65 @@ I should search for current weather in San Francisco. I'll include "today" in th
             PartStartEvent(
                 index=4,
                 part=BuiltinToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx', provider_name='anthropic'
+                    tool_name='web_search',
+                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                    provider_name='anthropic',
                 ),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='quer', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='y": ', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='"San', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta=' Fra', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='nci', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='sco w', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+                index=4,
+                delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
             ),
             PartDeltaEvent(
                 index=4,
-                delta=ToolCallPartDelta(args_delta='eather S', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
-            ),
-            PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='ep', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+                delta=ToolCallPartDelta(args_delta='{"', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
             ),
             PartDeltaEvent(
                 index=4,
-                delta=ToolCallPartDelta(args_delta='tember 16 2', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
+                delta=ToolCallPartDelta(args_delta='quer', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
             ),
             PartDeltaEvent(
-                index=4, delta=ToolCallPartDelta(args_delta='025"}', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx')
+                index=4,
+                delta=ToolCallPartDelta(args_delta='y": ', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=ToolCallPartDelta(args_delta='"San', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=ToolCallPartDelta(args_delta=' Fra', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=ToolCallPartDelta(args_delta='nci', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=ToolCallPartDelta(args_delta='sco w', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=ToolCallPartDelta(
+                    args_delta='eather S',
+                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                ),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=ToolCallPartDelta(args_delta='ep', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=ToolCallPartDelta(
+                    args_delta='tember 16 2',
+                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
+                ),
+            ),
+            PartDeltaEvent(
+                index=4,
+                delta=ToolCallPartDelta(args_delta='025"}', tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx'),
             ),
             PartEndEvent(
                 index=4,
@@ -4049,7 +4353,11 @@ I should search for current weather in San Francisco. I'll include "today" in th
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=6, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(
+                index=6,
+                part=TextPart(content='Base'),
+                previous_part_kind='builtin-tool-return',
+            ),
             PartDeltaEvent(
                 index=6,
                 delta=TextPartDelta(
@@ -4066,7 +4374,10 @@ According\
 """
                 ),
             ),
-            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=" to AccuWeather's forecast, ")),
+            PartDeltaEvent(
+                index=6,
+                delta=TextPartDelta(content_delta=" to AccuWeather's forecast, "),
+            ),
             PartEndEvent(
                 index=6,
                 part=TextPart(
@@ -4099,7 +4410,10 @@ From the recent San\
                 ),
                 previous_part_kind='text',
             ),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' Francisco Chronicle weather report, ')),
+            PartDeltaEvent(
+                index=8,
+                delta=TextPartDelta(content_delta=' Francisco Chronicle weather report, '),
+            ),
             PartEndEvent(
                 index=8,
                 part=TextPart(
@@ -4122,7 +4436,9 @@ From the recent San Francisco Chronicle weather report, \
                 next_part_kind='text',
             ),
             PartStartEvent(
-                index=10, part=TextPart(content=", so today's forecast of 76°F is"), previous_part_kind='text'
+                index=10,
+                part=TextPart(content=", so today's forecast of 76°F is"),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(
                 index=10,
@@ -4230,7 +4546,10 @@ The general weather pattern for San Francisco in September includes:
                 ),
                 previous_part_kind='text',
             ),
-            PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' Typically, there are no rainy days')),
+            PartDeltaEvent(
+                index=15,
+                delta=TextPartDelta(content_delta=' Typically, there are no rainy days'),
+            ),
             PartDeltaEvent(index=15, delta=TextPartDelta(content_delta=' during this month')),
             PartEndEvent(
                 index=15,
@@ -4251,10 +4570,17 @@ So for today, you can expect partly sunny to sunny skies with a\
                 previous_part_kind='text',
             ),
             PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=' high around 76°F (24°C)')),
-            PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=' and a low around 59°F (15°C),')),
-            PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=" with very little chance of rain. It's sh")),
             PartDeltaEvent(
-                index=16, delta=TextPartDelta(content_delta='aping up to be a pleasant day in San Francisco!')
+                index=16,
+                delta=TextPartDelta(content_delta=' and a low around 59°F (15°C),'),
+            ),
+            PartDeltaEvent(
+                index=16,
+                delta=TextPartDelta(content_delta=" with very little chance of rain. It's sh"),
+            ),
+            PartDeltaEvent(
+                index=16,
+                delta=TextPartDelta(content_delta='aping up to be a pleasant day in San Francisco!'),
             ),
             PartEndEvent(
                 index=16,
@@ -4792,7 +5118,10 @@ async def test_anthropic_web_fetch_tool_stream(
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='://ai.pydantic.dev')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and provide')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' only')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the first sentence from')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' the first sentence from'),
+            ),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that page.')),
             PartDeltaEvent(
                 index=0,
@@ -4809,29 +5138,45 @@ async def test_anthropic_web_fetch_tool_stream(
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(tool_name='web_fetch', tool_call_id=IsStr(), provider_name='anthropic'),
+                part=BuiltinToolCallPart(
+                    tool_name='web_fetch',
+                    tool_call_id=IsStr(),
+                    provider_name='anthropic',
+                ),
                 previous_part_kind='thinking',
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
+                index=1,
+                delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='{"url": "', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
+                delta=ToolCallPartDelta(
+                    args_delta='{"url": "',
+                    tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk',
+                ),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='https://ai', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='.p', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='yd', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk')
+                delta=ToolCallPartDelta(
+                    args_delta='https://ai',
+                    tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk',
+                ),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='antic.dev"}', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
+                delta=ToolCallPartDelta(args_delta='.p', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='yd', tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='antic.dev"}',
+                    tool_call_id='srvtoolu_018ADaxdJjyZ8HXtF3sTBPNk',
+                ),
             ),
             PartStartEvent(
                 index=2,
@@ -5267,7 +5612,10 @@ async def test_anthropic_web_fetch_tool_with_parameters():
     # Verify all parameters are passed correctly
     assert web_fetch_tool_param.get('type') == 'web_fetch_20250910'
     assert web_fetch_tool_param.get('max_uses') == 5
-    assert web_fetch_tool_param.get('allowed_domains') == ['example.com', 'ai.pydantic.dev']
+    assert web_fetch_tool_param.get('allowed_domains') == [
+        'example.com',
+        'ai.pydantic.dev',
+    ]
     assert web_fetch_tool_param.get('blocked_domains') is None
     assert web_fetch_tool_param.get('citations') == {'enabled': True}
     assert web_fetch_tool_param.get('max_content_tokens') == 50000
@@ -5298,7 +5646,10 @@ async def test_anthropic_web_fetch_tool_domain_filtering():
     assert web_fetch_tool_param is not None
 
     # Verify blocked_domains is passed correctly
-    assert web_fetch_tool_param.get('blocked_domains') == ['private.example.com', 'internal.example.com']
+    assert web_fetch_tool_param.get('blocked_domains') == [
+        'private.example.com',
+        'internal.example.com',
+    ]
     assert web_fetch_tool_param.get('allowed_domains') is None
 
 
@@ -5672,55 +6023,87 @@ It's designed to simplify building robust, production-ready AI agents while abst
                 ),
             ),
             PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+                index=1,
+                delta=ToolCallPartDelta(args_delta='', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='{"repoName"', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta=': "', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='pydantic', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                delta=ToolCallPartDelta(
+                    args_delta='{"repoName"',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                ),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='/pydantic-ai', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='"', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+                delta=ToolCallPartDelta(args_delta=': "', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta=', "question', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                delta=ToolCallPartDelta(
+                    args_delta='pydantic',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                ),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='": "What', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta=' is ', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=ToolCallPartDelta(args_delta='this repo', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                delta=ToolCallPartDelta(
+                    args_delta='/pydantic-ai',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                ),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='sitory about', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
-            ),
-            PartDeltaEvent(
-                index=1, delta=ToolCallPartDelta(args_delta='? Wha', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1')
+                delta=ToolCallPartDelta(args_delta='"', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='t are i', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                delta=ToolCallPartDelta(
+                    args_delta=', "question',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                ),
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='ts main feat', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                delta=ToolCallPartDelta(
+                    args_delta='": "What',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta=' is ', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='this repo',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='sitory about',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(args_delta='? Wha', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='t are i',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta='ts main feat',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                ),
             ),
             PartDeltaEvent(
                 index=1,
@@ -5728,7 +6111,10 @@ It's designed to simplify building robust, production-ready AI agents while abst
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='s and purpo', tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1'),
+                delta=ToolCallPartDelta(
+                    args_delta='s and purpo',
+                    tool_call_id='mcptoolu_01FZmJ5UspaX5BB9uU339UT1',
+                ),
             ),
             PartDeltaEvent(
                 index=1,
@@ -5898,7 +6284,10 @@ print(f"3 * 12390 = {result}")\
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CTCwceSoRxi8Pf16Fb7Tn'},
+                provider_details={
+                    'finish_reason': 'end_turn',
+                    'container_id': 'container_011CTCwceSoRxi8Pf16Fb7Tn',
+                },
                 provider_response_id='msg_018bVTPr9khzuds31rFDuqW4',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -5967,7 +6356,10 @@ print(f"4 * 12390 = {result}")\
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CTCwdXe48NC7LaX3rxQ4d'},
+                provider_details={
+                    'finish_reason': 'end_turn',
+                    'container_id': 'container_011CTCwdXe48NC7LaX3rxQ4d',
+                },
                 provider_response_id='msg_01VngRFBcNddwrYQoKUmdePY',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -6088,7 +6480,10 @@ Here's how it breaks down following the order of operations:
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(content='', signature='', provider_name='anthropic'),
+            ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(content_delta='The user is asking me to calculate'),
@@ -6127,7 +6522,10 @@ This\
 """
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='465-6544 * 65464-6+1.02255')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='465-6544 * 65464-6+1.02255'),
+            ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
@@ -6153,7 +6551,10 @@ Following order of operations:
                 index=0,
                 delta=ThinkingPartDelta(content_delta=' addition and subtraction: 65465'),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' - (result from step 1)')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' - (result from step 1)'),
+            ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
@@ -6210,7 +6611,8 @@ This is a computational task that requires precise calculations, so I should use
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
-                index=1, delta=TextPartDelta(content_delta=' it down step by step following the order of operations.')
+                index=1,
+                delta=TextPartDelta(content_delta=' it down step by step following the order of operations.'),
             ),
             PartEndEvent(
                 index=1,
@@ -6229,7 +6631,8 @@ This is a computational task that requires precise calculations, so I should use
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG')
+                index=2,
+                delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
             ),
             PartDeltaEvent(
                 index=2,
@@ -6241,12 +6644,16 @@ This is a computational task that requires precise calculations, so I should use
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
-                    args_delta=')\\n\\nexpression = \\"65465-6544 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                    args_delta=')\\n\\nexpression = \\"65465-6544 ',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
                 ),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='* 65464-6+1', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+                delta=ToolCallPartDelta(
+                    args_delta='* 65464-6+1',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
             ),
             PartDeltaEvent(
                 index=2,
@@ -6258,71 +6665,92 @@ This is a computational task that requires precise calculations, so I should use
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
-                    args_delta='}\\")\\n\\n# Let\'s break it down', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                    args_delta='}\\")\\n\\n# Let\'s break it down',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
                 ),
             ),
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
-                    args_delta=' step by step\\nstep1 = ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='6544 * 65464  ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='# Multiplication first\\nprint', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='(f\\"Step 1 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='- Multiplication: ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='6544 * 65464 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='= {step1}\\")\\n\\nstep2', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                    args_delta=' step by step\\nstep1 = ',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
                 ),
             ),
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
-                    args_delta=' = 65465 - step1  ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                    args_delta='6544 * 65464  ',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
                 ),
             ),
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
-                    args_delta='# First subtraction\\nprint(f\\"Step', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                    args_delta='# Multiplication first\\nprint',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
                 ),
             ),
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
-                    args_delta=' 2 - First subtraction:', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                    args_delta='(f\\"Step 1 ',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
                 ),
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta=' 65465 - {step1', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+                delta=ToolCallPartDelta(
+                    args_delta='- Multiplication: ',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
             ),
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
-                    args_delta='} = {step2}\\")\\n\\nstep', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                    args_delta='6544 * 65464 ',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='= {step1}\\")\\n\\nstep2',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta=' = 65465 - step1  ',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='# First subtraction\\nprint(f\\"Step',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta=' 2 - First subtraction:',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta=' 65465 - {step1',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='} = {step2}\\")\\n\\nstep',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
                 ),
             ),
             PartDeltaEvent(
@@ -6341,12 +6769,16 @@ This is a computational task that requires precise calculations, so I should use
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta=' - 6 = {step3', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+                delta=ToolCallPartDelta(
+                    args_delta=' - 6 = {step3',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
             ),
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
-                    args_delta='}\\")\\n\\nfinal_result = step3 + ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                    args_delta='}\\")\\n\\nfinal_result = step3 + ',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
                 ),
             ),
             PartDeltaEvent(
@@ -6359,23 +6791,29 @@ This is a computational task that requires precise calculations, so I should use
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
-                    args_delta='4 - Final addition: {step3', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
-                ),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(args_delta='} + 1.02255 ', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
-            ),
-            PartDeltaEvent(
-                index=2,
-                delta=ToolCallPartDelta(
-                    args_delta='= {final_result}\\")\\n\\n#', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                    args_delta='4 - Final addition: {step3',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
                 ),
             ),
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
-                    args_delta=" Let's also verify with", tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                    args_delta='} + 1.02255 ',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='= {final_result}\\")\\n\\n#',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
+            ),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta=" Let's also verify with",
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
                 ),
             ),
             PartDeltaEvent(
@@ -6388,7 +6826,8 @@ This is a computational task that requires precise calculations, so I should use
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
-                    args_delta='465-6544 * 65464-', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                    args_delta='465-6544 * 65464-',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
                 ),
             ),
             PartDeltaEvent(
@@ -6401,7 +6840,8 @@ This is a computational task that requires precise calculations, so I should use
             PartDeltaEvent(
                 index=2,
                 delta=ToolCallPartDelta(
-                    args_delta=' {direct_result}\\")\\nprint', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'
+                    args_delta=' {direct_result}\\")\\nprint',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
                 ),
             ),
             PartDeltaEvent(
@@ -6413,10 +6853,14 @@ This is a computational task that requires precise calculations, so I should use
             ),
             PartDeltaEvent(
                 index=2,
-                delta=ToolCallPartDelta(args_delta='_result}\\")', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
+                delta=ToolCallPartDelta(
+                    args_delta='_result}\\")',
+                    tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG',
+                ),
             ),
             PartDeltaEvent(
-                index=2, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG')
+                index=2,
+                delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01MKwyo39KHRDr9Ubff5vWtG'),
             ),
             PartEndEvent(
                 index=2,
@@ -6454,7 +6898,11 @@ Results match: True
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=4, part=TextPart(content='The answer to'), previous_part_kind='builtin-tool-return'),
+            PartStartEvent(
+                index=4,
+                part=TextPart(content='The answer to'),
+                previous_part_kind='builtin-tool-return',
+            ),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' **65465-6544 * ')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='65464-6+1.02255** is **')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-428,330,955.97745**.')),
@@ -6469,7 +6917,10 @@ Here's how it breaks down following the order of operations:
 """
                 ),
             ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=', multiplication: 6,544 × 65,464 ')),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta=', multiplication: 6,544 × 65,464 '),
+            ),
             PartDeltaEvent(
                 index=4,
                 delta=TextPartDelta(
@@ -6500,7 +6951,10 @@ Here's how it breaks down following the order of operations:
 """
                 ),
             ),
-            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='1.02255 = -428,330,955.97745')),
+            PartDeltaEvent(
+                index=4,
+                delta=TextPartDelta(content_delta='1.02255 = -428,330,955.97745'),
+            ),
             PartEndEvent(
                 index=4,
                 part=TextPart(
@@ -6563,7 +7017,11 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
 
     result = await agent.run('What day is today?')
     assert result.output == snapshot('Today is November 19, 2025.')
-    result = await agent.run('What day is tomorrow?', model=openai_model, message_history=result.all_messages())
+    result = await agent.run(
+        'What day is tomorrow?',
+        model=openai_model,
+        message_history=result.all_messages(),
+    )
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
@@ -6611,7 +7069,11 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
         [[UserPromptPart], [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
     )
 
-    result = await agent.run('Multiplied by 12390', model=anthropic_model, message_history=result.all_messages())
+    result = await agent.run(
+        'Multiplied by 12390',
+        model=anthropic_model,
+        message_history=result.all_messages(),
+    )
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
@@ -6639,19 +7101,37 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     # Test _map_message with list containing empty strings in user prompt
     messages_mixed_content: list[ModelMessage] = [
         ModelRequest(
-            parts=[UserPromptPart(content=['', 'Hello', '', 'World'])], kind='request', timestamp=IsDatetime()
+            parts=[UserPromptPart(content=['', 'Hello', '', 'World'])],
+            kind='request',
+            timestamp=IsDatetime(),
         ),
     ]
     _, anthropic_messages = await model._map_message(messages_mixed_content, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     assert anthropic_messages == snapshot(
-        [{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}, {'text': 'World', 'type': 'text'}]}]
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Hello', 'type': 'text'},
+                    {'text': 'World', 'type': 'text'},
+                ],
+            }
+        ]
     )
 
     # Test _map_message with empty assistant response
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[SystemPromptPart(content='You are helpful')], kind='request', timestamp=IsDatetime()),
+        ModelRequest(
+            parts=[SystemPromptPart(content='You are helpful')],
+            kind='request',
+            timestamp=IsDatetime(),
+        ),
         ModelResponse(parts=[TextPart(content='')], kind='response'),  # Empty response
-        ModelRequest(parts=[UserPromptPart(content='Hello')], kind='request', timestamp=IsDatetime()),
+        ModelRequest(
+            parts=[UserPromptPart(content='Hello')],
+            kind='request',
+            timestamp=IsDatetime(),
+        ),
     ]
     _, anthropic_messages = await model._map_message(messages, ModelRequestParameters(), {})  # type: ignore[attr-defined]
     # The empty assistant message should be filtered out
@@ -6695,7 +7175,11 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa')
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args={},
+                        tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa',
+                    )
                 ],
                 usage=RequestUsage(
                     input_tokens=445,
@@ -6807,7 +7291,11 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                     TextPart(
                         content="I'll help find the largest city in your country. Let me first check your country using the get_user_country tool."
                     ),
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01JJ8TequDsrEU2pv1QFRWAK'),
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args={},
+                        tool_call_id='toolu_01JJ8TequDsrEU2pv1QFRWAK',
+                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=383,
@@ -6902,7 +7390,11 @@ async def test_anthropic_prompted_output(allow_model_requests: None, anthropic_a
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01ArHq5f2wxRpRF2PVQcKExM')
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args={},
+                        tool_call_id='toolu_01ArHq5f2wxRpRF2PVQcKExM',
+                    )
                 ],
                 usage=RequestUsage(
                     input_tokens=459,
@@ -7100,7 +7592,12 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
 
     # Create the second mock response that references the history
     second_response = completion_message(
-        [BetaTextBlock(text='The web search result showed that today is January 2, 2025.', type='text')],
+        [
+            BetaTextBlock(
+                text='The web search result showed that today is January 2, 2025.',
+                type='text',
+            )
+        ],
         BetaUsage(input_tokens=50, output_tokens=30),
     )
 
@@ -7202,31 +7699,47 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             PartStartEvent(
                 index=0,
                 part=BuiltinToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY', provider_name='anthropic'
+                    tool_name='web_search',
+                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='{"q', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
+                index=0,
+                delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ToolCallPartDelta(args_delta='uery": "top', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY'),
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta=' w', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='orld n', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
-            ),
-            PartDeltaEvent(
-                index=0, delta=ToolCallPartDelta(args_delta='ew', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY')
+                delta=ToolCallPartDelta(args_delta='{"q', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY'),
             ),
             PartDeltaEvent(
                 index=0,
-                delta=ToolCallPartDelta(args_delta='s today"}', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY'),
+                delta=ToolCallPartDelta(
+                    args_delta='uery": "top',
+                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta=' w', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='orld n',
+                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(args_delta='ew', tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='s today"}',
+                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
+                ),
             ),
             PartEndEvent(
                 index=0,
@@ -7326,7 +7839,10 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                 previous_part_kind='builtin-tool-return',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' news stories to get clearer headlines.')),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(content_delta=' news stories to get clearer headlines.'),
+            ),
             PartEndEvent(
                 index=2,
                 part=TextPart(
@@ -7337,36 +7853,58 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
             PartStartEvent(
                 index=3,
                 part=BuiltinToolCallPart(
-                    tool_name='web_search', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T', provider_name='anthropic'
+                    tool_name='web_search',
+                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                    provider_name='anthropic',
                 ),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
-            ),
-            PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='{"query', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+                index=3,
+                delta=ToolCallPartDelta(args_delta='', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
             ),
             PartDeltaEvent(
                 index=3,
-                delta=ToolCallPartDelta(args_delta='": "breaki', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
+                delta=ToolCallPartDelta(
+                    args_delta='{"query',
+                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                ),
             ),
             PartDeltaEvent(
                 index=3,
-                delta=ToolCallPartDelta(args_delta='ng news ', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
-            ),
-            PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='headl', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+                delta=ToolCallPartDelta(
+                    args_delta='": "breaki',
+                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                ),
             ),
             PartDeltaEvent(
                 index=3,
-                delta=ToolCallPartDelta(args_delta='ines August ', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
+                delta=ToolCallPartDelta(
+                    args_delta='ng news ',
+                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                ),
             ),
             PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='14 2025', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+                index=3,
+                delta=ToolCallPartDelta(args_delta='headl', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
             ),
             PartDeltaEvent(
-                index=3, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T')
+                index=3,
+                delta=ToolCallPartDelta(
+                    args_delta='ines August ',
+                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                ),
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=ToolCallPartDelta(
+                    args_delta='14 2025',
+                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
+                ),
+            ),
+            PartDeltaEvent(
+                index=3,
+                delta=ToolCallPartDelta(args_delta='"}', tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T'),
             ),
             PartEndEvent(
                 index=3,
@@ -7460,11 +7998,19 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartStartEvent(index=5, part=TextPart(content='Base'), previous_part_kind='builtin-tool-return'),
-            PartDeltaEvent(
-                index=5, delta=TextPartDelta(content_delta='d on the search results, I can identify the top')
+            PartStartEvent(
+                index=5,
+                part=TextPart(content='Base'),
+                previous_part_kind='builtin-tool-return',
             ),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' 3 major news stories from aroun')),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(content_delta='d on the search results, I can identify the top'),
+            ),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(content_delta=' 3 major news stories from aroun'),
+            ),
             PartDeltaEvent(
                 index=5,
                 delta=TextPartDelta(
@@ -7485,7 +8031,10 @@ d the world today (August 14, 2025):
 """
                 ),
             ),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='1. Trump-Putin Summit and Ukraine Crisis')),
+            PartDeltaEvent(
+                index=5,
+                delta=TextPartDelta(content_delta='1. Trump-Putin Summit and Ukraine Crisis'),
+            ),
             PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='**\n')),
             PartEndEvent(
                 index=5,
@@ -7508,7 +8057,10 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 previous_part_kind='text',
             ),
             PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="'s Volodymyr Zel")),
-            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="enskyy and NATO's chief ahea")),
+            PartDeltaEvent(
+                index=6,
+                delta=TextPartDelta(content_delta="enskyy and NATO's chief ahea"),
+            ),
             PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="d of Friday's U.S.-")),
             PartDeltaEvent(index=6, delta=TextPartDelta(content_delta='Russia summit')),
             PartEndEvent(
@@ -7525,7 +8077,10 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 part=TextPart(content='The White House lowered its expectations surrounding'),
                 previous_part_kind='text',
             ),
-            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' the Trump-Putin summit on Friday')),
+            PartDeltaEvent(
+                index=8,
+                delta=TextPartDelta(content_delta=' the Trump-Putin summit on Friday'),
+            ),
             PartEndEvent(
                 index=8,
                 part=TextPart(
@@ -7540,9 +8095,18 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 part=TextPart(content='In a surprise move just days before the Trump-Putin summit'),
                 previous_part_kind='text',
             ),
-            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=', the White House swapped out pro')),
-            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta="-EU PM Tusk for Poland's new president –")),
-            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=" a political ally who once opposed Ukraine's")),
+            PartDeltaEvent(
+                index=10,
+                delta=TextPartDelta(content_delta=', the White House swapped out pro'),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=TextPartDelta(content_delta="-EU PM Tusk for Poland's new president –"),
+            ),
+            PartDeltaEvent(
+                index=10,
+                delta=TextPartDelta(content_delta=" a political ally who once opposed Ukraine's"),
+            ),
             PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=' NATO and EU bids')),
             PartEndEvent(
                 index=10,
@@ -7582,7 +8146,10 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 ),
                 previous_part_kind='text',
             ),
-            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta="eover of the city's police entered its thir")),
+            PartDeltaEvent(
+                index=12,
+                delta=TextPartDelta(content_delta="eover of the city's police entered its thir"),
+            ),
             PartDeltaEvent(index=12, delta=TextPartDelta(content_delta='d night')),
             PartEndEvent(
                 index=12,
@@ -7601,7 +8168,8 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 previous_part_kind='text',
             ),
             PartDeltaEvent(
-                index=14, delta=TextPartDelta(content_delta='d federalization of local police to crack down on crime')
+                index=14,
+                delta=TextPartDelta(content_delta='d federalization of local police to crack down on crime'),
             ),
             PartDeltaEvent(index=14, delta=TextPartDelta(content_delta=" in the nation's capital")),
             PartEndEvent(
@@ -7680,7 +8248,8 @@ Based on the search results, I can identify the top 3 major news stories from ar
                 ),
             ),
             PartDeltaEvent(
-                index=20, delta=TextPartDelta(content_delta=' Saturday as it faces a potential work stoppage by')
+                index=20,
+                delta=TextPartDelta(content_delta=' Saturday as it faces a potential work stoppage by'),
             ),
             PartDeltaEvent(index=20, delta=TextPartDelta(content_delta=' its flight attendants')),
             PartEndEvent(
@@ -7701,8 +8270,14 @@ These stories represent major international diplomatic developments, significant
                 ),
                 previous_part_kind='text',
             ),
-            PartDeltaEvent(index=21, delta=TextPartDelta(content_delta=' changes in the US, and major transportation')),
-            PartDeltaEvent(index=21, delta=TextPartDelta(content_delta=' disruptions affecting North America.')),
+            PartDeltaEvent(
+                index=21,
+                delta=TextPartDelta(content_delta=' changes in the US, and major transportation'),
+            ),
+            PartDeltaEvent(
+                index=21,
+                delta=TextPartDelta(content_delta=' disruptions affecting North America.'),
+            ),
             PartEndEvent(
                 index=21,
                 part=TextPart(
@@ -7897,7 +8472,11 @@ async def test_anthropic_text_parts_ahead_of_built_in_tool_call(allow_model_requ
     # Verify that text parts ahead of the built-in tool call are not included in the output
 
     anthropic_model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()], instructions='Be very concise.')
+    agent = Agent(
+        anthropic_model,
+        builtin_tools=[WebSearchTool()],
+        instructions='Be very concise.',
+    )
 
     result = await agent.run('Briefly mention 1 event that happened today in history?')
     assert result.output == snapshot("""\
@@ -8156,13 +8735,17 @@ This sentence is often used for testing typewriters, fonts, and keyboards becaus
 async def test_anthropic_count_tokens_with_mock(allow_model_requests: None):
     """Test that count_tokens is called on the mock client."""
     c = completion_message(
-        [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+        [BetaTextBlock(text='hello world', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
     )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    result = await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+    result = await agent.run(
+        'hello',
+        usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True),
+    )
     assert result.output == 'hello world'
     assert len(mock_client.chat_completion_kwargs) == 2  # type: ignore
     count_tokens_kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore
@@ -8192,7 +8775,10 @@ async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropi
     agent = Agent(model)
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+        await agent.run(
+            'hello',
+            usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True),
+        )
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.model_name == model_id
@@ -8211,8 +8797,14 @@ async def test_anthropic_bedrock_count_tokens_not_supported(env: TestEnv):
     model = AnthropicModel('anthropic.claude-3-5-sonnet-20241022-v2:0', provider=provider)
     agent = Agent(model)
 
-    with pytest.raises(UserError, match='AsyncAnthropicBedrock client does not support `count_tokens` api.'):
-        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+    with pytest.raises(
+        UserError,
+        match='AsyncAnthropicBedrock client does not support `count_tokens` api.',
+    ):
+        await agent.run(
+            'hello',
+            usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True),
+        )
 
 
 @pytest.mark.vcr()
@@ -8245,7 +8837,10 @@ async def test_anthropic_cache_messages_real_api(allow_model_requests: None, ant
 
     # Continue the conversation - this message appends to history
     # The previous cached message should still be in the request
-    result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
+    result2 = await agent.run(
+        'Can you summarize that in one sentence?',
+        message_history=result1.all_messages(),
+    )
     usage2 = result2.usage()
 
     # The second call should potentially read from cache if the previous message is still cached
@@ -8259,13 +8854,19 @@ async def test_anthropic_cache_messages_real_api(allow_model_requests: None, ant
 
 async def test_anthropic_container_setting_explicit(allow_model_requests: None):
     """Test that anthropic_container setting passes explicit container config to API."""
-    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    c = completion_message(
+        [BetaTextBlock(text='world', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
     # Test with explicit container config
-    await agent.run('hello', model_settings=AnthropicModelSettings(anthropic_container={'id': 'container_abc123'}))
+    await agent.run(
+        'hello',
+        model_settings=AnthropicModelSettings(anthropic_container={'id': 'container_abc123'}),
+    )
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert completion_kwargs['container'] == BetaContainerParams(id='container_abc123')
@@ -8273,7 +8874,10 @@ async def test_anthropic_container_setting_explicit(allow_model_requests: None):
 
 async def test_anthropic_container_from_message_history(allow_model_requests: None):
     """Test that container_id from message history is passed to subsequent requests."""
-    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    c = completion_message(
+        [BetaTextBlock(text='world', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
     mock_client = MockAnthropic.create_mock([c, c])
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
@@ -8295,9 +8899,14 @@ async def test_anthropic_container_from_message_history(allow_model_requests: No
     assert completion_kwargs['container'] == BetaContainerParams(id='container_from_history')
 
 
-async def test_anthropic_container_setting_false_ignores_history(allow_model_requests: None):
+async def test_anthropic_container_setting_false_ignores_history(
+    allow_model_requests: None,
+):
     """Test that anthropic_container=False ignores container_id from history."""
-    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    c = completion_message(
+        [BetaTextBlock(text='world', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
@@ -8314,7 +8923,9 @@ async def test_anthropic_container_setting_false_ignores_history(allow_model_req
 
     # Run with anthropic_container=False to force fresh container
     await agent.run(
-        'follow up', message_history=history, model_settings=AnthropicModelSettings(anthropic_container=False)
+        'follow up',
+        message_history=history,
+        model_settings=AnthropicModelSettings(anthropic_container=False),
     )
 
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
@@ -8456,45 +9067,63 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
         ),
     ]
 
-    # This should NOT raise ValueError — args_as_dict(allow_partial=True)
-    # returns {'INVALID_JSON': ...} for the malformed tool call, allowing the retry to proceed.
+    # This should NOT raise ValueError — args_as_dict() now gracefully handles
+    # malformed JSON by returning {'INVALID_JSON': ...}, allowing the retry to proceed.
     result = await agent.run(
         'Please fix the tool call and try again.',
         message_history=message_history,
     )
     assert result.output == 'Here is the corrected result.'
-
-
-def test_args_as_dict_allow_partial_valid_json():
-    """args_as_dict(allow_partial=True) should return parsed dict for valid JSON args."""
-    part = ToolCallPart(tool_name='test_tool', args='{"key": "value"}')
-    assert part.args_as_dict(allow_partial=True) == {'key': 'value'}
-
-
-def test_args_as_dict_allow_partial_dict_args():
-    """args_as_dict(allow_partial=True) should return the dict directly when args is already a dict."""
-    part = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
-    assert part.args_as_dict(allow_partial=True) == {'key': 'value'}
-
-
-def test_args_as_dict_allow_partial_malformed_json():
-    """args_as_dict(allow_partial=True) should return INVALID_JSON wrapper for malformed JSON."""
-    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
-    part = ToolCallPart(tool_name='test_tool', args=malformed)
-    # Should NOT raise ValueError
-    result = part.args_as_dict(allow_partial=True)
-    assert result == {'INVALID_JSON': malformed}
-
-
-def test_args_as_dict_allow_partial_empty_args():
-    """args_as_dict(allow_partial=True) should return {} when args is None/empty."""
-    part = ToolCallPart(tool_name='test_tool', args=None)
-    assert part.args_as_dict(allow_partial=True) == {}
-
-
-def test_args_as_dict_raises_on_malformed_json_by_default():
-    """args_as_dict() without allow_partial should still raise on malformed JSON."""
-    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
-    part = ToolCallPart(tool_name='test_tool', args=malformed)
-    with pytest.raises(ValueError):
-        part.args_as_dict()
+    assert result.all_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='search_knowledge',
+                        args="""\
+{"query": "bad query", "file_ids":[4556]</parameter>
+<parameter name="limit": 8}\
+""",
+                        tool_call_id='toolu_123',
+                    )
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Invalid JSON: expected `,` or `}` at line 1 column 99',
+                        tool_name='search_knowledge',
+                        tool_call_id='toolu_123',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Please fix the tool call and try again.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Here is the corrected result.')],
+                usage=RequestUsage(
+                    input_tokens=10,
+                    output_tokens=5,
+                    details={'input_tokens': 10, 'output_tokens': 5},
+                ),
+                model_name='claude-3-5-haiku-123',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )

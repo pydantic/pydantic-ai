@@ -1276,16 +1276,18 @@ class BaseToolCallPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
-    def args_as_dict(self, *, allow_partial: bool = False) -> dict[str, Any]:
+    def args_as_dict(self, *, raise_if_invalid: bool = False) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
         This is just for convenience with models that require dicts as input.
 
         Args:
-            allow_partial: If ``True``, malformed JSON in ``args`` will not
-                raise an exception.  Instead, ``{'INVALID_JSON': '<raw args>'}``
-                is returned so that the value can still be sent to a model API
-                (e.g. during a retry flow) without crashing.
+            raise_if_invalid: If ``True``, a ``ValueError`` or ``AssertionError``
+                caused by malformed JSON in ``args`` will be re-raised.  When
+                ``False`` (the default), malformed JSON is handled gracefully by
+                returning ``{'INVALID_JSON': '<raw args>'}`` so that the value
+                can still be sent to a model API (e.g. during a retry flow)
+                without crashing.
         """
         if not self.args:
             return {}
@@ -1296,7 +1298,7 @@ class BaseToolCallPart:
             assert isinstance(args, dict), 'args should be a dict'
             return cast(dict[str, Any], args)
         except (ValueError, AssertionError):
-            if not allow_partial:
+            if raise_if_invalid:
                 raise
             _logger.debug(
                 'Malformed tool call args for %r, falling back to INVALID_JSON wrapper: %s',

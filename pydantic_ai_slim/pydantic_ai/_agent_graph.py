@@ -109,7 +109,7 @@ class GraphAgentState:
                 and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
             ):
                 try:
-                    tool_call.args_as_dict()
+                    tool_call.args_as_dict(raise_if_invalid=True)
                 except Exception:
                     max_tokens = model_settings.get('max_tokens') if model_settings else None
                     raise exceptions.IncompleteToolCall(
