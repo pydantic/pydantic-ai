@@ -27,7 +27,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import BuiltinToolCallPart, BuiltinToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
@@ -1032,7 +1032,7 @@ async def test_response_handler_all_fail() -> None:
         await agent.run('hello')
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     assert len(exc_info.value.exceptions) == 1
-    assert isinstance(exc_info.value.exceptions[0], RuntimeError)
+    assert isinstance(exc_info.value.exceptions[0], ResponseRejected)
     assert 'rejected by fallback_on' in str(exc_info.value.exceptions[0])
 
 
@@ -1108,7 +1108,7 @@ async def test_mixed_failures_all_fail() -> None:
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     assert len(exc_info.value.exceptions) == 2
     assert isinstance(exc_info.value.exceptions[0], ModelHTTPError)
-    assert isinstance(exc_info.value.exceptions[1], RuntimeError)
+    assert isinstance(exc_info.value.exceptions[1], ResponseRejected)
     assert 'rejected by fallback_on' in str(exc_info.value.exceptions[1])
     assert call_order == ['first', 'second']
 
@@ -1443,36 +1443,28 @@ def test_fallback_on_single_exception_type_direct() -> None:
     assert result.output == 'success'
 
 
-def test_empty_fallback_on_list_warning() -> None:
-    """Test that empty fallback_on list produces a warning."""
-    import warnings
+def test_empty_fallback_on_list_error() -> None:
+    """Test that empty fallback_on list raises UserError."""
+    from pydantic_ai.exceptions import UserError
 
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter('always')
+    with pytest.raises(UserError, match='empty fallback_on'):
         FallbackModel(
             primary_model,
             fallback_model_impl,
             fallback_on=[],
         )
-        assert len(w) == 1
-        assert issubclass(w[0].category, UserWarning)
-        assert 'empty fallback_on' in str(w[0].message)
 
 
-def test_empty_fallback_on_tuple_warning() -> None:
-    """Test that empty fallback_on tuple produces a warning."""
-    import warnings
+def test_empty_fallback_on_tuple_error() -> None:
+    """Test that empty fallback_on tuple raises UserError."""
+    from pydantic_ai.exceptions import UserError
 
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter('always')
+    with pytest.raises(UserError, match='empty fallback_on'):
         FallbackModel(
             primary_model,
             fallback_model_impl,
             fallback_on=(),
         )
-        assert len(w) == 1
-        assert issubclass(w[0].category, UserWarning)
-        assert 'empty fallback_on' in str(w[0].message)
 
 
 async def test_response_rejection_error_message() -> None:
@@ -1491,9 +1483,71 @@ async def test_response_rejection_error_message() -> None:
     with pytest.raises(ExceptionGroup) as exc_info:
         await agent.run('hello')
 
-    # Find the RuntimeError in the exception group
-    runtime_errors = [e for e in exc_info.value.exceptions if isinstance(e, RuntimeError)]
-    assert len(runtime_errors) == 1
+    # Find the ResponseRejected in the exception group
+    rejection_errors = [e for e in exc_info.value.exceptions if isinstance(e, ResponseRejected)]
+    assert len(rejection_errors) == 1
 
-    error_msg = str(runtime_errors[0])
+    error_msg = str(rejection_errors[0])
     assert 'rejected by fallback_on handler' in error_msg
+
+
+async def test_streaming_response_handler_accepts() -> None:
+    """Test that response handlers are checked after stream consumption and accept."""
+
+    def accept_all(response: ModelResponse) -> bool:
+        return False  # Don't reject
+
+    fallback = FallbackModel(
+        success_model_stream,
+        failure_model_stream,
+        fallback_on=[ModelHTTPError, accept_all],
+    )
+    agent = Agent(model=fallback)
+    async with agent.run_stream('hello') as result:
+        chunks = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
+    # Stream completed normally — response handler accepted
+    assert len(chunks) > 0
+    assert result.is_complete
+
+
+async def test_streaming_response_handler_rejects() -> None:
+    """Test that response handlers reject after stream consumption, raising FallbackExceptionGroup."""
+
+    def reject_all(response: ModelResponse) -> bool:
+        return True  # Always reject
+
+    fallback = FallbackModel(
+        success_model_stream,
+        failure_model_stream,
+        fallback_on=reject_all,
+    )
+    agent = Agent(model=fallback)
+    with pytest.raises(ExceptionGroup) as exc_info:
+        async with agent.run_stream('hello') as result:
+            async for _ in result.stream_responses(debounce_by=None):
+                pass  # pragma: lax no cover
+    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
+    rejection_errors = [e for e in exc_info.value.exceptions if isinstance(e, ResponseRejected)]
+    assert len(rejection_errors) == 1
+
+
+async def test_streaming_exception_fallback_then_response_rejection() -> None:
+    """Test exception fallback during init + response rejection after stream consumption."""
+
+    def reject_all(response: ModelResponse) -> bool:
+        return True  # Always reject
+
+    fallback = FallbackModel(
+        failure_model_stream,  # Raises ModelHTTPError during init
+        success_model_stream,  # Succeeds init but response rejected
+        fallback_on=[ModelHTTPError, reject_all],
+    )
+    agent = Agent(model=fallback)
+    with pytest.raises(ExceptionGroup) as exc_info:
+        async with agent.run_stream('hello') as result:
+            async for _ in result.stream_responses(debounce_by=None):
+                pass  # pragma: lax no cover
+    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
+    assert len(exc_info.value.exceptions) == 2
+    assert isinstance(exc_info.value.exceptions[0], ModelHTTPError)
+    assert isinstance(exc_info.value.exceptions[1], ResponseRejected)

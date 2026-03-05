@@ -1,9 +1,9 @@
 from __future__ import annotations as _annotations
 
-import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
 
@@ -14,28 +14,37 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import get_first_param_type, is_async_callable
 from pydantic_ai.models.instrumented import InstrumentedModel
 
-from ..exceptions import FallbackExceptionGroup, ModelAPIError
-from ..messages import ModelResponse
+from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
+from ..messages import ModelResponse, ModelResponseStreamEvent
 from ..profiles import ModelProfile
+from ..usage import RequestUsage
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage
     from ..settings import ModelSettings
 
-# Type aliases for handlers (support both sync and async)
-_ExceptionHandler = Callable[[Exception], Awaitable[bool]] | Callable[[Exception], bool]
-_ResponseHandler = Callable[[ModelResponse], Awaitable[bool]] | Callable[[ModelResponse], bool]
+ExceptionHandler = Callable[[Exception], Awaitable[bool]] | Callable[[Exception], bool]
+"""A sync or async callable that decides whether an exception should trigger fallback."""
 
+ResponseHandler = Callable[[ModelResponse], Awaitable[bool]] | Callable[[ModelResponse], bool]
+"""A sync or async callable that decides whether a model response should trigger fallback."""
 
-# The unified fallback_on type
-_FallbackOn = (
+FallbackOn = (
     type[Exception]
     | tuple[type[Exception], ...]
-    | _ExceptionHandler
-    | _ResponseHandler
-    | Sequence[type[Exception] | _ExceptionHandler | _ResponseHandler]
+    | ExceptionHandler
+    | ResponseHandler
+    | Sequence[type[Exception] | ExceptionHandler | ResponseHandler]
 )
+"""The type of the `fallback_on` parameter to [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]."""
+
+
+class ResponseRejected(Exception):
+    """Raised within a `FallbackExceptionGroup` when model responses are rejected by a response handler."""
+
+    def __init__(self, rejected_count: int):
+        super().__init__(f'{rejected_count} model response(s) rejected by fallback_on handler')
 
 
 def _is_response_handler(handler: Callable[..., Any]) -> bool:
@@ -56,6 +65,91 @@ def _is_exception_type(value: Any) -> TypeGuard[type[Exception]]:
     return isinstance(value, type) and issubclass(value, Exception)
 
 
+class _ResponseCheckingStream(StreamedResponse):
+    """Wraps a StreamedResponse to check response handlers after stream consumption.
+
+    Proxies all attributes to the wrapped stream via __getattr__.
+    After all events are yielded, calls the response handler and raises
+    ResponseRejected if the response is rejected.
+    """
+
+    def __init__(
+        self,
+        wrapped: StreamedResponse,
+        should_fallback: Callable[[ModelResponse], Awaitable[bool]],
+    ):
+        # Skip super().__init__() so dataclass field defaults don't create instance attributes
+        object.__setattr__(self, '_wrapped', wrapped)
+        object.__setattr__(self, '_should_fallback', should_fallback)
+
+    # Fields from StreamedResponse that have class-level defaults (from dataclass field(default=None))
+    # which would shadow __getattr__. We list them here so __getattribute__ can intercept reads.
+    _PROXIED_FIELDS = frozenset(
+        {
+            'final_result_event',
+            'provider_response_id',
+            'provider_details',
+            'finish_reason',
+            '_event_iterator',
+        }
+    )
+
+    def __getattribute__(self, name: str) -> Any:
+        # For proxied fields, go straight to the wrapped stream instead of finding
+        # the class-level None default inherited from StreamedResponse's dataclass.
+        if name in object.__getattribute__(self, '_PROXIED_FIELDS'):
+            return getattr(object.__getattribute__(self, '_wrapped'), name)
+        return object.__getattribute__(self, name)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._wrapped, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # Redirect writes to the wrapped stream (e.g. final_result_event set by agent loop)
+        if name in ('_wrapped', '_should_fallback'):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._wrapped, name, value)
+
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        return self._iterate()
+
+    async def _iterate(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        async for event in self._wrapped:
+            yield event
+        # Stream fully consumed — check response handlers
+        response = self._wrapped.get()
+        if await self._should_fallback(response):
+            raise ResponseRejected(1)
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        # Not called — __aiter__ is overridden to proxy the wrapped stream directly
+        raise NotImplementedError  # pragma: no cover
+        yield  # pragma: no cover
+
+    def get(self) -> ModelResponse:
+        return self._wrapped.get()
+
+    def usage(self) -> RequestUsage:
+        return self._wrapped.usage()
+
+    @property
+    def model_name(self) -> str:
+        return self._wrapped.model_name
+
+    @property
+    def provider_name(self) -> str | None:
+        return self._wrapped.provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        return self._wrapped.provider_url
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._wrapped.timestamp
+
+
 @dataclass(init=False)
 class FallbackModel(Model):
     """A model that uses one or more fallback models upon failure.
@@ -66,14 +160,14 @@ class FallbackModel(Model):
     models: list[Model]
 
     _model_name: str = field(repr=False)
-    _exception_handlers: list[_ExceptionHandler] = field(repr=False)
-    _response_handlers: list[_ResponseHandler] = field(repr=False)
+    _exception_handlers: list[ExceptionHandler] = field(repr=False)
+    _response_handlers: list[ResponseHandler] = field(repr=False)
 
     def __init__(
         self,
         default_model: Model | KnownModelName | str,
         *fallback_models: Model | KnownModelName | str,
-        fallback_on: _FallbackOn = (ModelAPIError,),
+        fallback_on: FallbackOn = (ModelAPIError,),
     ):
         """Initialize a fallback model instance.
 
@@ -90,10 +184,6 @@ class FallbackModel(Model):
                 Handler type is auto-detected by inspecting type hints on the first parameter.
                 If the first parameter is hinted as `ModelResponse`, it's a response handler.
                 Otherwise (including untyped handlers and lambdas), it's an exception handler.
-
-                Note: For streaming requests, only exception-based fallback is supported, and only for
-                errors during stream initialization. Response handlers are ignored for streaming.
-                See https://github.com/pydantic/pydantic-ai/issues/4140.
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
@@ -103,7 +193,7 @@ class FallbackModel(Model):
         self._response_handlers = []
         self._parse_fallback_on(fallback_on)
 
-    def _parse_fallback_on(self, fallback_on: _FallbackOn) -> None:
+    def _parse_fallback_on(self, fallback_on: FallbackOn) -> None:
         """Parse the fallback_on parameter into exception and response handlers."""
         if isinstance(fallback_on, tuple):
             if fallback_on:
@@ -128,14 +218,11 @@ class FallbackModel(Model):
         else:
             assert_never(fallback_on)  # type: ignore[arg-type]  # pyright can't narrow str/bytes exclusion
 
-        # Warn if no handlers were registered (empty tuple, empty list, etc.)
         if not self._exception_handlers and not self._response_handlers:
-            warnings.warn(
+            raise UserError(
                 'FallbackModel created with empty fallback_on. '
                 'All exceptions will propagate and all responses will be accepted. '
-                'Consider using fallback_on=(ModelAPIError,) for default behavior.',
-                UserWarning,
-                stacklevel=3,  # user(3) -> __init__(2) -> _parse_fallback_on(1)
+                'Use fallback_on=(ModelAPIError,) for default behavior.'
             )
 
     def _add_handler(self, handler: Callable[..., Any]) -> None:
@@ -215,10 +302,10 @@ class FallbackModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         """Try each model in sequence until one succeeds.
 
-        Note: For streaming, only exception-based fallback is currently supported,
-        and only for errors during stream initialization. Response handlers are
-        ignored for streaming requests.
-        See https://github.com/pydantic/pydantic-ai/issues/4140.
+        Response handlers are checked after stream consumption. If the response
+        is rejected, a `ResponseRejected` is raised (wrapped in a `FallbackExceptionGroup`).
+        Unlike non-streaming requests, transparent retry with the next model is not possible
+        because events have already been yielded to the caller.
         """
         exceptions: list[Exception] = []
 
@@ -235,9 +322,17 @@ class FallbackModel(Model):
                         continue
                     raise exc  # pragma: no cover
 
-                # For streaming, we yield the response directly (no response-based fallback)
                 self._set_span_attributes(model, prepared_parameters)
-                yield response
+                if self._response_handlers:
+                    try:
+                        yield _ResponseCheckingStream(response, self._should_fallback)
+                    except ResponseRejected as e:
+                        # Response was rejected after stream consumption.
+                        # Can't retry — events already consumed by caller.
+                        exceptions.append(e)
+                        break
+                else:
+                    yield response
                 return
 
         _raise_fallback_exception_group(exceptions, [])
@@ -268,7 +363,7 @@ class FallbackModel(Model):
                     )
 
 
-def _exception_types_to_handler(exceptions: tuple[type[Exception], ...]) -> _ExceptionHandler:
+def _exception_types_to_handler(exceptions: tuple[type[Exception], ...]) -> ExceptionHandler:
     """Create an exception handler from a tuple of exception types."""
 
     def handler(exc: Exception) -> bool:
@@ -286,5 +381,5 @@ def _raise_fallback_exception_group(exceptions: list[Exception], rejected_respon
     """
     all_errors = list(exceptions)
     if rejected_responses:
-        all_errors.append(RuntimeError(f'{len(rejected_responses)} model response(s) rejected by fallback_on handler'))
+        all_errors.append(ResponseRejected(len(rejected_responses)))
     raise FallbackExceptionGroup('All models from FallbackModel failed', all_errors)

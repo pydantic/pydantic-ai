@@ -155,9 +155,12 @@ attributes showing the queue depth and configured limits. The `name` parameter o
 You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models
 in sequence until one succeeds. Pydantic AI can switch to the next model when the current model
 raises an exception (like a 4xx/5xx API error) **or** when the response content indicates a semantic
-failure (like a truncated response or a failed built-in tool call). This behavior is controlled by the
-`fallback_on` parameter (see [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]), which accepts exception types,
+failure (like a truncated response or a failed built-in tool call).
+
+This behavior is controlled by the `fallback_on` parameter (see
+[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]), which accepts exception types,
 exception handlers, and response handlers — all of which can be sync or async.
+By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (4xx/5xx API errors).
 
 !!! note
     The provider SDKs on which Models are based (like OpenAI, Anthropic, etc.) often have built-in retry logic that can delay the `FallbackModel` from activating.
@@ -368,8 +371,6 @@ print(result.output)
 A more complex use case is when using built-in tools like web search or URL fetching. For example, Google's [`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool] may return a successful response with a status indicating the URL fetch failed:
 
 ```python {title="fallback_on_builtin_tool.py"}
-from google.genai.types import UrlMetadata, UrlRetrievalStatus
-
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -382,13 +383,13 @@ def web_fetch_failed(response: ModelResponse) -> bool:
     for call, result in response.builtin_tool_calls:
         if call.tool_name != 'web_fetch':
             continue
-        # Content is a list of UrlMetadata dicts from Google
         if not isinstance(result.content, list):
             continue
         for item in result.content:
-            meta = UrlMetadata.model_validate(item)
-            if meta.url_retrieval_status != UrlRetrievalStatus.URL_RETRIEVAL_STATUS_SUCCESS:
-                return True
+            if isinstance(item, dict):
+                status = item.get('url_retrieval_status', '')
+                if status and status != 'URL_RETRIEVAL_STATUS_SUCCESS':
+                    return True
     return False
 
 
@@ -414,7 +415,7 @@ Pydantic AI is a Python agent framework for building production-grade LLM applic
 
 Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model and should return `True` to trigger fallback to the next model, or `False` to accept the response.
 
-#### Combining Handlers { #combining-handlers }
+#### Combining Handlers
 
 You can combine exception types, exception handlers, and response handlers in a single list:
 
