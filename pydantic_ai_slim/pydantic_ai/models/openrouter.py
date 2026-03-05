@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Discriminator
-from typing_extensions import Required, TypedDict, assert_never, override
+from typing_extensions import TypedDict, assert_never, override
 
 from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelHTTPError
@@ -214,46 +214,6 @@ class OpenRouterUsageConfig(TypedDict, total=False):
     """Configuration for OpenRouter usage."""
 
     include: bool
-
-
-class OpenRouterWebSearchPlugin(TypedDict, total=False):
-    """Configuration for the OpenRouter web search plugin.
-
-    See [the OpenRouter docs](https://openrouter.ai/docs/guides/features/plugins/web-search) for more information.
-    """
-
-    id: Required[Literal['web']]
-    """The plugin identifier. Must be 'web' for web search."""
-
-    engine: Literal['native', 'exa']
-    """Which search engine to use.
-
-    - 'native': Uses the provider's native web search when available (OpenAI, Anthropic, Perplexity, xAI).
-    - 'exa': Uses Exa search for all other providers.
-
-    If not specified, OpenRouter will automatically select the best engine.
-    """
-
-    max_results: int
-    """Maximum number of search results to return. Defaults to 5."""
-
-    search_prompt: str
-    """Custom prompt for attaching web search results."""
-
-
-class OpenRouterWebSearchOptions(TypedDict, total=False):
-    """Options for web search passed to the model.
-
-    See [the OpenRouter docs](https://openrouter.ai/docs/features/web-search) for more information.
-    """
-
-    search_context_size: Literal['low', 'medium', 'high']
-    """Controls how much context from web search results is provided to the model.
-
-    - 'low': Minimal context
-    - 'medium': Balanced context (default)
-    - 'high': Maximum context
-    """
 
 
 class OpenRouterModelSettings(ModelSettings, total=False):
@@ -574,12 +534,8 @@ def _openrouter_settings_to_openai_settings(
 
     for builtin_tool in model_request_parameters.builtin_tools:
         if isinstance(builtin_tool, WebSearchTool):
-            web_search_plugin: OpenRouterWebSearchPlugin = {'id': 'web'}
-
-            extra_body.setdefault('plugins', []).append(web_search_plugin)
-
-            web_search_options: OpenRouterWebSearchOptions = {'search_context_size': builtin_tool.search_context_size}
-            extra_body['web_search_options'] = web_search_options
+            extra_body.setdefault('plugins', []).append({'id': 'web'})
+            extra_body['web_search_options'] = {'search_context_size': builtin_tool.search_context_size}
 
     model_settings['extra_body'] = extra_body
 
