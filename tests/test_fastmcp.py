@@ -604,52 +604,62 @@ server.run()"""
 
 
 class TestAudienceFiltering:
-    """Unit tests for audience annotation filtering added in fix/mcp-respect-audience-annotations."""
+    """Tests for audience annotation filtering added in fix/mcp-respect-audience-annotations.
 
-    def test_include_for_assistant_no_annotations(self) -> None:
-        """Content with no annotations is always included."""
-        from pydantic_ai.toolsets.fastmcp import _include_for_assistant  # type: ignore[reportPrivateUsage]
+    All tests exercise the public call_tool API rather than private helpers.
+    """
 
-        part = TextContent(type='text', text='hello')
-        assert _include_for_assistant(part) is True
+    async def test_call_tool_user_only_content_returns_placeholder(self, run_context: RunContext[None]) -> None:
+        """When all content blocks are annotated for user-only, the model receives the placeholder."""
+        from mcp.types import Annotations, TextContent
 
-    def test_include_for_assistant_annotations_no_audience(self) -> None:
-        """Annotations present but no audience field means include for all."""
-        from mcp.types import Annotations
+        fastmcp_server = FastMCP('test_server')
 
-        from pydantic_ai.toolsets.fastmcp import _include_for_assistant  # type: ignore[reportPrivateUsage]
+        @fastmcp_server.tool()
+        def user_only_tool() -> list[TextContent]:
+            return [TextContent(type='text', text='secret', annotations=Annotations(audience=['user']))]
 
-        part = TextContent(type='text', text='hello', annotations=Annotations())
-        assert _include_for_assistant(part) is True
-
-    def test_include_for_assistant_audience_includes_assistant(self) -> None:
-        """Audience includes 'assistant' — include."""
-        from mcp.types import Annotations
-
-        from pydantic_ai.toolsets.fastmcp import _include_for_assistant  # type: ignore[reportPrivateUsage]
-
-        part = TextContent(type='text', text='hello', annotations=Annotations(audience=['assistant']))
-        assert _include_for_assistant(part) is True
-
-    def test_include_for_assistant_audience_excludes_assistant(self) -> None:
-        """Audience is user-only — exclude."""
-        from mcp.types import Annotations
-
-        from pydantic_ai.toolsets.fastmcp import _include_for_assistant  # type: ignore[reportPrivateUsage]
-
-        part = TextContent(type='text', text='hello', annotations=Annotations(audience=['user']))
-        assert _include_for_assistant(part) is False
-
-    def test_map_fastmcp_tool_results_empty_returns_placeholder(self) -> None:
-        """_map_fastmcp_tool_results([]) returns the audience-filtered placeholder."""
-        from pydantic_ai.toolsets.fastmcp import _map_fastmcp_tool_results  # type: ignore[reportPrivateUsage]
-
-        result = _map_fastmcp_tool_results([])
+        toolset = FastMCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool(
+                name='user_only_tool', tool_args={}, ctx=run_context, tool=tools['user_only_tool']
+            )
         assert result == 'Tool executed successfully. (No model-visible content in result.)'
 
-    async def test_call_tool_empty_content_returns_structured_content(
-        self, run_context: RunContext[None]
-    ) -> None:
+    async def test_call_tool_assistant_content_passes_through(self, run_context: RunContext[None]) -> None:
+        """Content annotated for assistant (or with no annotation) passes through unchanged."""
+        from mcp.types import Annotations, TextContent
+
+        fastmcp_server = FastMCP('test_server')
+
+        @fastmcp_server.tool()
+        def assistant_tool() -> list[TextContent]:
+            return [TextContent(type='text', text='hello model', annotations=Annotations(audience=['assistant']))]
+
+        toolset = FastMCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool(
+                name='assistant_tool', tool_args={}, ctx=run_context, tool=tools['assistant_tool']
+            )
+        assert result == 'hello model'
+
+    async def test_call_tool_no_annotation_passes_through(self, run_context: RunContext[None]) -> None:
+        """Content with no audience annotation is always forwarded to the model."""
+        fastmcp_server = FastMCP('test_server')
+
+        @fastmcp_server.tool()
+        def plain_tool() -> str:
+            return 'plain result'
+
+        toolset = FastMCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool(name='plain_tool', tool_args={}, ctx=run_context, tool=tools['plain_tool'])
+        assert result == 'plain result'
+
+    async def test_call_tool_empty_content_returns_structured_content(self, run_context: RunContext[None]) -> None:
         """A tool that returns an empty list gets wrapped in structured_content by FastMCP."""
         fastmcp_server = FastMCP('test_server')
 
@@ -660,9 +670,7 @@ class TestAudienceFiltering:
         toolset = FastMCPToolset(fastmcp_server)
         async with toolset:
             tools = await toolset.get_tools(run_context)
-            result = await toolset.call_tool(
-                name='empty_tool', tool_args={}, ctx=run_context, tool=tools['empty_tool']
-            )
+            result = await toolset.call_tool(name='empty_tool', tool_args={}, ctx=run_context, tool=tools['empty_tool'])
             # FastMCP wraps the return value as structured_content; an empty list
             # becomes {'result': []} so the model knows the tool ran successfully.
             assert result == {'result': []}
