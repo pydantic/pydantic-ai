@@ -61,6 +61,19 @@ T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
 EndStrategy = Literal['early', 'exhaustive']
+
+# Tool execution messages sent back to the model.
+# Extracted as module-level constants to support future configurability (see #2009).
+FINAL_RESULT_PROCESSED: str = 'Final result processed.'
+"""Message sent to the model when an output tool call produces a final result."""
+TOOL_NOT_EXECUTED_FINAL_RESULT: str = 'Tool not executed - a final result was already processed.'
+"""Message sent to the model when a tool call is skipped because a final result already exists."""
+OUTPUT_TOOL_NOT_USED_FINAL_RESULT: str = OUTPUT_TOOL_NOT_USED_FINAL_RESULT
+"""Message sent to the model when an output tool is skipped because a final result already exists."""
+OUTPUT_TOOL_NOT_USED_VALIDATION_FAILED: str = OUTPUT_TOOL_NOT_USED_VALIDATION_FAILED
+"""Message sent to the model when an output tool is skipped because validation failed."""
+OUTPUT_TOOL_NOT_USED_EXECUTION_FAILED: str = OUTPUT_TOOL_NOT_USED_EXECUTION_FAILED
+"""Message sent to the model when an output tool is skipped because execution raised an error."""
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
@@ -952,14 +965,14 @@ async def process_tool_calls(  # noqa: C901
         if final_result and final_result.tool_call_id == call.tool_call_id:
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
-                content='Final result processed.',
+                content=FINAL_RESULT_PROCESSED,
                 tool_call_id=call.tool_call_id,
             )
             output_parts.append(part)
         # Early strategy is chosen and final result is already set
         elif ctx.deps.end_strategy == 'early' and final_result:
             for event in _emit_skipped_output_tool(
-                call, 'Output tool not used - a final result was already processed.', output_parts, args_valid=None
+                call, OUTPUT_TOOL_NOT_USED_FINAL_RESULT, output_parts, args_valid=None
             ):
                 yield event
         # Early strategy is chosen and final result is not yet set
@@ -975,7 +988,7 @@ async def process_tool_calls(  # noqa: C901
                 if final_result:
                     # If output tool fails when we already have a final result, skip it without retrying
                     for event in _emit_skipped_output_tool(
-                        call, 'Output tool not used - output failed validation.', output_parts, args_valid=False
+                        call, OUTPUT_TOOL_NOT_USED_VALIDATION_FAILED, output_parts, args_valid=False
                     ):
                         yield event
                     continue
@@ -988,7 +1001,7 @@ async def process_tool_calls(  # noqa: C901
                 assert validated.validation_error is not None
                 if final_result:
                     for event in _emit_skipped_output_tool(
-                        call, 'Output tool not used - output failed validation.', output_parts, args_valid=False
+                        call, OUTPUT_TOOL_NOT_USED_VALIDATION_FAILED, output_parts, args_valid=False
                     ):
                         yield event
                     continue
@@ -1009,7 +1022,7 @@ async def process_tool_calls(  # noqa: C901
             except exceptions.UnexpectedModelBehavior as e:
                 if final_result:
                     for event in _emit_skipped_output_tool(
-                        call, 'Output tool not used - output function execution failed.', output_parts, args_valid=True
+                        call, OUTPUT_TOOL_NOT_USED_EXECUTION_FAILED, output_parts, args_valid=True
                     ):
                         yield event
                     continue
@@ -1031,7 +1044,7 @@ async def process_tool_calls(  # noqa: C901
 
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
-                content='Final result processed.',
+                content=FINAL_RESULT_PROCESSED,
                 tool_call_id=call.tool_call_id,
             )
             output_parts.append(part)
@@ -1047,7 +1060,7 @@ async def process_tool_calls(  # noqa: C901
             output_parts.append(
                 _messages.ToolReturnPart(
                     tool_name=call.tool_name,
-                    content='Tool not executed - a final result was already processed.',
+                    content=TOOL_NOT_EXECUTED_FINAL_RESULT,
                     tool_call_id=call.tool_call_id,
                 )
             )
@@ -1135,7 +1148,7 @@ async def process_tool_calls(  # noqa: C901
                     output_parts.append(
                         _messages.ToolReturnPart(
                             tool_name=call.tool_name,
-                            content='Tool not executed - a final result was already processed.',
+                            content=TOOL_NOT_EXECUTED_FINAL_RESULT,
                             tool_call_id=call.tool_call_id,
                         )
                     )

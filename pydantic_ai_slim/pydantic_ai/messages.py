@@ -11,7 +11,7 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, TypeAlias, cast, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -1150,11 +1150,16 @@ class RetryPromptPart:
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    #: Message prefix for validation feedback when no tool name is associated.
+    VALIDATION_FEEDBACK_PREFIX: ClassVar[str] = 'Validation feedback:'
+    #: Message suffix appended to all retry messages, instructing the model to fix errors.
+    RETRY_SUFFIX: ClassVar[str] = 'Fix the errors and try again.'
+
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
         if isinstance(self.content, str):
             if self.tool_name is None:
-                description = f'Validation feedback:\n{self.content}'
+                description = f'{self.VALIDATION_FEEDBACK_PREFIX}\n{self.content}'
             else:
                 description = self.content
         else:
@@ -1163,7 +1168,7 @@ class RetryPromptPart:
             description = (
                 f'{len(self.content)} validation error{"s" if plural else ""}:\n```json\n{json_errors.decode()}\n```'
             )
-        return f'{description}\n\nFix the errors and try again.'
+        return f'{description}\n\n{self.RETRY_SUFFIX}'
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         if self.tool_name is None:

@@ -23,6 +23,13 @@ from .usage import RunUsage
 
 ParallelExecutionMode = Literal['parallel', 'sequential', 'parallel_ordered_events']
 
+# Tool error messages sent back to the model via ModelRetry.
+# Extracted as module-level constants to support future configurability (see #2009).
+UNKNOWN_TOOL_NAME: str = 'Unknown tool name: {name!r}. {available}'
+"""Message template sent to the model when it calls a tool that doesn't exist."""
+NO_TOOLS_AVAILABLE: str = 'No tools available.'
+"""Message sent to the model when no tools are registered."""
+
 _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar(
     'parallel_execution_mode', default='parallel'
 )
@@ -253,10 +260,10 @@ class ToolManager(Generic[AgentDepsT]):
         try:
             if tool is None:
                 if self.tools:
-                    msg = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
+                    available = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
                 else:
-                    msg = 'No tools available.'
-                raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
+                    available = NO_TOOLS_AVAILABLE
+                raise ModelRetry(UNKNOWN_TOOL_NAME.format(name=name, available=available))
 
             ctx = self._build_tool_context(
                 call, tool, allow_partial=allow_partial, approved=approved, metadata=metadata
