@@ -51,11 +51,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1211'
+      - '1351'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1024
+      - gfet4t7; dur=1712
       transfer-encoding:
       - chunked
       vary:
@@ -71,21 +71,21 @@ interactions:
                 location:
                   city: Tokyo
               name: get_temperature
-            thoughtSignature: CqACAXLI2nwtRSijkF0wyuS+XFIu3sBl3o5eIYL0RL532byzNHncC0I43TWAO5BsXYCzAKwPZOjFjur9AcdF1gDpSnsW5iSeHNbLmrpXjlHAZk/JLcuMN1RH8R0vCJknFkhRJngzvtMApMWnAWLTlDRlR2LzOAshCODrsaVN8m/I5gSV6vkFETiJ9/PoWMTGzcWglbgYFLjordwEcxHyoIwe2V1pDdkleeDA8MwSvwbFI++yR3oT3tCVaC6+oe08OlQwtXv1Hz4XZPMoNxMWrVthwXQt2R0t/vo5+irHcLh8LjPU16wRZeek/wH6LcCjORqiLhzWMubAxcs/QNvGJhTU1DoZmGYOC/YZ5HANMzdzf26TwU35+Khk/SGsfQNasxoR
+            thoughtSignature: CokDAXLI2nx7y1r688uMKE5qfXDwpeSqIF7VYiV69kdLpcaEXwTzpcqRlmp8qXcv0Xh3wPQtv5F+MAe0t1r+bJPXCVMD1R+EGookjtXA+zR9IAB9MTgVPWMEypfCIV8anOOS/BolaY1MJnfdJc33bf5mB+p2QibFDWlduTyxD8DmSHzhY/Wvmd78V2bDNpLYfa8iS3rwnhgsTJ96D7/MiY//9wP3p36Mv0g5LwkYoGWYIPVyxEc8mfKBLUlnipcDfgAF733fZ584YB+hL/3gTDFo5GosAcXveyPLX8QLu5UdmcJFoMwyXfP6YUMiE3CG7a1Kh6zysy3hl2bHKbwlxyNoz7Aedy4Cp8djSna35lVwJ6ppGinRR7s0mEZEwWDo2jkEZ1eP+o2CxhZyR8jBILM1gcDPMoqklrZis5WAw4EhQcbG+Xp1yPJcupT4K8fChXZSHTOgxvHoInoq+Wp+V6n6yjOtemR+Mwu8NOiwdqbUzuTSty8tO1iViA4L/TO76RuQxGIMA61BZ+mb
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: V0VVaZ3ML4GsqtsP3ozx6A0
+      responseId: tf5XaaanA_WfqtsPi5uF-Ao
       usageMetadata:
         candidatesTokenCount: 19
         promptTokenCount: 40
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 40
-        thoughtsTokenCount: 58
-        totalTokenCount: 117
+        thoughtsTokenCount: 84
+        totalTokenCount: 143
     status:
       code: 200
       message: OK
@@ -171,11 +171,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '5523'
+      - '2500'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=4537
+      - gfet4t7; dur=3009
       transfer-encoding:
       - chunked
       vary:
@@ -186,21 +186,21 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I need the latitude and longitude for Tokyo. Can you please provide them?
-            thoughtSignature: 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
+          - text: I'm sorry, I'm having trouble getting the temperature for Tokyo. Can you please try again?
+            thoughtSignature: CtADAXLI2nxXvfZSaYnRNDWDRyt10lZC+al8WmAuvxaL0hQvW6TUxelXNjrh3LloNAKmpfluEE+h0Y6JDCfiMr2idtNbNWlDOj5wKkThgJ7wN3hF92BDDCQc5V5ImqY4FOLVPMJZJybg1Pl4HuqIFSayLw+9ufxfFXrjDX2LgOEN1R4wo2yLetSMbd4inEi0dWoOnAaLMOaS1RPe1RJ/OFbSeNu6pwiINR1+D2Pmw2ESyyq8d0Fp2LD9YEcdUFqFNb+dcdt2zcuQX3gjEI1qfmNAzrdF0LTYTwMHY7daavMZq4d0S4Q8+ds4OnTKfjJDM0elNkFTawcVzN1zkOZoHWXZLGAKAil2vJdCVzapVKW9ATQAIkCFnUP5lvv7Xv65lJtJAaP5Rz2e9wGasXw9Uu3/QDLO8NQ/cj+UQa5V+1V1knnZL7DIApX55L7xCzA6v6z7nKlwJa0SYuTl47qICS8NEk4DWywUDUVz6f/pbv/l7IY2Q7Vt9CpjjQW31GgrDfBnUh4AJdJxgj+BOn+kuJvhFpSoiUUKxy36nuWk21L0aR7PRg277Dg4C5Xb3+efcy4Tiu9p1YaLPOUcAcdb5urDTbhP1m2cQT3bnS/1Ei64u4kKYgFyyNp8MOrsW1WuJ9P91+KjhNjnvXfz1HTme1xE1CJuiWS0y9CBzLu4wjUF1o0rSa5f9n8lK1x4P0AKX37m72Skvw3dOv6Hem1BAcxf2NsiuVKvrWbt9cVQGLQ0/PfWnfjeCo4FAXLI2nxtDMYVHLW5l3r5uhWf2K2fo3FNbW+9LYhWI4RElxe7w4mIcUwom5eG7ZM5biCEkjKLIRdKrvb/Zpb2ia2nNXwaCMdGX6m5NJQVd9OKju8Ta9EcHMQpwunGrDup8TLJx+CxmemEOSnv7HeO9+pWVSW8qpv3cK1Cg5pV2qXyZ3voO8wZNHIC3xWLus1kuMiLp/C80ohiXYWVOZ4qmTqaXSpT8HC3CqAkNuwbzUNAcoz+YPxS+TTcUIRCgNYIzE5aBlELEYDMpNxWAuGgimrZYUI+F2vy2SFDT8qHrTm5/Psj3BxPWChkU2b4WcMgd+S0pizA1DBehiPrf7P6rFbXTNl17zIC851wr4UDkyrMBwGzMnDNT7tDH2UU0zMeVSSZg44f9jelTxYvZAVrLQnFYt44dTlOQt8013SN5bBJ2iSzGlYXTZ+ABCgH2CsVk0GI+3xxoLAE9OjvoXqJuSPyT6ApptGB5OLqKJYnB+GyR7NPzpAN5SvXKxHiVaBahzHxeCz5BhkIdZcSaoPolzvUkBDgi2qYv/whlnwBZBkcgRsk9oAY54FuHSovWL8cDWuyMRFIYyl60H1A6IPRqUqQXQnsikRtm6XrZEYd4Jsf3lH8vk6xqYDPYCuYb/WF5Q6RfZLYMdDvyzZ3utgm9afuq1A25CuuDXwP84iw906od+dwEm5AHrIdm3kVWfutx6NZnZUWeYjx43k11YMrU4u/fnuCzxjWtJlmwudzP+Uta2rbOL+2AaReUWBRfd5ApZEqUJJKNpWjmlKu/Og2DdytlE5ntWo+RpQLx6OMYt50JmhOtVeMQ+pgOn+npY8lDOLogJ2Dm0tMRXIiu8CFH8v8exr0VSP6s1+6gckcCmkBcsjafAqXfbyaqkjX3tlZROUFDNYQwrZtmfzixM95MsgBWyHRqCW2SFrYPRJ4NqsrRk1k/eePoESut/Qdi/BEK77t1uDpCKOyowmjgtvovsjcujYVyUoCou1mPGr7BTqK/0dp2dzOIPEKJAFyyNp8SW1OYufa4UA4sG0muCM/EaMT/nE0rLU0VYyO0+rhGg==
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-2.5-flash
-      responseId: XEVVabaLItmjqtsPzqrZ2Q0
+      responseId: uP5XaY-bGPmnqtsPg9fXgQs
       usageMetadata:
-        candidatesTokenCount: 15
+        candidatesTokenCount: 22
         promptTokenCount: 164
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 164
-        thoughtsTokenCount: 793
-        totalTokenCount: 972
+        thoughtsTokenCount: 289
+        totalTokenCount: 475
     status:
       code: 200
       message: OK

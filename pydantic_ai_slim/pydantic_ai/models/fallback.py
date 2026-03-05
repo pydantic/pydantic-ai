@@ -49,7 +49,7 @@ class FallbackModel(Model):
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
 
         if isinstance(fallback_on, tuple):
-            self._fallback_on = _default_fallback_condition_factory(fallback_on)
+            self._fallback_on = _default_fallback_condition_factory(fallback_on)  # pyright: ignore[reportUnknownArgumentType]
         else:
             self._fallback_on = fallback_on
 
@@ -57,6 +57,11 @@ class FallbackModel(Model):
     def model_name(self) -> str:
         """The model name."""
         return f'fallback:{",".join(model.model_name for model in self.models)}'
+
+    @property
+    def model_id(self) -> str:
+        """The fully qualified model identifier, combining the wrapped models' IDs."""
+        return f'fallback:{",".join(model.model_id for model in self.models)}'
 
     @property
     def system(self) -> str:

@@ -106,7 +106,8 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile = {
             'google': _openrouter_google_model_profile,
             'openai': openai_model_profile,
@@ -134,6 +135,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_send_back_thinking_parts='field',
             openai_chat_thinking_field='reasoning',
+            openai_chat_supports_file_urls=True,
         ).update(profile)
 
     @overload

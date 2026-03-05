@@ -13,7 +13,7 @@ class FakeTable:
 @dataclass
 class DatabaseConn:
     users: FakeTable = field(default_factory=FakeTable)
-    _forecasts: dict[int, str] = field(default_factory=dict)
+    _forecasts: dict[int, str] = field(default_factory=dict[int, str])
 
     async def execute(self, query: str) -> list[dict[str, Any]]:
         return [{'id': 123, 'name': 'John Doe'}]

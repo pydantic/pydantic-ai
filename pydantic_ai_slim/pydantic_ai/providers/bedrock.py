@@ -72,6 +72,22 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
 BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', 'global', 'us-gov')
 
 
+def remove_bedrock_geo_prefix(model_name: str) -> str:
+    """Remove inference geographic prefix from model ID if present.
+
+    Bedrock supports cross-region inference using geographic prefixes like
+    'us.', 'eu.', 'apac.', etc. This function strips those prefixes.
+
+    Example:
+        'us.amazon.titan-embed-text-v2:0' -> 'amazon.titan-embed-text-v2:0'
+        'amazon.titan-embed-text-v2:0' -> 'amazon.titan-embed-text-v2:0'
+    """
+    for prefix in BEDROCK_GEO_PREFIXES:
+        if model_name.startswith(f'{prefix}.'):
+            return model_name.removeprefix(f'{prefix}.')
+    return model_name
+
+
 def _without_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
     return replace(profile or BedrockModelProfile(), supported_builtin_tools=frozenset())
 
@@ -91,14 +107,20 @@ class BedrockProvider(Provider[BaseClient]):
     def client(self) -> BaseClient:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': lambda model_name: BedrockModelProfile(
-                bedrock_supports_tool_choice=True,
-                bedrock_send_back_thinking_parts=True,
-                bedrock_supports_prompt_caching=True,
-                bedrock_supports_tool_caching=True,
-            ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
+            'anthropic': lambda model_name: replace(
+                BedrockModelProfile(
+                    bedrock_supports_tool_choice=True,
+                    bedrock_send_back_thinking_parts=True,
+                    bedrock_supports_prompt_caching=True,
+                    bedrock_supports_tool_caching=True,
+                ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
+                # We don't currently support native structured output with Bedrock.
+                # See https://github.com/pydantic/pydantic-ai/issues/4209.
+                supports_json_schema_output=False,
+            ),
             'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
                 _without_builtin_tools(mistral_model_profile(model_name))
             ),
@@ -209,7 +231,7 @@ class BedrockProvider(Provider[BaseClient]):
                         profile_name=profile_name,
                     )
                     config['signature_version'] = 'bearer'
-                else:
+                else:  # pragma: lax no cover
                     session = boto3.Session(
                         aws_access_key_id=aws_access_key_id,
                         aws_secret_access_key=aws_secret_access_key,

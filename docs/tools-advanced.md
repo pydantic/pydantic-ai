@@ -20,7 +20,7 @@ class User(BaseModel):
     age: int
 
 
-agent = Agent(model=OpenAIResponsesModel('gpt-5'))
+agent = Agent(model=OpenAIResponsesModel('gpt-5.2'))
 
 
 @agent.tool_plain
@@ -79,7 +79,7 @@ import time
 from pydantic_ai import Agent
 from pydantic_ai import ToolReturn, BinaryContent
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 
 @agent.tool_plain
 def click_and_capture(x: int, y: int) -> ToolReturn:
@@ -97,7 +97,7 @@ def click_and_capture(x: int, y: int) -> ToolReturn:
     return ToolReturn(
         return_value=f'Successfully clicked at ({x}, {y})',
         content=[
-            f'Clicked at coordinates ({x}, {y}). Here's the comparison:',
+            f'Clicked at coordinates ({x}, {y}). Here\'s the comparison:',
             'Before:',
             BinaryContent(data=before_screenshot, media_type='image/png'),
             'After:',
@@ -403,15 +403,56 @@ async def fast_tool() -> str:
 
 When a timeout occurs, the tool is considered to have failed and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
 
+### Custom Args Validator {#args-validator}
+
+The `args_validator` parameter lets you define custom validation that runs after Pydantic schema validation but before the tool executes. This is useful for business logic validation, cross-field validation, or validating arguments before requesting [human approval](deferred-tools.md) for deferred tools.
+
+The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, or raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on failure.
+
+```python {title="args_validator_approval.py"}
+from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
+
+agent = Agent('test', deps_type=int, output_type=[str, DeferredToolRequests])
+
+
+def validate_sum_limit(ctx: RunContext[int], x: int, y: int) -> None:
+    """Validate that the sum doesn't exceed the limit from deps."""
+    if x + y > ctx.deps:
+        raise ModelRetry(f'Sum of x and y must not exceed {ctx.deps}')
+
+
+# Validation runs *before* approval is requested, so the model can
+# fix bad args without bothering the user.
+@agent.tool(requires_approval=True, args_validator=validate_sum_limit)
+def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+    """Add two numbers (sum must not exceed the configured limit)."""
+    return x + y
+
+
+result = agent.run_sync('add 5 and 3', deps=100)
+assert isinstance(result.output, DeferredToolRequests)
+# The validated args are ready for the user to approve
+print(result.output.approvals[0].args)
+#> {'x': 0, 'y': 0}
+```
+
+_(This example is complete, it can be run "as is")_
+
+When validation fails, the error message is sent back to the LLM as a retry prompt. This respects the `retries` setting on the tool. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred, while failed validation triggers a retry just like regular tools.
+
+The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions.
+
+The validation result is exposed via the `args_valid` field on [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]. This reflects all validation — both schema validation and custom `args_validator` validation (if configured): `True` means all validation passed, `False` means validation failed, and `None` means validation was not performed (e.g. tool calls skipped due to the `'early'` end strategy, or deferred tool calls resolved without execution).
+
 ### Parallel tool calls & concurrency
 
 When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`.
-If a tool requires sequential/serial execution, you can pass the [`sequential`][pydantic_ai.tools.ToolDefinition.sequential] flag when registering the tool, or wrap the agent run in the [`with agent.sequential_tool_calls()`][pydantic_ai.agent.AbstractAgent.sequential_tool_calls] context manager.
+If a tool requires sequential/serial execution, you can pass the [`sequential`][pydantic_ai.tools.ToolDefinition.sequential] flag when registering the tool, or wrap the agent run in the [`with agent.parallel_tool_call_execution_mode('sequential')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode] context manager.
 
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
 
 !!! note "Limiting tool executions"
-    You can cap tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agents.md#usage-limits). The counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
+    You can cap tool executions within a run using [`UsageLimits(tool_calls_limit=...)`](agent.md#usage-limits). The counter increments only after a successful tool invocation. Output tools (used for [structured output](output.md)) are not counted in the `tool_calls` metric.
 
 #### Output Tool Calls
 

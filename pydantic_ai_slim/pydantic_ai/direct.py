@@ -159,7 +159,7 @@ def model_request_stream(
 
     async def main():
         messages = [ModelRequest.user_text_prompt('Who was Albert Einstein?')]  # (1)!
-        async with model_request_stream('openai:gpt-4.1-mini', messages) as stream:
+        async with model_request_stream('openai:gpt-5-mini', messages) as stream:
             chunks = []
             async for chunk in stream:
                 chunks.append(chunk)
@@ -222,7 +222,7 @@ def model_request_stream_sync(
     from pydantic_ai.direct import model_request_stream_sync
 
     messages = [ModelRequest.user_text_prompt('Who was Albert Einstein?')]
-    with model_request_stream_sync('openai:gpt-4.1-mini', messages) as stream:
+    with model_request_stream_sync('openai:gpt-5-mini', messages) as stream:
         chunks = []
         for chunk in stream:
             chunks.append(chunk)
@@ -288,7 +288,7 @@ class StreamedResponseSync:
 
     _async_stream_cm: AbstractAsyncContextManager[StreamedResponse]
     _queue: queue.Queue[messages.ModelResponseStreamEvent | Exception | None] = field(
-        default_factory=queue.Queue, init=False
+        default_factory=queue.Queue[messages.ModelResponseStreamEvent | Exception | None], init=False
     )
     _thread: threading.Thread | None = field(default=None, init=False)
     _stream_response: StreamedResponse | None = field(default=None, init=False)

@@ -8,7 +8,7 @@ jobs:
     # Note: this should match the `docs` job in ci.yml
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -41,7 +41,7 @@ jobs:
       url: https://ai.pydantic.dev
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
       - run: npm install

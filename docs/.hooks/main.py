@@ -132,8 +132,19 @@ def create_gateway_toggle(markdown: str, relative_path: Path) -> str:
     )
 
 
+# Mapping of provider names to their canonical gateway form
+GATEWAY_MODEL_MAP = {
+    'anthropic': 'anthropic',
+    'openai': 'openai',
+    'openai-responses': 'openai-responses',
+    'openai-chat': 'openai',
+    'bedrock': 'bedrock',
+    'google-gla': 'gemini',
+    'google-vertex': 'google-vertex',
+    'groq': 'groq',
+}
 # Models that should get gateway transformation
-GATEWAY_MODELS = ('anthropic', 'openai', 'openai-responses', 'openai-chat', 'bedrock', 'google-vertex', 'groq')
+GATEWAY_MODELS = tuple(GATEWAY_MODEL_MAP.keys())
 
 
 def transform_gateway_code_block(m: re.Match[str], relative_path: Path) -> str:
@@ -168,13 +179,17 @@ def transform_gateway_code_block(m: re.Match[str], relative_path: Path) -> str:
 
     # Transform the code for gateway version
     def replace_agent_model(match: re.Match[str]) -> str:
-        """Replace model string with gateway/ prefix."""
+        """Replace model string with gateway/ prefix if it's a supported provider."""
         full_match = match.group(0)
         quote = match.group(1)
         model = match.group(2)
 
-        # Replace the model string while preserving the rest
-        return full_match.replace(f'{quote}{model}{quote}', f'{quote}gateway/{model}{quote}', 1)
+        for provider, gateway_provider in GATEWAY_MODEL_MAP.items():
+            if model.startswith(f'{provider}:'):
+                new_model = model.replace(f'{provider}:', f'gateway/{gateway_provider}:', 1)
+                return full_match.replace(f'{quote}{model}{quote}', f'{quote}{new_model}{quote}', 1)
+
+        return full_match
 
     # This pattern finds: "Agent(" followed by anything (lazy), then the first quoted string
     gateway_code = re.sub(

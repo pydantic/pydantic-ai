@@ -42,6 +42,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
@@ -52,8 +53,10 @@ from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
+    'compaction': 'stop',
     'end_turn': 'stop',
     'max_tokens': 'length',
+    'model_context_window_exceeded': 'length',
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
     'pause_turn': 'stop',
@@ -70,6 +73,7 @@ try:
         AsyncStream,
         omit as OMIT,
     )
+    from anthropic.types.anthropic_beta_param import AnthropicBetaParam
     from anthropic.types.beta import (
         BetaBase64PDFSourceParam,
         BetaCacheControlEphemeralParam,
@@ -83,6 +87,8 @@ try:
         BetaContainerParams,
         BetaContentBlock,
         BetaContentBlockParam,
+        BetaFileDocumentSourceParam,
+        BetaFileImageSourceParam,
         BetaImageBlockParam,
         BetaInputJSONDelta,
         BetaJSONOutputFormatParam,
@@ -94,6 +100,7 @@ try:
         BetaMessageParam,
         BetaMessageTokensCount,
         BetaMetadataParam,
+        BetaOutputConfigParam,
         BetaPlainTextSourceParam,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
@@ -133,10 +140,10 @@ try:
         BetaWebSearchToolResultBlockParam,
         BetaWebSearchToolResultBlockParamContentParam,
     )
+    from anthropic.types.beta.beta_user_location_param import BetaUserLocationParam
     from anthropic.types.beta.beta_web_fetch_tool_result_block_param import (
         Content as WebFetchToolResultBlockParamContent,
     )
-    from anthropic.types.beta.beta_web_search_tool_20250305_param import UserLocation
     from anthropic.types.model_param import ModelParam
 
 except ImportError as _import_error:
@@ -208,6 +215,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching for more information.
     """
 
+    anthropic_effort: Literal['low', 'medium', 'high', 'max'] | None
+    """The effort level for the model to use when generating a response.
+
+    See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/effort) for more information.
+    """
+
     anthropic_container: BetaContainerParams | Literal[False]
     """Container configuration for multi-turn conversations.
 
@@ -216,6 +229,14 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
     Set to `False` to force a fresh container (ignore any `container_id` from history).
     Set to a dict (e.g. `{'id': 'container_xxx'}`) to explicitly specify a container.
+    """
+
+    anthropic_betas: list[AnthropicBetaParam]
+    """List of Anthropic beta features to enable for API requests.
+
+    Each item can be a known beta name (e.g. 'interleaved-thinking-2025-05-14') or a custom string.
+    Merged with auto-added betas (e.g. structured-outputs, builtin tools) and any betas from
+    extra_headers['anthropic-beta']. See the Anthropic docs for available beta features.
     """
 
 
@@ -291,11 +312,21 @@ class AnthropicModel(Model):
             model_settings,
             model_request_parameters,
         )
-        response = await self._messages_create(
-            messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
-        )
-        model_response = self._process_response(response)
-        return model_response
+        model_settings = cast(AnthropicModelSettings, model_settings or {})
+        try:
+            response = await self._messages_create(messages, False, model_settings, model_request_parameters)
+            return self._process_response(response)
+        except ValueError as e:
+            if 'Streaming is required' in str(e):
+                # Anthropic SDK requires streaming for high max_tokens; fall back transparently
+                # https://github.com/anthropics/anthropic-sdk-python/blob/49d639a671cb0ac30c767e8e1e68fdd5925205d5/src/anthropic/_base_client.py#L726
+                stream = await self._messages_create(messages, True, model_settings, model_request_parameters)
+                async with stream:
+                    streamed_response = await self._process_streamed_response(stream, model_request_parameters)
+                    async for _ in streamed_response:
+                        pass
+                    return streamed_response.get()
+            raise  # pragma: no cover
 
     async def count_tokens(
         self,
@@ -341,7 +372,7 @@ class AnthropicModel(Model):
             model_request_parameters.output_tools
             and settings
             and (thinking := settings.get('anthropic_thinking'))
-            and thinking.get('type') == 'enabled'
+            and thinking.get('type') in ('enabled', 'adaptive')
         ):
             if model_request_parameters.output_mode == 'auto':
                 output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
@@ -405,7 +436,7 @@ class AnthropicModel(Model):
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
-        output_format = self._native_output_format(model_request_parameters)
+        output_config = self._build_output_config(model_request_parameters, model_settings)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
         container = self._get_container(messages, model_settings)
@@ -418,7 +449,7 @@ class AnthropicModel(Model):
                 tools=tools or OMIT,
                 tool_choice=tool_choice or OMIT,
                 mcp_servers=mcp_servers or OMIT,
-                output_format=output_format or OMIT,
+                output_config=output_config or OMIT,
                 betas=sorted(betas) or OMIT,
                 stream=stream,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
@@ -459,6 +490,9 @@ class AnthropicModel(Model):
         if has_strict_tools or model_request_parameters.output_mode == 'native':
             betas.add('structured-outputs-2025-11-13')
 
+        if betas_from_setting := model_settings.get('anthropic_betas'):
+            betas.update(str(b) for b in betas_from_setting)
+
         if beta_header := extra_headers.pop('anthropic-beta', None):
             betas.update({stripped_beta for beta in beta_header.split(',') if (stripped_beta := beta.strip())})
 
@@ -493,7 +527,7 @@ class AnthropicModel(Model):
 
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._limit_cache_points(system_prompt, anthropic_messages, tools)
-        output_format = self._native_output_format(model_request_parameters)
+        output_config = self._build_output_config(model_request_parameters, model_settings)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
         try:
@@ -505,7 +539,7 @@ class AnthropicModel(Model):
                 tool_choice=tool_choice or OMIT,
                 mcp_servers=mcp_servers or OMIT,
                 betas=sorted(betas) or OMIT,
-                output_format=output_format or OMIT,
+                output_config=output_config or OMIT,
                 thinking=model_settings.get('anthropic_thinking', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 extra_headers=extra_headers,
@@ -619,7 +653,9 @@ class AnthropicModel(Model):
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
-                user_location = UserLocation(type='approximate', **tool.user_location) if tool.user_location else None
+                user_location = (
+                    BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
+                )
                 tools.append(
                     BetaWebSearchTool20250305Param(
                         name='web_search',
@@ -883,7 +919,7 @@ class AnthropicModel(Model):
                                     BetaMCPToolResultBlock(
                                         tool_use_id=tool_use_id,
                                         type='mcp_tool_result',
-                                        **cast(dict[str, Any], response_part.content),  # pyright: ignore[reportUnknownMemberType]
+                                        **response_part.content,  # pyright: ignore[reportUnknownMemberType]
                                     )
                                 )
                     elif isinstance(response_part, FilePart):  # pragma: no cover
@@ -1071,8 +1107,8 @@ class AnthropicModel(Model):
         else:
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
-    @staticmethod
-    async def _map_user_prompt(
+    async def _map_user_prompt(  # noqa: C901
+        self,
         part: UserPromptPart,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):
@@ -1112,6 +1148,28 @@ class AnthropicModel(Model):
                         )
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
+                elif isinstance(item, UploadedFile):
+                    # Verify provider matches
+                    if item.provider_name != self.system:
+                        raise UserError(
+                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
+                            f'Expected `provider_name` to be `{self.system!r}`.'
+                        )
+                    if item.media_type.startswith('image/'):
+                        yield BetaImageBlockParam(
+                            source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
+                            type='image',
+                        )
+                    elif item.media_type.startswith(('text/', 'application/')):
+                        yield BetaRequestDocumentBlockParam(
+                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                            type='document',
+                        )
+                    else:
+                        raise UserError(
+                            f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
+                            'Only image and document (text/application) types are supported.'
+                        )
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
@@ -1127,11 +1185,25 @@ class AnthropicModel(Model):
         return tool_param
 
     @staticmethod
-    def _native_output_format(model_request_parameters: ModelRequestParameters) -> BetaJSONOutputFormatParam | None:
-        if model_request_parameters.output_mode != 'native':
+    def _build_output_config(
+        model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
+    ) -> BetaOutputConfigParam | None:
+        output_format: BetaJSONOutputFormatParam | None = None
+        if model_request_parameters.output_mode == 'native':
+            assert model_request_parameters.output_object is not None
+            output_format = {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
+
+        effort = model_settings.get('anthropic_effort')
+
+        if output_format is None and effort is None:
             return None
-        assert model_request_parameters.output_object is not None
-        return {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
+
+        config: BetaOutputConfigParam = {}
+        if output_format is not None:
+            config['format'] = output_format
+        if effort is not None:
+            config['effort'] = effort
+        return config
 
 
 def _map_usage(

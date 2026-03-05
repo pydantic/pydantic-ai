@@ -10,6 +10,8 @@
 
 ::: pydantic_ai.providers.openai
 
+::: pydantic_ai.providers.xai
+
 ::: pydantic_ai.providers.deepseek
 
 ::: pydantic_ai.providers.bedrock
@@ -19,6 +21,8 @@
 ::: pydantic_ai.providers.azure
 
 ::: pydantic_ai.providers.cohere
+
+::: pydantic_ai.providers.voyageai.VoyageAIProvider
 
 ::: pydantic_ai.providers.cerebras.CerebrasProvider
 

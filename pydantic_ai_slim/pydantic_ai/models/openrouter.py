@@ -19,16 +19,19 @@ from ..messages import (
     ModelResponseStreamEvent,
     ThinkingPart,
 )
+from ..exceptions import ModelHTTPError
+from ..messages import BinaryContent, FinishReason, ModelResponseStreamEvent, ThinkingPart, VideoUrl
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
 from ..settings import ModelSettings
-from . import ModelRequestParameters
+from . import ModelRequestParameters, download_item
 
 try:
     from openai import APIError, AsyncOpenAI
     from openai.types import chat, completion_usage
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
+    from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
     from openai.types.chat.chat_completion_message import Annotation as _OpenAIAnnotation
 
     from .openai import (
@@ -49,6 +52,25 @@ _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_f
     'content_filter': 'content_filter',
     'error': 'error',
 }
+
+
+class _VideoURL(TypedDict):
+    """Video URL payload for OpenRouter content parts."""
+
+    url: str
+
+
+class _ChatCompletionContentPartVideoUrlParam(TypedDict):
+    """Video URL content part parameter for OpenRouter.
+
+    OpenRouter supports video_url content parts, which the OpenAI client doesn't support.
+    The structure mirrors the image_url format with a video_url field.
+    """
+
+    video_url: _VideoURL
+
+    type: Literal['video_url']
+    """The type of content part."""
 
 
 class _OpenRouterMaxPrice(TypedDict, total=False):
@@ -259,8 +281,8 @@ class _BaseReasoningDetail(BaseModel, frozen=True):
         Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1', 'google-gemini-v1']
         | str
         | None
-    )
-    index: int | None
+    ) = None
+    index: int | None = None
     type: Literal['reasoning.text', 'reasoning.summary', 'reasoning.encrypted']
 
 
@@ -628,7 +650,7 @@ class OpenRouterModel(OpenAIChatModel):
 
     @dataclass
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
-        reasoning_details: list[dict[str, Any]] = field(default_factory=list)
+        reasoning_details: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
         file_inputs: list[dict[str, str | dict[str, str]]] = field(default_factory=list)
 
         def _into_message_param(self) -> chat.ChatCompletionAssistantMessageParam:
@@ -671,6 +693,32 @@ class OpenRouterModel(OpenAIChatModel):
         return OpenRouterStreamedResponse
 
     @override
+    async def _map_binary_content_item(self, item: BinaryContent) -> ChatCompletionContentPartParam:
+        """Map a BinaryContent item to a chat completion content part for OpenRouter."""
+        if item.is_video:
+            video_url: _VideoURL = {'url': item.data_uri}
+            return cast(
+                ChatCompletionContentPartParam,
+                _ChatCompletionContentPartVideoUrlParam(video_url=video_url, type='video_url'),
+            )
+
+        return await super()._map_binary_content_item(item)
+
+    @override
+    async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:
+        """Map a VideoUrl to a chat completion content part for OpenRouter."""
+        video_url: _VideoURL = {'url': item.url}
+        if item.force_download:
+            video_content = await download_item(item, data_format='base64_uri', type_format='extension')
+            video_url['url'] = video_content['data']
+        # OpenRouter extends OpenAI's API to support video_url, but it's not in the OpenAI client types.
+        # At runtime, the OpenAI client accepts dicts that match the expected structure.
+        return cast(
+            ChatCompletionContentPartParam,
+            _ChatCompletionContentPartVideoUrlParam(video_url=video_url, type='video_url'),
+        )
+
+    @override
     def _map_finish_reason(  # type: ignore[reportIncompatibleMethodOverride]
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']
     ) -> FinishReason | None:
@@ -702,7 +750,7 @@ class _OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):
 class _OpenRouterChunkChoice(chat_completion_chunk.Choice):
     """Wraps OpenAI chat completion chunk choice with OpenRouter specific attributes."""
 
-    native_finish_reason: str | None
+    native_finish_reason: str | None = None
     """The provided finish reason by the downstream provider from OpenRouter."""
 
     finish_reason: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'] | None  # type: ignore[reportIncompatibleVariableOverride]

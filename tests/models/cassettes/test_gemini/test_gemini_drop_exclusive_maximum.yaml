@@ -41,7 +41,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=537
+      - gfet4t7; dur=648
       transfer-encoding:
       - chunked
       vary:
@@ -60,7 +60,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: MEVVacqALbzVz7IP84PssAg
+      responseId: 4DxXaaeKB-qnqtsPp9GKkQ4
       usageMetadata:
         candidatesTokenCount: 8
         candidatesTokensDetails:
@@ -129,7 +129,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=570
+      - gfet4t7; dur=449
       transfer-encoding:
       - chunked
       vary:
@@ -138,7 +138,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.00032264060739959987
+      - avgLogprobs: -0.00027348204249782223
         content:
           parts:
           - text: |
@@ -146,7 +146,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: MUVVacvUKIuEz7IP_cTy2Qc
+      responseId: 4TxXaZCrEba_qtsProiYiQs
       usageMetadata:
         candidatesTokenCount: 7
         candidatesTokensDetails:
@@ -202,7 +202,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=779
+      - gfet4t7; dur=595
       transfer-encoding:
       - chunked
       vary:
@@ -221,7 +221,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: MkVVae65ML2tz7IPmqOAkAk
+      responseId: 4jxXaYCsHImjqtsPpcLJ-Q0
       usageMetadata:
         candidatesTokenCount: 8
         candidatesTokensDetails:
@@ -301,11 +301,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '729'
+      - '724'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=666
+      - gfet4t7; dur=539
       transfer-encoding:
       - chunked
       vary:
@@ -314,24 +314,24 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.07295973527999151
+      - avgLogprobs: -0.22163665294647217
         content:
           parts:
-          - text: I am sorry, I cannot fulfill this request. The age needs to be greater than 18.
+          - text: I am sorry, I cannot fulfill this request. The age must be greater than 18.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: M0VVafrNJ7-fz7IPvqPoqAg
+      responseId: 4zxXacLZBqGUmtkPk8unoQs
       usageMetadata:
-        candidatesTokenCount: 21
+        candidatesTokenCount: 20
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 21
+          tokenCount: 20
         promptTokenCount: 113
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 113
-        totalTokenCount: 134
+        totalTokenCount: 133
     status:
       code: 200
       message: OK

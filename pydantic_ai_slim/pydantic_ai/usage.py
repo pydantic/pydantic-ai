@@ -47,7 +47,7 @@ class UsageBase:
         dict[str, int],
         # `details` can not be `None` any longer, but we still want to support deserializing model responses stored in a DB before this was changed
         BeforeValidator(lambda d: d or {}),
-    ] = dataclasses.field(default_factory=dict)
+    ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
     @property
@@ -197,7 +197,7 @@ class RunUsage(UsageBase):
     output_tokens: int = 0
     """Total number of output/completion tokens."""
 
-    details: dict[str, int] = dataclasses.field(default_factory=dict)
+    details: dict[str, int] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
     def incr(self, incr_usage: RunUsage | RequestUsage) -> None:
@@ -236,7 +236,9 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
     slf.output_tokens += incr_usage.output_tokens
 
     for key, value in incr_usage.details.items():
-        slf.details[key] = slf.details.get(key, 0) + value
+        # Note: value can be None at runtime from model responses despite the type annotation
+        if isinstance(value, (int, float)):
+            slf.details[key] = slf.details.get(key, 0) + value
 
 
 @dataclass(repr=False, kw_only=True)
@@ -344,8 +346,8 @@ class UsageLimits:
     ):
         self.request_limit = request_limit
         self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = input_tokens_limit or request_tokens_limit
-        self.output_tokens_limit = output_tokens_limit or response_tokens_limit
+        self.input_tokens_limit = input_tokens_limit if input_tokens_limit is not None else request_tokens_limit
+        self.output_tokens_limit = output_tokens_limit if output_tokens_limit is not None else response_tokens_limit
         self.total_tokens_limit = total_tokens_limit
         self.count_tokens_before_request = count_tokens_before_request
 

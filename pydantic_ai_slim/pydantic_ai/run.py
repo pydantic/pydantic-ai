@@ -38,7 +38,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ```python
     from pydantic_ai import Agent
 
-    agent = Agent('openai:gpt-4o')
+    agent = Agent('openai:gpt-5.2')
 
     async def main():
         nodes = []
@@ -72,7 +72,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 model_response=ModelResponse(
                     parts=[TextPart(content='The capital of France is Paris.')],
                     usage=RequestUsage(input_tokens=56, output_tokens=7),
-                    model_name='gpt-4o',
+                    model_name='gpt-5.2',
                     timestamp=datetime.datetime(...),
                     run_id='...',
                 )
@@ -187,11 +187,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         if isinstance(task, Sequence) and len(task) == 1:
             first_task = task[0]
             if isinstance(first_task.inputs, BaseNode):  # pragma: no branch
-                base_node: BaseNode[
+                base_node: BaseNode[  # pyright: ignore[reportUnknownVariableType]
                     _agent_graph.GraphAgentState,
                     _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT],
                     FinalResult[OutputDataT],
-                ] = first_task.inputs  # type: ignore[reportUnknownMemberType]
+                ] = first_task.inputs  # pyright: ignore[reportUnknownMemberType]
                 if _agent_graph.is_agent_node(node=base_node):  # pragma: no branch
                     return base_node
         if isinstance(task, EndMarker):
@@ -216,7 +216,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         from pydantic_ai import Agent
         from pydantic_graph import End
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         async def main():
             async with agent.iter('What is the capital of France?') as agent_run:
@@ -252,7 +252,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                         model_response=ModelResponse(
                             parts=[TextPart(content='The capital of France is Paris.')],
                             usage=RequestUsage(input_tokens=56, output_tokens=7),
-                            model_name='gpt-4o',
+                            model_name='gpt-5.2',
                             timestamp=datetime.datetime(...),
                             run_id='...',
                         )

@@ -9,7 +9,6 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
@@ -25,6 +24,7 @@ from pydantic_ai import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -33,6 +33,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
@@ -596,7 +597,7 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
     )
     mock_client = MockMistralAI.create_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model=model, output_type=int, system_prompt='System prompt value')
+    agent = Agent(model=model, output_type=int, instructions='System prompt value')
 
     result = await agent.run('User prompt value')
 
@@ -608,9 +609,9 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='System prompt value', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='System prompt value',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -810,6 +811,7 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                {'first': ''},
                 {'first': 'O'},
                 {'first': 'On'},
                 {'first': 'One'},
@@ -923,6 +925,7 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                [],
                 [''],
                 ['f'],
                 ['fi'],
@@ -1015,6 +1018,7 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                MyTypedBaseModel(first='', second=''),
                 MyTypedBaseModel(first='O', second=''),
                 MyTypedBaseModel(first='On', second=''),
                 MyTypedBaseModel(first='One', second=''),
@@ -1336,7 +1340,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
     ]
     mock_client = MockMistralAI.create_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model, system_prompt='this is the system prompt', output_type=MyTypedDict)
+    agent = Agent(model, instructions='this is the system prompt', output_type=MyTypedDict)
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -1354,9 +1358,9 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1390,6 +1394,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1423,6 +1428,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1509,7 +1515,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
 
     mock_client = MockMistralAI.create_stream_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model, system_prompt='this is the system prompt', output_type=MyTypedDict)
+    agent = Agent(model, instructions='this is the system prompt', output_type=MyTypedDict)
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -1531,9 +1537,9 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1567,6 +1573,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1634,7 +1641,7 @@ async def test_stream_tool_call(allow_model_requests: None):
 
     mock_client = MockMistralAI.create_stream_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model, system_prompt='this is the system prompt')
+    agent = Agent(model, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -1656,9 +1663,9 @@ async def test_stream_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1692,6 +1699,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1757,7 +1765,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
 
     mock_client = MockMistralAI.create_stream_mock(completion)
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model, system_prompt='this is the system prompt')
+    agent = Agent(model, instructions='this is the system prompt')
 
     @agent.tool_plain
     async def get_location(loc_name: str) -> str:
@@ -1782,9 +1790,9 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1818,6 +1826,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -1851,6 +1860,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
@@ -2306,6 +2316,16 @@ async def test_video_url_input(allow_model_requests: None):
         await agent.run(['hello', VideoUrl(url='https://www.google.com')])
 
 
+async def test_uploaded_file_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(RuntimeError, match='UploadedFile is not supported by Mistral.'):
+        await agent.run(['hello', UploadedFile(file_id='file-123', provider_name='anthropic')])
+
+
 def test_model_status_error(allow_model_requests: None) -> None:
     response = httpx.Response(500, content=b'test error')
     mock_client = MockMistralAI.create_mock(SDKError('test error', raw_response=response))
@@ -2382,9 +2402,21 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12'),
-                    ThinkingPart(content=IsStr(), id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12'),
-                    TextPart(content=IsStr(), id='msg_68bb64663d1c8196b9c7e78e7018cc4103498c8aa840cf12'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68bb64663d1c8196b9c7e78e7018cc4103498c8aa840cf12',
+                        provider_name='openai',
+                    ),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=1616, details={'reasoning_tokens': 1344}),
                 model_name='o3-mini-2025-01-31',

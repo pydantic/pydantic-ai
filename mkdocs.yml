@@ -18,7 +18,7 @@ nav:
 
   - Documentation:
       - Core Concepts:
-          - agents.md
+          - Agents: agent.md
           - dependencies.md
           - tools.md
           - output.md
@@ -29,6 +29,7 @@ nav:
           - models/openai.md
           - models/anthropic.md
           - models/google.md
+          - models/xai.md
           - models/bedrock.md
           - models/cerebras.md
           - models/cohere.md
@@ -69,12 +70,14 @@ nav:
           - Built-in Evaluators: evals/evaluators/built-in.md
           - LLM Judge: evals/evaluators/llm-judge.md
           - Custom Evaluators: evals/evaluators/custom.md
+          - Report Evaluators: evals/evaluators/report-evaluators.md
           - Span-Based: evals/evaluators/span-based.md
       - How-To Guides:
           - Logfire Integration: evals/how-to/logfire-integration.md
           - Dataset Management: evals/how-to/dataset-management.md
           - Dataset Serialization: evals/how-to/dataset-serialization.md
           - Concurrency & Performance: evals/how-to/concurrency.md
+          - Multi-Run Evaluation: evals/how-to/multi-run.md
           - Retry Strategies: evals/how-to/retry-strategies.md
           - Metrics & Attributes: evals/how-to/metrics-attributes.md
       - Examples:
@@ -103,7 +106,7 @@ nav:
       - Agent2Agent (A2A): a2a.md
 
   - Related Packages:
-      - Clai: cli.md
+      - clai: cli.md
 
   - Examples:
       - Setup: examples/setup.md
@@ -134,6 +137,7 @@ nav:
           - api/agent.md
           - api/builtin_tools.md
           - api/common_tools.md
+          - api/concurrency.md
           - api/direct.md
           - api/durable_exec.md
           - api/embeddings.md
@@ -150,6 +154,7 @@ nav:
           - api/models/fallback.md
           - api/models/function.md
           - api/models/google.md
+          - api/models/xai.md
           - api/models/groq.md
           - api/models/huggingface.md
           - api/models/instrumented.md
@@ -204,6 +209,15 @@ nav:
 extra:
   # hide the "Made with Material for MkDocs" message
   generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/pydantic/pydantic-ai
+    - icon: fontawesome/brands/bluesky
+      link: https://bsky.app/profile/pydantic.dev
+    - icon: fontawesome/brands/x-twitter
+      link: https://x.com/pydantic
+    - icon: fontawesome/brands/linkedin
+      link: https://www.linkedin.com/company/pydantic
 
 theme:
   name: "material"
@@ -355,13 +369,13 @@ plugins:
           - troubleshooting.md
         Concepts documentation:
           - a2a.md
-          - ag-ui.md
-          - agents.md
+          - agent.md
           - builtin-tools.md
           - dependencies.md
           - deferred-tools.md
           - direct.md
           - embeddings.md
+          - gateway.md
           - input.md
           - tools.md
           - common-tools.md
@@ -373,14 +387,17 @@ plugins:
           - third-party-tools.md
           - tools-advanced.md
           - toolsets.md
+          - web.md
         Models:
           - models/*.md
         Graphs:
           - graph.md
+          - graph/*.md
         API Reference:
           - api/*.md
         Evals:
           - evals.md
+          - evals/*.md
         Durable Execution:
           - durable_execution/*.md
         MCP:

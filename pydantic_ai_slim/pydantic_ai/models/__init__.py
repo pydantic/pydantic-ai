@@ -47,10 +47,17 @@ from ..messages import (
 )
 from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..providers import Provider, infer_provider
+from ..providers import Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+
+DEFAULT_HTTP_TIMEOUT: int = 600
+"""Default HTTP timeout in seconds for API requests.
+
+This matches the default timeout used by OpenAI's Python client.
+See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
+"""
 
 KnownModelName = TypeAliasType(
     'KnownModelName',
@@ -71,10 +78,12 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-opus-4-20250514',
         'anthropic:claude-opus-4-5-20251101',
         'anthropic:claude-opus-4-5',
+        'anthropic:claude-opus-4-6',
         'anthropic:claude-sonnet-4-0',
         'anthropic:claude-sonnet-4-20250514',
         'anthropic:claude-sonnet-4-5-20250929',
         'anthropic:claude-sonnet-4-5',
+        'anthropic:claude-sonnet-4-6',
         'bedrock:amazon.titan-text-express-v1',
         'bedrock:amazon.titan-text-lite-v1',
         'bedrock:amazon.titan-tg1-large',
@@ -90,6 +99,7 @@ KnownModelName = TypeAliasType(
         'bedrock:anthropic.claude-opus-4-20250514-v1:0',
         'bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
         'bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'bedrock:anthropic.claude-sonnet-4-6',
         'bedrock:anthropic.claude-v2:1',
         'bedrock:anthropic.claude-v2',
         'bedrock:cohere.command-light-text-v14',
@@ -99,6 +109,7 @@ KnownModelName = TypeAliasType(
         'bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
         'bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
         'bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'bedrock:eu.anthropic.claude-sonnet-4-6',
         'bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
         'bedrock:meta.llama3-1-405b-instruct-v1:0',
         'bedrock:meta.llama3-1-70b-instruct-v1:0',
@@ -124,6 +135,7 @@ KnownModelName = TypeAliasType(
         'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
         'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
         'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'bedrock:us.anthropic.claude-sonnet-4-6',
         'bedrock:us.meta.llama3-1-70b-instruct-v1:0',
         'bedrock:us.meta.llama3-1-8b-instruct-v1:0',
         'bedrock:us.meta.llama3-2-11b-instruct-v1:0',
@@ -136,7 +148,9 @@ KnownModelName = TypeAliasType(
         'cerebras:llama3.1-8b',
         'cerebras:qwen-3-235b-a22b-instruct-2507',
         'cerebras:qwen-3-32b',
+        'cerebras:qwen-3-coder-480b',
         'cerebras:zai-glm-4.6',
+        'cerebras:zai-glm-4.7',
         'cohere:c4ai-aya-expanse-32b',
         'cohere:c4ai-aya-expanse-8b',
         'cohere:command-nightly',
@@ -161,10 +175,12 @@ KnownModelName = TypeAliasType(
         'gateway/anthropic:claude-opus-4-20250514',
         'gateway/anthropic:claude-opus-4-5-20251101',
         'gateway/anthropic:claude-opus-4-5',
+        'gateway/anthropic:claude-opus-4-6',
         'gateway/anthropic:claude-sonnet-4-0',
         'gateway/anthropic:claude-sonnet-4-20250514',
         'gateway/anthropic:claude-sonnet-4-5-20250929',
         'gateway/anthropic:claude-sonnet-4-5',
+        'gateway/anthropic:claude-sonnet-4-6',
         'gateway/bedrock:amazon.titan-text-express-v1',
         'gateway/bedrock:amazon.titan-text-lite-v1',
         'gateway/bedrock:amazon.titan-tg1-large',
@@ -180,6 +196,7 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:anthropic.claude-opus-4-20250514-v1:0',
         'gateway/bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
         'gateway/bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'gateway/bedrock:anthropic.claude-sonnet-4-6',
         'gateway/bedrock:anthropic.claude-v2:1',
         'gateway/bedrock:anthropic.claude-v2',
         'gateway/bedrock:cohere.command-light-text-v14',
@@ -189,6 +206,7 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
         'gateway/bedrock:meta.llama3-1-405b-instruct-v1:0',
         'gateway/bedrock:meta.llama3-1-70b-instruct-v1:0',
@@ -214,6 +232,7 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
         'gateway/bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
         'gateway/bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'gateway/bedrock:us.anthropic.claude-sonnet-4-6',
         'gateway/bedrock:us.meta.llama3-1-70b-instruct-v1:0',
         'gateway/bedrock:us.meta.llama3-1-8b-instruct-v1:0',
         'gateway/bedrock:us.meta.llama3-2-11b-instruct-v1:0',
@@ -232,6 +251,9 @@ KnownModelName = TypeAliasType(
         'gateway/google-vertex:gemini-3-flash-preview',
         'gateway/google-vertex:gemini-3-pro-image-preview',
         'gateway/google-vertex:gemini-3-pro-preview',
+        'gateway/google-vertex:gemini-3.1-flash-image-preview',
+        'gateway/google-vertex:gemini-3.1-flash-lite-preview',
+        'gateway/google-vertex:gemini-3.1-pro-preview',
         'gateway/google-vertex:gemini-flash-latest',
         'gateway/google-vertex:gemini-flash-lite-latest',
         'gateway/groq:llama-3.1-8b-instant',
@@ -347,6 +369,9 @@ KnownModelName = TypeAliasType(
         'google-gla:gemini-3-flash-preview',
         'google-gla:gemini-3-pro-image-preview',
         'google-gla:gemini-3-pro-preview',
+        'google-gla:gemini-3.1-flash-image-preview',
+        'google-gla:gemini-3.1-flash-lite-preview',
+        'google-gla:gemini-3.1-pro-preview',
         'google-gla:gemini-flash-latest',
         'google-gla:gemini-flash-lite-latest',
         'google-vertex:gemini-2.0-flash-lite',
@@ -360,6 +385,9 @@ KnownModelName = TypeAliasType(
         'google-vertex:gemini-3-flash-preview',
         'google-vertex:gemini-3-pro-image-preview',
         'google-vertex:gemini-3-pro-preview',
+        'google-vertex:gemini-3.1-flash-image-preview',
+        'google-vertex:gemini-3.1-flash-lite-preview',
+        'google-vertex:gemini-3.1-pro-preview',
         'google-vertex:gemini-flash-latest',
         'google-vertex:gemini-flash-lite-latest',
         'grok:grok-2-image-1212',
@@ -369,6 +397,7 @@ KnownModelName = TypeAliasType(
         'grok:grok-3-mini',
         'grok:grok-3',
         'grok:grok-4-0709',
+        'grok:grok-4-latest',
         'grok:grok-4-1-fast-non-reasoning',
         'grok:grok-4-1-fast-reasoning',
         'grok:grok-4-1-fast',
@@ -377,6 +406,27 @@ KnownModelName = TypeAliasType(
         'grok:grok-4-fast',
         'grok:grok-4',
         'grok:grok-code-fast-1',
+        'xai:grok-3',
+        'xai:grok-3-fast',
+        'xai:grok-3-fast-latest',
+        'xai:grok-3-latest',
+        'xai:grok-3-mini',
+        'xai:grok-3-mini-fast',
+        'xai:grok-3-mini-fast-latest',
+        'xai:grok-4',
+        'xai:grok-4-0709',
+        'xai:grok-4-1-fast',
+        'xai:grok-4-1-fast-non-reasoning',
+        'xai:grok-4-1-fast-non-reasoning-latest',
+        'xai:grok-4-1-fast-reasoning',
+        'xai:grok-4-1-fast-reasoning-latest',
+        'xai:grok-4-fast',
+        'xai:grok-4-fast-non-reasoning',
+        'xai:grok-4-fast-non-reasoning-latest',
+        'xai:grok-4-fast-reasoning',
+        'xai:grok-4-fast-reasoning-latest',
+        'xai:grok-4-latest',
+        'xai:grok-code-fast-1',
         'groq:llama-3.1-8b-instant',
         'groq:llama-3.3-70b-versatile',
         'groq:meta-llama/llama-guard-4-12b',
@@ -566,13 +616,13 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
 class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
-    function_tools: list[ToolDefinition] = field(default_factory=list)
-    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
+    function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
+    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list[AbstractBuiltinTool])
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
-    output_tools: list[ToolDefinition] = field(default_factory=list)
-    prompted_output_template: str | None = None
+    output_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
+    prompted_output_template: str | Literal[False] | None = None
     allow_text_output: bool = True
     allow_image_output: bool = False
 
@@ -718,7 +768,7 @@ class Model(ABC):
         if (
             params.output_mode == 'prompted'
             or (params.output_mode == 'native' and self.profile.native_output_requires_schema_in_instructions)
-        ) and not params.prompted_output_template:
+        ) and params.prompted_output_template is None:
             params = replace(params, prompted_output_template=self.profile.prompted_output_template)
 
         # Check if output mode is supported
@@ -747,6 +797,11 @@ class Model(ABC):
     def model_name(self) -> str:
         """The model name."""
         raise NotImplementedError()
+
+    @property
+    def model_id(self) -> str:
+        """The fully qualified model name in `'provider:model_name'` format."""
+        return f'{self.system}:{self.model_name}'
 
     @property
     def label(self) -> str:
@@ -1062,6 +1117,84 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
+_LEGACY_MODEL_PREFIXES: dict[str, str] = {
+    'gpt': 'openai',
+    'o1': 'openai',
+    'o3': 'openai',
+    'claude': 'anthropic',
+    'gemini': 'google-gla',
+}
+"""Backward compat: allows prefix-only model names like `gpt-4` without `provider:`."""
+
+
+def parse_model_id(model: str) -> tuple[str | None, str]:
+    """Parse a model id string into its provider and model name components.
+
+    Handles both the modern `provider:model` format and legacy model names
+    that start with known prefixes (e.g., `gpt-4`, `claude-3`).
+
+    Emits a `DeprecationWarning` when a legacy prefix-based model name is used.
+
+    Args:
+        model: A model identifier string, either `provider:model_name` or a legacy
+            prefix-based name.
+
+    Returns:
+        A tuple of `(provider_name, model_name)`. If the provider can't be inferred,
+        returns `(None, model)` so callers can decide how to handle unknown providers.
+    """
+    if ':' in model:
+        provider_name, model_name = model.split(':', maxsplit=1)
+        return provider_name, model_name
+
+    # Legacy model names without provider prefix
+    for prefix, provider_name in _LEGACY_MODEL_PREFIXES.items():
+        if model.startswith(prefix):
+            warnings.warn(
+                f'Specifying a model name without a provider prefix is deprecated. '
+                f"Instead of {model!r}, use '{provider_name}:{model}'.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return provider_name, model
+
+    # Unknown prefix: let callers decide how to handle this case.
+    return None, model
+
+
+def infer_model_profile(model: str) -> ModelProfile:
+    """Infer the model profile from a model id string without constructing a provider.
+
+    Uses `Provider.model_profile` to look up the profile for the given model.
+    Returns `DEFAULT_PROFILE` for unknown or unrecognized providers.
+
+    Note: This returns the raw provider profile **without** intersecting with
+    `Model.supported_builtin_tools()`, unlike `Model.profile`. This means the returned
+    profile may claim support for builtin tools that a specific `Model` subclass doesn't
+    implement. This is acceptable for best-effort scenarios (e.g. `TemporalModel` with
+    unregistered model strings) where the actual `Model` class isn't available.
+
+    Args:
+        model: A model identifier string (e.g. `'openai:gpt-5'`, `'anthropic:claude-sonnet-4-5'`).
+
+    Returns:
+        The inferred `ModelProfile`, or `DEFAULT_PROFILE` if the provider is unknown.
+    """
+    provider, model_name = parse_model_id(model)
+    if provider is None:
+        return DEFAULT_PROFILE
+
+    try:
+        provider_class = infer_provider_class(provider)
+    except ValueError:
+        return DEFAULT_PROFILE
+
+    try:
+        return provider_class.model_profile(model_name) or DEFAULT_PROFILE
+    except (ValueError, UserError):
+        return DEFAULT_PROFILE
+
+
 def infer_model(  # noqa: C901
     model: Model | KnownModelName | str, provider_factory: Callable[[str], Provider[Any]] = infer_provider
 ) -> Model:
@@ -1080,25 +1213,9 @@ def infer_model(  # noqa: C901
 
         return TestModel()
 
-    try:
-        provider_name, model_name = model.split(':', maxsplit=1)
-    except ValueError:
-        provider_name = None
-        model_name = model
-        if model_name.startswith(('gpt', 'o1', 'o3')):
-            provider_name = 'openai'
-        elif model_name.startswith('claude'):
-            provider_name = 'anthropic'
-        elif model_name.startswith('gemini'):
-            provider_name = 'google-gla'
-
-        if provider_name is not None:
-            warnings.warn(
-                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider_name}:{model_name}'.",
-                DeprecationWarning,
-            )
-        else:
-            raise UserError(f'Unknown model: {model}')
+    provider_name, model_name = parse_model_id(model)
+    if provider_name is None:
+        raise UserError(f'Unknown model: {model}')
 
     if provider_name == 'vertexai':  # pragma: no cover
         warnings.warn(
@@ -1161,11 +1278,17 @@ def infer_model(  # noqa: C901
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)
+    elif model_kind == 'xai':
+        from .xai import XaiModel
+
+        return XaiModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def cached_async_http_client(*, provider: str | None = None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
+def cached_async_http_client(
+    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
     """Cached HTTPX async client that creates a separate client for each provider.
 
     The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
@@ -1191,7 +1314,9 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
 
 
 @cache
-def _cached_async_http_client(provider: str | None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
+def _cached_async_http_client(
+    provider: str | None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
@@ -1237,6 +1362,14 @@ async def download_item(
 ) -> DownloadedItem[str] | DownloadedItem[bytes]:
     """Download an item by URL and return the content as a bytes object or a (base64-encoded) string.
 
+    This function includes SSRF (Server-Side Request Forgery) protection:
+    - Only http:// and https:// protocols are allowed
+    - Private/internal IP addresses are blocked by default
+    - Cloud metadata endpoints (169.254.169.254) are always blocked
+    - Hostnames are resolved before requests to prevent DNS rebinding
+
+    Set `item.force_download='allow-local'` to allow private IP addresses.
+
     Args:
         item: The item to download.
         data_format: The format to return the content in:
@@ -1249,18 +1382,17 @@ async def download_item(
             - `extension`: The media type as an extension.
 
     Raises:
-        UserError: If the URL points to a YouTube video or its protocol is gs://.
+        UserError: If the URL points to a YouTube video.
+        ValueError: If the URL uses an unsupported protocol or targets a private/internal
+            IP address (unless allow-local is set).
     """
-    if item.url.startswith('gs://'):
-        raise UserError('Downloading from protocol "gs://" is not supported.')
-    elif item.url.startswith('s3://'):
-        raise UserError('Downloading from protocol "s3://" is not supported.')
-    elif isinstance(item, VideoUrl) and item.is_youtube:
+    if isinstance(item, VideoUrl) and item.is_youtube:
         raise UserError('Downloading YouTube videos is not supported.')
 
-    client = cached_async_http_client()
-    response = await client.get(item.url, follow_redirects=True)
-    response.raise_for_status()
+    from .._ssrf import safe_download
+
+    allow_local = item.force_download == 'allow-local'
+    response = await safe_download(item.url, allow_local=allow_local)
 
     if content_type := response.headers.get('content-type'):
         content_type = content_type.split(';')[0]

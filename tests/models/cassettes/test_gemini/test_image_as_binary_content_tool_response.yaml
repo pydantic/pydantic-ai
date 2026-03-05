@@ -33,11 +33,110 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1593'
+      - '1733'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3592
+      - gfet4t7; dur=3066
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                parameters: {}
+              name: get_image
+            thoughtSignature: EssFCsgFAXLI2nwYs/znGI/jAP9S3ut3REd2KDoNq3TNmbk+LaWur9eD/q7f6VfQIONv4kOsSX5SzYrMogL0hMywqTm9ZttIaDg5Xpi+0XDeegMqfHauxmF3wKppc/MnE8NfhmERQrb+tkIXvtpLZG752oGAVq4f7aUbaNWjHIGWk/nQI9PCBE26oKtyzxYD5OuxJ9ocCCEYAZrW1DIDq6EiE44uGGUjQz+/kxt3gfSvBrJQY9LOFOeOUn7nTyPnLF1cS+op2hZ2zLy4DdHSCW1BY2zQJH22GukobZsox0bVeWz7pZVVRA/j/L4K/YuXDVXUQFfhHbRviBmVfHuSOrxnEuLdedQbg6DTOGSzHMta2F6ojFWcVrOHj7Lr3qj1z1WuUrhFD/b6SYH7QsRrDopMswywP94qqZKWV0hTXb6MLEn65ajKOHnTkSneLTFXN3c/clMUcYwhdE43+sZ0NavEzDUSA5nkHb7rAy1hWhDNKtrdyItP+DdQI4FSlwT1jooHzBYIP8hbvTd2P+riBr7yqV3/f6ISSNeJjF2BeIg2z71w9RqJVV5xlJCzu4DKaoCHk574/T6g51c1zf3MLzV3/3TxvJo+FwWNcvxF99X4XESh7ignitJXx/h04e/wIv8oSATJ7lNbeJiWmXvp6ZRyV4Dtn7KyYKExlCFZzlKbRBKR7QUyyXiyToTJxRCCY59aiMjMt9edrzoVIY3VOIPZDam/bJemLsLJpCfHiS2ccJvDzBeS5vdWZYACzOv1okArIJphw0cORCSexNIqSz7qdZ8nr1InF/uffG9YJbkOD6IHVeeSCl+qVMhe+mxpSmBLWUL/XByP1DhuB5SXwmIqeAkj84e0wXaCUBLJDv4LBOzY3Vevfnn34fsSfe7cnxRq+5HYVBK7fXUqS0xWuV4CCEvnFq6qAz2/J/226PQm/wktVGbiL3UnGq4cng==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-pro-preview
+      responseId: tDxXaYb6JNCLqtsP0OvimQ4
+      usageMetadata:
+        candidatesTokenCount: 13
+        promptTokenCount: 33
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 33
+        thoughtsTokenCount: 168
+        totalTokenCount: 214
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '750'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What fruit is in the image you can get from the get_image tool?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              parameters: {}
+            name: get_image
+          thoughtSignature: skip_thought_signature_validator
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_image
+            response:
+              call_error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "extra_forbidden",
+                    "loc": [
+                      "parameters"
+                    ],
+                    "msg": "Extra inputs are not permitted",
+                    "input": {}
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
+        role: user
+      tools:
+        functionDeclarations:
+        - description: ''
+          name: get_image
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '7597'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=14951
       transfer-encoding:
       - chunked
       vary:
@@ -51,21 +150,21 @@ interactions:
           - functionCall:
               args: {}
               name: get_image
-            thoughtSignature: EogFCoUFAXLI2nzbRxXzFZACaLwH5W7n1EGolByST5GuNvRwztWMduzLu6OdBz5KidGgUna8V6rp1TrldOnS97iDxdetoQHWU64WfFct+Prz/P1qpF6/j4mfe/KXEld9MVt7QyK0L4lZJEB+Wp7Ytr0u4SvldvNRfFJ3TJs0fj41e767CuJdeE4E/S1TupbFEriZC0BweC+mLqTT/01DzeBxjWkO3N7u4aFusBuTRM5dr5B3KJ/kvYwrvf+w2qf3/H8AVg+bFUhZfa8Jo4EfQqCpa8Bj+XziwusvUU0sUQSA1xq/IYxrY/SDEzcj6AMmb94eVjQeHgW9sACKgPw86C6xGWfor4Y6sj+V0i266NhQFs4n1duibpAeqUblUced5FuhtKKdeHji0750/key9hMz86wiL92J91xJkZiF5cVu2HAGr8u1pH4riiKNOzZhJDnCGKFYKSvcs5FWMw9JhiUw0j1fS7v4Du+UahuXQqO8e5BRBnhPDUeAvue7HONpykX33zl2snK3hn5ZPqJPEtq3jFTxkgqnnWBf80c7GL1p0CAtkWzgIZwFkCWxrN0tbPAW+ZeZ4b3XL1e3KWWxjNrroeaZS1b30wfwPwLvsFuVLMZBhkcOF56Y+R/fiEw+TjZfEFurQVk779OWZd+SvZWd/qCY89YMkITnfRvsTvmKWwtx0w7Rigsol9D48mIacTnEzPRyzqgOXuF1YxS5XFwHPQLDyr3uEe7pXBX8z+2JGee4mBr70kBlfODhTD95MI+5jELOczJSl25+mN1rmOf5k7UTw2aDPPrE3zVY2fFOBO2mjrsYCLCl1eQvR4ybG0o1JmqfSRTGE+X6fbLCAP8JtVbhjD2hrQEC
+            thoughtSignature: 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
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-pro-preview
-      responseId: OEVVaeOpAtLhz7IPyeXCuAg
+      responseId: xDxXadCnC4GsqtsP3ozx6A0
       usageMetadata:
         candidatesTokenCount: 10
-        promptTokenCount: 33
+        promptTokenCount: 130
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 33
-        thoughtsTokenCount: 145
-        totalTokenCount: 188
+          tokenCount: 130
+        thoughtsTokenCount: 1211
+        totalTokenCount: 1351
     status:
       code: 200
       message: OK
@@ -78,7 +177,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '132034'
+      - '132508'
       content-type:
       - application/json
       host:
@@ -88,6 +187,34 @@ interactions:
       contents:
       - parts:
         - text: What fruit is in the image you can get from the get_image tool?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              parameters: {}
+            name: get_image
+          thoughtSignature: skip_thought_signature_validator
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_image
+            response:
+              call_error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "extra_forbidden",
+                    "loc": [
+                      "parameters"
+                    ],
+                    "msg": "Extra inputs are not permitted",
+                    "input": {}
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
         role: user
       - parts:
         - functionCall:
@@ -119,11 +246,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1875'
+      - '1186'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=5022
+      - gfet4t7; dur=3715
       transfer-encoding:
       - chunked
       vary:
@@ -134,25 +261,33 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: '6'
-          - text: The fruit in the image is a **kiwi** (specifically, a cross-section showing its green flesh, black seeds,
-              and white core).
-            thoughtSignature: EowGCokGAXLI2nzMqCx0QJm1/L/VP1FNNuc95WqCtATY/EA+tdPw4v0D/qZjEc2B/vcpadcbPQiTCgplsTCPVEDH9dPijW557NuqqU3M63T0zMY6d5R8dk/L4Sh86ZVFVA7FcivBuYLqNpvOXO4QHZpMjTW0lBrj64pi6NqXfJUay55/W4WP7t/Duy74Bf6/xGfBXejtHrnow1J7YM7VyjVfxiRUFkQJ2wZn34DkNpsQULYFwIMSerqevhurGHTpnoIdgcpP6N16zQRJb3ziSudEdqQAgKgJ4XgEsPHhuVlRMUE9/gDThDPOX3cuc8CF+IsWE7+3wUXy3HanhBi3i35LAuSko6H3UiSX7Uy9fLKdiN0rzBOYc/GCxMMvKb98B+2NU27TXUBus8NS54j6oMFExqtRpicjO2xNp8nBBnBwHrkDfRsubyCbK1b8jEPdBBPNC2BcjUeXrjUrR6hiK+/vKkjfofdZnLMAT8P+PfSTWdr7hWLGc0MVyY0ro74IF3H4H7jjiHwrGp/YEvTWaU/Wk8Yl3FqoV+IDx9+eklsY9feZzjFVgKdMf96hlVGLMuxfMxVg8AfWBnts2SDZMIOCTWP+KWo3LU+e3LepRmxv5V2GTZ6qkR1HyeLAOWa6D3rgBbPSwpWHq1lGtxznhOn/MlWpq4YdYwTf87kzBO2kkuVAfEaVqlwvJyp9bToCKCNA6QqKRRQZMJ3nA4ULECiuTRV7nDsY5cBHCedCJpYjrPZdiywj49P2EINg+TBf2HFs5sFQM/rUgdC2eL0fQVpmd+pNvS/UgbH86xO960QBYapqkIWrFtR6W72+MgaFhBErOvAyghnP8nezrieOA/ZFErLcMs8ZMwGVMaFKoyjH+sSIId00ZlLjxjm2cj6xM/K9DpbjXLhZUvkmdNbO7XjS2A4QQXpXSlTJnRT2qO8kyxe8rnF566aXn/agYdRSvaIvB/j/0xMzBiHrYtXxYMIGbI1PqjPVI8mEoVkt7Bi5GnTIIRz6Kk1vcfZBVNZn8VOyB8rGsbqfTn4LnMJp
+          - text: '1'
+          - text: |-
+              AM
+
+              The fruit in the image is a **kiwi**. It is sliced in half, showing its bright green flesh, small black seeds, and white core.
+
+              Would you like to know more about kiwis, such as their nutritional benefits?
+
+              **Source:**
+              - *Image generated from tool output.*
+          - text: The fruit in the image is a **kiwi** (or kiwifruit). It shows the cross-section of a sliced kiwi, featuring
+              its characteristic bright green flesh, ring of small black seeds, and white center core, surrounded by fuzzy
+              brown skin.
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-pro-preview
-      responseId: PUVVabfNEuGymtkPr9GT2Q0
+      responseId: yDxXaef-I7e1qtsPxtKp8Ao
       usageMetadata:
-        candidatesTokenCount: 31
-        promptTokenCount: 1166
+        candidatesTokenCount: 116
+        promptTokenCount: 1263
         promptTokensDetails:
         - modality: IMAGE
           tokenCount: 1088
         - modality: TEXT
-          tokenCount: 78
-        thoughtsTokenCount: 184
-        totalTokenCount: 1381
+          tokenCount: 175
+        totalTokenCount: 1379
     status:
       code: 200
       message: OK

@@ -68,11 +68,12 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
         if snapshot_id := getattr(self, '__snapshot_id', None):
             return snapshot_id
         else:
-            self.__dict__['__snapshot_id'] = snapshot_id = generate_snapshot_id(self.get_node_id())
+            snapshot_id = generate_snapshot_id(self.get_node_id())
+            object.__setattr__(self, '__snapshot_id', snapshot_id)
             return snapshot_id
 
     def set_snapshot_id(self, snapshot_id: str) -> None:
-        self.__dict__['__snapshot_id'] = snapshot_id
+        object.__setattr__(self, '__snapshot_id', snapshot_id)
 
     @classmethod
     @cache

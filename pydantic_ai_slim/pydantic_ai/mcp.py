@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import base64
-import functools
 import os
 import re
 import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
@@ -32,7 +31,7 @@ try:
     from mcp.client.session import ClientSession, ElicitationFnT, LoggingFnT
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
-    from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
+    from mcp.client.streamable_http import streamable_http_client
     from mcp.shared import exceptions as mcp_exceptions
     from mcp.shared.context import RequestContext
     from mcp.shared.message import SessionMessage
@@ -340,9 +339,14 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     When enabled (default), tools are fetched once and cached until either:
     - The server sends a `notifications/tools/list_changed` notification
-    - The connection is closed
+    - [`MCPServer.__aexit__`][pydantic_ai.mcp.MCPServer.__aexit__] is called (when the last context exits)
 
     Set to `False` for servers that change tools dynamically without sending notifications.
+
+    Note: When using durable execution (Temporal, DBOS), tool definitions are additionally cached
+    at the wrapper level across activities/steps, to avoid redundant MCP connections. This
+    wrapper-level cache is not invalidated by `tools/list_changed` notifications.
+    Set to `False` to disable all caching if tools may change during a workflow.
     """
 
     cache_resources: bool
@@ -350,7 +354,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     When enabled (default), resources are fetched once and cached until either:
     - The server sends a `notifications/resources/list_changed` notification
-    - The connection is closed
+    - [`MCPServer.__aexit__`][pydantic_ai.mcp.MCPServer.__aexit__] is called (when the last context exits)
 
     Set to `False` for servers that change resources dynamically without sending notifications.
     """
@@ -480,20 +484,18 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         Tools are cached by default, with cache invalidation on:
         - `notifications/tools/list_changed` notifications from the server
-        - Connection close (cache is cleared in `__aexit__`)
+        - `__aexit__` when the last context exits
 
         Set `cache_tools=False` for servers that change tools without sending notifications.
         """
+        if self.cache_tools and self._cached_tools is not None:
+            return self._cached_tools
+
         async with self:
+            result = await self._client.list_tools()
             if self.cache_tools:
-                if self._cached_tools is not None:
-                    return self._cached_tools
-                result = await self._client.list_tools()
                 self._cached_tools = result.tools
-                return result.tools
-            else:
-                result = await self._client.list_tools()
-                return result.tools
+            return result.tools
 
     async def direct_call_tool(
         self,
@@ -601,27 +603,25 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         Resources are cached by default, with cache invalidation on:
         - `notifications/resources/list_changed` notifications from the server
-        - Connection close (cache is cleared in `__aexit__`)
+        - `__aexit__` when the last context exits
 
         Set `cache_resources=False` for servers that change resources without sending notifications.
 
         Raises:
             MCPError: If the server returns an error.
         """
+        if self.cache_resources and self._cached_resources is not None:
+            return self._cached_resources
+
         async with self:
             if not self.capabilities.resources:
                 return []
             try:
+                result = await self._client.list_resources()
+                resources = [Resource.from_mcp_sdk(r) for r in result.resources]
                 if self.cache_resources:
-                    if self._cached_resources is not None:
-                        return self._cached_resources
-                    result = await self._client.list_resources()
-                    resources = [Resource.from_mcp_sdk(r) for r in result.resources]
                     self._cached_resources = resources
-                    return resources
-                else:
-                    result = await self._client.list_resources()
-                    return [Resource.from_mcp_sdk(r) for r in result.resources]
+                return resources
             except mcp_exceptions.McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
 
@@ -714,9 +714,9 @@ class MCPServer(AbstractToolset[Any], ABC):
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        if self._running_count == 0:
-            raise ValueError('MCPServer.__aexit__ called more times than __aenter__')
         async with self._enter_lock:
+            if self._running_count == 0:
+                raise ValueError('MCPServer.__aexit__ called more times than __aenter__')
             self._running_count -= 1
             if self._running_count == 0 and self._exit_stack is not None:
                 await self._exit_stack.aclose()
@@ -830,7 +830,7 @@ class MCPServerStdio(MCPServer):
     server = MCPServerStdio(  # (1)!
         'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
     )
-    agent = Agent('openai:gpt-4o', toolsets=[server])
+    agent = Agent('openai:gpt-5.2', toolsets=[server])
     ```
 
     1. See [MCP Run Python](https://github.com/pydantic/mcp-run-python) for more information.
@@ -1113,67 +1113,6 @@ class _MCPServerHTTP(MCPServer):
             client_info=client_info,
         )
 
-    @property
-    @abstractmethod
-    def _transport_client(
-        self,
-    ) -> Callable[
-        ...,
-        AbstractAsyncContextManager[
-            tuple[
-                MemoryObjectReceiveStream[SessionMessage | Exception],
-                MemoryObjectSendStream[SessionMessage],
-                GetSessionIdCallback,
-            ],
-        ]
-        | AbstractAsyncContextManager[
-            tuple[
-                MemoryObjectReceiveStream[SessionMessage | Exception],
-                MemoryObjectSendStream[SessionMessage],
-            ]
-        ],
-    ]: ...
-
-    @asynccontextmanager
-    async def client_streams(
-        self,
-    ) -> AsyncIterator[
-        tuple[
-            MemoryObjectReceiveStream[SessionMessage | Exception],
-            MemoryObjectSendStream[SessionMessage],
-        ]
-    ]:
-        if self.http_client and self.headers:
-            raise ValueError('`http_client` is mutually exclusive with `headers`.')  # pragma: no cover
-
-        transport_client_partial = functools.partial(
-            self._transport_client,
-            url=self.url,
-            timeout=self.timeout,
-            sse_read_timeout=self.read_timeout,
-        )
-
-        if self.http_client is not None:
-            # TODO: Clean up once https://github.com/modelcontextprotocol/python-sdk/pull/1177 lands.
-            @asynccontextmanager
-            async def httpx_client_factory(
-                headers: dict[str, str] | None = None,
-                timeout: httpx.Timeout | None = None,
-                auth: httpx.Auth | None = None,
-            ) -> AsyncIterator[httpx.AsyncClient]:
-                assert self.http_client is not None
-                yield self.http_client
-
-            async with transport_client_partial(httpx_client_factory=httpx_client_factory) as (
-                read_stream,
-                write_stream,
-                *_,
-            ):
-                yield read_stream, write_stream
-        else:
-            async with transport_client_partial(headers=self.headers) as (read_stream, write_stream, *_):
-                yield read_stream, write_stream
-
     def __repr__(self) -> str:  # pragma: no cover
         repr_args = [
             f'url={self.url!r}',
@@ -1199,7 +1138,7 @@ class MCPServerSSE(_MCPServerHTTP):
     from pydantic_ai.mcp import MCPServerSSE
 
     server = MCPServerSSE('http://localhost:3001/sse')
-    agent = Agent('openai:gpt-4o', toolsets=[server])
+    agent = Agent('openai:gpt-5.2', toolsets=[server])
     ```
     """
 
@@ -1217,9 +1156,47 @@ class MCPServerSSE(_MCPServerHTTP):
             ),
         )
 
-    @property
-    def _transport_client(self):
-        return sse_client  # pragma: no cover
+    # sse_client has a hang bug (https://github.com/modelcontextprotocol/python-sdk/issues/1811)
+    # that prevents testing SSE transport in CI.
+    # TODO: Remove pragma and add a test
+    # once https://github.com/modelcontextprotocol/python-sdk/pull/1838 is released.
+    @asynccontextmanager
+    async def client_streams(  # pragma: no cover
+        self,
+    ) -> AsyncIterator[
+        tuple[
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
+        ]
+    ]:
+        if self.http_client and self.headers:
+            raise ValueError('`http_client` is mutually exclusive with `headers`.')
+
+        if self.http_client is not None:
+
+            def httpx_client_factory(
+                headers: dict[str, str] | None = None,
+                timeout: httpx.Timeout | None = None,
+                auth: httpx.Auth | None = None,
+            ) -> httpx.AsyncClient:
+                assert self.http_client is not None
+                return self.http_client
+
+            async with sse_client(
+                url=self.url,
+                timeout=self.timeout,
+                sse_read_timeout=self.read_timeout,
+                httpx_client_factory=httpx_client_factory,
+            ) as (read_stream, write_stream, *_):
+                yield read_stream, write_stream
+        else:
+            async with sse_client(
+                url=self.url,
+                timeout=self.timeout,
+                sse_read_timeout=self.read_timeout,
+                headers=self.headers,
+            ) as (read_stream, write_stream, *_):
+                yield read_stream, write_stream
 
     def __eq__(self, value: object, /) -> bool:
         return super().__eq__(value) and isinstance(value, MCPServerSSE) and self.url == value.url
@@ -1242,7 +1219,7 @@ class MCPServerHTTP(MCPServerSSE):
     from pydantic_ai.mcp import MCPServerHTTP
 
     server = MCPServerHTTP('http://localhost:3001/sse')
-    agent = Agent('openai:gpt-4o', toolsets=[server])
+    agent = Agent('openai:gpt-5.2', toolsets=[server])
     ```
     """
 
@@ -1263,7 +1240,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     from pydantic_ai.mcp import MCPServerStreamableHTTP
 
     server = MCPServerStreamableHTTP('http://localhost:8000/mcp')
-    agent = Agent('openai:gpt-4o', toolsets=[server])
+    agent = Agent('openai:gpt-5.2', toolsets=[server])
     ```
     """
 
@@ -1281,9 +1258,29 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
             ),
         )
 
-    @property
-    def _transport_client(self):
-        return streamablehttp_client
+    @asynccontextmanager
+    async def client_streams(
+        self,
+    ) -> AsyncIterator[
+        tuple[
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
+        ]
+    ]:
+        if self.http_client and self.headers:
+            raise ValueError('`http_client` is mutually exclusive with `headers`.')
+
+        aexit_stack = AsyncExitStack()
+        http_client = self.http_client or await aexit_stack.enter_async_context(
+            httpx.AsyncClient(timeout=httpx.Timeout(self.timeout, read=self.read_timeout), headers=self.headers)
+        )
+        read_stream, write_stream, *_ = await aexit_stack.enter_async_context(
+            streamable_http_client(self.url, http_client=http_client)
+        )
+        try:
+            yield read_stream, write_stream
+        finally:
+            await aexit_stack.aclose()
 
     def __eq__(self, value: object, /) -> bool:
         return super().__eq__(value) and isinstance(value, MCPServerStreamableHTTP) and self.url == value.url

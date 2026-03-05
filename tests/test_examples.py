@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field
 from inspect import FrameInfo
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -63,8 +63,8 @@ code_examples: dict[str, CodeExample] = {}
 
 @dataclass
 class ExamplesConfig(BaseExamplesConfig):
-    known_first_party: list[str] = field(default_factory=list)
-    known_local_folder: list[str] = field(default_factory=list)
+    known_first_party: list[str] = field(default_factory=list[str])
+    known_local_folder: list[str] = field(default_factory=list[str])
 
     def ruff_config(self) -> tuple[str, ...]:
         config = super().ruff_config()
@@ -112,6 +112,17 @@ def tmp_path_cwd(tmp_path: Path):
         sys.path.remove(str(tmp_path))
 
 
+def _check_python_version(min_version: str | None, max_version: str | None) -> None:
+    if min_version:
+        min_info = tuple(int(v) for v in min_version.split('.'))
+        if sys.version_info < min_info:
+            pytest.skip(f'Python version {min_version} required')  # pragma: lax no cover
+    if max_version:
+        max_info = tuple(int(v) for v in max_version.split('.'))
+        if sys.version_info[:2] > max_info:
+            pytest.skip(f'Python version <= {max_version} required')  # pragma: lax no cover
+
+
 @pytest.mark.xdist_group(name='doc_tests')
 @pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
     'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
@@ -154,6 +165,10 @@ def test_docs_examples(
     mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
     mocker.patch('pydantic_ai.toolsets.fastmcp.FastMCPToolset', return_value=MockMCPServer())
     mocker.patch('mcp.server.fastmcp.FastMCP')
+    try:
+        mocker.patch('sentence_transformers.SentenceTransformer')
+    except ModuleNotFoundError:
+        pass
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
@@ -186,21 +201,23 @@ def test_docs_examples(
     env.set('ALIBABA_API_KEY', 'testing')
     env.set('SAMBANOVA_API_KEY', 'testing')
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
+    env.set('VOYAGE_API_KEY', 'testing')
+    env.set('XAI_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
     opt_lint = prefix_settings.get('lint', '')
     noqa = prefix_settings.get('noqa', '')
     python_version = prefix_settings.get('py')
+    max_python_version = prefix_settings.get('max_py')
     dunder_name = prefix_settings.get('dunder_name', '__main__')
     requires = prefix_settings.get('requires')
+
+    _check_python_version(python_version, max_python_version)
 
     ruff_target_version: str = 'py310'
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
-        if sys.version_info < python_version_info:
-            pytest.skip(f'Python version {python_version} required')  # pragma: lax no cover
-
         ruff_target_version = f'py{python_version_info[0]}{python_version_info[1]}'
 
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
@@ -612,6 +629,9 @@ async def model_logic(  # noqa: C901
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'reason': '-', 'pass': True, 'score': 1.0})]
             )
+        elif m.content.startswith('Question '):
+            # Handle concurrency example prompts like "Question 0", "Question 1", etc.
+            return ModelResponse(parts=[TextPart(f'Answer to {m.content}')])
         elif m.content == 'What time is it?':
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='get_current_time', args={}, tool_call_id='pyd_ai_tool_call_id')]
@@ -764,6 +784,7 @@ async def model_logic(  # noqa: C901
             parts=[ToolCallPart(tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
+        m.content = cast(str, m.content)
         if 'Anne' in m.content:
             return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
         elif 'Yashar' in m.content:
@@ -824,7 +845,7 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
         return ModelResponse(parts=[TextPart("The user's name is John.")])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast':
-        return ModelResponse(parts=[TextPart(m.content)])
+        return ModelResponse(parts=[TextPart(cast(str, m.content))])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo':
         return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document':
@@ -924,7 +945,7 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file' and 'README.md.bak' in m.content:
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file' and 'README.md.bak' in cast(str, m.content):
         return ModelResponse(
             parts=[
                 TextPart(
@@ -1017,6 +1038,7 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
         'text-embedding-3-small': 1536,
         'text-embedding-3-large': 3072,
         'embed-v4.0': 1024,
+        'voyage-3.5': 1024,
         'all-MiniLM-L6-v2': 384,
         'gemini-embedding-001': 3072,
     }

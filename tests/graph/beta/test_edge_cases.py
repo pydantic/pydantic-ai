@@ -315,7 +315,7 @@ async def test_state_with_mutable_collections():
 
     @dataclass
     class MutableState:
-        items: list[int] = field(default_factory=list)
+        items: list[int] = field(default_factory=list[int])
 
     g = GraphBuilder(state_type=MutableState, output_type=list[int])
 

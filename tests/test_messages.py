@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 
 from pydantic_ai import (
@@ -15,6 +14,7 @@ from pydantic_ai import (
     DocumentUrl,
     FilePart,
     ImageUrl,
+    InstrumentationSettings,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -24,10 +24,13 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
 
 
@@ -121,6 +124,16 @@ def test_binary_content_image(media_type: str, format: str):
     binary_content = BinaryContent(data=b'Hello, world!', media_type=media_type)
     assert binary_content.is_image
     assert binary_content.format == format
+
+
+def test_binary_image_requires_image_media_type():
+    # Valid image media type should work
+    img = BinaryImage(data=b'test', media_type='image/png')
+    assert img.is_image
+
+    # Non-image media type should raise
+    with pytest.raises(ValueError, match='`BinaryImage` must have a media type that starts with "image/"'):
+        BinaryImage(data=b'test', media_type='text/plain')
 
 
 @pytest.mark.parametrize(
@@ -492,6 +505,62 @@ def test_file_part_has_content():
     assert filepart.has_content()
 
 
+@pytest.mark.parametrize(
+    'args',
+    [
+        {'key': 'value'},
+        {'key': 0},
+        {'key': False},
+        {'key': ''},
+        {'key': []},
+        {'key': {}},
+        '{"key": "value"}',
+        '0',
+    ],
+)
+def test_tool_call_part_has_content(args: dict[str, object] | str):
+    part = ToolCallPart(tool_name='test_tool', args=args)
+    assert part.has_content()
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        {},
+        '',
+        None,
+    ],
+)
+def test_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
+    part = ToolCallPart(tool_name='test_tool', args=args)
+    assert not part.has_content()
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        {'key': 'value'},
+        {'key': 0},
+        {'key': False},
+    ],
+)
+def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None):
+    part = BuiltinToolCallPart(tool_name='web_search', args=args)
+    assert part.has_content()
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        {},
+        None,
+    ],
+)
+def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
+    part = BuiltinToolCallPart(tool_name='web_search', args=args)
+    assert not part.has_content()
+
+
 def test_file_part_serialization_roundtrip():
     # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
     messages: list[ModelMessage] = [
@@ -728,3 +797,361 @@ def test_binary_content_from_path(tmp_path: Path):
     test_toml_file.write_text('[project]\nname = "test"', encoding='utf-8')
     binary_content = BinaryContent.from_path(test_toml_file)
     assert binary_content == snapshot(BinaryContent(data=b'[project]\nname = "test"', media_type='application/toml'))
+
+
+def test_uploaded_file_identifier_property():
+    """Test that UploadedFile.identifier hashes the file_id."""
+    # Test basic identifier (should be hashed)
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic')
+    assert uploaded_file.identifier == snapshot('3a1a6c')
+
+    # Test with custom identifier
+    uploaded_file_with_id = UploadedFile(file_id='file-xyz789', provider_name='anthropic', identifier='my-custom-id')
+    assert uploaded_file_with_id.identifier == 'my-custom-id'
+
+    # Test with URL file_id (should still be hashed)
+    uploaded_file_url = UploadedFile(
+        file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
+        provider_name='google-gla',
+    )
+    assert uploaded_file_url.identifier == snapshot('d8d637')
+
+
+def test_uploaded_file_format():
+    """Test UploadedFile.format property for different media types."""
+    # Test with no media_type - defaults to 'application/octet-stream' which has no format
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic')
+    assert uploaded_file.media_type == 'application/octet-stream'
+    with pytest.raises(ValueError, match='Unknown media type'):
+        uploaded_file.format
+
+    # Test with image media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='image/png')
+    assert uploaded_file.format == 'png'
+
+    # Test with video media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='video/mp4')
+    assert uploaded_file.format == 'mp4'
+
+    # Test with audio media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='audio/wav')
+    assert uploaded_file.format == 'wav'
+
+    # Test with document media_type
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/pdf')
+    assert uploaded_file.format == 'pdf'
+
+    # Test with unknown media_type - should raise ValueError
+    uploaded_file = UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/custom')
+    with pytest.raises(ValueError, match='Unknown media type'):
+        uploaded_file.format
+
+
+def test_uploaded_file_in_otel_message_parts():
+    """Test that UploadedFile is handled correctly in otel message parts conversion.
+
+    Per OTel GenAI spec, UploadedFile maps to FilePart with type='file', modality, and file_id.
+    See: https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-input-messages.json
+    """
+    # Test with file ID (OTel FilePart format) - no media_type defaults to 'application/octet-stream'
+    part = UserPromptPart(
+        content=['text before', UploadedFile(file_id='file-abc123', provider_name='anthropic'), 'text after']
+    )
+    settings = InstrumentationSettings(include_content=True)
+    otel_parts = part.otel_message_parts(settings)
+    assert otel_parts == snapshot(
+        [
+            {'type': 'text', 'content': 'text before'},
+            {'type': 'file', 'modality': 'document', 'file_id': 'file-abc123', 'mime_type': 'application/octet-stream'},
+            {'type': 'text', 'content': 'text after'},
+        ]
+    )
+
+    # Test with URL file_id (still uses file_id field per spec) - no extension defaults to 'application/octet-stream'
+    part_url = UserPromptPart(
+        content=[
+            'analyze this',
+            UploadedFile(
+                file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
+                provider_name='google-gla',
+            ),
+        ]
+    )
+    otel_parts_url = part_url.otel_message_parts(settings)
+    assert otel_parts_url == snapshot(
+        [
+            {'type': 'text', 'content': 'analyze this'},
+            {
+                'type': 'file',
+                'modality': 'document',
+                'file_id': 'https://generativelanguage.googleapis.com/v1beta/files/abc123',
+                'mime_type': 'application/octet-stream',
+            },
+        ]
+    )
+
+    # Test with S3 URL and media_type - should include modality and mime_type
+    part_s3 = UserPromptPart(
+        content=[
+            'process this',
+            UploadedFile(file_id='s3://my-bucket/my-file.pdf', provider_name='bedrock', media_type='application/pdf'),
+        ]
+    )
+    otel_parts_s3 = part_s3.otel_message_parts(settings)
+    assert otel_parts_s3 == snapshot(
+        [
+            {'type': 'text', 'content': 'process this'},
+            {
+                'type': 'file',
+                'modality': 'document',
+                'file_id': 's3://my-bucket/my-file.pdf',
+                'mime_type': 'application/pdf',
+            },
+        ]
+    )
+
+    # Test with image media_type - should have image modality
+    part_image = UserPromptPart(
+        content=[UploadedFile(file_id='img-123', provider_name='openai', media_type='image/png')]
+    )
+    otel_parts_image = part_image.otel_message_parts(settings)
+    assert otel_parts_image == snapshot(
+        [{'type': 'file', 'modality': 'image', 'file_id': 'img-123', 'mime_type': 'image/png'}]
+    )
+
+    # Test with audio media_type - should have audio modality
+    part_audio = UserPromptPart(
+        content=[UploadedFile(file_id='audio-123', provider_name='openai', media_type='audio/mp3')]
+    )
+    otel_parts_audio = part_audio.otel_message_parts(settings)
+    assert otel_parts_audio == snapshot(
+        [{'type': 'file', 'modality': 'audio', 'file_id': 'audio-123', 'mime_type': 'audio/mp3'}]
+    )
+
+    # Test with video media_type - should have video modality
+    part_video = UserPromptPart(
+        content=[UploadedFile(file_id='video-123', provider_name='openai', media_type='video/mp4')]
+    )
+    otel_parts_video = part_video.otel_message_parts(settings)
+    assert otel_parts_video == snapshot(
+        [{'type': 'file', 'modality': 'video', 'file_id': 'video-123', 'mime_type': 'video/mp4'}]
+    )
+
+    # Test without include_content (should have type, modality, and mime_type but not file_id)
+    settings_no_content = InstrumentationSettings(include_content=False)
+    otel_parts_no_content = part.otel_message_parts(settings_no_content)
+    assert otel_parts_no_content == snapshot(
+        [
+            {'type': 'text'},
+            {'type': 'file', 'modality': 'document', 'mime_type': 'application/octet-stream'},
+            {'type': 'text'},
+        ]
+    )
+
+
+def test_uploaded_file_serialization_roundtrip():
+    """Verify that UploadedFile survives a ModelMessagesTypeAdapter serialization roundtrip.
+
+    UploadedFile uses `exclude=True` on private fields (`_media_type`, `_identifier`) and exposes
+    them via computed fields — this test ensures those computed values are preserved through
+    serialization and deserialization.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'analyze this file',
+                        UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='application/pdf'),
+                    ]
+                )
+            ]
+        )
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+    assert deserialized == messages
+
+
+def test_uploaded_file_custom_identifier_and_media_type_roundtrip():
+    """Verify that custom `identifier` and `media_type` survive serialization roundtrip."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        UploadedFile(
+                            file_id='file-abc123',
+                            provider_name='anthropic',
+                            media_type='image/png',
+                            identifier='my-id',
+                        ),
+                    ]
+                )
+            ]
+        )
+    ]
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+    part = deserialized[0].parts[0]
+    assert isinstance(part, UserPromptPart)
+    uploaded = part.content[0]
+    assert isinstance(uploaded, UploadedFile)
+    assert uploaded.identifier == 'my-id'
+    assert uploaded.media_type == 'image/png'
+    assert deserialized == messages
+
+
+def test_tool_return_content_with_url_field_not_coerced_to_image_url():
+    """Test that dicts with 'url' keys are not incorrectly coerced to ImageUrl.
+
+    Regression test for: https://github.com/pydantic/pydantic-ai/issues/4190
+
+    Without a discriminator on MultiModalContent union, Pydantic would incorrectly
+    match any dict containing a 'url' key against ImageUrl (first union member),
+    causing data loss.
+    """
+
+    serialized_history = r"""[
+      {
+        "parts": [{"content": "Hello", "timestamp": "2026-02-03T22:25:50Z", "part_kind": "user-prompt"}],
+        "kind": "request"
+      },
+      {
+        "parts": [{"tool_name": "my_tool", "args": "{}", "tool_call_id": "call_1", "part_kind": "tool-call"}],
+        "model_name": "test",
+        "timestamp": "2026-02-03T22:26:39Z",
+        "kind": "response"
+      },
+      {
+        "parts": [
+          {
+            "tool_name": "my_tool",
+            "content": {
+              "items": [{"name": "Example", "url": "/some/path/12345"}]
+            },
+            "tool_call_id": "call_1",
+            "timestamp": "2026-02-03T22:27:32Z",
+            "part_kind": "tool-return"
+          }
+        ],
+        "kind": "request"
+      }
+    ]
+    """
+
+    # Deserialize - the dict with 'url' should remain as a dict, not become ImageUrl
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
+
+    tool_return_part = deserialized[2].parts[0]
+    assert isinstance(tool_return_part, ToolReturnPart)
+
+    # The content should be preserved as a dict, not coerced to ImageUrl
+    expected_content = {'items': [{'name': 'Example', 'url': '/some/path/12345'}]}
+    assert tool_return_part.content == expected_content
+
+    # Round-trip should work without errors
+    reserialized = ModelMessagesTypeAdapter.dump_json(deserialized)
+    reloaded = ModelMessagesTypeAdapter.validate_json(reserialized)
+
+    reloaded_tool_return = reloaded[2].parts[0]
+    assert isinstance(reloaded_tool_return, ToolReturnPart)
+    assert reloaded_tool_return.content == expected_content
+
+
+def test_tool_return_content_with_explicit_image_url():
+    """Test that ImageUrl with explicit 'kind' discriminator is correctly deserialized."""
+    from pydantic_ai.messages import ToolReturnPart
+
+    serialized_history = r"""[
+      {
+        "parts": [{"content": "Hello", "timestamp": "2026-02-03T22:25:50Z", "part_kind": "user-prompt"}],
+        "kind": "request"
+      },
+      {
+        "parts": [
+          {
+            "tool_name": "image_tool",
+            "content": {
+              "url": "https://example.com/image.png",
+              "kind": "image-url"
+            },
+            "tool_call_id": "call_1",
+            "timestamp": "2026-02-03T22:27:32Z",
+            "part_kind": "tool-return"
+          }
+        ],
+        "kind": "request"
+      }
+    ]
+    """
+
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
+
+    tool_return_part = deserialized[1].parts[0]
+    assert isinstance(tool_return_part, ToolReturnPart)
+
+    # Content with explicit kind: "image-url" should become ImageUrl
+    assert isinstance(tool_return_part.content, ImageUrl)
+    assert tool_return_part.content.url == 'https://example.com/image.png'
+
+
+def test_tool_return_content_nested_multimodal():
+    """Test that nested MultiModalContent types with explicit discriminators work."""
+    from pydantic_ai.messages import ToolReturnPart
+
+    serialized_history = r"""[
+      {
+        "parts": [
+          {
+            "tool_name": "mixed_tool",
+            "content": {
+              "images": [
+                {"url": "https://example.com/img1.jpg", "kind": "image-url"},
+                {"url": "https://example.com/img2.png", "kind": "image-url"}
+              ],
+              "documents": [
+                {"url": "https://example.com/doc.pdf", "kind": "document-url"}
+              ],
+              "regular_data": [
+                {"url": "/api/path", "id": 123, "name": "test"}
+              ]
+            },
+            "tool_call_id": "call_1",
+            "timestamp": "2026-02-03T22:27:32Z",
+            "part_kind": "tool-return"
+          }
+        ],
+        "kind": "request"
+      }
+    ]
+    """
+
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized_history)
+    tool_return_part = deserialized[0].parts[0]
+    assert isinstance(tool_return_part, ToolReturnPart)
+
+    content = tool_return_part.content
+    assert isinstance(content, dict)
+
+    # Items with kind: "image-url" should be ImageUrl
+    assert isinstance(content['images'][0], ImageUrl)
+    assert isinstance(content['images'][1], ImageUrl)
+
+    # Items with kind: "document-url" should be DocumentUrl
+    assert isinstance(content['documents'][0], DocumentUrl)
+
+    # Items without kind should remain as dicts
+    assert content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
+
+    # Round-trip should preserve types
+    reserialized = ModelMessagesTypeAdapter.dump_json(deserialized)
+    reloaded = ModelMessagesTypeAdapter.validate_json(reserialized)
+    reloaded_tool_return = reloaded[0].parts[0]
+    assert isinstance(reloaded_tool_return, ToolReturnPart)
+    reloaded_content = reloaded_tool_return.content
+    assert isinstance(reloaded_content, dict)
+
+    assert isinstance(reloaded_content['images'][0], ImageUrl)
+    assert isinstance(reloaded_content['documents'][0], DocumentUrl)
+    assert reloaded_content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]

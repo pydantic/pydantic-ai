@@ -25,9 +25,9 @@ from pydantic_ai import Agent
 from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 
 agent = Agent(
-    'openai:o3-mini',
+    'openai:gpt-5.2',
     tools=[duckduckgo_search_tool()],
-    system_prompt='Search DuckDuckGo for the given query and return the results.',
+    instructions='Search DuckDuckGo for the given query and return the results.',
 )
 
 result = agent.run_sync(
@@ -113,9 +113,9 @@ api_key = os.getenv('TAVILY_API_KEY')
 assert api_key is not None
 
 agent = Agent(
-    'openai:o3-mini',
+    'openai:gpt-5.2',
     tools=[tavily_search_tool(api_key)],
-    system_prompt='Search Tavily for the given query and return the results.',
+    instructions='Search Tavily for the given query and return the results.',
 )
 
 result = agent.run_sync('Tell me the top news in the GenAI world, give me links.')
@@ -178,7 +178,7 @@ api_key = os.getenv('EXA_API_KEY')
 assert api_key is not None
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5.2',
     tools=[exa_search_tool(api_key, num_results=5, max_characters=1000)],
     system_prompt='Search the web for information using Exa.',
 )
@@ -212,7 +212,7 @@ toolset = ExaToolset(
 )
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5.2',
     toolsets=[toolset],
     system_prompt='You have access to Exa search tools to find information on the web.',
 )
