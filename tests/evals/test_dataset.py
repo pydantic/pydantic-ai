@@ -718,7 +718,7 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
                             name='output',
                             value='a',
                             reason=None,
-                            source=EvaluatorSpec(name='MockEvaluator', arguments=({'output': 'a'},)),
+                            source=EvaluatorSpec(name='MockEvaluator', arguments={'output': {'output': 'a'}}),
                         )
                     },
                     assertions={},
@@ -741,7 +741,7 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
                             name='output',
                             value='a',
                             reason=None,
-                            source=EvaluatorSpec(name='MockEvaluator', arguments=({'output': 'a'},)),
+                            source=EvaluatorSpec(name='MockEvaluator', arguments={'output': {'output': 'a'}}),
                         )
                     },
                     assertions={},
