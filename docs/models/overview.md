@@ -150,6 +150,50 @@ attributes showing the queue depth and configured limits. The `name` parameter o
 
 <!-- TODO(Marcelo): We need to create a section in the docs about reliability. -->
 
+## HTTP Client Lifecycle
+
+Each [provider](index.md) creates and owns an HTTP client for communicating with the model API.
+To ensure the client is properly closed when you're done, use the provider (or its model/agent) as an async context manager:
+
+```python {title="http_client_lifecycle.py" test="skip"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-4o')
+
+async def main():
+    async with agent:
+        result = await agent.run('Hello!')
+        print(result.output)
+```
+
+If a provider is garbage collected without its HTTP client being closed, Pydantic AI emits a
+[`ResourceWarning`][ResourceWarning] to help you identify the leak:
+
+```
+ResourceWarning: OpenAIProvider(...) was garbage collected with an open HTTP client.
+Use the provider (or its model/agent) as an async context manager to ensure proper cleanup.
+```
+
+!!! note
+    In many cases — such as short-lived scripts, notebooks, or tests — the process exits before
+    the warning matters. If the warning is noisy in your setup, you can silence it with a
+    [warning filter](https://docs.python.org/3/library/warnings.html#the-warnings-filter):
+
+    ```python
+    import warnings
+    warnings.filterwarnings('ignore', message='.*was garbage collected with an open HTTP client')
+    ```
+
+    Or via pytest configuration:
+
+    ```toml
+    # pyproject.toml
+    [tool.pytest.ini_options]
+    filterwarnings = [
+        "ignore:.*was garbage collected with an open HTTP client:ResourceWarning",
+    ]
+    ```
+
 ## Fallback Model
 
 You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models

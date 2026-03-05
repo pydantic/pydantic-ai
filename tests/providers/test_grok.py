@@ -64,9 +64,7 @@ def test_grok_model_profile():
     assert model.profile.openai_supports_strict_tool_definition is False
 
 
-async def test_grok_provider_is_deprecated():
+def test_grok_provider_is_deprecated():
     """Test that GrokProvider shows a deprecation warning."""
     with pytest.warns(DeprecationWarning, match=r'`GrokProvider` is deprecated, use `XaiProvider` with `XaiModel`'):
-        provider = GrokProvider(api_key='api-key')
-    if provider._own_http_client is not None:  # pyright: ignore[reportPrivateUsage]
-        await provider._own_http_client.aclose()  # pyright: ignore[reportPrivateUsage]
+        GrokProvider(api_key='api-key')
