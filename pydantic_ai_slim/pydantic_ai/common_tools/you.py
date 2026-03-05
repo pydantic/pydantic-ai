@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Literal, cast
 
 import httpx
-from typing_extensions import Any, TypedDict
+from typing_extensions import Any, NotRequired, TypedDict
 
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.tools import Tool
@@ -126,30 +126,32 @@ class YouSearchContents(TypedDict, total=False):
     """The Markdown content of the page."""
 
 
-class YouSearchResult(TypedDict, total=False):
+class YouSearchResult(TypedDict):
     """A You.com search result.
 
     See [You.com Search API documentation](https://docs.you.com/api-reference/search/v1-search)
     for more information.
+
+    `title` and `url` are always present. All other fields are optional.
     """
 
     title: str
     """The title of the search result."""
     url: str
     """The URL of the search result."""
-    description: str
+    description: NotRequired[str]
     """A description or snippet of the search result."""
-    snippets: list[str]
+    snippets: NotRequired[list[str]]
     """Text snippets from the search result, providing a preview of the content."""
-    thumbnail_url: str
+    thumbnail_url: NotRequired[str]
     """URL of the thumbnail image for the search result."""
-    page_age: datetime
+    page_age: NotRequired[datetime]
     """The age/publication date of the search result (ISO 8601 format)."""
-    favicon_url: str
+    favicon_url: NotRequired[str]
     """The URL of the favicon of the search result's domain."""
-    contents: YouSearchContents
+    contents: NotRequired[YouSearchContents]
     """Contents of the page if livecrawl was enabled."""
-    authors: list[str]
+    authors: NotRequired[list[str]]
     """An array of authors of the search result."""
 
 
@@ -368,7 +370,7 @@ class YouSearchTool:
 
     def _build_result(self, result: dict[str, Any]) -> YouSearchResult:
         """Build a YouSearchResult, including only fields with values."""
-        search_result: YouSearchResult = {}
+        search_result: dict[str, Any] = {}
         title = result.get('title')
         if isinstance(title, str) and title:
             search_result['title'] = title
@@ -386,7 +388,7 @@ class YouSearchTool:
             parsed_page_age = self._parse_datetime(page_age)
             if parsed_page_age is not None:
                 search_result['page_age'] = parsed_page_age
-        return search_result
+        return cast(YouSearchResult, search_result)
 
     def _build_contents(self, contents: dict[str, Any]) -> YouSearchContents:
         """Build YouSearchContents, including only fields with values."""
