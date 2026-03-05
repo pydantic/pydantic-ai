@@ -165,9 +165,13 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         # Otherwise, return the content
         filtered = [p for p in call_tool_result.content if _include_for_assistant(p)]
         # If the original content was empty (tool returned nothing), return an empty list rather
-        # than the audience-filtered placeholder that _map_fastmcp_tool_results([]) would produce.
+        # than the audience-filtered placeholder.
         if not filtered and not call_tool_result.content:
             return []
+        # If audience filtering removed all content blocks, return a placeholder so the
+        # model knows the tool ran but produced no model-visible output.
+        if not filtered:
+            return 'Tool executed successfully. (No model-visible content in result.)'
         return _map_fastmcp_tool_results(parts=filtered)
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
@@ -198,12 +202,13 @@ def _include_for_assistant(part: ContentBlock) -> bool:
 
 
 def _map_fastmcp_tool_results(parts: list[ContentBlock]) -> list[FastMCPToolResult] | FastMCPToolResult:
-    """Map FastMCP tool results to toolset tool results."""
-    mapped_results = [_map_fastmcp_tool_result(part) for part in parts]
+    """Map FastMCP tool results to toolset tool results.
 
-    if not mapped_results:
-        # All content blocks were filtered out (audience=['user'] only).
-        return 'Tool executed successfully. (No model-visible content in result.)'
+    ``parts`` must be non-empty; audience filtering and empty-content handling are the
+    caller's responsibility (see ``call_tool``).
+    """
+    assert parts, '_map_fastmcp_tool_results called with empty parts list'
+    mapped_results = [_map_fastmcp_tool_result(part) for part in parts]
 
     if len(mapped_results) == 1:
         return mapped_results[0]
