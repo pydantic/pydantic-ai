@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-import inspect
 from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Discriminator, with_config
