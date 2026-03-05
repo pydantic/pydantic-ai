@@ -1293,7 +1293,7 @@ async def test_google_model_maps_tool(allow_model_requests: None, google_provide
     result = await agent.run('What are some highly rated coffee shops near Union Square in San Francisco?')
     messages = result.all_messages()
 
-    # There should be a ModelResponse with Maps grounding parts
+    # With VCR cassette, the response is deterministic - assert maps grounding parts are always present
     model_response = next(msg for msg in messages if isinstance(msg, ModelResponse))
     maps_call = next(
         (p for p in model_response.parts if isinstance(p, BuiltinToolCallPart) and p.tool_name == 'google_maps'),
@@ -1303,10 +1303,10 @@ async def test_google_model_maps_tool(allow_model_requests: None, google_provide
         (p for p in model_response.parts if isinstance(p, BuiltinToolReturnPart) and p.tool_name == 'google_maps'),
         None,
     )
-    # If the model returned Maps grounding, validate both parts are present together
-    if maps_call is not None:
-        assert maps_return is not None
-        assert maps_call.tool_call_id == maps_return.tool_call_id
+    # VCR cassette guarantees deterministic response — maps grounding parts must be present
+    assert maps_call is not None, 'Expected BuiltinToolCallPart for google_maps in VCR response'
+    assert maps_return is not None, 'Expected BuiltinToolReturnPart for google_maps in VCR response'
+    assert maps_call.tool_call_id == maps_return.tool_call_id
     assert isinstance(result.output, str)
 
 
@@ -1319,7 +1319,41 @@ async def test_google_model_maps_tool_with_location(allow_model_requests: None, 
     )
 
     result = await agent.run('Find me a good pizza place near here.')
+    messages = result.all_messages()
+
+    # With VCR cassette, the response is deterministic — assert maps grounding is present
+    model_response = next(msg for msg in messages if isinstance(msg, ModelResponse))
+    maps_call = next(
+        (p for p in model_response.parts if isinstance(p, BuiltinToolCallPart) and p.tool_name == 'google_maps'),
+        None,
+    )
+    maps_return = next(
+        (p for p in model_response.parts if isinstance(p, BuiltinToolReturnPart) and p.tool_name == 'google_maps'),
+        None,
+    )
+    # VCR cassette guarantees deterministic response — maps grounding parts must be present
+    assert maps_call is not None, 'Expected BuiltinToolCallPart for google_maps in VCR response'
+    assert maps_return is not None, 'Expected BuiltinToolReturnPart for google_maps in VCR response'
+    assert maps_call.tool_call_id == maps_return.tool_call_id
     assert isinstance(result.output, str)
+
+
+def test_google_maps_tool_partial_location_raises():
+    """GoogleMapsTool must raise UserError when only one of latitude/longitude is set."""
+    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.models.google import GoogleModel
+
+    with pytest.raises(UserError, match='requires both .latitude. and .longitude. to be set'):
+        model = GoogleModel('gemini-2.5-flash')
+        from pydantic_ai import Agent
+        from pydantic_ai.builtin_tools import GoogleMapsTool
+        import asyncio
+
+        async def run():
+            agent = Agent(model, builtin_tools=[GoogleMapsTool(latitude=37.0)])
+            await agent.run('test')
+
+        asyncio.run(run())
 
 
 async def test_google_model_web_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):
