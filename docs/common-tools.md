@@ -266,7 +266,6 @@ This design gives you full control over search behavior when needed, while still
 Here's an example of how you can use the You.com search tool with an agent:
 
 ```py {title="you_search.py" test="skip"}
-import asyncio
 import os
 
 from pydantic_ai import Agent
@@ -275,13 +274,10 @@ from pydantic_ai.common_tools.you import you_search_tool
 api_key = os.getenv('YOU_API_KEY')
 assert api_key is not None
 
-# You'll need an Anthropic API key
-# export ANTHROPIC_API_KEY="your-api-key"
-
 # All parameters are locked to the values set at tool creation time
 # In this example, the LLM can determine safesearch, livecrawl, and livecrawl_formats
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'openai:gpt-5.1',
     tools=[you_search_tool(
         api_key=api_key,
         count=5,            # Always return 5 results per section
@@ -294,13 +290,8 @@ agent = Agent(
     ),
 )
 
-
-async def main():
-    result = await agent.run('Tell me 1 thing that happened in the world today')
-    print(result.output)
-
-
-asyncio.run(main())
+result = agent.run_sync('Tell me 1 thing that happened in the world today')
+print(result.output)
 """
 Based on today's news, one significant event is that the U.S. Supreme Court has allowed
 the enforcement of a law requiring TikTok's parent company, ByteDance, to divest its
