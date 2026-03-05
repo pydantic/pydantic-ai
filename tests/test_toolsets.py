@@ -1106,7 +1106,7 @@ async def test_function_toolset_instructions_decorator():
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == 'Use tool Y for data processing.'
+    assert result == ['Use tool Y for data processing.']
 
 
 async def test_function_toolset_instructions_decorator_with_ctx():
@@ -1119,7 +1119,7 @@ async def test_function_toolset_instructions_decorator_with_ctx():
 
     ctx = build_run_context(42)
     result = await toolset.get_instructions(ctx)
-    assert result == 'Dep value: 42'
+    assert result == ['Dep value: 42']
 
 
 async def test_function_toolset_instructions_decorator_combined_with_constructor():
@@ -1132,7 +1132,7 @@ async def test_function_toolset_instructions_decorator_combined_with_constructor
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == 'From constructor.\n\nFrom decorator.'
+    assert result == ['From constructor.', 'From decorator.']
 
 
 async def test_function_toolset_instructions_none_filtered():
@@ -1141,25 +1141,25 @@ async def test_function_toolset_instructions_none_filtered():
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result == 'Only this.'
+    assert result == ['Only this.']
 
 
 async def test_function_toolset_empty_string_instructions():
-    """Empty string instructions are treated as no instructions."""
+    """Empty string instructions are included as-is in the list."""
     toolset = FunctionToolset(instructions='')
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result is None
+    assert result == ['']
 
 
 async def test_function_toolset_whitespace_only_instructions():
-    """Whitespace-only instructions are treated as no instructions."""
+    """Whitespace-only instructions are included as-is in the list."""
     toolset = FunctionToolset(instructions='   \n\n  ')
 
     ctx = build_run_context(None)
     result = await toolset.get_instructions(ctx)
-    assert result is None
+    assert result == ['   \n\n  ']
 
 
 async def test_wrapper_toolset_passes_through_instructions():
@@ -1169,7 +1169,7 @@ async def test_wrapper_toolset_passes_through_instructions():
 
     ctx = build_run_context(None)
     result = await wrapped.get_instructions(ctx)
-    assert result == 'Inner instructions.'
+    assert result == ['Inner instructions.']
 
 
 async def test_combined_toolset_aggregates_instructions():
@@ -1241,7 +1241,7 @@ async def test_dynamic_toolset_instructions_after_resolution():
     # get_tools triggers resolution
     await dynamic.get_tools(ctx)
     result = await dynamic.get_instructions(ctx)
-    assert result == 'Dynamic instructions.'
+    assert result == ['Dynamic instructions.']
 
 
 async def test_toolset_instructions_in_agent():
