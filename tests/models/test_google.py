@@ -54,6 +54,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
     FileSearchTool,
+    GoogleMapsTool,
     ImageGenerationTool,
     UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
@@ -1282,6 +1283,43 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
             ),
         ]
     )
+
+
+@pytest.mark.vcr
+async def test_google_model_maps_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[GoogleMapsTool()])
+
+    result = await agent.run('What are some highly rated coffee shops near Union Square in San Francisco?')
+    messages = result.all_messages()
+
+    # There should be a ModelResponse with Maps grounding parts
+    model_response = next(msg for msg in messages if isinstance(msg, ModelResponse))
+    maps_call = next(
+        (p for p in model_response.parts if isinstance(p, BuiltinToolCallPart) and p.tool_name == 'google_maps'),
+        None,
+    )
+    maps_return = next(
+        (p for p in model_response.parts if isinstance(p, BuiltinToolReturnPart) and p.tool_name == 'google_maps'),
+        None,
+    )
+    # If the model returned Maps grounding, validate both parts are present together
+    if maps_call is not None:
+        assert maps_return is not None
+        assert maps_call.tool_call_id == maps_return.tool_call_id
+    assert isinstance(result.output, str)
+
+
+@pytest.mark.vcr
+async def test_google_model_maps_tool_with_location(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(
+        m,
+        builtin_tools=[GoogleMapsTool(latitude=37.7879, longitude=-122.4075)],
+    )
+
+    result = await agent.run('Find me a good pizza place near here.')
+    assert isinstance(result.output, str)
 
 
 async def test_google_model_web_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):

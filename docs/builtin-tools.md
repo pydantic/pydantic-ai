@@ -13,6 +13,7 @@ Pydantic AI supports the following built-in tools:
 - **[`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool]**: Enables agents to use memory
 - **[`MCPServerTool`][pydantic_ai.builtin_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 - **[`FileSearchTool`][pydantic_ai.builtin_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
+- **[`GoogleMapsTool`][pydantic_ai.builtin_tools.GoogleMapsTool]**: Enables agents to ground responses using Google Maps data
 
 These tools are passed to the agent via the `builtin_tools` parameter and are executed by the model provider's infrastructure.
 
@@ -792,6 +793,67 @@ async def main():
 
 asyncio.run(main())
 ```
+
+## Google Maps Tool
+
+The [`GoogleMapsTool`][pydantic_ai.builtin_tools.GoogleMapsTool] allows your agent to ground responses using Google Maps data, providing location-aware, factually accurate answers by leveraging Google Maps' database of places, reviews, addresses, and more.
+
+### Provider Support
+
+| Provider | Support | Notes |
+|----------|---------|-------|
+| Google | ✅ | Supported on Gemini 2.0 Flash, 2.5 Flash-Lite, 2.5 Flash, and 2.5 Pro. Not supported on Gemini 3.x models. |
+
+### Usage
+
+```python {title="google_maps_tool.py" test="skip"}
+from pydantic_ai import Agent, GoogleMapsTool
+
+agent = Agent('google-gla:gemini-2.5-flash', builtin_tools=[GoogleMapsTool()])
+
+result = agent.run_sync('What are the best coffee shops near Union Square in San Francisco?')
+print(result.output)
+```
+
+### Location-Aware Results
+
+You can optionally provide the user's coordinates to get localised results:
+
+```python {title="google_maps_tool_location.py" test="skip"}
+from pydantic_ai import Agent, GoogleMapsTool
+
+agent = Agent(
+    'google-gla:gemini-2.5-flash',
+    builtin_tools=[
+        GoogleMapsTool(
+            latitude=37.7879,
+            longitude=-122.4075,
+        )
+    ],
+)
+
+result = agent.run_sync('Find a good pizza place near me.')
+print(result.output)
+```
+
+### Widget Token
+
+Set `enable_widget=True` to receive a `google_maps_widget_context_token` in the grounding metadata, which can be used to render an interactive Google Maps widget in your application:
+
+```python {title="google_maps_tool_widget.py" test="skip"}
+from pydantic_ai import Agent, GoogleMapsTool
+
+agent = Agent(
+    'google-gla:gemini-2.5-flash',
+    builtin_tools=[GoogleMapsTool(enable_widget=True)],
+)
+
+result = agent.run_sync('Find hotels near Times Square.')
+print(result.output)
+```
+
+!!! note "Service Usage Requirements"
+    When using `GoogleMapsTool`, you must display Google Maps attribution and sources to your end users, as required by the [Google Maps Platform Terms of Service](https://cloud.google.com/maps-platform/terms).
 
 ## API Reference
 
