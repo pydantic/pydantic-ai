@@ -222,6 +222,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModel
 
 async def context_aware_processor(ctx: HistoryProcessorContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
     if len(messages) > 4:
+        assert isinstance(ctx.model, OpenAIResponsesModel)
         compacted_messages = await ctx.model.compact_messages(
             messages[:-1],
             model_settings=ctx.model_settings,
