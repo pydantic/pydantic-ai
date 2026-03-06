@@ -113,7 +113,5 @@ interactions:
         score: 0.7663815
         title: Study of Lightweight Transformer Architectures for Single ...
         url: https://arxiv.org/abs/2505.21057
-    status:
-      code: 200
-      message: OK
+    status: 200
 version: 1

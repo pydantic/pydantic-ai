@@ -60,7 +60,5 @@ interactions:
         score: 0.8138313
         title: A General Survey on Attention Mechanisms in Deep ...
         url: https://arxiv.org/abs/2203.14263
-    status:
-      code: 200
-      message: OK
+    status: 200
 version: 1

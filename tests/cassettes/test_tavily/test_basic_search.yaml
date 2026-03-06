@@ -83,7 +83,5 @@ interactions:
         score: 0.9999001
         title: 'Pydantic AI : r/LLMDevs'
         url: https://www.reddit.com/r/LLMDevs/comments/1iih8az/pydantic_ai/
-    status:
-      code: 200
-      message: OK
+    status: 200
 version: 1

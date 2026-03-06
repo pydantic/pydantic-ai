@@ -35,7 +35,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from cassetter._core import Body, GrpcInteraction, GrpcRequest, GrpcResponse
 from cassetter.cassette import Cassette, NoMatchError
