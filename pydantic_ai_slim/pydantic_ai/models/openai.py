@@ -100,7 +100,12 @@ try:
         WebSearchOptionsUserLocation,
         WebSearchOptionsUserLocationApproximate,
     )
-    from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
+    from openai.types.responses import (
+        ComputerToolParam,
+        FileSearchToolParam,
+        ResponseCompactionItem,
+        WebSearchToolParam,
+    )
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.responses.response_reasoning_item_param import (
         Content as ReasoningContent,
@@ -1381,6 +1386,9 @@ class OpenAIResponsesModel(Model):
         if not response.output:  # pragma: no cover
             raise UnexpectedModelBehavior('CompactedResponse returned with no output items')
         compaction = response.output[-1]
+
+        if not isinstance(compaction, ResponseCompactionItem):  # pragma: no cover
+            raise UnexpectedModelBehavior(f'Last item in response is not a compaction, got: {response.output[-1].type}')
 
         item = CompactionPart(
             content=None, id=compaction.id, provider_name=self.system, provider_details=compaction.model_dump()
