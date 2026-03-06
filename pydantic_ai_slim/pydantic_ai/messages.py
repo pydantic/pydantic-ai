@@ -683,12 +683,18 @@ class UploadedFile:
     - [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]
     - [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]
     - [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
-    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel]
+    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Vertex: GCS `gs://` URIs)
     - [`XaiModel`][pydantic_ai.models.xai.XaiModel]
     """
 
     file_id: str
-    """The provider-specific file identifier."""
+    """The provider-specific file identifier.
+
+    For most providers, this is the file ID returned by the provider's upload API.
+    For GoogleModel (Vertex), this must be a GCS URI (`gs://bucket/path`).
+    For GoogleModel (GLA), this must be a Google Files API URI (`https://generativelanguage.googleapis.com/...`).
+    For BedrockConverseModel, this must be an S3 URI (`s3://bucket/key`).
+    """
 
     provider_name: UploadedFileProviderName
     """The provider this file belongs to.
@@ -1162,8 +1168,6 @@ class BaseToolReturnPart:
             elif isinstance(item, str):
                 tool_content_parts.append(item)
 
-        if not tool_content_parts:
-            return '', file_content
         if was_list:
             return tool_return_ta.dump_json(tool_content_parts).decode(), file_content
         return tool_content_parts[0], file_content

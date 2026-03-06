@@ -23,7 +23,7 @@ import pytest
 from typing_extensions import assert_never
 
 from pydantic_ai import Agent, BinaryContent, BinaryImage
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     AudioUrl,
     DocumentUrl,
@@ -32,6 +32,8 @@ from pydantic_ai.messages import (
     ModelRequest,
     ToolReturn,
     ToolReturnPart,
+    UploadedFile,
+    UploadedFileProviderName,
     UserPromptPart,
     VideoUrl,
 )
@@ -93,7 +95,7 @@ PROVIDERS = [pytest.param(name, id=name) for name in ProviderName.__args__]
 FileType = Literal['image', 'document', 'audio', 'video']
 FILE_TYPES = [pytest.param(t, id=t) for t in FileType.__args__]
 
-ContentSource = Literal['binary', 'url', 'url_force_download']
+ContentSource = Literal['binary', 'url', 'url_force_download', 'uploaded_file']
 CONTENT_SOURCES = [pytest.param(s, id=s) for s in ContentSource.__args__]
 
 ReturnStyle = Literal['direct', 'tool_return_content']
@@ -189,6 +191,34 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
     # Vertex AI can't crawl certain URLs blocked by robots.txt (gstatic.com, test-videos.co.uk).
     # force_download variants work since the client downloads locally before sending to Vertex.
     ('google_vertex', 'image', 'url', None): ExpectError(ModelHTTPError, r'URL_ROBOTED|ROBOTED_DENIED'),
+    # OpenAI uploaded file references only support document formats, not images
+    ('openai_chat', 'image', 'uploaded_file', None): ExpectError(ModelHTTPError, r'unsupported MIME type'),
+    ('openai_responses', 'image', 'uploaded_file', None): ExpectError(ModelHTTPError, r'supported format'),
+    # Anthropic API doesn't support 'file' source type in tool_result blocks
+    ('anthropic', 'image', 'uploaded_file', None): ExpectError(
+        ModelHTTPError, r"Input tag 'file'.*does not match any of the expected tags"
+    ),
+    ('anthropic', 'document', 'uploaded_file', None): ExpectError(
+        ModelHTTPError, r"Input tag 'file'.*does not match any of the expected tags"
+    ),
+    # Bedrock UploadedFile audio raises UserError (not NotImplementedError like binary/url)
+    ('bedrock_nova', 'audio', 'uploaded_file', None): ExpectError(
+        UserError, r'Audio files are not supported for Bedrock UploadedFile'
+    ),
+    ('bedrock_claude', 'audio', 'uploaded_file', None): ExpectError(
+        UserError, r'Audio files are not supported for Bedrock UploadedFile'
+    ),
+    # Claude on Bedrock doesn't support s3Uri for images
+    ('bedrock_claude', 'image', 'uploaded_file', None): ExpectError(ModelHTTPError, r"doesn't support the s3Uri field"),
+    # Claude on Bedrock doesn't support s3Uri for documents in user content (tool_return_content fallback)
+    ('bedrock_claude', 'document', 'uploaded_file', 'tool_return_content'): ExpectError(
+        ModelHTTPError, r'document\.source\.type: Field required'
+    ),
+    # Nova doesn't support documents/videos with S3 sources inside tool results
+    ('bedrock_nova', 'document', 'uploaded_file', 'direct'): ExpectError(
+        ModelHTTPError, r'extraneous key \[toolResult\]'
+    ),
+    ('bedrock_nova', 'video', 'uploaded_file', 'direct'): ExpectError(ModelHTTPError, r'extraneous key \[toolResult\]'),
 }
 
 
@@ -273,6 +303,46 @@ AUDIO_URL = 'https://download.samplelib.com/mp3/sample-3s.mp3'
 VIDEO_URL = 'https://www.w3schools.com/html/mov_bbb.mp4'
 
 
+PROVIDER_TO_UPLOADED_FILE_NAME: dict[ProviderName, UploadedFileProviderName] = {
+    'anthropic': 'anthropic',
+    'bedrock_nova': 'bedrock',
+    'bedrock_claude': 'bedrock',
+    'google_2_5': 'google-gla',
+    'google_gemini3': 'google-gla',
+    'google_vertex': 'google-vertex',
+    'openai_chat': 'openai',
+    'openai_responses': 'openai',
+    'xai': 'xai',
+}
+
+UPLOADED_FILE_IDS: dict[tuple[UploadedFileProviderName, FileType], str] = {
+    ('openai', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
+    ('openai', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
+    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
+    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
+    ('xai', 'image'): 'file_20ac2a79-38a3-40ae-83d0-0a604d8fd316',
+    ('xai', 'document'): 'file_dafc7e7e-f3ea-42d2-bb50-83f735a0bd9d',
+    ('google-gla', 'image'): 'https://generativelanguage.googleapis.com/v1beta/files/3qswqtk02p7x',
+    ('google-gla', 'document'): 'https://generativelanguage.googleapis.com/v1beta/files/k8plo4aq1e1w',
+    ('google-gla', 'audio'): 'https://generativelanguage.googleapis.com/v1beta/files/8b2bhnsluaai',
+    ('google-gla', 'video'): 'https://generativelanguage.googleapis.com/v1beta/files/nvp2l539zsmd',
+    ('google-vertex', 'image'): 'gs://pydantic-ai-test-files-vertex/test-files/kiwi.jpg',
+    ('google-vertex', 'document'): 'gs://pydantic-ai-test-files-vertex/test-files/dummy.pdf',
+    ('google-vertex', 'audio'): 'gs://pydantic-ai-test-files-vertex/test-files/marcelo.mp3',
+    ('google-vertex', 'video'): 'gs://pydantic-ai-test-files-vertex/test-files/small_video.mp4',
+    ('bedrock', 'image'): 's3://pydantic-ai-test-files/test-files/kiwi.jpg',
+    ('bedrock', 'document'): 's3://pydantic-ai-test-files/test-files/dummy.pdf',
+    ('bedrock', 'audio'): 's3://pydantic-ai-test-files/test-files/marcelo.mp3',
+    ('bedrock', 'video'): 's3://pydantic-ai-test-files/test-files/small_video.mp4',
+}
+
+FILE_TYPE_MEDIA_TYPES: dict[FileType, str] = {
+    'image': 'image/jpeg',
+    'document': 'application/pdf',
+    'audio': 'audio/mpeg',
+    'video': 'video/mp4',
+}
+
 URL_FACTORIES: dict[tuple[FileType, ContentSource], Any] = {
     ('image', 'url'): lambda: ImageUrl(url=IMAGE_URL),
     ('image', 'url_force_download'): lambda: ImageUrl(url=IMAGE_URL, force_download=True),
@@ -313,26 +383,58 @@ XAI_CASSETTE_PATTERNS: dict[tuple[FileType, ContentSource], str | tuple[str, ...
     ('document', 'url_force_download'): 'file_id',
 }
 
+UPLOADED_FILE_CASSETTE_PATTERNS: dict[tuple[ProviderName, FileType], str | tuple[str, ...]] = {
+    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
+    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
+    ('bedrock_nova', 'image'): 's3://pydantic-ai-test-files/test-files/kiwi.jpg',
+    ('bedrock_nova', 'document'): 's3://pydantic-ai-test-files/test-files/dummy.pdf',
+    ('bedrock_nova', 'video'): 's3://pydantic-ai-test-files/test-files/small_video.mp4',
+    ('bedrock_claude', 'image'): 's3://pydantic-ai-test-files/test-files/kiwi.jpg',
+    ('bedrock_claude', 'document'): 's3://pydantic-ai-test-files/test-files/dummy.pdf',
+    ('google_2_5', 'image'): 'files/3qswqtk02p7x',
+    ('google_2_5', 'document'): 'files/k8plo4aq1e1w',
+    ('google_2_5', 'audio'): 'files/8b2bhnsluaai',
+    ('google_2_5', 'video'): 'files/nvp2l539zsmd',
+    ('google_gemini3', 'image'): 'files/3qswqtk02p7x',
+    ('google_gemini3', 'document'): 'files/k8plo4aq1e1w',
+    ('google_gemini3', 'audio'): 'files/8b2bhnsluaai',
+    ('google_gemini3', 'video'): 'files/nvp2l539zsmd',
+    ('google_vertex', 'image'): 'gs://pydantic-ai-test-files-vertex/test-files/kiwi.jpg',
+    ('google_vertex', 'document'): 'gs://pydantic-ai-test-files-vertex/test-files/dummy.pdf',
+    ('google_vertex', 'audio'): 'gs://pydantic-ai-test-files-vertex/test-files/marcelo.mp3',
+    ('google_vertex', 'video'): 'gs://pydantic-ai-test-files-vertex/test-files/small_video.mp4',
+    ('openai_chat', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
+    ('openai_chat', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
+    ('openai_responses', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
+    ('openai_responses', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
+    ('xai', 'image'): 'file_20ac2a79-38a3-40ae-83d0-0a604d8fd316',
+    ('xai', 'document'): 'file_dafc7e7e-f3ea-42d2-bb50-83f735a0bd9d',
+}
+
 
 def get_cassette_pattern(
     provider: ProviderName, file_type: FileType, content_source: ContentSource
 ) -> str | tuple[str, ...] | None:
     """Get the cassette pattern for a provider/file_type/content_source combination."""
+    if content_source == 'uploaded_file':
+        return UPLOADED_FILE_CASSETTE_PATTERNS.get((provider, file_type))
     if provider == 'xai':
         return XAI_CASSETTE_PATTERNS.get((file_type, content_source))
     return CASSETTE_PATTERNS.get((file_type, content_source))
 
 
 FILE_TYPE_CLASSES: dict[FileType, tuple[type, ...]] = {
-    'image': (BinaryImage, ImageUrl),
-    'document': (DocumentUrl, BinaryContent),
-    'audio': (AudioUrl, BinaryContent),
-    'video': (VideoUrl, BinaryContent),
+    'image': (BinaryImage, ImageUrl, UploadedFile),
+    'document': (DocumentUrl, BinaryContent, UploadedFile),
+    'audio': (AudioUrl, BinaryContent, UploadedFile),
+    'video': (VideoUrl, BinaryContent, UploadedFile),
 }
 
 
 def _is_file_type(item: Any, file_type: FileType) -> bool:
     """Check if item matches the expected file type."""
+    if isinstance(item, UploadedFile):
+        return item.media_type.startswith(file_type if file_type != 'document' else 'application/')
     expected_classes = FILE_TYPE_CLASSES[file_type]
     if not isinstance(item, expected_classes):
         return False  # pragma: no cover
@@ -471,9 +573,29 @@ async def test_multimodal_tool_return_matrix(
     if not is_provider_available(provider):  # pragma: no cover
         pytest.skip(f'{provider} dependencies not installed')
 
+    uf_provider: UploadedFileProviderName | None = None
+    file_id: str | None = None
+    if content_source == 'uploaded_file':
+        if provider not in PROVIDER_TO_UPLOADED_FILE_NAME:
+            pytest.skip(f'{provider} does not support UploadedFile')
+        uf_provider = PROVIDER_TO_UPLOADED_FILE_NAME[provider]
+        file_id = UPLOADED_FILE_IDS.get((uf_provider, file_type))
+        if file_id is None:
+            pytest.skip(f'No uploaded file ID for ({uf_provider}, {file_type})')
+
     error_info = get_error_info(provider, file_type, content_source, return_style)
     model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
-    content = binary_contents[file_type] if content_source == 'binary' else URL_FACTORIES[(file_type, content_source)]()
+    if content_source == 'uploaded_file':
+        assert uf_provider is not None and file_id is not None
+        content: Any = UploadedFile(
+            file_id=file_id,
+            provider_name=uf_provider,
+            media_type=FILE_TYPE_MEDIA_TYPES[file_type],
+        )
+    elif content_source == 'binary':
+        content = binary_contents[file_type]
+    else:
+        content = URL_FACTORIES[(file_type, content_source)]()
 
     agent: Agent[None, str] = Agent(model)
 

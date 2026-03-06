@@ -783,6 +783,29 @@ class GoogleModel(Model):
 
         return result
 
+    def _validate_uploaded_file(self, file: UploadedFile) -> tuple[str, str]:
+        """Validate an `UploadedFile` and return (`file_uri`, `mime_type`).
+
+        GLA uses the Files API (https:// URIs). Vertex uses GCS (gs:// URIs).
+        The Files API is not available on Vertex AI.
+        """
+        if file.provider_name != self.system:
+            raise UserError(
+                f'UploadedFile with `provider_name={file.provider_name!r}` cannot be used with GoogleModel. '
+                f'Expected `provider_name` to be `{self.system!r}`.'
+            )
+        if self.system == 'google-vertex':
+            if not file.file_id.startswith('gs://'):
+                raise UserError(
+                    f'UploadedFile for GoogleModel (Vertex) must use a GCS URI (gs://bucket/path), got: {file.file_id}'
+                )
+        elif not file.file_id.startswith('https://'):
+            raise UserError(
+                f'UploadedFile for GoogleModel (GLA) must use a file URI from the Google Files API '
+                f'(https://generativelanguage.googleapis.com/...), got: {file.file_id}'
+            )
+        return file.file_id, file.media_type
+
     async def _map_file_to_part(self, file: FileUrl | BinaryContent | UploadedFile) -> PartDict:
         """Map a multimodal file directly to a Google API part.
 
@@ -798,16 +821,8 @@ class GoogleModel(Model):
                 part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
             return part_dict
         elif isinstance(file, UploadedFile):
-            if file.provider_name != self.system:
-                raise UserError(
-                    f'UploadedFile with `provider_name={file.provider_name!r}` cannot be used with GoogleModel. '
-                    f'Expected `provider_name` to be `{self.system!r}`.'
-                )
-            if not file.file_id.startswith('https://'):
-                raise UserError(
-                    f'UploadedFile for GoogleModel must use a file URI from the Google Files API, got: {file.file_id}'
-                )
-            file_data_dict = {'file_uri': file.file_id, 'mime_type': file.media_type}
+            file_uri, mime_type = self._validate_uploaded_file(file)
+            file_data_dict = {'file_uri': file_uri, 'mime_type': mime_type}
             part_dict = {'file_data': file_data_dict}
             if file.vendor_metadata:
                 part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
@@ -864,18 +879,10 @@ class GoogleModel(Model):
             }
             return FunctionResponsePartDict(inline_data=blob_dict)
         elif isinstance(file, UploadedFile):
-            if file.provider_name != self.system:
-                raise UserError(
-                    f'UploadedFile with `provider_name={file.provider_name!r}` cannot be used with GoogleModel. '
-                    f'Expected `provider_name` to be `{self.system!r}`.'
-                )
-            if not file.file_id.startswith('https://'):
-                raise UserError(
-                    f'UploadedFile for GoogleModel must use a file URI from the Google Files API, got: {file.file_id}'
-                )
+            file_uri, mime_type = self._validate_uploaded_file(file)
             file_data_dict = {
-                'file_uri': file.file_id,
-                'mime_type': file.media_type,
+                'file_uri': file_uri,
+                'mime_type': mime_type,
             }
             return FunctionResponsePartDict(file_data=file_data_dict)
         elif isinstance(file, VideoUrl) and (

@@ -603,13 +603,21 @@ def bedrock_provider():
             yield provider
             provider.client.close()
         else:  # pragma: lax no cover
-            bedrock_client = boto3.client(
-                'bedrock-runtime',
-                region_name=os.getenv('AWS_REGION', 'us-east-1'),
-                aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
-                aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'),
-                aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
-            )
+            if os.getenv('AWS_PROFILE'):
+                bedrock_client = boto3.client(
+                    'bedrock-runtime',
+                    region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                )
+            else:
+                bedrock_client = boto3.client(
+                    'bedrock-runtime',
+                    region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'AKIA6666666666666666'),
+                    aws_secret_access_key=os.getenv(
+                        'AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'
+                    ),
+                    aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
+                )
             yield BedrockProvider(bedrock_client=bedrock_client)
             bedrock_client.close()
     except ImportError:  # pragma: lax no cover

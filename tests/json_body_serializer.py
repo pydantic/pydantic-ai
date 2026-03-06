@@ -1,6 +1,7 @@
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 import gzip
 import json
+import re
 import unicodedata
 import urllib.parse
 import zlib
@@ -102,6 +103,24 @@ def deserialize(cassette_string: str):
     return cassette_dict
 
 
+def scrub_xml_credentials(data: dict[str, Any], headers: dict[str, list[str]], content_type: list[str]) -> None:
+    """Redact AWS STS credentials from text/xml response bodies."""
+    if content_type != ['text/xml']:
+        return
+    body = data.get('body', None)
+    if isinstance(body, dict):
+        body = body.get('string', '')
+    if not isinstance(body, str) or '<Credentials>' not in body:
+        return
+    body = re.sub(r'<AccessKeyId>[^<]+</AccessKeyId>', '<AccessKeyId>SCRUBBED</AccessKeyId>', body)
+    body = re.sub(r'<SecretAccessKey>[^<]+</SecretAccessKey>', '<SecretAccessKey>SCRUBBED</SecretAccessKey>', body)
+    body = re.sub(r'<SessionToken>[^<]+</SessionToken>', '<SessionToken>SCRUBBED</SessionToken>', body)
+    body = re.sub(r'<Expiration>[^<]+</Expiration>', '<Expiration>2099-01-01T00:00:00Z</Expiration>', body)
+    data['body'] = {'string': body}
+    if 'content-length' in headers:
+        headers['content-length'] = [str(len(body.encode('utf-8')))]
+
+
 def serialize(cassette_dict: Any):  # pragma: lax no cover
     for interaction in cassette_dict['interactions']:
         for _kind, data in interaction.items():
@@ -162,6 +181,7 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     if key in query_params:
                         query_params[key] = ['scrubbed']
                         data['body'] = urllib.parse.urlencode(query_params, doseq=True)
+            scrub_xml_credentials(data, headers, content_type)
 
     # Use our custom dumper
     return yaml.dump(cassette_dict, Dumper=LiteralDumper, allow_unicode=True, width=120)
