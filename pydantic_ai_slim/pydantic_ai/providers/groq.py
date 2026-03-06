@@ -59,7 +59,8 @@ class GroqProvider(Provider[AsyncGroq]):
     def client(self) -> AsyncGroq:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         prefix_to_profile = {
             'llama': meta_model_profile,
             'meta-llama/': meta_groq_model_profile,

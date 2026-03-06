@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import KW_ONLY, dataclass
-from functools import cached_property
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -31,7 +30,7 @@ from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
 from .._event_stream import describe_file
-from ._utils import dump_provider_metadata, iter_metadata_chunks, iter_tool_approval_responses, tool_return_output
+from ._utils import dump_provider_metadata, iter_metadata_chunks, tool_return_output
 from .request_types import RequestData
 from .response_types import (
     BaseChunk,
@@ -96,15 +95,6 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     _step_started: bool = False
     _finish_reason: FinishReason = None
-
-    @cached_property
-    def _denied_tool_ids(self) -> set[str]:
-        """Get the set of tool_call_ids that were denied by the user."""
-        return {
-            tool_call_id
-            for tool_call_id, approval in iter_tool_approval_responses(self.run_input.messages)
-            if not approval.approved
-        }
 
     @property
     def response_headers(self) -> Mapping[str, str] | None:
@@ -267,11 +257,16 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         )
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseChunk]:
-        yield ToolOutputAvailableChunk(
-            tool_call_id=part.tool_call_id,
-            output=_tool_return_with_files(part),
-            provider_executed=True,
-        )
+        if self.sdk_version >= 6 and part.outcome == 'denied':
+            yield ToolOutputDeniedChunk(tool_call_id=part.tool_call_id)
+        elif part.outcome == 'failed':
+            yield ToolOutputErrorChunk(tool_call_id=part.tool_call_id, error_text=part.model_response_str())
+        else:
+            yield ToolOutputAvailableChunk(
+                tool_call_id=part.tool_call_id,
+                output=_tool_return_with_files(part),
+                provider_executed=True,
+            )
 
     async def handle_file(self, part: FilePart) -> AsyncIterator[BaseChunk]:
         file = part.content
@@ -281,11 +276,12 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         part = event.result
         tool_call_id = part.tool_call_id
 
-        # Check if this tool was denied by the user (only when sdk_version >= 6)
-        if self.sdk_version >= 6 and tool_call_id in self._denied_tool_ids:
+        if self.sdk_version >= 6 and isinstance(part, ToolReturnPart) and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=tool_call_id)
         elif isinstance(part, RetryPromptPart):
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
+        elif isinstance(part, ToolReturnPart) and part.outcome == 'failed':
+            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response_str())
         else:
             yield ToolOutputAvailableChunk(tool_call_id=tool_call_id, output=_tool_return_with_files(part))
 

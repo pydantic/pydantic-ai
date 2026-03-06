@@ -1038,6 +1038,14 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
+    outcome: Literal['success', 'failed', 'denied'] = 'success'
+    """The outcome of the tool call.
+
+    - `'success'`: The tool executed successfully.
+    - `'failed'`: The tool raised an error during execution.
+    - `'denied'`: The tool call was denied by the approval mechanism.
+    """
+
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:
         """Split content into non-file and file parts.
 
@@ -1581,7 +1589,7 @@ class ToolCallPart(BaseToolCallPart):
     _: KW_ONLY
 
     part_kind: Literal['tool-call'] = 'tool-call'
-    """Part type identifier, this is available on all parts as a discriminator."""
+    """Part type identifier, this is available on all parts as a discriminator. Note that this is different from `ToolCallPartDelta.part_delta_kind`."""
 
 
 @dataclass(repr=False)
@@ -2057,7 +2065,7 @@ class ToolCallPartDelta:
     """
 
     part_delta_kind: Literal['tool_call'] = 'tool_call'
-    """Part delta type identifier, used as a discriminator."""
+    """Part delta type identifier, used as a discriminator. Note that this is different from `ToolCallPart.part_kind`."""
 
     def as_part(self) -> ToolCallPart | None:
         """Convert this delta to a fully formed `ToolCallPart` if possible, otherwise return `None`.
