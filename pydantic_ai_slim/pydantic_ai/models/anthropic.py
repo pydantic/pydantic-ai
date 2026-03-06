@@ -42,6 +42,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
@@ -86,6 +87,8 @@ try:
         BetaContainerParams,
         BetaContentBlock,
         BetaContentBlockParam,
+        BetaFileDocumentSourceParam,
+        BetaFileImageSourceParam,
         BetaImageBlockParam,
         BetaInputJSONDelta,
         BetaJSONOutputFormatParam,
@@ -309,11 +312,21 @@ class AnthropicModel(Model):
             model_settings,
             model_request_parameters,
         )
-        response = await self._messages_create(
-            messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
-        )
-        model_response = self._process_response(response)
-        return model_response
+        model_settings = cast(AnthropicModelSettings, model_settings or {})
+        try:
+            response = await self._messages_create(messages, False, model_settings, model_request_parameters)
+            return self._process_response(response)
+        except ValueError as e:
+            if 'Streaming is required' in str(e):
+                # Anthropic SDK requires streaming for high max_tokens; fall back transparently
+                # https://github.com/anthropics/anthropic-sdk-python/blob/49d639a671cb0ac30c767e8e1e68fdd5925205d5/src/anthropic/_base_client.py#L726
+                stream = await self._messages_create(messages, True, model_settings, model_request_parameters)
+                async with stream:
+                    streamed_response = await self._process_streamed_response(stream, model_request_parameters)
+                    async for _ in streamed_response:
+                        pass
+                    return streamed_response.get()
+            raise  # pragma: no cover
 
     async def count_tokens(
         self,
@@ -1094,8 +1107,8 @@ class AnthropicModel(Model):
         else:
             raise RuntimeError(f'Unsupported binary content media type for Anthropic: {media_type}')
 
-    @staticmethod
-    async def _map_user_prompt(
+    async def _map_user_prompt(  # noqa: C901
+        self,
         part: UserPromptPart,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):
@@ -1135,6 +1148,28 @@ class AnthropicModel(Model):
                         )
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
+                elif isinstance(item, UploadedFile):
+                    # Verify provider matches
+                    if item.provider_name != self.system:
+                        raise UserError(
+                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
+                            f'Expected `provider_name` to be `{self.system!r}`.'
+                        )
+                    if item.media_type.startswith('image/'):
+                        yield BetaImageBlockParam(
+                            source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
+                            type='image',
+                        )
+                    elif item.media_type.startswith(('text/', 'application/')):
+                        yield BetaRequestDocumentBlockParam(
+                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                            type='document',
+                        )
+                    else:
+                        raise UserError(
+                            f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
+                            'Only image and document (text/application) types are supported.'
+                        )
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
