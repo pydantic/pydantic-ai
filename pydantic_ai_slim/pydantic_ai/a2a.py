@@ -44,6 +44,7 @@ try:
         Message,
         Part,
         Skill,
+        Task,
         TaskIdParams,
         TaskSendParams,
         TextPart as A2ATextPart,
@@ -59,11 +60,27 @@ except ImportError as _import_error:
         'you can use the `a2a` optional group — `pip install "pydantic-ai-slim[a2a]"`'
     ) from _import_error
 
-# Context variables to hold the current A2A execution context
-a2a_task_id: ContextVar[str] = ContextVar('a2a_task_id')
-a2a_task: ContextVar[Any] = ContextVar('a2a_task')
-a2a_storage: ContextVar[Storage] = ContextVar('a2a_storage')
-a2a_broker: ContextVar[Broker] = ContextVar('a2a_broker')
+
+current_task_id: ContextVar[str] = ContextVar('current_task_id')
+"""Context variable holding the ID of the A2A task currently being executed.
+
+Available during agent execution (e.g. in tools or callbacks).
+Raises `LookupError` if accessed outside an A2A task execution.
+"""
+
+current_task: ContextVar[Task] = ContextVar('current_task')
+"""Context variable holding the current A2A task metadata.
+
+Available during agent execution. Contains the full task dictionary from storage.
+Raises `LookupError` if accessed outside an A2A task execution.
+"""
+
+current_storage: ContextVar[Storage] = ContextVar('current_storage')
+"""Context variable holding the A2A storage instance.
+
+Available during agent execution. Useful for mutating task state mid-run.
+Raises `LookupError` if accessed outside an A2A task execution.
+"""
 
 
 @asynccontextmanager
@@ -145,22 +162,23 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
         # Re-load the task to ensure we expose the most up-to-date state (e.g. state='working' and any new timestamps).
         # This is critical for persistent storage backends that do not mutate the task dictionary in-place.
         updated_task = await self.storage.load_task(task['id'])
-        if updated_task is not None:
-            task = updated_task
-        else:
-            raise ValueError(f'Task {task["id"]} not found after update')  # pragma: no cover
+        assert updated_task is not None, f'Task {task["id"]} not found after update'
+        task = updated_task
 
         # Load context - contains pydantic-ai message history from previous tasks in this conversation
         message_history = await self.storage.load_context(task['context_id']) or []
         message_history.extend(self.build_message_history(task.get('history', [])))
 
         # Expose the A2A context to the agent execution
-        task_id_token = a2a_task_id.set(task['id'])
-        task_token = a2a_task.set(task)
-        storage_token = a2a_storage.set(self.storage)
-        broker_token = a2a_broker.set(self.broker)
+        task_id_token = None
+        task_token = None
+        storage_token = None
 
         try:
+            task_id_token = current_task_id.set(task['id'])
+            task_token = current_task.set(task)
+            storage_token = current_storage.set(self.storage)
+
             result = await self.agent.run(message_history=message_history)  # type: ignore
 
             await self.storage.update_context(task['context_id'], result.all_messages())
@@ -189,10 +207,12 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
                 task['id'], state='completed', new_artifacts=artifacts, new_messages=a2a_messages
             )
         finally:
-            a2a_task_id.reset(task_id_token)
-            a2a_task.reset(task_token)
-            a2a_storage.reset(storage_token)
-            a2a_broker.reset(broker_token)
+            if task_id_token is not None:
+                current_task_id.reset(task_id_token)
+            if task_token is not None:
+                current_task.reset(task_token)
+            if storage_token is not None:
+                current_storage.reset(storage_token)
 
     async def cancel_task(self, params: TaskIdParams) -> None:
         pass

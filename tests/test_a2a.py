@@ -31,7 +31,7 @@ with try_import() as imports_successful:
     from fasta2a.schema import DataPart, FilePart, Message, TextPart
     from fasta2a.storage import InMemoryStorage
 
-    from pydantic_ai.a2a import a2a_broker, a2a_storage, a2a_task, a2a_task_id
+    from pydantic_ai.a2a import current_storage, current_task, current_task_id
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fasta2a not installed'),
@@ -1036,22 +1036,20 @@ async def test_a2a_context_vars():
 
     async def get_task_context(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
-        task_id = a2a_task_id.get()
-        task = a2a_task.get()
-        storage = a2a_storage.get()
-        broker = a2a_broker.get()
+        task_id = current_task_id.get()
+        task = current_task.get()
+        storage = current_storage.get()
 
         # Verify the exposed metadata and instances
         assert task['id'] == task_id
         assert task['status']['state'] == 'working'
-        assert storage is not None
-        assert broker is not None
+        assert isinstance(storage, InMemoryStorage)
 
         # Test modifying the task via the exposed storage instance
         await storage.update_task(task_id, state='working')
 
         context_id = task.get('context_id')
-        args_json = f'{{"response": ["{task_id}", "{context_id}"]}}'
+        args_json = f'{{"response":["{task_id}", "{context_id}"]}}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
     model_task_context = FunctionModel(get_task_context)
@@ -1088,5 +1086,20 @@ async def test_a2a_context_vars():
             assert 'artifacts' in final_result
 
             parts = final_result['artifacts'][0]['parts']
-            assert parts[0]['kind'] == 'data'
-            assert parts[0]['data']['result'] == [task_id, context_id]
+            assert parts == snapshot(
+                [
+                    {
+                        'metadata': {'json_schema': {'items': {}, 'type': 'array'}},
+                        'kind': 'data',
+                        'data': {'result': [task_id, context_id]},
+                    }
+                ]
+            )
+
+    # Test that context vars are properly cleaned up
+    with pytest.raises(LookupError):
+        current_task_id.get()
+    with pytest.raises(LookupError):
+        current_task.get()
+    with pytest.raises(LookupError):
+        current_storage.get()
