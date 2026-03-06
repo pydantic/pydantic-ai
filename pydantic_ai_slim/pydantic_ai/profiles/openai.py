@@ -136,7 +136,7 @@ class OpenAIModelProfile(ModelProfile):
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
     # GPT-5.1+ models use `reasoning={"effort": "none"}` by default, which allows sampling params.
-    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4'))
+    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3-codex', 'gpt-5.4'))
 
     # doesn't support `reasoning={"effort": "none"}` -  default is set at 'medium'
     # see https://platform.openai.com/docs/guides/reasoning
@@ -145,7 +145,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # always reasoning
     is_o_series = model_name.startswith('o')
 
-    thinking_always_enabled = is_o_series or (is_gpt_5 and 'gpt-5-chat' not in model_name)
+    thinking_always_enabled = is_o_series or (is_gpt_5 and '-chat' not in model_name)
 
     supports_reasoning = thinking_always_enabled or is_gpt_5_1_plus
 
