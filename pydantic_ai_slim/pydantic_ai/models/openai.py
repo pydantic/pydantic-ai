@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import base64
 import itertools
 import json
@@ -45,6 +46,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseState,
     ModelResponseStreamEvent,
     PartStartEvent,
     RetryPromptPart,
@@ -163,6 +165,11 @@ _RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'
     'cancelled': 'error',
     'failed': 'error',
 }
+
+
+def _response_status_to_state(status: ResponseStatus | None) -> ModelResponseState:
+    return 'suspended' if status in ('queued', 'in_progress') else 'complete'
+
 
 _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x1536', '1536x1024']] = {
     '1:1': '1024x1024',
@@ -463,6 +470,23 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     in the `provider_details['annotations']` field of text parts.
     This is opt-in since there may be overlap with native annotation support once
     added via https://github.com/pydantic/pydantic-ai/issues/3126.
+    """
+
+    openai_background: bool
+    """Enable background mode for long-running requests.
+
+    When enabled, this setting both passes `background=True` to the Responses API
+    **and** opts into automatic polling for completion. If the response status is
+    `'queued'` or `'in_progress'`, it sets `state='suspended'`, triggering the
+    agent's `ContinueRequestNode` loop which polls via `retrieve()`.
+    """
+
+    openai_background_poll_interval: float
+    """Seconds to wait between polling a background response via `retrieve()`.
+
+    Only used when `openai_background` is enabled and the response is still pending.
+    Polling uses this fixed interval (it does not apply exponential backoff).
+    Defaults to 1.0 second.
     """
 
 
@@ -1409,17 +1433,19 @@ class OpenAIResponsesModel(Model):
             model_settings,
             model_request_parameters,
         )
-        response = await self._responses_create(
-            messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
-        )
+        settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
-        # Handle ModelResponse
+        if info := self._get_continuation_info(messages, settings):
+            response_id, _, _ = info
+            await asyncio.sleep(settings.get('openai_background_poll_interval', 1.0))
+            response = await self._responses_retrieve(response_id, settings)
+        else:
+            response = await self._responses_create(messages, False, settings, model_request_parameters)
+
         if isinstance(response, ModelResponse):
             return response
 
-        return self._process_response(
-            response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
-        )
+        return self._process_response(response, settings, model_request_parameters)
 
     @asynccontextmanager
     async def request_stream(
@@ -1434,12 +1460,39 @@ class OpenAIResponsesModel(Model):
             model_settings,
             model_request_parameters,
         )
-        response = await self._responses_create(
-            messages, True, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
-        )
+        settings = cast(OpenAIResponsesModelSettings, model_settings or {})
+
+        if info := self._get_continuation_info(messages, settings):
+            response_id, last_sequence_number, previous_model_name = info
+            await asyncio.sleep(settings.get('openai_background_poll_interval', 1.0))
+            if last_sequence_number is None:
+                # Some background responses were not previously streamed and have no resumable
+                # sequence cursor. `retrieve(stream=True)` can block for a long time in this case,
+                # so fall back to non-stream retrieve and return a static streamed wrapper.
+                response = await self._responses_retrieve(response_id, settings)
+                yield _ModelResponseStreamedResponse(
+                    model_request_parameters=model_request_parameters,
+                    _model_response=self._process_response(response, settings, model_request_parameters),
+                )
+                return
+            response = await self._responses_retrieve(
+                response_id, settings, stream=True, starting_after=last_sequence_number
+            )
+        else:
+            previous_model_name = None
+            response = await self._responses_create(messages, True, settings, model_request_parameters)
+        if isinstance(response, ModelResponse):
+            yield _ModelResponseStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                _model_response=response,
+            )
+            return
         async with response:
             yield await self._process_streamed_response(
-                response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
+                response,
+                settings,
+                model_request_parameters,
+                expected_model_name=previous_model_name,
             )
 
     def _process_response(  # noqa: C901
@@ -1562,6 +1615,7 @@ class OpenAIResponsesModel(Model):
         if response.created_at:  # pragma: no branch
             provider_details['timestamp'] = number_to_datetime(response.created_at)
 
+        state = _response_status_to_state(response.status)
         if refusal_text is not None:
             items = []
             finish_reason = 'content_filter'
@@ -1577,6 +1631,7 @@ class OpenAIResponsesModel(Model):
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             finish_reason=finish_reason,
+            state=state,
             provider_details=provider_details or None,
         )
 
@@ -1585,6 +1640,8 @@ class OpenAIResponsesModel(Model):
         response: AsyncStream[responses.ResponseStreamEvent],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        expected_model_name: OpenAIModelName | None = None,
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
@@ -1592,18 +1649,31 @@ class OpenAIResponsesModel(Model):
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        assert isinstance(first_chunk, responses.ResponseCreatedEvent)
-        return OpenAIResponsesStreamedResponse(
+        if isinstance(first_chunk, responses.ResponseCreatedEvent):
+            model_name = first_chunk.response.model
+            provider_timestamp = (
+                number_to_datetime(first_chunk.response.created_at) if first_chunk.response.created_at else None
+            )
+            initial_state = _response_status_to_state(first_chunk.response.status)
+        else:
+            # When `starting_after` is used, OpenAI may omit `response.created` and start
+            # directly with delta events. Keep the previous model name (if known) so
+            # continuation merging doesn't accidentally replace earlier parts.
+            model_name = expected_model_name or self.model_name
+            provider_timestamp = None
+            initial_state = 'suspended'
+
+        streamed_response = OpenAIResponsesStreamedResponse(
             model_request_parameters=model_request_parameters,
-            _model_name=first_chunk.response.model,
+            _model_name=model_name,
             _model_settings=model_settings,
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
-            _provider_timestamp=number_to_datetime(first_chunk.response.created_at)
-            if first_chunk.response.created_at
-            else None,
+            _provider_timestamp=provider_timestamp,
         )
+        streamed_response.state = initial_state
+        return streamed_response
 
     @overload
     async def _responses_create(
@@ -1621,9 +1691,9 @@ class OpenAIResponsesModel(Model):
         stream: Literal[True],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[responses.ResponseStreamEvent]: ...
+    ) -> AsyncStream[responses.ResponseStreamEvent] | ModelResponse: ...
 
-    async def _responses_create(  # noqa: C901
+    async def _responses_create(
         self,
         messages: list[ModelRequest | ModelResponse],
         stream: bool,
@@ -1678,17 +1748,7 @@ class OpenAIResponsesModel(Model):
 
         _drop_unsupported_params(profile, model_settings)
 
-        include: list[responses.ResponseIncludable] = []
-        if profile.openai_supports_encrypted_reasoning_content:
-            include.append('reasoning.encrypted_content')
-        if model_settings.get('openai_include_code_execution_outputs'):
-            include.append('code_interpreter_call.outputs')
-        if model_settings.get('openai_include_web_search_sources'):
-            include.append('web_search_call.action.sources')
-        if model_settings.get('openai_include_file_search_results'):
-            include.append('file_search_call.results')
-        if model_settings.get('openai_logprobs'):
-            include.append('message.output_text.logprobs')
+        include = self._build_include(model_settings)
 
         # When there are no input messages and we're not reusing a previous response,
         # the OpenAI API will reject a request without any input,
@@ -1730,6 +1790,7 @@ class OpenAIResponsesModel(Model):
                 include=include or OMIT,
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                 prompt_cache_retention=prompt_cache_retention,
+                background=model_settings.get('openai_background', OMIT),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -1741,6 +1802,94 @@ class OpenAIResponsesModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
+    @staticmethod
+    def _get_continuation_info(
+        messages: list[ModelMessage], model_settings: OpenAIResponsesModelSettings
+    ) -> tuple[str, int | None, OpenAIModelName | None] | None:
+        """If background mode is active and the last response expects continuation, return continuation metadata."""
+        if not model_settings.get('openai_background'):
+            return None
+        for message in reversed(messages):
+            if isinstance(message, ModelResponse):
+                if not (message.state == 'suspended' and message.provider_response_id):
+                    return None
+                details = message.provider_details if isinstance(message.provider_details, dict) else {}
+                seq = details.get('openai_last_sequence_number')
+                last_sequence_number = seq if isinstance(seq, int) else None
+                return (
+                    message.provider_response_id,
+                    last_sequence_number,
+                    cast(OpenAIModelName | None, message.model_name),
+                )
+        return None
+
+    def _build_include(self, model_settings: OpenAIResponsesModelSettings) -> list[responses.ResponseIncludable]:
+        """Build the include list for retrieve/create requests."""
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        include: list[responses.ResponseIncludable] = []
+        if profile.openai_supports_encrypted_reasoning_content:
+            include.append('reasoning.encrypted_content')
+        if model_settings.get('openai_include_code_execution_outputs'):
+            include.append('code_interpreter_call.outputs')
+        if model_settings.get('openai_include_web_search_sources'):
+            include.append('web_search_call.action.sources')
+        if model_settings.get('openai_include_file_search_results'):
+            include.append('file_search_call.results')
+        if model_settings.get('openai_logprobs'):
+            include.append('message.output_text.logprobs')
+        return include
+
+    @overload
+    async def _responses_retrieve(
+        self,
+        response_id: str,
+        model_settings: OpenAIResponsesModelSettings,
+        *,
+        stream: Literal[False] = False,
+        starting_after: int | None = None,
+    ) -> responses.Response: ...
+
+    @overload
+    async def _responses_retrieve(
+        self,
+        response_id: str,
+        model_settings: OpenAIResponsesModelSettings,
+        *,
+        stream: Literal[True],
+        starting_after: int | None = None,
+    ) -> AsyncStream[responses.ResponseStreamEvent]: ...
+
+    async def _responses_retrieve(
+        self,
+        response_id: str,
+        model_settings: OpenAIResponsesModelSettings,
+        *,
+        stream: bool = False,
+        starting_after: int | None = None,
+    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
+        """Retrieve a background response by ID, optionally streaming."""
+        include = self._build_include(model_settings)
+        try:
+            extra_headers = model_settings.get('extra_headers', {})
+            extra_headers.setdefault('User-Agent', get_user_agent())
+            retrieve_kwargs: dict[str, Any] = {}
+            if starting_after is not None:
+                retrieve_kwargs['starting_after'] = starting_after
+            return await self.client.responses.retrieve(
+                response_id=response_id,
+                include=include or OMIT,
+                stream=stream,
+                timeout=model_settings.get('timeout', NOT_GIVEN),
+                extra_headers=extra_headers,
+                **retrieve_kwargs,
+            )
+        except APIStatusError as e:  # pragma: lax no cover
+            if (status_code := e.status_code) >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise
+        except APIConnectionError as e:  # pragma: lax no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | Omit:
@@ -2441,6 +2590,45 @@ class OpenAIStreamedResponse(StreamedResponse):
 
 
 @dataclass
+class _ModelResponseStreamedResponse(StreamedResponse):
+    """`StreamedResponse` wrapper for pre-built `ModelResponse` objects."""
+
+    _model_response: ModelResponse
+
+    def __post_init__(self) -> None:
+        self._usage = self._model_response.usage
+        self.provider_response_id = self._model_response.provider_response_id
+        self.provider_details = self._model_response.provider_details
+        self.finish_reason = self._model_response.finish_reason
+        self.state = self._model_response.state
+        self.metadata = self._model_response.metadata
+        for index, part in enumerate(self._model_response.parts):
+            self._parts_manager.handle_part(vendor_part_id=index, part=part)
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        if False:  # pragma: no cover
+            yield cast(ModelResponseStreamEvent, None)
+
+    @property
+    def model_name(self) -> str:
+        # model_name is always set when _ModelResponseStreamedResponse is constructed
+        assert self._model_response.model_name is not None
+        return self._model_response.model_name
+
+    @property
+    def provider_name(self) -> str | None:
+        return self._model_response.provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        return self._model_response.provider_url
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._model_response.timestamp
+
+
+@dataclass
 class OpenAIResponsesStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for OpenAI Responses API."""
 
@@ -2453,6 +2641,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_now_utc)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
+    _last_sequence_number: int | None = field(default=None, init=False)
+
+    def _set_state(self, status: ResponseStatus | None) -> None:
+        self.state = _response_status_to_state(status)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         # Track annotations by item_id and content_index
@@ -2462,9 +2654,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             self.provider_details = {'timestamp': self._provider_timestamp}
 
         async for chunk in self._response:
+            self._last_sequence_number = chunk.sequence_number
             # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += self._map_usage(chunk.response)
+                self._set_state(chunk.response.status)
 
                 raw_finish_reason = (
                     details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
@@ -2482,11 +2676,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseCreatedEvent):
+                self._set_state(chunk.response.status)
                 if chunk.response.id:  # pragma: no branch
                     self.provider_response_id = chunk.response.id
 
             elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
                 self._usage += self._map_usage(chunk.response)
+                self._set_state(chunk.response.status)
 
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -2499,11 +2695,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
                 pass  # there's nothing we need to do here
 
+            elif isinstance(chunk, (responses.ResponseInProgressEvent, responses.ResponseQueuedEvent)):
+                self._usage += self._map_usage(chunk.response)
+                self._set_state(chunk.response.status)
+
             elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
                 self._usage += self._map_usage(chunk.response)
-
-            elif isinstance(chunk, responses.ResponseInProgressEvent):
-                self._usage += self._map_usage(chunk.response)
+                self._set_state(chunk.response.status)
 
             elif isinstance(chunk, responses.ResponseOutputItemAddedEvent):
                 if isinstance(chunk.item, responses.ResponseFunctionToolCall):
@@ -2826,6 +3024,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
         if self._refusal_text:
             self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+
+        # This is used to resume suspended background streams with `starting_after`.
+        if self.state == 'suspended' and self._last_sequence_number is not None:
+            self.provider_details = {
+                **(self.provider_details or {}),
+                'openai_last_sequence_number': self._last_sequence_number,
+            }
 
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)

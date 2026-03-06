@@ -59,7 +59,7 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'model_context_window_exceeded': 'length',
     'stop_sequence': 'stop',
     'tool_use': 'tool_call',
-    'pause_turn': 'stop',
+    'pause_turn': 'incomplete',
     'refusal': 'content_filter',
 }
 
@@ -609,6 +609,7 @@ class AnthropicModel(Model):
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             finish_reason=finish_reason,
+            state='suspended' if response.stop_reason == 'pause_turn' else 'complete',
             provider_details=provider_details,
         )
 
@@ -1379,6 +1380,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                     self.provider_details = self.provider_details or {}
                     self.provider_details['finish_reason'] = raw_finish_reason
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                    self.state = 'suspended' if raw_finish_reason == 'pause_turn' else 'complete'
 
             elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
                 if isinstance(current_block, BetaMCPToolUseBlock):
