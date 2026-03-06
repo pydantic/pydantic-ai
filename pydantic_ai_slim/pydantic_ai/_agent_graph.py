@@ -663,6 +663,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # we got an empty response.
                     # this sometimes happens with anthropic (and perhaps other models)
                     # when the model has already returned text along side tool calls
+                    if output_schema.allows_none:
+                        result_data = cast(NodeRunEndT, None)
+                        run_context = build_run_context(ctx)
+                        for validator in ctx.deps.output_validators:
+                            result_data = await validator.validate(result_data, run_context)
+                        self._next_node = self._handle_final_result(ctx, result.FinalResult(result_data), [])
+                        return
+
                     if text_processor := output_schema.text_processor:  # pragma: no branch
                         # in this scenario, if text responses are allowed, we return text from the most recent model
                         # response, if any
