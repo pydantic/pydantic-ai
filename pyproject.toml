@@ -281,6 +281,7 @@ omit = [
     "tests/example_modules/*.py",
     "pydantic_ai_slim/pydantic_ai/ext/aci.py",  # aci-sdk is too niche to be added as an (optional) dependency
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
+    "pydantic_ai_slim/pydantic_ai/common_tools/you.py",  # You.com integration with external API calls
     # TODO(Marcelo): Enable prefect coverage again.
     "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/*.py",
     "tests/test_prefect.py",
