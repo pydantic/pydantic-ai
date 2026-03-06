@@ -2337,6 +2337,7 @@ async def test_approval_required_toolset():
                         content='The tool call was denied.',
                         tool_call_id='foo2',
                         timestamp=IsDatetime(),
+                        outcome='denied',
                     ),
                 ],
                 timestamp=IsDatetime(),
