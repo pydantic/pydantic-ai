@@ -1337,7 +1337,7 @@ async def test_toolset_instructions_alone_satisfy_validation():
     result = await agent.run()
     first_message = result.all_messages()[0]
     assert first_message.instructions == 'Always use my_tool correctly.'  # type: ignore[union-attr]
-    assert first_message.parts == []  # type: ignore[union-attr]
+    assert first_message.parts == []
 
 
 async def test_no_input_raises_without_toolset_instructions():
