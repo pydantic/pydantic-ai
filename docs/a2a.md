@@ -131,15 +131,15 @@ When executing tools or other callbacks within an A2A task, you might need acces
 
 Pydantic AI provides several `ContextVar`s in the `pydantic_ai.a2a` module that are automatically populated during agent execution:
 
-- `current_task_id`: The ID of the currently executing A2A task.
-- `current_task`: The full task metadata dictionary.
-- `current_storage`: The storage instance being used, allowing for mid-run task updates.
+- [`current_task_id`][pydantic_ai.a2a.current_task_id]: The ID of the currently executing A2A task.
+- [`current_task`][pydantic_ai.a2a.current_task]: The full task metadata dictionary.
+- [`current_storage`][pydantic_ai.a2a.current_storage]: The storage instance being used, allowing for mid-run task updates.
 
 Here is an example of how you can access the current A2A task context inside a tool:
 
 ```python {title="context_tool.py" test="skip"}
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.a2a import current_task_id, current_storage
+from pydantic_ai.a2a import current_storage, current_task_id
 
 agent = Agent('openai:gpt-5.2', instructions='You are a helpful assistant.')
 
@@ -153,9 +153,9 @@ async def update_status(ctx: RunContext[None], status_message: str) -> str:
         # You can mutate the task state in storage mid-run
         await storage.update_task(task_id, state='working')
 
-        return f"Status updated to: {status_message}"
+        return f'Status updated to: {status_message}'
     except LookupError:
-        return "Not running inside an A2A task execution."
+        return 'Not running inside an A2A task execution.'
 
 app = agent.to_a2a()
 ```
