@@ -1,40 +1,58 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
+      content-length:
+      - '361'
+      host:
+      - api.anthropic.com
       accept:
       - application/json
       accept-encoding:
       - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '361'
       content-type:
       - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.
-          type: text
-        role: user
-      model: claude-sonnet-4-0
-      stream: true
-      thinking:
-        budget_tokens: 3000
-        type: enabled
-      tool_choice:
-        type: auto
-      tools:
-      - name: web_fetch
-        type: web_fetch_20250910
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
+      connection:
+      - keep-alive
     body:
-      string: |+
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - content:
+          - text: What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.
+            type: text
+          role: user
+        model: claude-sonnet-4-0
+        stream: true
+        thinking:
+          budget_tokens: 3000
+          type: enabled
+        tool_choice:
+          type: auto
+        tools:
+        - name: web_fetch
+          type: web_fetch_20250910
+  response:
+    status: 200
+    headers:
+      transfer-encoding:
+      - chunked
+      retry-after:
+      - '15'
+      content-type:
+      - text/event-stream; charset=utf-8
+      connection:
+      - keep-alive
+      cache-control:
+      - no-cache
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    body:
+      type: text
+      content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-4-20250514","id":"msg_015eAVGKhBrs95jUkYb2BaDt","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":899,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard"}}        }
 
@@ -191,21 +209,4 @@ interactions:
         event: message_stop
         data: {"type":"message_stop"         }
 
-    headers:
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream; charset=utf-8
-      retry-after:
-      - '15'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:24:49.938659+00:00

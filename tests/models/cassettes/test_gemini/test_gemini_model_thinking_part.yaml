@@ -1,69 +1,72 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
     headers:
+      host:
+      - generativelanguage.googleapis.com
       accept:
       - '*/*'
-      accept-encoding:
-      - gzip, deflate, br
       connection:
       - keep-alive
+      accept-encoding:
+      - gzip, deflate, br
       content-length:
       - '150'
       content-type:
       - application/json
-      host:
-      - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: What is 2+2?
-        role: user
-      generationConfig:
-        thinking_config:
-          includeThoughts: true
-          thinkingBudget: 1024
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: What is 2+2?
+          role: user
+        generationConfig:
+          thinking_config:
+            includeThoughts: true
+            thinkingBudget: 1024
   response:
+    status: 200
     headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '1025'
-      content-type:
-      - application/json; charset=UTF-8
-      server-timing:
-      - gfet4t7; dur=1380
-      transfer-encoding:
-      - chunked
       vary:
       - Origin
       - X-Origin
       - Referer
-    parsed_body:
-      candidates:
-      - content:
-          parts:
-          - text: |
-              **Calculating the Simple**
+      server-timing:
+      - gfet4t7; dur=1380
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1025'
+      transfer-encoding:
+      - chunked
+      content-type:
+      - application/json; charset=UTF-8
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: |
+                **Calculating the Simple**
 
-              Okay, here we go. Someone's asking a pretty straightforward arithmetic question. It's really just a simple calculation. Nothing fancy, just plug in the numbers and get the result.  No need to overthink it. It's a quick win, a chance to flex some basic math muscles before getting into anything more complex. Just a matter of applying the right operation and moving on.
-            thought: true
-          - text: 2 + 2 = 4
-          role: model
-        finishReason: STOP
-        index: 0
-      modelVersion: gemini-2.5-flash
-      responseId: lghYaaSmK7eomtkP_KDT6A0
-      usageMetadata:
-        candidatesTokenCount: 8
-        promptTokenCount: 8
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 8
-        thoughtsTokenCount: 16
-        totalTokenCount: 32
-    status:
-      code: 200
-      message: OK
-version: 1
+                Okay, here we go. Someone's asking a pretty straightforward arithmetic question. It's really just a simple calculation. Nothing fancy, just plug in the numbers and get the result.  No need to overthink it. It's a quick win, a chance to flex some basic math muscles before getting into anything more complex. Just a matter of applying the right operation and moving on.
+              thought: true
+            - text: 2 + 2 = 4
+            role: model
+          finishReason: STOP
+          index: 0
+        modelVersion: gemini-2.5-flash
+        responseId: lghYaaSmK7eomtkP_KDT6A0
+        usageMetadata:
+          candidatesTokenCount: 8
+          promptTokenCount: 8
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 8
+          thoughtsTokenCount: 16
+          totalTokenCount: 32
+  recorded_at: 2026-03-06T19:45:36.071356+00:00

@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://mcp.deepwiki.com/mcp
     headers:
       accept:
       - application/json, text/event-stream
@@ -13,244 +16,251 @@ interactions:
       - application/json
       host:
       - mcp.deepwiki.com
-    method: POST
-    parsed_body:
-      id: 0
-      jsonrpc: '2.0'
-      method: initialize
-      params:
-        capabilities:
-          sampling: {}
-        clientInfo:
-          name: mcp
-          version: 0.1.0
-        protocolVersion: '2025-06-18'
-    uri: https://mcp.deepwiki.com/mcp
-  response:
     body:
-      string: |+
+      type: json
+      content:
+        id: 0
+        jsonrpc: '2.0'
+        method: initialize
+        params:
+          capabilities:
+            sampling: {}
+          clientInfo:
+            name: mcp
+            version: 0.1.0
+          protocolVersion: 2025-06-18
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      vary:
+      - accept-encoding
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      cache-control:
+      - no-cache
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      mcp-session-id:
+      - 79634f20860e529d0253e303afbce2571a0543c155a087250648960da3c67059
+      access-control-expose-headers:
+      - mcp-session-id
+      transfer-encoding:
+      - chunked
+      content-type:
+      - text/event-stream
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=rMn85WgDL0%2B8DcP3GhSk08gOMLOCdd9ylzYlWV%2BPazzXbOlw7hBD5mlea3Yzxs%2BdtHeX7t1OSADQzo5YxQq55wD0eI0FTdoN0UBf2SM%2F7zsjJieuzN%2FodKifnGLW%2FgU5j%2F%2F%2FHA%3D%3D"}]}'
+      access-control-max-age:
+      - '86400'
+    body:
+      type: text
+      content: |+
         event: message
         data: {"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2025-03-26","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"DeepWiki","version":"0.0.1"}}}
 
         event: ping
         data: ping
 
-    headers:
-      access-control-allow-headers:
-      - Content-Type, mcp-session-id, mcp-protocol-version
-      access-control-allow-methods:
-      - GET, POST, OPTIONS
-      access-control-allow-origin:
-      - '*'
-      access-control-expose-headers:
-      - mcp-session-id
-      access-control-max-age:
-      - '86400'
-      alt-svc:
-      - h3=":443"; ma=86400
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream
-      mcp-session-id:
-      - 79634f20860e529d0253e303afbce2571a0543c155a087250648960da3c67059
-      nel:
-      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
-      report-to:
-      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=rMn85WgDL0%2B8DcP3GhSk08gOMLOCdd9ylzYlWV%2BPazzXbOlw7hBD5mlea3Yzxs%2BdtHeX7t1OSADQzo5YxQq55wD0eI0FTdoN0UBf2SM%2F7zsjJieuzN%2FodKifnGLW%2FgU5j%2F%2F%2FHA%3D%3D"}]}'
-      transfer-encoding:
-      - chunked
-      vary:
-      - accept-encoding
-    status:
-      code: 200
-      message: OK
+  recorded_at: 2026-03-06T19:45:56.994514+00:00
 - request:
-    body: ''
-    headers:
-      accept:
-      - application/json, text/event-stream, text/event-stream
-      accept-encoding:
-      - gzip, deflate
-      cache-control:
-      - no-store
-      connection:
-      - keep-alive
-      content-type:
-      - application/json
-      host:
-      - mcp.deepwiki.com
-      mcp-protocol-version:
-      - '2025-03-26'
-      mcp-session-id:
-      - 79634f20860e529d0253e303afbce2571a0543c155a087250648960da3c67059
     method: GET
     uri: https://mcp.deepwiki.com/mcp
-  response:
-    body:
-      string: '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Method not allowed"},"id":null}'
     headers:
-      alt-svc:
-      - h3=":443"; ma=86400
+      accept-encoding:
+      - gzip, deflate
+      mcp-protocol-version:
+      - 2025-03-26
+      host:
+      - mcp.deepwiki.com
+      mcp-session-id:
+      - 79634f20860e529d0253e303afbce2571a0543c155a087250648960da3c67059
+      accept:
+      - application/json, text/event-stream, text/event-stream
+      content-type:
+      - application/json
       connection:
       - keep-alive
-      content-length:
-      - '82'
-      content-type:
-      - text/plain;charset=UTF-8
-      nel:
-      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      cache-control:
+      - no-store
+    body:
+      type: none
+  response:
+    status: 405
+    headers:
+      connection:
+      - keep-alive
       report-to:
       - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=PJNTRlKrI8lL0aiZCc1uJTiDVehFnTLMMt8VdPxyqnbI%2F0JHNcJ7zP3QWIemrZXXzvU8Vd%2Bei6J8F5UuykGqFqdTH%2BXrjvH5bM9Is8%2F%2BWmpiJxekG6tEGDnwy9qFv8xegxo8jQ%3D%3D"}]}'
       vary:
       - accept-encoding
-    status:
-      code: 405
-      message: Method Not Allowed
+      alt-svc:
+      - h3=":443"; ma=86400
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      content-length:
+      - '82'
+      content-type:
+      - text/plain;charset=UTF-8
+    body:
+      type: json
+      content:
+        error:
+          code: -32000
+          message: Method not allowed
+        id: null
+        jsonrpc: '2.0'
+  recorded_at: 2026-03-06T19:45:56.994514+00:00
 - request:
+    method: POST
+    uri: https://mcp.deepwiki.com/mcp
     headers:
+      mcp-protocol-version:
+      - 2025-03-26
+      content-type:
+      - application/json
+      content-length:
+      - '54'
+      connection:
+      - keep-alive
+      host:
+      - mcp.deepwiki.com
       accept:
       - application/json, text/event-stream
       accept-encoding:
       - gzip, deflate
+      mcp-session-id:
+      - 79634f20860e529d0253e303afbce2571a0543c155a087250648960da3c67059
+    body:
+      type: json
+      content:
+        jsonrpc: '2.0'
+        method: notifications/initialized
+  response:
+    status: 202
+    headers:
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      alt-svc:
+      - h3=":443"; ma=86400
+      vary:
+      - accept-encoding
+      access-control-expose-headers:
+      - mcp-session-id
+      content-length:
+      - '0'
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      access-control-allow-origin:
+      - '*'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=YOAoKhRcD%2FYSYhguoqnWMHg%2FDamN%2BTbORh3ouJR1UoKYxtW%2BOW%2BAHCtlYMucysWlEeSIhTC5vm5N999APwF5Rwu1Z8liG5LqCo4ixNr69BVK1ssPS4i24x%2FyVLYXc0HTo9dkIg%3D%3D"}]}'
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+    body:
+      type: none
+  recorded_at: 2026-03-06T19:45:56.994514+00:00
+- request:
+    method: POST
+    uri: https://mcp.deepwiki.com/mcp
+    headers:
+      mcp-protocol-version:
+      - 2025-03-26
+      content-type:
+      - application/json
+      mcp-session-id:
+      - 79634f20860e529d0253e303afbce2571a0543c155a087250648960da3c67059
       connection:
       - keep-alive
       content-length:
-      - '54'
-      content-type:
-      - application/json
+      - '46'
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
       host:
       - mcp.deepwiki.com
-      mcp-protocol-version:
-      - '2025-03-26'
-      mcp-session-id:
-      - 79634f20860e529d0253e303afbce2571a0543c155a087250648960da3c67059
-    method: POST
-    parsed_body:
-      jsonrpc: '2.0'
-      method: notifications/initialized
-    uri: https://mcp.deepwiki.com/mcp
-  response:
     body:
-      string: ''
+      type: json
+      content:
+        id: 1
+        jsonrpc: '2.0'
+        method: tools/list
+  response:
+    status: 200
     headers:
-      access-control-allow-headers:
-      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-max-age:
+      - '86400'
+      cache-control:
+      - no-cache
       access-control-allow-methods:
       - GET, POST, OPTIONS
       access-control-allow-origin:
       - '*'
       access-control-expose-headers:
       - mcp-session-id
-      access-control-max-age:
-      - '86400'
       alt-svc:
       - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '0'
-      nel:
-      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
       report-to:
-      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=YOAoKhRcD%2FYSYhguoqnWMHg%2FDamN%2BTbORh3ouJR1UoKYxtW%2BOW%2BAHCtlYMucysWlEeSIhTC5vm5N999APwF5Rwu1Z8liG5LqCo4ixNr69BVK1ssPS4i24x%2FyVLYXc0HTo9dkIg%3D%3D"}]}'
-      vary:
-      - accept-encoding
-    status:
-      code: 202
-      message: Accepted
-- request:
-    headers:
-      accept:
-      - application/json, text/event-stream
-      accept-encoding:
-      - gzip, deflate
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=rTAkw2F56hOqBG74w2PLRaPXDJf5XzFASzgxvvmTIrJZmebUbzATwXgvs3W6GMYCXnwMdcOUJcN05oKIJ6hq8XoPuu%2F97yD66drIfQOhQjT0HG2W4Kd1btBaRf0stfwOdus64w%3D%3D"}]}'
       connection:
       - keep-alive
-      content-length:
-      - '46'
-      content-type:
-      - application/json
-      host:
-      - mcp.deepwiki.com
-      mcp-protocol-version:
-      - '2025-03-26'
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
       mcp-session-id:
       - 79634f20860e529d0253e303afbce2571a0543c155a087250648960da3c67059
-    method: POST
-    parsed_body:
-      id: 1
-      jsonrpc: '2.0'
-      method: tools/list
-    uri: https://mcp.deepwiki.com/mcp
-  response:
+      vary:
+      - accept-encoding
+      content-type:
+      - text/event-stream
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      transfer-encoding:
+      - chunked
     body:
-      string: |+
+      type: text
+      content: |+
         event: message
         data: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"read_wiki_structure","description":"Get a list of documentation topics for a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}},{"name":"read_wiki_contents","description":"View documentation about a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}},{"name":"ask_question","description":"Ask any question about a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"},"question":{"type":"string","description":"The question to ask about the repository"}},"required":["repoName","question"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}}]}}
 
         event: ping
         data: ping
 
-    headers:
-      access-control-allow-headers:
-      - Content-Type, mcp-session-id, mcp-protocol-version
-      access-control-allow-methods:
-      - GET, POST, OPTIONS
-      access-control-allow-origin:
-      - '*'
-      access-control-expose-headers:
-      - mcp-session-id
-      access-control-max-age:
-      - '86400'
-      alt-svc:
-      - h3=":443"; ma=86400
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream
-      mcp-session-id:
-      - 79634f20860e529d0253e303afbce2571a0543c155a087250648960da3c67059
-      nel:
-      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
-      report-to:
-      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=rTAkw2F56hOqBG74w2PLRaPXDJf5XzFASzgxvvmTIrJZmebUbzATwXgvs3W6GMYCXnwMdcOUJcN05oKIJ6hq8XoPuu%2F97yD66drIfQOhQjT0HG2W4Kd1btBaRf0stfwOdus64w%3D%3D"}]}'
-      transfer-encoding:
-      - chunked
-      vary:
-      - accept-encoding
-    status:
-      code: 200
-      message: OK
+  recorded_at: 2026-03-06T19:45:56.994514+00:00
 - request:
-    body: ''
+    method: DELETE
+    uri: https://mcp.deepwiki.com/mcp
     headers:
       accept:
       - application/json, text/event-stream
-      accept-encoding:
-      - gzip, deflate
       connection:
       - keep-alive
       content-type:
       - application/json
-      host:
-      - mcp.deepwiki.com
       mcp-protocol-version:
-      - '2025-03-26'
+      - 2025-03-26
       mcp-session-id:
       - 79634f20860e529d0253e303afbce2571a0543c155a087250648960da3c67059
-    method: DELETE
-    uri: https://mcp.deepwiki.com/mcp
-  response:
+      host:
+      - mcp.deepwiki.com
+      accept-encoding:
+      - gzip, deflate
     body:
-      string: '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Method not allowed"},"id":null}'
+      type: none
+  response:
+    status: 405
     headers:
-      alt-svc:
-      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
@@ -263,8 +273,14 @@ interactions:
       - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=0AMi1Wp%2BN%2FfpGPKL%2BRDf5fdSr0BLZQRV0fR7plR%2FnrWUjtsC6slmDj71mtsoXeq%2B3YtYdqo0zDvuI59BSy9HcqeWAIau1X6Ng3C5K%2BzFGL1hIr4135Ivh%2BaiFo17vSsis7rEDQ%3D%3D"}]}'
       vary:
       - accept-encoding
-    status:
-      code: 405
-      message: Method Not Allowed
-version: 1
-...
+      alt-svc:
+      - h3=":443"; ma=86400
+    body:
+      type: json
+      content:
+        error:
+          code: -32000
+          message: Method not allowed
+        id: null
+        jsonrpc: '2.0'
+  recorded_at: 2026-03-06T19:45:56.994514+00:00

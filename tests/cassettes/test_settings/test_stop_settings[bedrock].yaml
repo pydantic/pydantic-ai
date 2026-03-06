@@ -1,43 +1,50 @@
+version: 1
 interactions:
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France? Give me an answer that contains
-      the word \"Paris\", but is not the first word."}]}], "system": [], "inferenceConfig": {"stopSequences": ["Paris"]}}'
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
     headers:
       amz-sdk-invocation-id:
-      - !!binary |
-        YWEyMWExMDYtNjJjMy00MmNiLTlkNjUtYTEwYzYzYTIxNGFk
+      - aa21a106-62c3-42cb-9d65-a10c63a214ad
       amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
+      - attempt=1
       content-length:
       - '231'
       content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+      - application/json
+    body:
+      type: json
+      content:
+        inferenceConfig:
+          stopSequences:
+          - Paris
+        messages:
+        - content:
+          - text: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
+          role: user
+        system: []
   response:
+    status: 200
     headers:
-      connection:
-      - keep-alive
       content-length:
       - '197'
       content-type:
       - application/json
-    parsed_body:
-      metrics:
-        latencyMs: 189
-      output:
-        message:
-          content:
-          - text: The city of Paris
-          role: assistant
-      stopReason: end_turn
-      usage:
-        inputTokens: 25
-        outputTokens: 4
-        totalTokens: 29
-    status:
-      code: 200
-      message: OK
-version: 1
+      connection:
+      - keep-alive
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 189
+        output:
+          message:
+            content:
+            - text: The city of Paris
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 25
+          outputTokens: 4
+          totalTokens: 29
+  recorded_at: 2026-03-06T19:45:58.944842+00:00

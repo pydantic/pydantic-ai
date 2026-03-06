@@ -1,49 +1,123 @@
+version: 1
 interactions:
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "Newer response with something except single number\nNewer
-      response with something except single number\nNewer response with something except single number\nNewer response with
-      something except single number\nNewer response with something except single number\nNewer response with something except
-      single number\nNewer response with something except single number\nNewer response with something except single number\nNewer
-      response with something except single number\nNewer response with something except single number\n"}, {"document": {"name":
-      "Document 1", "format": "txt", "source": {"bytes": "WW91IGFyZSBhIGdyZWF0IG1hdGhlbWF0aWNpYW4="}}}, {"text": "\n"}, {"cachePoint":
-      {"type": "default"}}, {"text": "What is 10 + 11?"}, {"cachePoint": {"type": "default"}}]}], "system": [{"text": "YOU
-      MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE
-      NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY
-      WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE
-      ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST
-      RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU
-      MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE
-      NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY
-      WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE
-      ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST
-      RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU
-      MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE
-      NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY
-      WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE
-      ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST
-      RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU
-      MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE
-      NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY
-      WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n"}, {"cachePoint":
-      {"type": "default"}}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "catalog_lookup", "inputSchema":
-      {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}, {"toolSpec": {"name": "diagnostics",
-      "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}, {"cachePoint": {"type":
-      "default"}}], "toolChoice": {"auto": {}}}}'
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
     headers:
       amz-sdk-invocation-id:
-      - !!binary |
-        YjlmZjc1ODgtNGRhNi00YWFjLTg0NWUtMGRmMDJlOGMyMGY0
-      amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
+      - b9ff7588-4da6-4aac-845e-0df02e8c20f4
       content-length:
       - '3416'
       content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+      - application/json
+      amz-sdk-request:
+      - attempt=1
+    body:
+      type: json
+      content:
+        inferenceConfig: {}
+        messages:
+        - content:
+          - text: |
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+          - document:
+              format: txt
+              name: Document 1
+              source:
+                bytes: WW91IGFyZSBhIGdyZWF0IG1hdGhlbWF0aWNpYW4=
+          - text: |2+
+
+          - cachePoint:
+              type: default
+          - text: What is 10 + 11?
+          - cachePoint:
+              type: default
+          role: user
+        system:
+        - text: |
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+        - cachePoint:
+            type: default
+        toolConfig:
+          toolChoice:
+            auto: {}
+          tools:
+          - toolSpec:
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+              name: catalog_lookup
+          - toolSpec:
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+              name: diagnostics
+          - cachePoint:
+              type: default
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
@@ -51,98 +125,170 @@ interactions:
       - '321'
       content-type:
       - application/json
-    parsed_body:
-      metrics:
-        latencyMs: 2023
-      output:
-        message:
-          content:
-          - text: '21'
-          role: assistant
-      stopReason: end_turn
-      usage:
-        cacheReadInputTokenCount: 0
-        cacheReadInputTokens: 0
-        cacheWriteInputTokenCount: 1322
-        cacheWriteInputTokens: 1322
-        inputTokens: 2
-        outputTokens: 5
-        serverToolUsage: {}
-        totalTokens: 1329
-    status:
-      code: 200
-      message: OK
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 2023
+        output:
+          message:
+            content:
+            - text: '21'
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 1322
+          cacheWriteInputTokens: 1322
+          inputTokens: 2
+          outputTokens: 5
+          serverToolUsage: {}
+          totalTokens: 1329
+  recorded_at: 2026-03-06T20:14:05.672611+00:00
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "Newer response with something except single number\nNewer
-      response with something except single number\nNewer response with something except single number\nNewer response with
-      something except single number\nNewer response with something except single number\nNewer response with something except
-      single number\nNewer response with something except single number\nNewer response with something except single number\nNewer
-      response with something except single number\nNewer response with something except single number\n"}, {"document": {"name":
-      "Document 1", "format": "txt", "source": {"bytes": "WW91IGFyZSBhIGdyZWF0IG1hdGhlbWF0aWNpYW4="}}}, {"text": "\n"}, {"cachePoint":
-      {"type": "default"}}, {"text": "What is 10 + 11?"}, {"cachePoint": {"type": "default"}}]}], "system": [{"text": "YOU
-      MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE
-      NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY
-      WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE
-      ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST
-      RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU
-      MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE
-      NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY
-      WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE
-      ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST
-      RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU
-      MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE
-      NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY
-      WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE
-      ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST
-      RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU
-      MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE
-      NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY
-      WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\nYOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n"}, {"cachePoint":
-      {"type": "default"}}], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "catalog_lookup", "inputSchema":
-      {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}, {"toolSpec": {"name": "diagnostics",
-      "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}, {"cachePoint": {"type":
-      "default"}}], "toolChoice": {"auto": {}}}}'
-    headers:
-      amz-sdk-invocation-id:
-      - !!binary |
-        NWVlODQ1M2EtYmY4Ny00ZTIyLThkNTEtNzNlOWQ5Y2E0NDUz
-      amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
-      content-length:
-      - '3416'
-      content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
     method: POST
     uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
-  response:
     headers:
-      connection:
-      - keep-alive
+      content-type:
+      - application/json
+      amz-sdk-invocation-id:
+      - 5ee8453a-bf87-4e22-8d51-73e9d9ca4453
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - '3416'
+    body:
+      type: json
+      content:
+        inferenceConfig: {}
+        messages:
+        - content:
+          - text: |
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+              Newer response with something except single number
+          - document:
+              format: txt
+              name: Document 1
+              source:
+                bytes: WW91IGFyZSBhIGdyZWF0IG1hdGhlbWF0aWNpYW4=
+          - text: |2+
+
+          - cachePoint:
+              type: default
+          - text: What is 10 + 11?
+          - cachePoint:
+              type: default
+          role: user
+        system:
+        - text: |
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+            YOU MUST RESPONSE ONLY WITH SINGLE NUMBER
+        - cachePoint:
+            type: default
+        toolConfig:
+          toolChoice:
+            auto: {}
+          tools:
+          - toolSpec:
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+              name: catalog_lookup
+          - toolSpec:
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+              name: diagnostics
+          - cachePoint:
+              type: default
+  response:
+    status: 200
+    headers:
       content-length:
       - '321'
       content-type:
       - application/json
-    parsed_body:
-      metrics:
-        latencyMs: 1990
-      output:
-        message:
-          content:
-          - text: '21'
-          role: assistant
-      stopReason: end_turn
-      usage:
-        cacheReadInputTokenCount: 1322
-        cacheReadInputTokens: 1322
-        cacheWriteInputTokenCount: 0
-        cacheWriteInputTokens: 0
-        inputTokens: 2
-        outputTokens: 5
-        serverToolUsage: {}
-        totalTokens: 1329
-    status:
-      code: 200
-      message: OK
-version: 1
+      connection:
+      - keep-alive
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1990
+        output:
+          message:
+            content:
+            - text: '21'
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 1322
+          cacheReadInputTokens: 1322
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 2
+          outputTokens: 5
+          serverToolUsage: {}
+          totalTokens: 1329
+  recorded_at: 2026-03-06T20:14:05.672611+00:00

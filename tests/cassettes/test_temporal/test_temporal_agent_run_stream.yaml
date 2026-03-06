@@ -1,31 +1,57 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
     headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
       connection:
       - keep-alive
       content-length:
       - '144'
-      content-type:
+      accept-encoding:
+      - gzip, deflate
+      accept:
       - application/json
       host:
       - api.openai.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: What is the capital of Mexico?
-        role: user
-      model: gpt-4o
-      stream: true
-      stream_options:
-        include_usage: true
-    uri: https://api.openai.com/v1/chat/completions
-  response:
+      content-type:
+      - application/json
     body:
-      string: |+
+      type: json
+      content:
+        messages:
+        - content: What is the capital of Mexico?
+          role: user
+        model: gpt-4o
+        stream: true
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      access-control-expose-headers:
+      - X-Request-ID
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - pydantic-28gund
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      openai-version:
+      - 2020-10-01
+      openai-processing-ms:
+      - '433'
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
         data: {"id":"chatcmpl-C2P2HtMJhPkWjQ2adKerkdVilXmRL","object":"chat.completion.chunk","created":1754688929,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_07871e2ad8","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"oouykO51ovJROe"}
 
         data: {"id":"chatcmpl-C2P2HtMJhPkWjQ2adKerkdVilXmRL","object":"chat.completion.chunk","created":1754688929,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_07871e2ad8","choices":[{"index":0,"delta":{"content":"The"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"Qk5ENocFqkZOr"}
@@ -50,29 +76,4 @@ interactions:
 
         data: [DONE]
 
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream; charset=utf-8
-      openai-organization:
-      - pydantic-28gund
-      openai-processing-ms:
-      - '433'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:45:59.517380+00:00

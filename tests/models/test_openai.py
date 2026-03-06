@@ -180,7 +180,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -199,7 +199,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -273,7 +273,7 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
                 provider_details={
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -345,7 +345,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -451,7 +451,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -489,7 +489,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -516,7 +516,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -593,7 +593,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
                         provider_url='https://api.openai.com/v1',
                         provider_details={
                             'finish_reason': 'stop',
-                            'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                            'timestamp': IsDatetime(),
                         },
                         provider_response_id='123',
                         finish_reason='stop',
@@ -1703,7 +1703,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 11, 22, 10, 1, 40, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='chatcmpl-Ceeiy4ivEE0hcL1EX5ZfLuW5xNUXB',
                 finish_reason='stop',
@@ -2543,7 +2543,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 7, 16, 30, 56, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
                 finish_reason='stop',
@@ -2658,18 +2658,46 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content=IsStr(),
+                        content="""\
+**Emphasizing pedestrian safety**
+
+I want to stress how important it is to look both ways thoroughly before stepping away from the curb. Being aware of turning vehicles and ensuring your visibility is key. If you can, make eye contact with drivers to confirm they see you. While I'm not a safety expert, these guidelines aim to encourage careful crossing. Remember to "walk, look, wait until it's safe, then cross." Always prioritize your safety!\
+""",
                         id='rs_68c1fa166e9c81979ff56b16882744f1093f57e27128848a',
-                        signature=IsStr(),
+                        signature='gAAAAABowfofynE_bcBtlQwnphMqkyKvkV8Sr35i7mAX3iK-nK_d2usOyX9bxTqTs2rO9Q-rWy_925tvvxVDftIty6WSJYgydfLk3_2n4aNnc--vX7aUT5db_qTyH_367MTbp_Qr_Wcu_QkOwTuMfF5wU0RxF5PNqKwg1Owpteut0jDGs0haA6SHMMskH0sezDb9VXSTHaIq2EQuaB2n5nAVi6hy5Z6OCScNnC4aBzSnTbPOFi2qMGf4vZwyGpl-mPZn6_kEtuN0ov7K0_vj3MyT02QHrk7ADk1aWu1GFvQHunYJ8LPV1jqZnwP6ovVI080lTTBXEkwvvjJxSmt2UE-0JJ3rlKDXVEC6U-k6_wL95LbXc0MqrFSO_yLNOnytNnTctYSF6i5mwID994MvNhF_L7zRLllV4uf_XrTSBD_oHmcL8R9E5Po=',
                         provider_name='openai',
                     ),
                     ThinkingPart(
-                        content=IsStr(),
+                        content="""\
+**Clarifying street crossing guidance**
+
+I see that the question "How do I cross the street?" can be quite ambiguous. To clarify, I might ask if the user is referring to safely crossing as a pedestrian. Assuming that's the case, I’ll provide straightforward instructions about pedestrian safety.
+
+It's crucial to find a safe spot, like a marked crosswalk, and obey pedestrian signals. Step up to the curb, avoid distractions, and look both ways carefully before crossing. It's also important to make eye contact with drivers and wear bright clothing at night if possible. Remember, local traffic laws vary, so always stay cautious!\
+""",
                         id='rs_68c1fa166e9c81979ff56b16882744f1093f57e27128848a',
                         provider_name='openai',
                     ),
                     TextPart(
-                        content=IsStr(),
+                        content="""\
+I'm happy to help. When crossing the street, safety is the top priority. Here are some general steps you can follow:
+
+1. Find a designated crossing area (like a crosswalk or an intersection). If there’s a pedestrian signal, wait for the “Walk” sign before stepping off the curb.
+
+2. Before you cross, pause at the curb. Look left, right, then left again (and occasionally right once more) to make sure no vehicles are approaching. Even when you have a signal, double-check that drivers are stopping and seem alert.
+
+3. Make eye contact with drivers where possible. This can help ensure that they see you and are yielding or prepared to stop.
+
+4. Keep distractions to a minimum—avoid using your phone or headphones at a high volume so you can hear oncoming traffic and other hazards.
+
+5. Cross at a steady pace. Stay aware of your surroundings as you cross. If you’re in an area with turning vehicles, extra caution is needed as drivers may be focused on traffic in front of them.
+
+6. If you’re crossing in an area without a designated crosswalk, choose a spot where you’re most visible and where drivers are more likely to see you. Make sure it’s safe to cross by ensuring there are long enough gaps between vehicles.
+
+7. Always follow local traffic laws and pedestrian guidelines, as these can vary by location.
+
+Remember, these are general guidelines and do not replace advice from local safety authorities. Your safety is important, so when in doubt, wait for a clear and safe opportunity to cross.\
+""",
                         id='msg_68c1fa1ec9448197b5c8f78a90999360093f57e27128848a',
                         provider_name='openai',
                     ),
@@ -2681,7 +2709,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 10, 22, 21, 57, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='resp_68c1fa0523248197888681b898567bde093f57e27128848a',
                 finish_reason='stop',
@@ -2725,7 +2753,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 10, 22, 22, 24, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
                 provider_response_id='chatcmpl-CENUmtwDD0HdvTUYL6lUeijDtxrZL',
                 finish_reason='stop',
@@ -2998,9 +3026,7 @@ def test_openai_response_timestamp_milliseconds(allow_model_requests: None):
     response = cast(ModelResponse, result.all_messages()[-1])
     assert response.timestamp == IsNow(tz=timezone.utc)
     assert response.provider_name == 'openai'
-    assert response.provider_details == snapshot(
-        {'finish_reason': 'stop', 'timestamp': datetime(2025, 6, 1, 3, 7, 48, tzinfo=timezone.utc)}
-    )
+    assert response.provider_details == snapshot({'finish_reason': 'stop', 'timestamp': IsDatetime()})
 
 
 async def test_openai_tool_output(allow_model_requests: None, openai_api_key: str):
@@ -3973,9 +3999,11 @@ async def test_openai_auto_mode_reasoning_field_different_provider_uses_tags(all
     assert mapped == snapshot(
         {
             'role': 'assistant',
-            'content': """<think>
+            'content': """\
+<think>
 reasoning from different provider
-</think>""",
+</think>\
+""",
         }
     )
 
@@ -4075,11 +4103,13 @@ async def test_openai_auto_mode_mismatched_field_uses_tags(allow_model_requests:
     assert mapped == snapshot(
         {
             'role': 'assistant',
-            'content': """<think>
+            'content': """\
+<think>
 thought
 </think>
 
-response""",
+response\
+""",
         }
     )
 

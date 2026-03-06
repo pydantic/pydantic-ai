@@ -1,230 +1,253 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
     headers:
-      accept:
-      - application/json
       accept-encoding:
       - gzip, deflate
       connection:
       - keep-alive
+      accept:
+      - application/json
       content-length:
       - '4294'
       content-type:
       - application/json
       host:
       - api.openai.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: 'Tell me: the capital of the country; the weather there; the product name'
-        role: user
-      model: gpt-4o
-      stream: true
-      stream_options:
-        include_usage: true
-      tool_choice: required
-      tools:
-      - function:
-          description: ''
-          name: get_weather
-          parameters:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
-          strict: true
-        type: function
-      - function:
-          description: ''
-          name: get_country
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
-            \       Temperature in Fahrenheit\n    "
-          name: celsius_to_fahrenheit
-          parameters:
-            additionalProperties: false
-            properties:
-              celsius:
-                type: number
-            required:
-            - celsius
-            type: object
-          strict: true
-        type: function
-      - function:
-          description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
-            forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
-          name: get_weather_forecast
-          parameters:
-            additionalProperties: false
-            properties:
-              location:
-                type: string
-            required:
-            - location
-            type: object
-          strict: true
-        type: function
-      - function:
-          description: ''
-          name: get_image_resource
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_image_resource_link
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_audio_resource
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_audio_resource_link
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_product_name
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_product_name_link
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_image
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_dict
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_error
-          parameters:
-            additionalProperties: false
-            properties:
-              value:
-                default: false
-                type: boolean
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_none
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_multiple_items
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
-          name: get_log_level
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: "Echo the run context.\n\n    Args:\n        ctx: Context object containing request and session information.\n\n
-            \   Returns:\n        Dictionary with an echo message and the deps.\n    "
-          name: echo_deps
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: Use sampling callback.
-          name: use_sampling
-          parameters:
-            additionalProperties: false
-            properties:
-              foo:
-                type: string
-            required:
-            - foo
-            type: object
-          strict: true
-        type: function
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              Answer:
-                additionalProperties: false
-                properties:
-                  answer:
-                    type: string
-                  label:
-                    type: string
-                required:
-                - label
-                - answer
-                type: object
-            additionalProperties: false
-            properties:
-              answers:
-                items:
-                  $ref: '#/$defs/Answer'
-                type: array
-            required:
-            - answers
-            type: object
-          strict: true
-        type: function
-    uri: https://api.openai.com/v1/chat/completions
-  response:
     body:
-      string: |+
+      type: json
+      content:
+        messages:
+        - content: 'Tell me: the capital of the country; the weather there; the product name'
+          role: user
+        model: gpt-4o
+        stream: true
+        stream_options:
+          include_usage: true
+        tool_choice: required
+        tools:
+        - function:
+            description: ''
+            name: get_weather
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+          type: function
+        - function:
+            description: ''
+            name: get_country
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n        Temperature in Fahrenheit\n    "
+            name: celsius_to_fahrenheit
+            parameters:
+              additionalProperties: false
+              properties:
+                celsius:
+                  type: number
+              required:
+              - celsius
+              type: object
+            strict: true
+          type: function
+        - function:
+            description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+            name: get_weather_forecast
+            parameters:
+              additionalProperties: false
+              properties:
+                location:
+                  type: string
+              required:
+              - location
+              type: object
+            strict: true
+          type: function
+        - function:
+            description: ''
+            name: get_image_resource
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_image_resource_link
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_audio_resource
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_audio_resource_link
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_product_name
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_product_name_link
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_image
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_dict
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_error
+            parameters:
+              additionalProperties: false
+              properties:
+                value:
+                  default: false
+                  type: boolean
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_none
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_multiple_items
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+            name: get_log_level
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: "Echo the run context.\n\n    Args:\n        ctx: Context object containing request and session information.\n\n    Returns:\n        Dictionary with an echo message and the deps.\n    "
+            name: echo_deps
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: Use sampling callback.
+            name: use_sampling
+            parameters:
+              additionalProperties: false
+              properties:
+                foo:
+                  type: string
+              required:
+              - foo
+              type: object
+            strict: true
+          type: function
+        - function:
+            description: The final response which ends this conversation
+            name: final_result
+            parameters:
+              $defs:
+                Answer:
+                  additionalProperties: false
+                  properties:
+                    answer:
+                      type: string
+                    label:
+                      type: string
+                  required:
+                  - label
+                  - answer
+                  type: object
+              additionalProperties: false
+              properties:
+                answers:
+                  items:
+                    $ref: '#/$defs/Answer'
+                  type: array
+              required:
+              - answers
+              type: object
+            strict: true
+          type: function
+  response:
+    status: 200
+    headers:
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      openai-organization:
+      - pydantic-28gund
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      transfer-encoding:
+      - chunked
+      connection:
+      - keep-alive
+      openai-processing-ms:
+      - '906'
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-version:
+      - 2020-10-01
+    body:
+      type: text
+      content: |+
         data: {"id":"chatcmpl-C2QD1kGWsTW5OWiqAtOSFEAOfPfQH","object":"chat.completion.chunk","created":1754693439,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_07871e2ad8","usage":null,"choices":[{"index":0,"delta":{"role":"assistant","content":null},"logprobs":null,"finish_reason":null}],"obfuscation":"3Y6yaTIPlXV"}
 
         data: {"id":"chatcmpl-C2QD1kGWsTW5OWiqAtOSFEAOfPfQH","object":"chat.completion.chunk","created":1754693439,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_07871e2ad8","usage":null,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_q2UyBRP7eXNTzAoR8lEhjc9Z","type":"function","function":{"name":"get_country","arguments":""}}]},"logprobs":null,"finish_reason":null}],"obfuscation":"g7emiFlCcG"}
@@ -241,277 +264,275 @@ interactions:
 
         data: [DONE]
 
+  recorded_at: 2026-03-06T19:45:59.480784+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
     headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      alt-svc:
-      - h3=":443"; ma=86400
+      host:
+      - api.openai.com
+      accept:
+      - application/json
       connection:
       - keep-alive
       content-type:
-      - text/event-stream; charset=utf-8
-      openai-organization:
-      - pydantic-28gund
+      - application/json
+      content-length:
+      - '4720'
+      accept-encoding:
+      - gzip, deflate
+      cookie:
+      - __cf_bm=zft6YwMMTPDlJv9nFzcyqjatDLWL51IWoXRjiBo8lxg-1754693440-1.0.1.1-FT8HyZDjEEZIx76hp4IYd2Ke6ga_YHmugNrkwXCbkPQJM7bAIax9kMz_DGNsvY5gt.sE2g60Jc0zEEp43vK95vUKIk62fCzcc3i.7eygET0; _cfuvid=I3WeF5lZoAzwC31zFIarQCYAjRSXcSCKQ0Z8Szv00_0-1754693440668-0.0.1.1-604800000
+    body:
+      type: json
+      content:
+        messages:
+        - content: 'Tell me: the capital of the country; the weather there; the product name'
+          role: user
+        - role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_country
+            id: call_q2UyBRP7eXNTzAoR8lEhjc9Z
+            type: function
+          - function:
+              arguments: '{}'
+              name: get_product_name
+            id: call_b51ijcpFkDiTQG1bQzsrmtW5
+            type: function
+        - content: Mexico
+          role: tool
+          tool_call_id: call_q2UyBRP7eXNTzAoR8lEhjc9Z
+        - content: Pydantic AI
+          role: tool
+          tool_call_id: call_b51ijcpFkDiTQG1bQzsrmtW5
+        model: gpt-4o
+        stream: true
+        stream_options:
+          include_usage: true
+        tool_choice: required
+        tools:
+        - function:
+            description: ''
+            name: get_weather
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+          type: function
+        - function:
+            description: ''
+            name: get_country
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n        Temperature in Fahrenheit\n    "
+            name: celsius_to_fahrenheit
+            parameters:
+              additionalProperties: false
+              properties:
+                celsius:
+                  type: number
+              required:
+              - celsius
+              type: object
+            strict: true
+          type: function
+        - function:
+            description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+            name: get_weather_forecast
+            parameters:
+              additionalProperties: false
+              properties:
+                location:
+                  type: string
+              required:
+              - location
+              type: object
+            strict: true
+          type: function
+        - function:
+            description: ''
+            name: get_image_resource
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_image_resource_link
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_audio_resource
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_audio_resource_link
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_product_name
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_product_name_link
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_image
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_dict
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_error
+            parameters:
+              additionalProperties: false
+              properties:
+                value:
+                  default: false
+                  type: boolean
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_none
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_multiple_items
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+            name: get_log_level
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: "Echo the run context.\n\n    Args:\n        ctx: Context object containing request and session information.\n\n    Returns:\n        Dictionary with an echo message and the deps.\n    "
+            name: echo_deps
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: Use sampling callback.
+            name: use_sampling
+            parameters:
+              additionalProperties: false
+              properties:
+                foo:
+                  type: string
+              required:
+              - foo
+              type: object
+            strict: true
+          type: function
+        - function:
+            description: The final response which ends this conversation
+            name: final_result
+            parameters:
+              $defs:
+                Answer:
+                  additionalProperties: false
+                  properties:
+                    answer:
+                      type: string
+                    label:
+                      type: string
+                  required:
+                  - label
+                  - answer
+                  type: object
+              additionalProperties: false
+              properties:
+                answers:
+                  items:
+                    $ref: '#/$defs/Answer'
+                  type: array
+              required:
+              - answers
+              type: object
+            strict: true
+          type: function
+  response:
+    status: 200
+    headers:
       openai-processing-ms:
-      - '906'
+      - '379'
+      access-control-expose-headers:
+      - X-Request-ID
+      connection:
+      - keep-alive
       openai-project:
       - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
-      - '2020-10-01'
+      - 2020-10-01
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '4720'
+      alt-svc:
+      - h3=":443"; ma=86400
       content-type:
-      - application/json
-      cookie:
-      - __cf_bm=zft6YwMMTPDlJv9nFzcyqjatDLWL51IWoXRjiBo8lxg-1754693440-1.0.1.1-FT8HyZDjEEZIx76hp4IYd2Ke6ga_YHmugNrkwXCbkPQJM7bAIax9kMz_DGNsvY5gt.sE2g60Jc0zEEp43vK95vUKIk62fCzcc3i.7eygET0;
-        _cfuvid=I3WeF5lZoAzwC31zFIarQCYAjRSXcSCKQ0Z8Szv00_0-1754693440668-0.0.1.1-604800000
-      host:
-      - api.openai.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: 'Tell me: the capital of the country; the weather there; the product name'
-        role: user
-      - role: assistant
-        tool_calls:
-        - function:
-            arguments: '{}'
-            name: get_country
-          id: call_q2UyBRP7eXNTzAoR8lEhjc9Z
-          type: function
-        - function:
-            arguments: '{}'
-            name: get_product_name
-          id: call_b51ijcpFkDiTQG1bQzsrmtW5
-          type: function
-      - content: Mexico
-        role: tool
-        tool_call_id: call_q2UyBRP7eXNTzAoR8lEhjc9Z
-      - content: Pydantic AI
-        role: tool
-        tool_call_id: call_b51ijcpFkDiTQG1bQzsrmtW5
-      model: gpt-4o
-      stream: true
-      stream_options:
-        include_usage: true
-      tool_choice: required
-      tools:
-      - function:
-          description: ''
-          name: get_weather
-          parameters:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
-          strict: true
-        type: function
-      - function:
-          description: ''
-          name: get_country
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
-            \       Temperature in Fahrenheit\n    "
-          name: celsius_to_fahrenheit
-          parameters:
-            additionalProperties: false
-            properties:
-              celsius:
-                type: number
-            required:
-            - celsius
-            type: object
-          strict: true
-        type: function
-      - function:
-          description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
-            forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
-          name: get_weather_forecast
-          parameters:
-            additionalProperties: false
-            properties:
-              location:
-                type: string
-            required:
-            - location
-            type: object
-          strict: true
-        type: function
-      - function:
-          description: ''
-          name: get_image_resource
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_image_resource_link
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_audio_resource
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_audio_resource_link
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_product_name
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_product_name_link
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_image
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_dict
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_error
-          parameters:
-            additionalProperties: false
-            properties:
-              value:
-                default: false
-                type: boolean
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_none
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_multiple_items
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
-          name: get_log_level
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: "Echo the run context.\n\n    Args:\n        ctx: Context object containing request and session information.\n\n
-            \   Returns:\n        Dictionary with an echo message and the deps.\n    "
-          name: echo_deps
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: Use sampling callback.
-          name: use_sampling
-          parameters:
-            additionalProperties: false
-            properties:
-              foo:
-                type: string
-            required:
-            - foo
-            type: object
-          strict: true
-        type: function
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              Answer:
-                additionalProperties: false
-                properties:
-                  answer:
-                    type: string
-                  label:
-                    type: string
-                required:
-                - label
-                - answer
-                type: object
-            additionalProperties: false
-            properties:
-              answers:
-                items:
-                  $ref: '#/$defs/Answer'
-                type: array
-            required:
-            - answers
-            type: object
-          strict: true
-        type: function
-    uri: https://api.openai.com/v1/chat/completions
-  response:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - pydantic-28gund
     body:
-      string: |+
+      type: text
+      content: |+
         data: {"id":"chatcmpl-C2QD2NQfRbWW5ww5we2oDjS1mgHtK","object":"chat.completion.chunk","created":1754693440,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_07871e2ad8","choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_LwxJUB9KppVyogRRLQsamRJv","type":"function","function":{"name":"get_weather","arguments":""}}],"refusal":null},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"NA5VZTdCK"}
 
         data: {"id":"chatcmpl-C2QD2NQfRbWW5ww5we2oDjS1mgHtK","object":"chat.completion.chunk","created":1754693440,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_07871e2ad8","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"MYr"}
@@ -532,287 +553,285 @@ interactions:
 
         data: [DONE]
 
+  recorded_at: 2026-03-06T19:45:59.480784+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      connection:
+      - keep-alive
+      host:
+      - api.openai.com
+      content-type:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      content-length:
+      - '4969'
+      accept:
+      - application/json
+      cookie:
+      - __cf_bm=zft6YwMMTPDlJv9nFzcyqjatDLWL51IWoXRjiBo8lxg-1754693440-1.0.1.1-FT8HyZDjEEZIx76hp4IYd2Ke6ga_YHmugNrkwXCbkPQJM7bAIax9kMz_DGNsvY5gt.sE2g60Jc0zEEp43vK95vUKIk62fCzcc3i.7eygET0; _cfuvid=I3WeF5lZoAzwC31zFIarQCYAjRSXcSCKQ0Z8Szv00_0-1754693440668-0.0.1.1-604800000
+    body:
+      type: json
+      content:
+        messages:
+        - content: 'Tell me: the capital of the country; the weather there; the product name'
+          role: user
+        - role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_country
+            id: call_q2UyBRP7eXNTzAoR8lEhjc9Z
+            type: function
+          - function:
+              arguments: '{}'
+              name: get_product_name
+            id: call_b51ijcpFkDiTQG1bQzsrmtW5
+            type: function
+        - content: Mexico
+          role: tool
+          tool_call_id: call_q2UyBRP7eXNTzAoR8lEhjc9Z
+        - content: Pydantic AI
+          role: tool
+          tool_call_id: call_b51ijcpFkDiTQG1bQzsrmtW5
+        - role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Mexico City"}'
+              name: get_weather
+            id: call_LwxJUB9KppVyogRRLQsamRJv
+            type: function
+        - content: sunny
+          role: tool
+          tool_call_id: call_LwxJUB9KppVyogRRLQsamRJv
+        model: gpt-4o
+        stream: true
+        stream_options:
+          include_usage: true
+        tool_choice: required
+        tools:
+        - function:
+            description: ''
+            name: get_weather
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+          type: function
+        - function:
+            description: ''
+            name: get_country
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n        Temperature in Fahrenheit\n    "
+            name: celsius_to_fahrenheit
+            parameters:
+              additionalProperties: false
+              properties:
+                celsius:
+                  type: number
+              required:
+              - celsius
+              type: object
+            strict: true
+          type: function
+        - function:
+            description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+            name: get_weather_forecast
+            parameters:
+              additionalProperties: false
+              properties:
+                location:
+                  type: string
+              required:
+              - location
+              type: object
+            strict: true
+          type: function
+        - function:
+            description: ''
+            name: get_image_resource
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_image_resource_link
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_audio_resource
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_audio_resource_link
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_product_name
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_product_name_link
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_image
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_dict
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_error
+            parameters:
+              additionalProperties: false
+              properties:
+                value:
+                  default: false
+                  type: boolean
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_none
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: ''
+            name: get_multiple_items
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+            name: get_log_level
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: "Echo the run context.\n\n    Args:\n        ctx: Context object containing request and session information.\n\n    Returns:\n        Dictionary with an echo message and the deps.\n    "
+            name: echo_deps
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+          type: function
+        - function:
+            description: Use sampling callback.
+            name: use_sampling
+            parameters:
+              additionalProperties: false
+              properties:
+                foo:
+                  type: string
+              required:
+              - foo
+              type: object
+            strict: true
+          type: function
+        - function:
+            description: The final response which ends this conversation
+            name: final_result
+            parameters:
+              $defs:
+                Answer:
+                  additionalProperties: false
+                  properties:
+                    answer:
+                      type: string
+                    label:
+                      type: string
+                  required:
+                  - label
+                  - answer
+                  type: object
+              additionalProperties: false
+              properties:
+                answers:
+                  items:
+                    $ref: '#/$defs/Answer'
+                  type: array
+              required:
+              - answers
+              type: object
+            strict: true
+          type: function
+  response:
+    status: 200
     headers:
       access-control-expose-headers:
       - X-Request-ID
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
-      content-type:
-      - text/event-stream; charset=utf-8
-      openai-organization:
-      - pydantic-28gund
-      openai-processing-ms:
-      - '379'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '4969'
-      content-type:
-      - application/json
-      cookie:
-      - __cf_bm=zft6YwMMTPDlJv9nFzcyqjatDLWL51IWoXRjiBo8lxg-1754693440-1.0.1.1-FT8HyZDjEEZIx76hp4IYd2Ke6ga_YHmugNrkwXCbkPQJM7bAIax9kMz_DGNsvY5gt.sE2g60Jc0zEEp43vK95vUKIk62fCzcc3i.7eygET0;
-        _cfuvid=I3WeF5lZoAzwC31zFIarQCYAjRSXcSCKQ0Z8Szv00_0-1754693440668-0.0.1.1-604800000
-      host:
-      - api.openai.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: 'Tell me: the capital of the country; the weather there; the product name'
-        role: user
-      - role: assistant
-        tool_calls:
-        - function:
-            arguments: '{}'
-            name: get_country
-          id: call_q2UyBRP7eXNTzAoR8lEhjc9Z
-          type: function
-        - function:
-            arguments: '{}'
-            name: get_product_name
-          id: call_b51ijcpFkDiTQG1bQzsrmtW5
-          type: function
-      - content: Mexico
-        role: tool
-        tool_call_id: call_q2UyBRP7eXNTzAoR8lEhjc9Z
-      - content: Pydantic AI
-        role: tool
-        tool_call_id: call_b51ijcpFkDiTQG1bQzsrmtW5
-      - role: assistant
-        tool_calls:
-        - function:
-            arguments: '{"city":"Mexico City"}'
-            name: get_weather
-          id: call_LwxJUB9KppVyogRRLQsamRJv
-          type: function
-      - content: sunny
-        role: tool
-        tool_call_id: call_LwxJUB9KppVyogRRLQsamRJv
-      model: gpt-4o
-      stream: true
-      stream_options:
-        include_usage: true
-      tool_choice: required
-      tools:
-      - function:
-          description: ''
-          name: get_weather
-          parameters:
-            additionalProperties: false
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
-          strict: true
-        type: function
-      - function:
-          description: ''
-          name: get_country
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
-            \       Temperature in Fahrenheit\n    "
-          name: celsius_to_fahrenheit
-          parameters:
-            additionalProperties: false
-            properties:
-              celsius:
-                type: number
-            required:
-            - celsius
-            type: object
-          strict: true
-        type: function
-      - function:
-          description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
-            forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
-          name: get_weather_forecast
-          parameters:
-            additionalProperties: false
-            properties:
-              location:
-                type: string
-            required:
-            - location
-            type: object
-          strict: true
-        type: function
-      - function:
-          description: ''
-          name: get_image_resource
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_image_resource_link
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_audio_resource
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_audio_resource_link
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_product_name
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_product_name_link
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_image
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_dict
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_error
-          parameters:
-            additionalProperties: false
-            properties:
-              value:
-                default: false
-                type: boolean
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_none
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: ''
-          name: get_multiple_items
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
-          name: get_log_level
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: "Echo the run context.\n\n    Args:\n        ctx: Context object containing request and session information.\n\n
-            \   Returns:\n        Dictionary with an echo message and the deps.\n    "
-          name: echo_deps
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-        type: function
-      - function:
-          description: Use sampling callback.
-          name: use_sampling
-          parameters:
-            additionalProperties: false
-            properties:
-              foo:
-                type: string
-            required:
-            - foo
-            type: object
-          strict: true
-        type: function
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            $defs:
-              Answer:
-                additionalProperties: false
-                properties:
-                  answer:
-                    type: string
-                  label:
-                    type: string
-                required:
-                - label
-                - answer
-                type: object
-            additionalProperties: false
-            properties:
-              answers:
-                items:
-                  $ref: '#/$defs/Answer'
-                type: array
-            required:
-            - answers
-            type: object
-          strict: true
-        type: function
-    uri: https://api.openai.com/v1/chat/completions
-  response:
+      openai-processing-ms:
+      - '482'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-organization:
+      - pydantic-28gund
     body:
-      string: |+
+      type: text
+      content: |+
         data: {"id":"chatcmpl-C2QD4vblfNcSDeoXmULJR4umoKNqY","object":"chat.completion.chunk","created":1754693442,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_07871e2ad8","choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_CCGIWaMeYWmxOQ91orkmTvzn","type":"function","function":{"name":"final_result","arguments":""}}],"refusal":null},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"3HGTeJmv"}
 
         data: {"id":"chatcmpl-C2QD4vblfNcSDeoXmULJR4umoKNqY","object":"chat.completion.chunk","created":1754693442,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_07871e2ad8","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"5oT"}
@@ -927,29 +946,4 @@ interactions:
 
         data: [DONE]
 
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream; charset=utf-8
-      openai-organization:
-      - pydantic-28gund
-      openai-processing-ms:
-      - '482'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:45:59.480784+00:00

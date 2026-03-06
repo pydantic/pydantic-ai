@@ -1,72 +1,75 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
     headers:
       accept:
       - '*/*'
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
       content-length:
       - '203'
       content-type:
       - application/json
       host:
       - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: ''
-        role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
-      systemInstruction:
-        parts:
-        - text: You are a helpful assistant.
-        role: user
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+      connection:
+      - keep-alive
+      accept-encoding:
+      - gzip, deflate
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: ''
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+        systemInstruction:
+          parts:
+          - text: You are a helpful assistant.
+          role: user
   response:
+    status: 200
     headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '796'
       content-type:
       - application/json; charset=UTF-8
-      server-timing:
-      - gfet4t7; dur=4764
-      transfer-encoding:
-      - chunked
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       vary:
       - Origin
       - X-Origin
       - Referer
-    parsed_body:
-      candidates:
-      - content:
-          parts:
-          - text: |-
-              Hello! That's correct. I am designed to be a helpful assistant.
+      transfer-encoding:
+      - chunked
+      server-timing:
+      - gfet4t7; dur=4764
+      content-length:
+      - '796'
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: |-
+                Hello! That's correct. I am designed to be a helpful assistant.
 
-              I'm ready to assist you with a wide range of tasks, from answering questions and providing information to brainstorming ideas and generating creative content.
+                I'm ready to assist you with a wide range of tasks, from answering questions and providing information to brainstorming ideas and generating creative content.
 
-              How can I help you today?
-          role: model
-        finishReason: STOP
-        index: 0
-      modelVersion: gemini-2.5-flash
-      responseId: KY8gadCXGtqnmtkPvdGvsQg
-      usageMetadata:
-        candidatesTokenCount: 53
-        promptTokenCount: 8
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 8
-        thoughtsTokenCount: 725
-        totalTokenCount: 786
-    status:
-      code: 200
-      message: OK
-version: 1
+                How can I help you today?
+            role: model
+          finishReason: STOP
+          index: 0
+        modelVersion: gemini-2.5-flash
+        responseId: KY8gadCXGtqnmtkPvdGvsQg
+        usageMetadata:
+          candidatesTokenCount: 53
+          promptTokenCount: 8
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 8
+          thoughtsTokenCount: 725
+          totalTokenCount: 786
+  recorded_at: 2026-03-06T19:45:25.604375+00:00

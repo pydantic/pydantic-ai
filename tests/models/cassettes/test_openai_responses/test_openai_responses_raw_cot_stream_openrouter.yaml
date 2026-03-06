@@ -1,29 +1,51 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/responses
     headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '95'
       content-type:
       - application/json
       host:
       - openrouter.ai
-    method: POST
-    parsed_body:
-      input:
-      - content: What is 2+2?
-        role: user
-      model: openai/gpt-oss-20b
-      stream: true
-    uri: https://openrouter.ai/api/v1/responses
-  response:
+      accept:
+      - application/json
+      connection:
+      - keep-alive
+      accept-encoding:
+      - gzip, deflate
+      content-length:
+      - '95'
     body:
-      string: |+
+      type: json
+      content:
+        input:
+        - content: What is 2+2?
+          role: user
+        model: openai/gpt-oss-20b
+        stream: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      vary:
+      - Accept-Encoding
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      access-control-allow-origin:
+      - '*'
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+    body:
+      type: text
+      content: |+
         : OPENROUTER PROCESSING
 
         data: {"type":"response.created","response":{"object":"response","id":"gen-1764265411-Fu1iEX7h5MRWiL79lb94","created_at":1764265411,"status":"in_progress","error":null,"output_text":"","output":[],"model":"openai/gpt-oss-20b","incomplete_details":null,"max_tool_calls":null,"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"max_output_tokens":null,"temperature":null,"top_p":null,"metadata":{},"background":false,"previous_response_id":null,"service_tier":"auto","truncation":null,"store":false,"instructions":null,"reasoning":null,"safety_identifier":null,"prompt_cache_key":null,"user":null},"sequence_number":0}
@@ -108,26 +130,4 @@ interactions:
 
         data: [DONE]
 
-    headers:
-      access-control-allow-origin:
-      - '*'
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream
-      permissions-policy:
-      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
-        "https://hooks.stripe.com")
-      referrer-policy:
-      - no-referrer, strict-origin-when-cross-origin
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:45:35.536123+00:00

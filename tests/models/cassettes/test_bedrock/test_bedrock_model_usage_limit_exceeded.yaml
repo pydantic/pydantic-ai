@@ -1,32 +1,41 @@
+version: 1
 interactions:
 - request:
-    body: '{"input": {"converse": {"messages": [{"role": "user", "content": [{"text": "The quick brown fox jumps over the
-      lazydog."}, {"cachePoint": {"type": "default"}}, {"text": "What was next?"}]}], "system": []}}}'
-    headers:
-      amz-sdk-invocation-id:
-      - !!binary |
-        Y2FhYzlhNjAtNWYyOC00NjhmLWJkZTgtODM0OTdhMjc1ZTI3
-      amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
-      content-length:
-      - '206'
-      content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
     method: POST
     uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-sonnet-4-20250514-v1%3A0/count-tokens
-  response:
     headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '18'
       content-type:
       - application/json
-    parsed_body:
-      inputTokens: 23
-    status:
-      code: 200
-      message: OK
-version: 1
+      amz-sdk-request:
+      - attempt=1
+      amz-sdk-invocation-id:
+      - caac9a60-5f28-468f-bde8-83497a275e27
+      content-length:
+      - '206'
+    body:
+      type: json
+      content:
+        input:
+          converse:
+            messages:
+            - content:
+              - text: The quick brown fox jumps over the lazydog.
+              - cachePoint:
+                  type: default
+              - text: What was next?
+              role: user
+            system: []
+  response:
+    status: 200
+    headers:
+      content-length:
+      - '18'
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        inputTokens: 23
+  recorded_at: 2026-03-06T20:14:05.729848+00:00

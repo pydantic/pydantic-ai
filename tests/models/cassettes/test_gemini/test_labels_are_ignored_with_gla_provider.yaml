@@ -1,62 +1,65 @@
+version: 1
 interactions:
-  - request:
-      headers:
-        accept:
-          - "*/*"
-        accept-encoding:
-          - gzip, deflate
-        connection:
-          - keep-alive
-        content-length:
-          - "82"
-        content-type:
-          - application/json
-        host:
-          - generativelanguage.googleapis.com
-      method: POST
-      parsed_body:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+    headers:
+      host:
+      - generativelanguage.googleapis.com
+      accept:
+      - '*/*'
+      content-length:
+      - '82'
+      content-type:
+      - application/json
+      connection:
+      - keep-alive
+      accept-encoding:
+      - gzip, deflate
+    body:
+      type: json
+      content:
         contents:
-          - parts:
-              - text: What is the capital of France?
-            role: user
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
-    response:
-      headers:
-        alt-svc:
-          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-        content-length:
-          - "637"
-        content-type:
-          - application/json; charset=UTF-8
-        server-timing:
-          - gfet4t7; dur=426
-        transfer-encoding:
-          - chunked
-        vary:
-          - Origin
-          - X-Origin
-          - Referer
-      parsed_body:
+        - parts:
+          - text: What is the capital of France?
+          role: user
+  response:
+    status: 200
+    headers:
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      content-length:
+      - '637'
+      transfer-encoding:
+      - chunked
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=426
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+    body:
+      type: json
+      content:
         candidates:
-          - avgLogprobs: -0.02703852951526642
-            content:
-              parts:
-                - text: |
-                    The capital of France is **Paris**.
-              role: model
-            finishReason: STOP
+        - avgLogprobs: -0.02703852951526642
+          content:
+            parts:
+            - text: |
+                The capital of France is **Paris**.
+            role: model
+          finishReason: STOP
         modelVersion: gemini-2.0-flash
         usageMetadata:
           candidatesTokenCount: 9
           candidatesTokensDetails:
-            - modality: TEXT
-              tokenCount: 9
+          - modality: TEXT
+            tokenCount: 9
           promptTokenCount: 7
           promptTokensDetails:
-            - modality: TEXT
-              tokenCount: 7
+          - modality: TEXT
+            tokenCount: 7
           totalTokenCount: 16
-      status:
-        code: 200
-        message: OK
-version: 1
+  recorded_at: 2026-03-06T19:45:36.704245+00:00

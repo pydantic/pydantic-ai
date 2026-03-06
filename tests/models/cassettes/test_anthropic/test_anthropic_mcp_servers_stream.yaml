@@ -1,43 +1,59 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
+      content-length:
+      - '416'
       accept:
       - application/json
       accept-encoding:
       - gzip, deflate
       connection:
       - keep-alive
-      content-length:
-      - '416'
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      mcp_servers:
-      - name: deepwiki
-        tool_configuration:
-          allowed_tools:
-          - ask_question
-          enabled: true
-        type: url
-        url: https://mcp.deepwiki.com/mcp
-      messages:
-      - content:
-        - text: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: true
-      thinking:
-        budget_tokens: 3000
-        type: enabled
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
     body:
-      string: |+
+      type: json
+      content:
+        max_tokens: 4096
+        mcp_servers:
+        - name: deepwiki
+          tool_configuration:
+            allowed_tools:
+            - ask_question
+            enabled: true
+          type: url
+          url: https://mcp.deepwiki.com/mcp
+        messages:
+        - content:
+          - text: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
+            type: text
+          role: user
+        model: claude-sonnet-4-5
+        stream: true
+        thinking:
+          budget_tokens: 3000
+          type: enabled
+  response:
+    status: 200
+    headers:
+      content-type:
+      - text/event-stream; charset=utf-8
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      transfer-encoding:
+      - chunked
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    body:
+      type: text
+      content: |+
         event: message_start
         data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_01Xf6SmUVY1mDrSwFc5RsY3n","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":690,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard"}}     }
 
@@ -227,19 +243,4 @@ interactions:
         event: message_stop
         data: {"type":"message_stop"         }
 
-    headers:
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream; charset=utf-8
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:24:49.810263+00:00

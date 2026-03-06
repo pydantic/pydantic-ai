@@ -1,6 +1,5 @@
 import os
 from collections.abc import Iterator
-from functools import partial
 from typing import Any, Literal, get_args
 
 import httpx
@@ -38,23 +37,14 @@ pytestmark = [
 ]
 
 
-def modify_response(response: dict[str, Any], filter_headers: list[str]) -> dict[str, Any]:  # pragma: lax no cover
-    for header in response['headers'].copy():
-        assert isinstance(header, str)
-        if header.lower() in filter_headers:
-            del response['headers'][header]
-    return response
-
-
 @pytest.fixture(scope='module')
 def vcr_config():  # pragma: lax no cover
     if os.getenv('CI') or not os.getenv('CEREBRAS_API_KEY'):
         return {'record_mode': 'none'}
 
     return {
-        'record_mode': 'rewrite',
-        'filter_headers': ['accept-encoding'],
-        'before_record_response': partial(modify_response, filter_headers=['cache-control', 'connection']),
+        'record_mode': 'all',
+        'filter_headers': ['accept-encoding', 'cache-control', 'connection'],
     }
 
 

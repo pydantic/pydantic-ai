@@ -11,7 +11,6 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from functools import cached_property
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
@@ -20,8 +19,6 @@ import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
-from vcr import VCR, request as vcr_request
-
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
 from pydantic_ai.models import Model
@@ -295,18 +292,6 @@ def raise_if_exception(e: Any) -> None:
         raise e
 
 
-def pytest_recording_configure(config: Any, vcr: VCR):
-    from . import json_body_serializer
-
-    vcr.register_serializer('yaml', json_body_serializer)
-
-    def method_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
-        if r1.method.upper() != r2.method.upper():
-            raise AssertionError(f'{r1.method} != {r2.method}')
-
-    vcr.register_matcher('method', method_matcher)
-
-
 def pytest_addoption(parser: Any) -> None:
     parser.addoption(
         '--xai-proto-include-json',
@@ -317,30 +302,11 @@ def pytest_addoption(parser: Any) -> None:
     )
 
 
-@pytest.fixture(autouse=True)
-def mock_vcr_aiohttp_content(mocker: MockerFixture):
-    try:
-        from vcr.stubs import aiohttp_stubs
-    except ImportError:  # pragma: lax no cover
-        return
-
-    # google-genai calls `self.response_stream.content.readline()` where `self.response_stream` is a `MockClientResponse`,
-    # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
-    # So we turn `content` into a cached property to return the same one each time.
-    # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
-    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # type: ignore
-    cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
-    mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
-    mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
-
-
 @pytest.fixture(scope='module')
 def vcr_config():
     return {
         'ignore_localhost': True,
-        # Note: additional header filtering is done inside the serializer
         'filter_headers': ['authorization', 'x-api-key'],
-        'decode_compressed_response': True,
     }
 
 

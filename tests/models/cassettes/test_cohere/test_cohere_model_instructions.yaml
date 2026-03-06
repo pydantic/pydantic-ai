@@ -1,6 +1,13 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.cohere.com/v2/chat
     headers:
+      host:
+      - api.cohere.com
+      content-type:
+      - application/json
       accept:
       - '*/*'
       accept-encoding:
@@ -9,60 +16,54 @@ interactions:
       - keep-alive
       content-length:
       - '177'
-      content-type:
-      - application/json
-      host:
-      - api.cohere.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: You are a helpful assistant.
-        role: system
-      - content: What is the capital of France?
-        role: user
-      model: command-r7b-12-2024
-      stream: false
-    uri: https://api.cohere.com/v2/chat
+    body:
+      type: json
+      content:
+        messages:
+        - content: You are a helpful assistant.
+          role: system
+        - content: What is the capital of France?
+          role: user
+        model: command-r7b-12-2024
+        stream: false
   response:
+    status: 200
     headers:
+      num_tokens:
+      - '74'
+      vary:
+      - Origin
+      num_chars:
+      - '2839'
+      pragma:
+      - no-cache
+      content-length:
+      - '555'
       access-control-expose-headers:
       - X-Debug-Trace-ID
+      content-type:
+      - application/json
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
       - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
-      content-length:
-      - '555'
-      content-type:
-      - application/json
       expires:
       - Thu, 01 Jan 1970 00:00:00 UTC
-      num_chars:
-      - '2839'
-      num_tokens:
-      - '74'
-      pragma:
-      - no-cache
-      vary:
-      - Origin
-    parsed_body:
-      finish_reason: COMPLETE
-      id: cf7be73f-dcee-4589-9eea-2dca902b27ec
-      message:
-        content:
-        - text: The capital of France is Paris. It is the country's largest city and serves as the economic, cultural, and
-            political center of France. Paris is known for its rich history, iconic landmarks such as the Eiffel Tower and
-            the Louvre Museum, and its significant influence on fashion, cuisine, and the arts.
-          type: text
-        role: assistant
-      usage:
-        billed_units:
-          input_tokens: 13
-          output_tokens: 61
-        tokens:
-          input_tokens: 542
-          output_tokens: 63
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: json
+      content:
+        finish_reason: COMPLETE
+        id: cf7be73f-dcee-4589-9eea-2dca902b27ec
+        message:
+          content:
+          - text: The capital of France is Paris. It is the country's largest city and serves as the economic, cultural, and political center of France. Paris is known for its rich history, iconic landmarks such as the Eiffel Tower and the Louvre Museum, and its significant influence on fashion, cuisine, and the arts.
+            type: text
+          role: assistant
+        usage:
+          billed_units:
+            input_tokens: 13
+            output_tokens: 61
+          tokens:
+            input_tokens: 542
+            output_tokens: 63
+  recorded_at: 2026-03-06T19:45:40.848628+00:00

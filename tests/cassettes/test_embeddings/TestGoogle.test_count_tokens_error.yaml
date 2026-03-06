@@ -1,48 +1,50 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/models/nonexistent-model:countTokens
     headers:
+      content-type:
+      - application/json
       accept:
       - '*/*'
       accept-encoding:
       - gzip, deflate, br
+      host:
+      - generativelanguage.googleapis.com
       connection:
       - keep-alive
       content-length:
       - '70'
-      content-type:
-      - application/json
-      host:
-      - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: Hello, world!
-        role: user
-    uri: https://generativelanguage.googleapis.com/v1beta/models/nonexistent-model:countTokens
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Hello, world!
+          role: user
   response:
+    status: 404
     headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '262'
+      transfer-encoding:
+      - chunked
       content-type:
       - application/json; charset=UTF-8
       server-timing:
       - gfet4t7; dur=65
-      transfer-encoding:
-      - chunked
       vary:
       - Origin
       - X-Origin
       - Referer
-    parsed_body:
-      error:
-        code: 404
-        message: models/nonexistent-model is not found for API version v1beta, or is not supported for countTokens. Call ListModels
-          to see the list of available models and their supported methods.
-        status: NOT_FOUND
-    status:
-      code: 404
-      message: Not Found
-version: 1
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '262'
+    body:
+      type: json
+      content:
+        error:
+          code: 404
+          message: models/nonexistent-model is not found for API version v1beta, or is not supported for countTokens. Call ListModels to see the list of available models and their supported methods.
+          status: NOT_FOUND
+  recorded_at: 2026-03-06T19:45:55.895644+00:00

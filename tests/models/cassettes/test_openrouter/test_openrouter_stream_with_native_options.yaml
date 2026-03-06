@@ -1,38 +1,60 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
     headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
       content-length:
       - '232'
       content-type:
       - application/json
+      connection:
+      - keep-alive
       host:
       - openrouter.ai
-    method: POST
-    parsed_body:
-      messages:
-      - content: Who are you
-        role: user
-      model: google/gemini-2.0-flash-exp:free
-      models:
-      - x-ai/grok-4
-      provider:
-        only:
-        - xai
-      stream: true
-      stream_options:
-        include_usage: true
-      transforms:
-      - middle-out
-    uri: https://openrouter.ai/api/v1/chat/completions
-  response:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
     body:
-      string: |+
+      type: json
+      content:
+        messages:
+        - content: Who are you
+          role: user
+        model: google/gemini-2.0-flash-exp:free
+        models:
+        - x-ai/grok-4
+        provider:
+          only:
+          - xai
+        stream: true
+        stream_options:
+          include_usage: true
+        transforms:
+        - middle-out
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - '*'
+      transfer-encoding:
+      - chunked
+      connection:
+      - keep-alive
+      cache-control:
+      - no-cache
+      vary:
+      - Accept-Encoding
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      content-type:
+      - text/event-stream
+    body:
+      type: text
+      content: |+
         : OPENROUTER PROCESSING
 
         : OPENROUTER PROCESSING
@@ -197,26 +219,4 @@ interactions:
 
         data: [DONE]
 
-    headers:
-      access-control-allow-origin:
-      - '*'
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream
-      permissions-policy:
-      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
-        "https://hooks.stripe.com")
-      referrer-policy:
-      - no-referrer, strict-origin-when-cross-origin
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:45:37.434734+00:00

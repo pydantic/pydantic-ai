@@ -1,18 +1,33 @@
+version: 1
 interactions:
 - request:
-    body: null
-    headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
     method: GET
     uri: https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
-  response:
+    headers:
+      connection:
+      - keep-alive
+      accept-encoding:
+      - gzip, deflate
+      accept:
+      - '*/*'
     body:
-      string: |
+      type: none
+  response:
+    status: 200
+    headers:
+      content-md5:
+      - sc9JBYqKfuVJ7//VcUymgw==
+      content-length:
+      - '1681126'
+      etag:
+      - '0x8DADE2A203B60B6'
+      content-type:
+      - application/octet-stream
+      last-modified:
+      - Wed, 14 Dec 2022 23:22:53 GMT
+    body:
+      type: text
+      content: |
         IQ== 0
         Ig== 1
         Iw== 2
@@ -100269,18 +100284,4 @@ interactions:
         LldhaXRGb3I= 100253
         IGRheWNhcmU= 100254
         IENvbnZleW9y 100255
-    headers:
-      content-length:
-      - '1681126'
-      content-md5:
-      - sc9JBYqKfuVJ7//VcUymgw==
-      content-type:
-      - application/octet-stream
-      etag:
-      - '0x8DADE2A203B60B6'
-      last-modified:
-      - Wed, 14 Dec 2022 23:22:53 GMT
-    status:
-      code: 200
-      message: OK
-version: 1
+  recorded_at: 2026-03-06T19:45:56.535248+00:00

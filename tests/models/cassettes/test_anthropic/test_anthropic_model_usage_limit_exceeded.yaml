@@ -1,40 +1,43 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages/count_tokens?beta=true
     headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
       connection:
       - keep-alive
+      content-type:
+      - application/json
       content-length:
       - '139'
-      content-type:
+      accept:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      messages:
-      - content:
-        - text: The quick brown fox jumps over the lazydog.
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-    uri: https://api.anthropic.com/v1/messages/count_tokens?beta=true
+      accept-encoding:
+      - gzip, deflate
+    body:
+      type: json
+      content:
+        messages:
+        - content:
+          - text: The quick brown fox jumps over the lazydog.
+            type: text
+          role: user
+        model: claude-sonnet-4-5
   response:
+    status: 200
     headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '19'
-      content-type:
-      - application/json
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
-    parsed_body:
-      input_tokens: 19
-    status:
-      code: 200
-      message: OK
-version: 1
+      content-length:
+      - '19'
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        input_tokens: 19
+  recorded_at: 2026-03-06T19:24:49.850659+00:00

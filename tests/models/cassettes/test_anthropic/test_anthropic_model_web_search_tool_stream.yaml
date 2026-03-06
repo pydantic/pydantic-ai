@@ -1,44 +1,60 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '396'
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the weather in San Francisco today?
-          type: text
-        role: user
-      model: claude-sonnet-4-0
-      stream: true
-      thinking:
-        budget_tokens: 3000
-        type: enabled
-      tool_choice:
-        type: auto
-      tools:
-      - allowed_domains: null
-        blocked_domains: null
-        max_uses: null
-        name: web_search
-        type: web_search_20250305
-        user_location: null
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
+      content-length:
+      - '396'
+      accept-encoding:
+      - gzip, deflate
+      accept:
+      - application/json
+      connection:
+      - keep-alive
     body:
-      string: |+
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - content:
+          - text: What is the weather in San Francisco today?
+            type: text
+          role: user
+        model: claude-sonnet-4-0
+        stream: true
+        thinking:
+          budget_tokens: 3000
+          type: enabled
+        tool_choice:
+          type: auto
+        tools:
+        - allowed_domains: null
+          blocked_domains: null
+          max_uses: null
+          name: web_search
+          type: web_search_20250305
+          user_location: null
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      transfer-encoding:
+      - chunked
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      cache-control:
+      - no-cache
+    body:
+      type: text
+      content: |+
         event: message_start
         data: {"type":"message_start","message":{"id":"msg_01QmxBSdEbD9ZeBWDVgFDoQ5","type":"message","role":"assistant","model":"claude-sonnet-4-20250514","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":2068,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard"}}         }
 
@@ -372,19 +388,4 @@ interactions:
         event: message_stop
         data: {"type":"message_stop"         }
 
-    headers:
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream; charset=utf-8
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:24:49.862229+00:00

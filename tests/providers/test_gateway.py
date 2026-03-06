@@ -76,9 +76,7 @@ def gateway_api_key():
 def vcr_config():
     return {
         'ignore_localhost': False,
-        # Note: additional header filtering is done inside the serializer
         'filter_headers': ['authorization', 'x-api-key'],
-        'decode_compressed_response': True,
     }
 
 

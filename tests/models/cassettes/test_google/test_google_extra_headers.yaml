@@ -1,12 +1,9 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
     headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
       content-length:
       - '86'
       content-type:
@@ -15,52 +12,58 @@ interactions:
       - Extra-Header-Value
       host:
       - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: Hello
-        role: user
-      generationConfig: {}
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+      connection:
+      - keep-alive
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Hello
+          role: user
+        generationConfig: {}
   response:
+    status: 200
     headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '686'
-      content-type:
-      - application/json; charset=UTF-8
-      server-timing:
-      - gfet4t7; dur=369
       transfer-encoding:
       - chunked
       vary:
       - Origin
       - X-Origin
       - Referer
-    parsed_body:
-      candidates:
-      - avgLogprobs: -0.0010216936299746687
-        content:
-          parts:
-          - text: |
-              Hello there! How can I help you today?
-          role: model
-        finishReason: STOP
-      modelVersion: gemini-1.5-flash
-      responseId: LVteaPaFMdm7nvgPz5Sb0Aw
-      usageMetadata:
-        candidatesTokenCount: 11
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 11
-        promptTokenCount: 2
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 2
-        totalTokenCount: 13
-    status:
-      code: 200
-      message: OK
-version: 1
+      content-type:
+      - application/json; charset=UTF-8
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      server-timing:
+      - gfet4t7; dur=369
+      content-length:
+      - '686'
+    body:
+      type: json
+      content:
+        candidates:
+        - avgLogprobs: -0.0010216936299746687
+          content:
+            parts:
+            - text: |
+                Hello there! How can I help you today?
+            role: model
+          finishReason: STOP
+        modelVersion: gemini-1.5-flash
+        responseId: LVteaPaFMdm7nvgPz5Sb0Aw
+        usageMetadata:
+          candidatesTokenCount: 11
+          candidatesTokensDetails:
+          - modality: TEXT
+            tokenCount: 11
+          promptTokenCount: 2
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 2
+          totalTokenCount: 13
+  recorded_at: 2026-03-06T19:45:20.884969+00:00

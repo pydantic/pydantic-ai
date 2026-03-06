@@ -1,39 +1,63 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
     headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '283'
       content-type:
       - application/json
+      content-length:
+      - '283'
       host:
       - api.openai.com
-    method: POST
-    parsed_body:
-      include:
-      - reasoning.encrypted_content
-      input:
-      - content: what's 123456 to the power of 123?
-        role: user
-      model: gpt-5
-      reasoning:
-        effort: low
-        summary: detailed
-      stream: true
-      tool_choice: auto
-      tools:
-      - container:
-          type: auto
-        type: code_interpreter
-    uri: https://api.openai.com/v1/responses
-  response:
+      connection:
+      - keep-alive
+      accept-encoding:
+      - gzip, deflate
+      accept:
+      - application/json
     body:
-      string: |+
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - content: what's 123456 to the power of 123?
+          role: user
+        model: gpt-5
+        reasoning:
+          effort: low
+          summary: detailed
+        stream: true
+        tool_choice: auto
+        tools:
+        - container:
+            type: auto
+          type: code_interpreter
+  response:
+    status: 200
+    headers:
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      openai-processing-ms:
+      - '1839'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-organization:
+      - pydantic-28gund
+      content-type:
+      - text/event-stream; charset=utf-8
+      connection:
+      - keep-alive
+      openai-version:
+      - 2020-10-01
+      alt-svc:
+      - h3=":443"; ma=86400
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
         event: response.created
         data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_68c35098e6fc819e80fb94b25b7d031b0f2d670b80edc507","object":"response","created_at":1757630616,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5-2025-08-07","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":"low","summary":"detailed"},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"code_interpreter","container":{"type":"auto"}}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
 
@@ -1129,27 +1153,4 @@ interactions:
         event: response.completed
         data: {"type":"response.completed","sequence_number":364,"response":{"id":"resp_68c35098e6fc819e80fb94b25b7d031b0f2d670b80edc507","object":"response","created_at":1757630616,"status":"completed","background":false,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"gpt-5-2025-08-07","output":[{"id":"rs_68c3509b2ee0819eba32735182d275ad0f2d670b80edc507","type":"reasoning","encrypted_content":"gAAAAABow1Cpwk_8o9uzIgV9Ik_sm5MRR6q2-dzTHRhtOGSJtCbL_aa4rNXMsxBuOAzp6LD_ibs0-j35fcTOsd87yrcCjs0L-pyl3dh83b1lVzMqlR8J6B6pAOqCptKQwBLrVlFo33adAqYDM6UPMHt27czm84CjlMMpyM382eIYgUGL6gOQDDZr22Sb6brpc3vkSVfphHQRDcuywTcJZiORfHGuGWptDiOhyrrpO6MzB8lpN-vj661kTprZxMUM-bLJ9HC82xkihkIpMaoIXg6AMlovkpX-sjmK72ylxkkRXYjELxZLQdfGtpGBaycISmVzG2QbtnfXnlTDKo3VVbQaa7ku-z_UAu_7-GLbVztkD0bhPQj8l5TmaJHVMHErPQ2-bxMwAVDFXzR5ohaILsy8dfX868NzNMpi9PHPxC5JbEt_3udxwn8kBcUmUxhTMSwT91SoZAxpVzleJEfOVkZdv49OMTBbVs5AnRoIIB8sHG6-hFixwJ4a1M2GFjJDsFYZcSBRND-D8ax9BZB-pQjisHBm6RJco_0nSBdzaggWrrcZY-RLbX9MAcZSe4D3Hkzs4xhCFxvnxoCFh3QIwf4mhvoZAjr5KkAipGaPEzjZHovpG3e2ihLeT1IW8mrmdNSjHb2w_p1TDqdwrmnJAwPJR40bKj5XSnZ25O-2bJpxfH_zGUXYa70EbJVdC-F7s0UVlg0W37-wOpIqCLYI_s5VVhJOsQjk7SUJqTpD9me8jTdSiW2mc-4wB9D05tNSiKOgatQ1JZvYveGkJOdHRj9JkvUxtsPvc5CjV0M0sYiJMNbV4ab8jWzbBwgZ3DcxdnxU2Mu-Pd_KkmeNT95bgCoCqB8LrBLQQMMcYkIonoF_04-Yj0ElVtk4ZIHUZ495oZrtvqeVtMnn-xC7AL2ydtRvJGjD9OIvU2RH8jOmGOTB42EuUStGhwuDPdqkLA62Tsh5ACXI1a50etcK6Sv_1V6C3hgD8hU99LtMPeHMBb_Xdgu4NoHqZLzqj0tgA3zJoauC8HVpj42CjH2bJas2rg2UuCFT6PgaVVqYrg4JwsQnGv1R1pMvIKbvE9H7Fc5WHfxxuS9tLtuaGuxHq7FfFs1rUWuc-NZRuaQWQiNED83OsytZZ2HqrMbCbxLMiF_LvJtvrWAwBIJSmboIsiBBrOWidZepalS0GJsaXHmCYhk9G_utlNgFSf0v-bRP-LwrGlFbl5-E-iZ_RFGRdzDbc4Yg-AQuUIYGSjwtxfW4Z_O4yVE_M12zji1A0w9JBHOazyqm66oECZ0RyRUq0Q8o9DmYF-KzGOP3sG8CaAj8e5LDlYI4757NStQs9DPDL-Nv5oCgy-Pr0YFnNwn1RTLpMvdoOTw8D_TSmbNmQmOqMtX-EEdREZbgkx4It9XQkWoPEgDu9VhVidV-o_T8Q1K-lWt8SKo1f6IqjmhGcfM4NaNYPEraE3Xbvr7a1rGCA1bJvxwis1k582vLnJpfIT2GQ40FHv24TBjLwE9YMp6GigcSl1C-YSrkqfF-PXlcv6tYernI87ZHy4OZPoMXJqCLQBKHhng_14PUIslejTz2JfpuVs-4nbBP0oLtV43H27UM8K1LEwnS_Dbn-dgtEwswoZkED60PJmIaM1gamsBhUKYNLGlLbKIHJpUJGH8QyLy4McsokFOgnG1SIy2ss_5JMVqVGCYuLlmIXT_ElRJz8a-bc8O0P2H31DjHPpx5CFzIQf2LnmsDcRv-Ep9oGnJd8AsdfCmuou-jtw==","summary":[{"type":"summary_text","text":"**Calculating a large integer**\n\nI need to compute 123456 raised to the power of 123. That’s an enormous integer, and the user probably wants the exact value. I can use Python's ability to handle big integers, but the output will likely be extremely long — potentially hundreds of digits. I should consider that and prepare to return the result as plain text, even if it ends up being around 627 digits. So, let’s go ahead and compute that!"}]},{"id":"ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507","type":"code_interpreter_call","status":"completed","code":"n = pow(123456, 123)\nlen(str(n))","container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","outputs":null},{"id":"ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507","type":"code_interpreter_call","status":"completed","code":"str(n)[:100], str(n)[-100:]","container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","outputs":null},{"id":"ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507","type":"code_interpreter_call","status":"completed","code":"n","container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","outputs":null},{"id":"msg_68c350a75ddc819ea5406470460be7850f2d670b80edc507","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"123456^123 equals:\n180302106304044807508140927865938572807342688638559680488440159857958502360813732502197826969863225730871630436419794758932074350380367697649814626542926602664707275874269201777743912313197516323690221274713845895457748735309484337191373255527928271785206382967998984330482105350942229970677054940838210936952303939401656756127607778599667243702814072746219431942293005416411635076021296045493305133645615566590735965652587934290425473827719935012870093575987789431818047013404691795773170405764614646054949298846184678296813625595333311611385251735244505448443050050547161779229749134489643622579100908331839817426366854332416"}],"role":"assistant"}],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":"low","summary":"detailed"},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"code_interpreter","container":{"type":"auto"}}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":3727,"input_tokens_details":{"cached_tokens":3200},"output_tokens":347,"output_tokens_details":{"reasoning_tokens":128},"total_tokens":4074},"user":null,"metadata":{}}}
 
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream; charset=utf-8
-      openai-organization:
-      - pydantic-28gund
-      openai-processing-ms:
-      - '1839'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:45:35.627548+00:00

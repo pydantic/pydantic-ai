@@ -1,80 +1,83 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
     headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate
+      host:
+      - generativelanguage.googleapis.com
       connection:
       - keep-alive
       content-length:
       - '350'
       content-type:
       - application/json
-      host:
-      - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: What is the largest city in Mexico?
-        role: user
-      generationConfig:
-        response_json_schema:
-          description: A city and its country.
-          properties:
-            city:
-              type: string
-            country:
-              type: string
-          required:
-          - city
-          - country
-          title: CityLocation
-          type: object
-        response_mime_type: application/json
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: What is the largest city in Mexico?
+          role: user
+        generationConfig:
+          response_json_schema:
+            description: A city and its country.
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            title: CityLocation
+            type: object
+          response_mime_type: application/json
   response:
+    status: 200
     headers:
+      transfer-encoding:
+      - chunked
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '707'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
       - gfet4t7; dur=813
-      transfer-encoding:
-      - chunked
+      content-length:
+      - '707'
       vary:
       - Origin
       - X-Origin
       - Referer
-    parsed_body:
-      candidates:
-      - avgLogprobs: -5.800400977022946e-05
-        content:
-          parts:
-          - text: |-
-              {
-                "city": "Mexico City",
-                "country": "Mexico"
-              }
-          role: model
-        finishReason: STOP
-      modelVersion: gemini-2.0-flash
-      responseId: wfkgacl6gqSq2w_ti--QDQ
-      usageMetadata:
-        candidatesTokenCount: 20
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 20
-        promptTokenCount: 8
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 8
-        totalTokenCount: 28
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: json
+      content:
+        candidates:
+        - avgLogprobs: -0.00005800400977022946
+          content:
+            parts:
+            - text: |-
+                {
+                  "city": "Mexico City",
+                  "country": "Mexico"
+                }
+            role: model
+          finishReason: STOP
+        modelVersion: gemini-2.0-flash
+        responseId: wfkgacl6gqSq2w_ti--QDQ
+        usageMetadata:
+          candidatesTokenCount: 20
+          candidatesTokensDetails:
+          - modality: TEXT
+            tokenCount: 20
+          promptTokenCount: 8
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 8
+          totalTokenCount: 28
+  recorded_at: 2026-03-06T19:45:36.073158+00:00

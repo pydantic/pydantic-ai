@@ -1,35 +1,51 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
-      accept:
-      - application/json
       accept-encoding:
       - gzip, deflate
+      accept:
+      - application/json
       connection:
       - keep-alive
-      content-length:
-      - '301'
-      content-type:
-      - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB
-          type: text
-        role: user
-      model: claude-sonnet-4-5-20250929
-      stream: true
-      thinking:
-        budget_tokens: 1024
-        type: enabled
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
+      content-type:
+      - application/json
+      content-length:
+      - '301'
     body:
-      string: |+
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - content:
+          - text: ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB
+            type: text
+          role: user
+        model: claude-sonnet-4-5-20250929
+        stream: true
+        thinking:
+          budget_tokens: 1024
+          type: enabled
+  response:
+    status: 200
+    headers:
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      cache-control:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      connection:
+      - keep-alive
+    body:
+      type: text
+      content: |+
         event: message_start
         data: {"type":"message_start","message":{"id":"msg_018XZkwvj9asBiffg3fXt88s","type":"message","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":92,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":88,"service_tier":"standard"}}    }
 
@@ -111,19 +127,4 @@ interactions:
         event: message_stop
         data: {"type":"message_stop"          }
 
-    headers:
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream; charset=utf-8
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:24:49.845258+00:00

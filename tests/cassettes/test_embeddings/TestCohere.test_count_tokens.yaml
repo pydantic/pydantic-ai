@@ -1,58 +1,61 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.cohere.com/v1/tokenize
     headers:
-      accept:
-      - '*/*'
+      content-type:
+      - application/json
       accept-encoding:
       - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '45'
-      content-type:
-      - application/json
       host:
       - api.cohere.com
-    method: POST
-    parsed_body:
-      model: embed-v4.0
-      text: Hello, world!
-    uri: https://api.cohere.com/v1/tokenize
-  response:
-    headers:
-      access-control-expose-headers:
-      - X-Debug-Trace-ID
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      cache-control:
-      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      accept:
+      - '*/*'
       content-length:
-      - '109'
-      content-type:
-      - application/json
+      - '45'
+      connection:
+      - keep-alive
+    body:
+      type: json
+      content:
+        model: embed-v4.0
+        text: Hello, world!
+  response:
+    status: 200
+    headers:
       expires:
       - Thu, 01 Jan 1970 00:00:00 GMT
+      content-length:
+      - '109'
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
       pragma:
       - no-cache
+      content-type:
+      - application/json
       transfer-encoding:
       - chunked
       vary:
       - Origin,Accept-Encoding
-    parsed_body:
-      meta:
-        api_version:
-          version: '1'
-      token_strings:
-      - Hello
-      - ','
-      - ' world'
-      - '!'
-      tokens:
-      - 9707
-      - 11
-      - 1879
-      - 0
-    status:
-      code: 200
-      message: OK
-version: 1
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+    body:
+      type: json
+      content:
+        meta:
+          api_version:
+            version: '1'
+        token_strings:
+        - Hello
+        - ','
+        - ' world'
+        - '!'
+        tokens:
+        - 9707
+        - 11
+        - 1879
+        - 0
+  recorded_at: 2026-03-06T19:45:55.785566+00:00

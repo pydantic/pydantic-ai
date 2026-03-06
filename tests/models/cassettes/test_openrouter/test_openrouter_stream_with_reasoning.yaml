@@ -1,31 +1,53 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
     headers:
       accept:
       - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
       content-length:
       - '128'
       content-type:
       - application/json
       host:
       - openrouter.ai
-    method: POST
-    parsed_body:
-      messages:
-      - content: Who are you
-        role: user
-      model: openai/o3
-      stream: true
-      stream_options:
-        include_usage: true
-    uri: https://openrouter.ai/api/v1/chat/completions
-  response:
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
     body:
-      string: |+
+      type: json
+      content:
+        messages:
+        - content: Who are you
+          role: user
+        model: openai/o3
+        stream: true
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      content-type:
+      - text/event-stream
+      cache-control:
+      - no-cache
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      vary:
+      - Accept-Encoding
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
         : OPENROUTER PROCESSING
 
         : OPENROUTER PROCESSING
@@ -246,26 +268,4 @@ interactions:
 
         data: [DONE]
 
-    headers:
-      access-control-allow-origin:
-      - '*'
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream
-      permissions-policy:
-      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
-        "https://hooks.stripe.com")
-      referrer-policy:
-      - no-referrer, strict-origin-when-cross-origin
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:45:37.440479+00:00

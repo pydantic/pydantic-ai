@@ -1,22 +1,29 @@
+version: 1
 interactions:
 - request:
-    body: '{"input": {"converse": {"messages": [{"role": "user", "content": [{"text": "The quick brown fox jumps over the
-      lazydog."}]}], "system": []}}}'
-    headers:
-      amz-sdk-invocation-id:
-      - !!binary |
-        OWQ3NzFhZmItYTkwYi00N2E4LWFkNjMtZmI5OTJhZDEyN2E4
-      amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
-      content-length:
-      - '141'
-      content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
     method: POST
     uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-sonnet-4-20250514-v1%3A0/count-tokens
+    headers:
+      content-type:
+      - application/json
+      amz-sdk-invocation-id:
+      - 9d771afb-a90b-47a8-ad63-fb992ad127a8
+      content-length:
+      - '141'
+      amz-sdk-request:
+      - attempt=1
+    body:
+      type: json
+      content:
+        input:
+          converse:
+            messages:
+            - content:
+              - text: The quick brown fox jumps over the lazydog.
+              role: user
+            system: []
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
@@ -24,55 +31,66 @@ interactions:
       - '18'
       content-type:
       - application/json
-    parsed_body:
-      inputTokens: 19
-    status:
-      code: 200
-      message: OK
+    body:
+      type: json
+      content:
+        inputTokens: 19
+  recorded_at: 2026-03-06T20:14:05.731586+00:00
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "The quick brown fox jumps over the lazydog."}]}], "system":
-      [], "inferenceConfig": {}}'
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-20250514-v1%3A0/converse
     headers:
-      amz-sdk-invocation-id:
-      - !!binary |
-        MWMwNDdlYWEtOWIxMy00YjAyLWI3ZjMtMjZkNjQ2MDEzOTY2
       amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
+      - attempt=1
+      amz-sdk-invocation-id:
+      - 1c047eaa-9b13-4b02-b7f3-26d646013966
       content-length:
       - '139'
       content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-20250514-v1%3A0/converse
+      - application/json
+    body:
+      type: json
+      content:
+        inferenceConfig: {}
+        messages:
+        - content:
+          - text: The quick brown fox jumps over the lazydog.
+          role: user
+        system: []
   response:
+    status: 200
     headers:
+      content-type:
+      - application/json
       connection:
       - keep-alive
       content-length:
       - '785'
-      content-type:
-      - application/json
-    parsed_body:
-      metrics:
-        latencyMs: 2333
-      output:
-        message:
-          content:
-          - text: "I notice there's a small typo in your message - it should be \"lazy dog\" (two words) rather than \"lazydog.\"\n\nThe corrected version is: \"The quick brown fox jumps over the lazy dog.\"\n\nThis is a famous pangram - a sentence that contains every letter of the English alphabet at least once. It's commonly used for testing typewriters, keyboards, fonts, and other applications where you want to display all the letters.\n\nIs there something specific you'd like to know about this phrase, or were you perhaps testing something?"
-          role: assistant
-      stopReason: end_turn
-      usage:
-        cacheReadInputTokenCount: 0
-        cacheReadInputTokens: 0
-        cacheWriteInputTokenCount: 0
-        cacheWriteInputTokens: 0
-        inputTokens: 19
-        outputTokens: 108
-        serverToolUsage: {}
-        totalTokens: 127
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 2333
+        output:
+          message:
+            content:
+            - text: |-
+                I notice there's a small typo in your message - it should be "lazy dog" (two words) rather than "lazydog."
+
+                The corrected version is: "The quick brown fox jumps over the lazy dog."
+
+                This is a famous pangram - a sentence that contains every letter of the English alphabet at least once. It's commonly used for testing typewriters, keyboards, fonts, and other applications where you want to display all the letters.
+
+                Is there something specific you'd like to know about this phrase, or were you perhaps testing something?
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 19
+          outputTokens: 108
+          serverToolUsage: {}
+          totalTokens: 127
+  recorded_at: 2026-03-06T20:14:05.731586+00:00

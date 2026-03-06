@@ -1,44 +1,49 @@
+version: 1
 interactions:
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "Hello!"}]}], "system": [{"text": "You are a chatbot."}], "inferenceConfig":
-      {}}'
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
     headers:
       amz-sdk-invocation-id:
-      - !!binary |
-        ZGQxNWI1ODItMTk4Yy00NWZhLTllZjYtODFlY2IzZmUxNWM2
+      - dd15b582-198c-45fa-9ef6-81ecb3fe15c6
       amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
+      - attempt=1
       content-length:
       - '132'
       content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+      - application/json
+    body:
+      type: json
+      content:
+        inferenceConfig: {}
+        messages:
+        - content:
+          - text: Hello!
+          role: user
+        system:
+        - text: You are a chatbot.
   response:
+    status: 200
     headers:
+      content-type:
+      - application/json
       connection:
       - keep-alive
       content-length:
       - '300'
-      content-type:
-      - application/json
-    parsed_body:
-      metrics:
-        latencyMs: 268
-      output:
-        message:
-          content:
-          - text: Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm
-              here to help.
-          role: assistant
-      stopReason: end_turn
-      usage:
-        inputTokens: 7
-        outputTokens: 30
-        totalTokens: 37
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 268
+        output:
+          message:
+            content:
+            - text: Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help.
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 7
+          outputTokens: 30
+          totalTokens: 37
+  recorded_at: 2026-03-06T20:14:05.676851+00:00

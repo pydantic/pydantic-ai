@@ -1,6 +1,11 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
     headers:
+      content-type:
+      - application/json
       accept:
       - application/json
       accept-encoding:
@@ -9,22 +14,31 @@ interactions:
       - keep-alive
       content-length:
       - '105'
-      content-type:
-      - application/json
       host:
       - api.openai.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: What is the capital of Mexico?
-        role: user
-      model: gpt-4o
-      stream: false
-    uri: https://api.openai.com/v1/chat/completions
+    body:
+      type: json
+      content:
+        messages:
+        - content: What is the capital of Mexico?
+          role: user
+        model: gpt-4o
+        stream: false
   response:
+    status: 200
     headers:
-      access-control-expose-headers:
-      - X-Request-ID
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '467'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      transfer-encoding:
+      - chunked
+      openai-version:
+      - 2020-10-01
       alt-svc:
       - h3=":443"; ma=86400
       connection:
@@ -33,47 +47,36 @@ interactions:
       - '838'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
-      openai-processing-ms:
-      - '467'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        logprobs: null
-        message:
-          annotations: []
-          content: The capital of Mexico is Mexico City.
-          refusal: null
-          role: assistant
-      created: 1754937502
-      id: chatcmpl-C3RhWZ6jbzOaAe9fKOSr5lWGY5Qi2
-      model: gpt-4o-2024-08-06
-      object: chat.completion
-      service_tier: default
-      system_fingerprint: fp_ff25b2783a
-      usage:
-        completion_tokens: 8
-        completion_tokens_details:
-          accepted_prediction_tokens: 0
-          audio_tokens: 0
-          reasoning_tokens: 0
-          rejected_prediction_tokens: 0
-        prompt_tokens: 14
-        prompt_tokens_details:
-          audio_tokens: 0
-          cached_tokens: 0
-        total_tokens: 22
-    status:
-      code: 200
-      message: OK
-version: 1
+      access-control-expose-headers:
+      - X-Request-ID
+    body:
+      type: json
+      content:
+        choices:
+        - finish_reason: stop
+          index: 0
+          logprobs: null
+          message:
+            annotations: []
+            content: The capital of Mexico is Mexico City.
+            refusal: null
+            role: assistant
+        created: 1754937502
+        id: chatcmpl-C3RhWZ6jbzOaAe9fKOSr5lWGY5Qi2
+        model: gpt-4o-2024-08-06
+        object: chat.completion
+        service_tier: default
+        system_fingerprint: fp_ff25b2783a
+        usage:
+          completion_tokens: 8
+          completion_tokens_details:
+            accepted_prediction_tokens: 0
+            audio_tokens: 0
+            reasoning_tokens: 0
+            rejected_prediction_tokens: 0
+          prompt_tokens: 14
+          prompt_tokens_details:
+            audio_tokens: 0
+            cached_tokens: 0
+          total_tokens: 22
+  recorded_at: 2026-03-06T19:45:54.524029+00:00

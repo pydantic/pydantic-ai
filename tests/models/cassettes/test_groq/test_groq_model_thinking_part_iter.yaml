@@ -1,33 +1,51 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
     headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
       connection:
       - keep-alive
+      accept-encoding:
+      - gzip, deflate
+      content-type:
+      - application/json
       content-length:
       - '218'
-      content-type:
+      accept:
       - application/json
       host:
       - api.groq.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: You are a chef.
-        role: system
-      - content: I want a recipe to cook Uruguayan alfajores.
-        role: user
-      model: deepseek-r1-distill-llama-70b
-      n: 1
-      reasoning_format: raw
-      stream: true
-    uri: https://api.groq.com/openai/v1/chat/completions
-  response:
     body:
-      string: |+
+      type: json
+      content:
+        messages:
+        - content: You are a chef.
+          role: system
+        - content: I want a recipe to cook Uruguayan alfajores.
+          role: user
+        model: deepseek-r1-distill-llama-70b
+        n: 1
+        reasoning_format: raw
+        stream: true
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      connection:
+      - keep-alive
+    body:
+      type: text
+      content: |+
         data: {"id":"chatcmpl-4ef92b12-fb9d-486f-8b98-af9b5ecac736","object":"chat.completion.chunk","created":1758144596,"model":"deepseek-r1-distill-llama-70b","system_fingerprint":"fp_448a0d11e0","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"x_groq":{"id":"req_01k5csb2e4eskv0qcffjqbscqj"}}
 
         data: {"id":"chatcmpl-4ef92b12-fb9d-486f-8b98-af9b5ecac736","object":"chat.completion.chunk","created":1758144596,"model":"deepseek-r1-distill-llama-70b","system_fingerprint":"fp_448a0d11e0","choices":[{"index":0,"delta":{"content":"\u003cthink\u003e"},"logprobs":null,"finish_reason":null}]}
@@ -2008,129 +2026,131 @@ interactions:
 
         data: [DONE]
 
+  recorded_at: 2026-03-06T19:45:38.590374+00:00
+- request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
     headers:
-      alt-svc:
-      - h3=":443"; ma=86400
+      cookie:
+      - __cf_bm=DrND2eVZfjY_rhSMEgYCZpYsSG1pQaW1WMOyqSAkWFs-1758144596-1.0.1.1-uQzUN9OQgAzC9gSzhnBjngMeLcmyAydbu.xgLW7qU3p0zkmNGoKVQMFLsZoqwSpcuZlhvJiQ73LfTeTTUSRSeQWC911XfshiHDebKgi.zqs
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      content-length:
+      - '4474'
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    body:
+      type: json
+      content:
+        messages:
+        - content: You are a chef.
+          role: system
+        - content: I want a recipe to cook Uruguayan alfajores.
+          role: user
+        - content: |-
+            <think>
+
+            Okay, so I want to make Uruguayan alfajores. I've heard they're a type of South American cookie sandwich with dulce de leche. I'm not entirely sure about the exact steps, but I can try to figure it out based on what I know.
+
+            First, I think alfajores are cookies, so I'll need to make the cookie part. From what I remember, the dough is probably made with flour, sugar, butter, eggs, vanilla, and maybe some baking powder or baking soda. I should look up a typical cookie dough recipe and adjust it for alfajores.
+
+            Once the dough is ready, I'll need to roll it out and cut into circles. I've seen people use a cookie cutter or even the rim of a glass. The thickness should be medium, not too thin to break easily.
+
+            Baking them in the oven, I suppose at around 350°F for about 10-15 minutes until they're lightly golden. I should keep an eye on them to make sure they don't burn.
+
+            After the cookies are baked and cooled, the next step is the dulce de leche filling. I can either make it from scratch or use store-bought. If I make it, I'll need to heat condensed milk until it thickens and turns golden. That might take some time, so I need to be patient and stir frequently to avoid burning.
+
+            Then, I'll sandwich two cookies together with the dulce de leche in the middle. I think pressing them gently is important so they stick together without breaking.
+
+            Finally, I've seen alfajores coated in powdered sugar. So, after assembling, I'll roll each sandwich in powdered sugar to coat them evenly. That should give them the classic look and extra sweetness.
+
+            Wait, I should make sure the cookies are completely cool before filling, otherwise the dulce de leche might melt or the cookies could become soggy. Also, maybe I can add a pinch of salt to balance the sweetness. Oh, and the vanilla extract is important for flavor.
+
+            I might have missed something, but this seems like a good start. I'll follow the steps, and if something doesn't turn out right, I can adjust next time.
+
+            </think>
+
+            To make Uruguayan alfajores, follow these organized steps for a delightful cookie sandwich with dulce de leche:
+
+            ### Ingredients:
+            - **For the Cookies:**
+              - 2 cups all-purpose flour
+              - 1 cup powdered sugar
+              - 1/2 tsp baking powder
+              - 1/4 tsp baking soda
+              - 1/4 tsp salt
+              - 1/2 cup unsalted butter, softened
+              - 1 large egg
+              - 1 egg yolk
+              - 1 tsp vanilla extract
+
+            - **For the Filling:**
+              - 1 can (14 oz) sweetened condensed milk (for dulce de leche)
+              - Powdered sugar (for coating)
+
+            ### Instructions:
+
+            1. **Prepare the Cookie Dough:**
+               - In a large bowl, whisk together flour, powdered sugar, baking powder, baking soda, and salt.
+               - Add softened butter and mix until the mixture resembles coarse crumbs.
+               - In a separate bowl, whisk together egg, egg yolk, and vanilla extract. Pour into the dry mixture and mix until a dough forms.
+               - Wrap dough in plastic wrap and refrigerate for 30 minutes.
+
+            2. **Roll and Cut Cookies:**
+               - Roll out dough on a floured surface to about 1/4 inch thickness.
+               - Cut into circles using a cookie cutter or glass rim.
+               - Place cookies on a parchment-lined baking sheet, leaving space between each.
+
+            3. **Bake the Cookies:**
+               - Preheat oven to 350°F (180°C).
+               - Bake for 10-15 minutes until lightly golden. Allow to cool on the baking sheet for 5 minutes, then transfer to a wire rack to cool completely.
+
+            4. **Make Dulce de Leche:**
+               - Pour sweetened condensed milk into a saucepan and heat over medium heat, stirring frequently, until thickened and golden (about 10-15 minutes).
+
+            5. **Assemble Alfajores:**
+               - Spread a layer of dulce de leche on the flat side of one cookie. Sandwich with another cookie, pressing gently.
+               - Roll each sandwich in powdered sugar to coat evenly.
+
+            6. **Serve:**
+               - Enjoy your alfajores with a dusting of powdered sugar. Store in an airtight container.
+
+            ### Tips:
+            - Ensure cookies are completely cool before filling to prevent sogginess.
+            - For an extra touch, add a pinch of salt to the dough for flavor balance.
+
+            Enjoy your homemade Uruguayan alfajores!
+          role: assistant
+        - content: Considering the Uruguayan recipe, how can I cook the Argentinian one?
+          role: user
+        model: deepseek-r1-distill-llama-70b
+        n: 1
+        reasoning_format: parsed
+        stream: true
+  response:
+    status: 200
+    headers:
       cache-control:
       - no-cache
+      vary:
+      - Origin
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
       - text/event-stream
       transfer-encoding:
       - chunked
-      vary:
-      - Origin
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '4474'
-      content-type:
-      - application/json
-      cookie:
-      - __cf_bm=DrND2eVZfjY_rhSMEgYCZpYsSG1pQaW1WMOyqSAkWFs-1758144596-1.0.1.1-uQzUN9OQgAzC9gSzhnBjngMeLcmyAydbu.xgLW7qU3p0zkmNGoKVQMFLsZoqwSpcuZlhvJiQ73LfTeTTUSRSeQWC911XfshiHDebKgi.zqs
-      host:
-      - api.groq.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: You are a chef.
-        role: system
-      - content: I want a recipe to cook Uruguayan alfajores.
-        role: user
-      - content: |-
-          <think>
-
-          Okay, so I want to make Uruguayan alfajores. I've heard they're a type of South American cookie sandwich with dulce de leche. I'm not entirely sure about the exact steps, but I can try to figure it out based on what I know.
-
-          First, I think alfajores are cookies, so I'll need to make the cookie part. From what I remember, the dough is probably made with flour, sugar, butter, eggs, vanilla, and maybe some baking powder or baking soda. I should look up a typical cookie dough recipe and adjust it for alfajores.
-
-          Once the dough is ready, I'll need to roll it out and cut into circles. I've seen people use a cookie cutter or even the rim of a glass. The thickness should be medium, not too thin to break easily.
-
-          Baking them in the oven, I suppose at around 350°F for about 10-15 minutes until they're lightly golden. I should keep an eye on them to make sure they don't burn.
-
-          After the cookies are baked and cooled, the next step is the dulce de leche filling. I can either make it from scratch or use store-bought. If I make it, I'll need to heat condensed milk until it thickens and turns golden. That might take some time, so I need to be patient and stir frequently to avoid burning.
-
-          Then, I'll sandwich two cookies together with the dulce de leche in the middle. I think pressing them gently is important so they stick together without breaking.
-
-          Finally, I've seen alfajores coated in powdered sugar. So, after assembling, I'll roll each sandwich in powdered sugar to coat them evenly. That should give them the classic look and extra sweetness.
-
-          Wait, I should make sure the cookies are completely cool before filling, otherwise the dulce de leche might melt or the cookies could become soggy. Also, maybe I can add a pinch of salt to balance the sweetness. Oh, and the vanilla extract is important for flavor.
-
-          I might have missed something, but this seems like a good start. I'll follow the steps, and if something doesn't turn out right, I can adjust next time.
-
-          </think>
-
-          To make Uruguayan alfajores, follow these organized steps for a delightful cookie sandwich with dulce de leche:
-
-          ### Ingredients:
-          - **For the Cookies:**
-            - 2 cups all-purpose flour
-            - 1 cup powdered sugar
-            - 1/2 tsp baking powder
-            - 1/4 tsp baking soda
-            - 1/4 tsp salt
-            - 1/2 cup unsalted butter, softened
-            - 1 large egg
-            - 1 egg yolk
-            - 1 tsp vanilla extract
-
-          - **For the Filling:**
-            - 1 can (14 oz) sweetened condensed milk (for dulce de leche)
-            - Powdered sugar (for coating)
-
-          ### Instructions:
-
-          1. **Prepare the Cookie Dough:**
-             - In a large bowl, whisk together flour, powdered sugar, baking powder, baking soda, and salt.
-             - Add softened butter and mix until the mixture resembles coarse crumbs.
-             - In a separate bowl, whisk together egg, egg yolk, and vanilla extract. Pour into the dry mixture and mix until a dough forms.
-             - Wrap dough in plastic wrap and refrigerate for 30 minutes.
-
-          2. **Roll and Cut Cookies:**
-             - Roll out dough on a floured surface to about 1/4 inch thickness.
-             - Cut into circles using a cookie cutter or glass rim.
-             - Place cookies on a parchment-lined baking sheet, leaving space between each.
-
-          3. **Bake the Cookies:**
-             - Preheat oven to 350°F (180°C).
-             - Bake for 10-15 minutes until lightly golden. Allow to cool on the baking sheet for 5 minutes, then transfer to a wire rack to cool completely.
-
-          4. **Make Dulce de Leche:**
-             - Pour sweetened condensed milk into a saucepan and heat over medium heat, stirring frequently, until thickened and golden (about 10-15 minutes).
-
-          5. **Assemble Alfajores:**
-             - Spread a layer of dulce de leche on the flat side of one cookie. Sandwich with another cookie, pressing gently.
-             - Roll each sandwich in powdered sugar to coat evenly.
-
-          6. **Serve:**
-             - Enjoy your alfajores with a dusting of powdered sugar. Store in an airtight container.
-
-          ### Tips:
-          - Ensure cookies are completely cool before filling to prevent sogginess.
-          - For an extra touch, add a pinch of salt to the dough for flavor balance.
-
-          Enjoy your homemade Uruguayan alfajores!
-        role: assistant
-      - content: Considering the Uruguayan recipe, how can I cook the Argentinian one?
-        role: user
-      model: deepseek-r1-distill-llama-70b
-      n: 1
-      reasoning_format: parsed
-      stream: true
-    uri: https://api.groq.com/openai/v1/chat/completions
-  response:
     body:
-      string: |+
+      type: text
+      content: |+
         data: {"id":"chatcmpl-dd0af56b-f71d-4101-be2f-89efcf3f05ac","object":"chat.completion.chunk","created":1758144601,"model":"deepseek-r1-distill-llama-70b","system_fingerprint":"fp_448a0d11e0","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"x_groq":{"id":"req_01k5csb6ydetnt62dq1g7btwsq"}}
 
         data: {"id":"chatcmpl-dd0af56b-f71d-4101-be2f-89efcf3f05ac","object":"chat.completion.chunk","created":1758144601,"model":"deepseek-r1-distill-llama-70b","system_fingerprint":"fp_448a0d11e0","choices":[{"index":0,"delta":{"reasoning":"Alright"},"logprobs":null,"finish_reason":null}]}
@@ -5145,21 +5165,4 @@ interactions:
 
         data: [DONE]
 
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:45:38.590374+00:00

@@ -1,57 +1,60 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
     headers:
-      accept:
+      content-type:
       - application/json
       accept-encoding:
       - gzip, deflate
-      connection:
-      - keep-alive
       content-length:
       - '203'
-      content-type:
+      accept:
       - application/json
-      host:
-      - api.openai.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: You are a helpful assistant.
-        role: system
-      - content: What day is today?
-        role: user
-      model: gpt-4o
-      stream: false
-      web_search_options:
-        search_context_size: low
-    uri: https://api.openai.com/v1/chat/completions
-  response:
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      alt-svc:
-      - h3=":443"; ma=86400
       connection:
       - keep-alive
-      content-length:
-      - '177'
-      content-type:
-      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        messages:
+        - content: You are a helpful assistant.
+          role: system
+        - content: What day is today?
+          role: user
+        model: gpt-4o
+        stream: false
+        web_search_options:
+          search_context_size: low
+  response:
+    status: 400
+    headers:
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      access-control-expose-headers:
+      - X-Request-ID
+      connection:
+      - keep-alive
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
       - '23'
+      alt-svc:
+      - h3=":443"; ma=86400
+      content-length:
+      - '177'
       openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-    parsed_body:
-      error:
-        code: null
-        message: Web search options not supported with this model.
-        param: web_search_options
-        type: invalid_request_error
-    status:
-      code: 400
-      message: Bad Request
-version: 1
+      - 2020-10-01
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        error:
+          code: null
+          message: Web search options not supported with this model.
+          param: web_search_options
+          type: invalid_request_error
+  recorded_at: 2026-03-06T19:22:51.906230+00:00

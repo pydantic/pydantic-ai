@@ -1,33 +1,55 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
     headers:
       accept:
       - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
       content-length:
       - '176'
-      content-type:
-      - application/json
+      connection:
+      - keep-alive
+      accept-encoding:
+      - gzip, deflate
       host:
       - openrouter.ai
-    method: POST
-    parsed_body:
-      messages:
-      - content: What is 2+2?
-        role: user
-      model: anthropic/claude-sonnet-4.5
-      reasoning:
-        enabled: true
-      stream: true
-      stream_options:
-        include_usage: true
-    uri: https://openrouter.ai/api/v1/chat/completions
-  response:
+      content-type:
+      - application/json
     body:
-      string: |+
+      type: json
+      content:
+        messages:
+        - content: What is 2+2?
+          role: user
+        model: anthropic/claude-sonnet-4.5
+        reasoning:
+          enabled: true
+        stream: true
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      vary:
+      - Accept-Encoding
+      connection:
+      - keep-alive
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      transfer-encoding:
+      - chunked
+      content-type:
+      - text/event-stream
+      access-control-allow-origin:
+      - '*'
+    body:
+      type: text
+      content: |+
         : OPENROUTER PROCESSING
 
         : OPENROUTER PROCESSING
@@ -66,26 +88,4 @@ interactions:
 
         data: [DONE]
 
-    headers:
-      access-control-allow-origin:
-      - '*'
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream
-      permissions-policy:
-      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
-        "https://hooks.stripe.com")
-      referrer-policy:
-      - no-referrer, strict-origin-when-cross-origin
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:45:37.443742+00:00

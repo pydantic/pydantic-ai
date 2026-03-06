@@ -1,29 +1,49 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.mistral.ai/v1/chat/completions#stream
     headers:
+      content-type:
+      - application/json
       accept:
       - text/event-stream
+      host:
+      - api.mistral.ai
       accept-encoding:
       - gzip, deflate
       connection:
       - keep-alive
       content-length:
       - '117'
-      content-type:
-      - application/json
-      host:
-      - api.mistral.ai
-    method: POST
-    parsed_body:
-      messages:
-      - content: How do I cross the street?
-        role: user
-      model: magistral-medium-latest
-      stream: true
-    uri: https://api.mistral.ai/v1/chat/completions#stream
-  response:
     body:
-      string: |+
+      type: json
+      content:
+        messages:
+        - content: How do I cross the street?
+          role: user
+        model: magistral-medium-latest
+        stream: true
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      content-type:
+      - text/event-stream; charset=utf-8
+      mistral-correlation-id:
+      - 019ac842-8151-73a9-a77a-2b27a0800270
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+    body:
+      type: text
+      content: |+
         data: {"id":"9f9d90210f194076abeee223863eaaf0","object":"chat.completion.chunk","created":1764296393,"model":"magistral-medium-latest","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
 
         data: {"id":"9f9d90210f194076abeee223863eaaf0","object":"chat.completion.chunk","created":1764296393,"model":"magistral-medium-latest","choices":[{"index":0,"delta":{"content":""},"finish_reason":null}]}
@@ -342,23 +362,4 @@ interactions:
 
         data: [DONE]
 
-    headers:
-      access-control-allow-origin:
-      - '*'
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream; charset=utf-8
-      mistral-correlation-id:
-      - 019ac842-8151-73a9-a77a-2b27a0800270
-      strict-transport-security:
-      - max-age=15552000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:45:41.317822+00:00

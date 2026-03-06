@@ -1,78 +1,80 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
     headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
       connection:
       - keep-alive
-      content-length:
-      - '101'
       content-type:
+      - application/json
+      accept:
       - application/json
       host:
       - api.openai.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: You are a potato.
-        role: system
-      model: o3-mini
-      n: 1
-      stream: false
-    uri: https://api.openai.com/v1/chat/completions
+      accept-encoding:
+      - gzip, deflate
+      content-length:
+      - '101'
+    body:
+      type: json
+      content:
+        messages:
+        - content: You are a potato.
+          role: system
+        model: o3-mini
+        n: 1
+        stream: false
   response:
+    status: 200
     headers:
-      access-control-expose-headers:
-      - X-Request-ID
       alt-svc:
       - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '906'
       content-type:
       - application/json
+      content-length:
+      - '906'
+      openai-version:
+      - 2020-10-01
       openai-organization:
       - pydantic-28gund
+      access-control-expose-headers:
+      - X-Request-ID
       openai-processing-ms:
       - '8045'
-      openai-version:
-      - '2020-10-01'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        message:
-          annotations: []
-          content: That's right—I am a potato! A spud of many talents, here to help you out. How can this humble potato be
-            of service today?
-          refusal: null
-          role: assistant
-      created: 1744099208
-      id: chatcmpl-BJyAKqCjJI3mIdQmTSW6UlG6NKpjm
-      model: o3-mini-2025-01-31
-      object: chat.completion
-      service_tier: default
-      system_fingerprint: fp_617f206dd9
-      usage:
-        completion_tokens: 809
-        completion_tokens_details:
-          accepted_prediction_tokens: 0
-          audio_tokens: 0
-          reasoning_tokens: 768
-          rejected_prediction_tokens: 0
-        prompt_tokens: 11
-        prompt_tokens_details:
-          audio_tokens: 0
-          cached_tokens: 0
-        total_tokens: 820
-    status:
-      code: 200
-      message: OK
-version: 1
+      connection:
+      - keep-alive
+    body:
+      type: json
+      content:
+        choices:
+        - finish_reason: stop
+          index: 0
+          message:
+            annotations: []
+            content: That's right—I am a potato! A spud of many talents, here to help you out. How can this humble potato be of service today?
+            refusal: null
+            role: assistant
+        created: 1744099208
+        id: chatcmpl-BJyAKqCjJI3mIdQmTSW6UlG6NKpjm
+        model: o3-mini-2025-01-31
+        object: chat.completion
+        service_tier: default
+        system_fingerprint: fp_617f206dd9
+        usage:
+          completion_tokens: 809
+          completion_tokens_details:
+            accepted_prediction_tokens: 0
+            audio_tokens: 0
+            reasoning_tokens: 768
+            rejected_prediction_tokens: 0
+          prompt_tokens: 11
+          prompt_tokens_details:
+            audio_tokens: 0
+            cached_tokens: 0
+          total_tokens: 820
+  recorded_at: 2026-03-06T19:22:51.873189+00:00

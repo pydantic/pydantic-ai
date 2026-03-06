@@ -1,10 +1,13 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
     headers:
-      accept:
-      - application/json
       accept-encoding:
       - gzip, deflate
+      accept:
+      - application/json
       connection:
       - keep-alive
       content-length:
@@ -13,41 +16,41 @@ interactions:
       - application/json
       host:
       - api.openai.com
-    method: POST
-    parsed_body:
-      input:
-      - content: What is the capital of France?
-        role: user
-      instructions: ''
-      model: gpt-4o
-      stream: true
-      temperature: -1
-    uri: https://api.openai.com/v1/responses
+    body:
+      type: json
+      content:
+        input:
+        - content: What is the capital of France?
+          role: user
+        instructions: ''
+        model: gpt-4o
+        stream: true
+        temperature: -1
   response:
+    status: 400
     headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '236'
-      content-type:
-      - application/json
       openai-organization:
       - pydantic-28gund
-      openai-processing-ms:
-      - '15'
-      openai-version:
-      - '2020-10-01'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
-    parsed_body:
-      error:
-        code: decimal_below_min_value
-        message: 'Invalid ''temperature'': decimal below minimum value. Expected a value >= 0, but got -1 instead.'
-        param: temperature
-        type: invalid_request_error
-    status:
-      code: 400
-      message: Bad Request
-version: 1
+      content-type:
+      - application/json
+      openai-version:
+      - 2020-10-01
+      alt-svc:
+      - h3=":443"; ma=86400
+      content-length:
+      - '236'
+      connection:
+      - keep-alive
+      openai-processing-ms:
+      - '15'
+    body:
+      type: json
+      content:
+        error:
+          code: decimal_below_min_value
+          message: 'Invalid ''temperature'': decimal below minimum value. Expected a value >= 0, but got -1 instead.'
+          param: temperature
+          type: invalid_request_error
+  recorded_at: 2026-03-06T19:45:34.630506+00:00

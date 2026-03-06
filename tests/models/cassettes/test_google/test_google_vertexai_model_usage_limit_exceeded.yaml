@@ -1,25 +1,25 @@
+version: 1
 interactions:
 - request:
-    body: assertion=eyJ0eXAiOiAiSldUIiwgImFsZyI6ICJSUzI1NiIsICJraWQiOiAiNjc4MmViNzhmMGU0MmIwMjRkNjExNjY2MTg0NWZhZTdkOTdiMDY3NyJ9.eyJpYXQiOiAxNzU1MTIyMTU5LCAiZXhwIjogMTc1NTEyNTc1OSwgImlzcyI6ICJweWRhbnRpYy1haS12ZXJ0ZXgtYWktZGV2QHB5ZGFudGljLWFpLWRldi5pYW0uZ3NlcnZpY2VhY2NvdW50LmNvbSIsICJhdWQiOiAiaHR0cHM6Ly9vYXV0aDIuZ29vZ2xlYXBpcy5jb20vdG9rZW4iLCAic2NvcGUiOiAiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vYXV0aC9jbG91ZC1wbGF0Zm9ybSJ9.pnrHg7uMo_ow8OctKf4GM7Oe28kUhvzKewq0xCeaJz88bSeorgyd5ZLRtRdRhgZwiznSCevAahorDTxCVeCxenJp88UHf_5tuN6Jo7e7dcrzjA3Ta3DbQgBc_N58cGWc75JgJpE6GwDtHjehLVtIlo_qpux-FqLZL5N745-ECeKnyKmMTdkuVVArMyU96CGOss9L3xiWKukRIv-h8_uCmsoPVWQmyGEfQQOv--EIC4ERUOfwed1I-4ZyF5Z8w3dymKTHtJoRSL-fg8tn12acytLptC1eEZ2OzkZJI4UJWHmmtAy8HrZ-PqjwUiO83sC5iZcLICmCxXWUxJce5j-d_Q&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer
+    method: POST
+    uri: https://oauth2.googleapis.com/token
     headers:
       accept:
       - '*/*'
-      accept-encoding:
-      - gzip, deflate
       connection:
       - keep-alive
-      content-length:
-      - '819'
       content-type:
       - application/x-www-form-urlencoded
-    method: POST
-    uri: https://oauth2.googleapis.com/token
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      accept-encoding:
+      - gzip, deflate
       content-length:
-      - '1083'
+      - '819'
+    body:
+      type: text
+      content: assertion=eyJ0eXAiOiAiSldUIiwgImFsZyI6ICJSUzI1NiIsICJraWQiOiAiNjc4MmViNzhmMGU0MmIwMjRkNjExNjY2MTg0NWZhZTdkOTdiMDY3NyJ9.eyJpYXQiOiAxNzU1MTIyMTU5LCAiZXhwIjogMTc1NTEyNTc1OSwgImlzcyI6ICJweWRhbnRpYy1haS12ZXJ0ZXgtYWktZGV2QHB5ZGFudGljLWFpLWRldi5pYW0uZ3NlcnZpY2VhY2NvdW50LmNvbSIsICJhdWQiOiAiaHR0cHM6Ly9vYXV0aDIuZ29vZ2xlYXBpcy5jb20vdG9rZW4iLCAic2NvcGUiOiAiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vYXV0aC9jbG91ZC1wbGF0Zm9ybSJ9.pnrHg7uMo_ow8OctKf4GM7Oe28kUhvzKewq0xCeaJz88bSeorgyd5ZLRtRdRhgZwiznSCevAahorDTxCVeCxenJp88UHf_5tuN6Jo7e7dcrzjA3Ta3DbQgBc_N58cGWc75JgJpE6GwDtHjehLVtIlo_qpux-FqLZL5N745-ECeKnyKmMTdkuVVArMyU96CGOss9L3xiWKukRIv-h8_uCmsoPVWQmyGEfQQOv--EIC4ERUOfwed1I-4ZyF5Z8w3dymKTHtJoRSL-fg8tn12acytLptC1eEZ2OzkZJI4UJWHmmtAy8HrZ-PqjwUiO83sC5iZcLICmCxXWUxJce5j-d_Q&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer
+  response:
+    status: 200
+    headers:
       content-type:
       - application/json; charset=UTF-8
       transfer-encoding:
@@ -28,58 +28,64 @@ interactions:
       - Origin
       - X-Origin
       - Referer
-    parsed_body:
-      access_token: scrubbed
-      expires_in: 3599
-      token_type: Bearer
-    status:
-      code: 200
-      message: OK
+      content-length:
+      - '1083'
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+    body:
+      type: json
+      content:
+        access_token: scrubbed
+        expires_in: 3599
+        token_type: Bearer
+  recorded_at: 2026-03-06T19:45:27.041056+00:00
 - request:
+    method: post
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.0-flash:countTokens
     headers:
       content-type:
       - application/json
-    method: post
-    parsed_body:
-      contents:
-      - parts:
-        - text: What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.
-        role: user
-      generationConfig:
-        max_output_tokens: 100
-      systemInstruction:
-        parts:
-        - text: You are a chatbot.
-        role: user
-      tools:
-      - functionDeclarations:
-        - description: ''
-          name: get_user_country
-          parameters:
-            properties: {}
-            type: OBJECT
-    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.0-flash:countTokens
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.
+          role: user
+        generationConfig:
+          max_output_tokens: 100
+        systemInstruction:
+          parts:
+          - text: You are a chatbot.
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: ''
+            name: get_user_country
+            parameters:
+              properties: {}
+              type: OBJECT
   response:
+    status: 200
     headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
       - '151'
-      content-type:
-      - application/json; charset=UTF-8
       transfer-encoding:
       - chunked
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
       vary:
       - Origin
       - X-Origin
       - Referer
-    parsed_body:
-      promptTokensDetails:
-      - modality: TEXT
-        tokenCount: 36
-      totalBillableCharacters: 123
-      totalTokens: 36
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: json
+      content:
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 36
+        totalBillableCharacters: 123
+        totalTokens: 36
+  recorded_at: 2026-03-06T19:45:27.041056+00:00

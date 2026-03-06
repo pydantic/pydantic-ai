@@ -12,6 +12,7 @@ from typing import Annotated, Any, TypeVar, cast
 
 import httpx
 import pytest
+from cassetter import Cassette
 from pydantic import BaseModel, Field
 
 from pydantic_ai import (
@@ -1101,7 +1102,7 @@ async def test_async_request_text_response(allow_model_requests: None):
 
 
 async def test_request_stream_fallback_for_high_max_tokens(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+    allow_model_requests: None, anthropic_api_key: str, vcr_cassette: Cassette
 ):
     """When the Anthropic SDK raises ValueError for high max_tokens, request() falls back to streaming."""
     # https://github.com/anthropics/anthropic-sdk-python/blob/49d639a671cb0ac30c767e8e1e68fdd5925205d5/src/anthropic/_base_client.py#L726
@@ -1112,9 +1113,9 @@ async def test_request_stream_fallback_for_high_max_tokens(
         'What is 1+1? Answer with just the number.', model_settings=ModelSettings(max_tokens=32_000)
     )
 
-    # Verify the fallback used streaming — the only request recorded should have stream=true
-    assert len(vcr.requests) == 1
-    request_body = json.loads(vcr.requests[0].body)
+    # Verify the fallback used streaming - the only request recorded should have stream=true
+    assert len(vcr_cassette.interactions) == 1
+    request_body = vcr_cassette.interactions[0].request.body.content
     assert request_body['stream'] is True
     assert request_body['max_tokens'] == 32_000
 

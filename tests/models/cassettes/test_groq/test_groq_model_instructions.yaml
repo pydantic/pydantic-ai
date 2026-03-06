@@ -1,6 +1,11 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
     headers:
+      host:
+      - api.groq.com
       accept:
       - application/json
       accept-encoding:
@@ -11,61 +16,59 @@ interactions:
       - '187'
       content-type:
       - application/json
-      host:
-      - api.groq.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: You are a helpful assistant.
-        role: system
-      - content: What is the capital of France?
-        role: user
-      model: llama-3.3-70b-versatile
-      n: 1
-      stream: false
-    uri: https://api.groq.com/openai/v1/chat/completions
+    body:
+      type: json
+      content:
+        messages:
+        - content: You are a helpful assistant.
+          role: system
+        - content: What is the capital of France?
+          role: user
+        model: llama-3.3-70b-versatile
+        n: 1
+        stream: false
   response:
+    status: 200
     headers:
-      alt-svc:
-      - h3=":443"; ma=86400
+      vary:
+      - Origin, Accept-Encoding
       cache-control:
       - private, max-age=0, no-store, no-cache, must-revalidate
-      connection:
-      - keep-alive
+      alt-svc:
+      - h3=":443"; ma=86400
       content-length:
       - '570'
       content-type:
       - application/json
       transfer-encoding:
       - chunked
-      vary:
-      - Origin, Accept-Encoding
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        logprobs: null
-        message:
-          content: The capital of France is Paris.
-          role: assistant
-      created: 1744043573
-      id: chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf
-      model: llama-3.3-70b-versatile
-      object: chat.completion
-      system_fingerprint: fp_72a5dc99ee
-      usage:
-        completion_time: 0.029090909
-        completion_tokens: 8
-        prompt_time: 0.002665957
-        prompt_tokens: 48
-        queue_time: 0.100731848
-        total_time: 0.031756866
-        total_tokens: 56
-      usage_breakdown:
-        models: null
-      x_groq:
-        id: req_01jr8hj0hzeq9b86xqb5dn7wqs
-    status:
-      code: 200
-      message: OK
-version: 1
+      connection:
+      - keep-alive
+    body:
+      type: json
+      content:
+        choices:
+        - finish_reason: stop
+          index: 0
+          logprobs: null
+          message:
+            content: The capital of France is Paris.
+            role: assistant
+        created: 1744043573
+        id: chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf
+        model: llama-3.3-70b-versatile
+        object: chat.completion
+        system_fingerprint: fp_72a5dc99ee
+        usage:
+          completion_time: 0.029090909
+          completion_tokens: 8
+          prompt_time: 0.002665957
+          prompt_tokens: 48
+          queue_time: 0.100731848
+          total_time: 0.031756866
+          total_tokens: 56
+        usage_breakdown:
+          models: null
+        x_groq:
+          id: req_01jr8hj0hzeq9b86xqb5dn7wqs
+  recorded_at: 2026-03-06T19:45:38.490842+00:00

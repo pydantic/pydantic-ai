@@ -1,34 +1,58 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
     headers:
       accept:
       - application/json
+      host:
+      - api.openai.com
+      content-length:
+      - '191'
       accept-encoding:
       - gzip, deflate
       connection:
       - keep-alive
-      content-length:
-      - '191'
       content-type:
       - application/json
-      host:
-      - api.openai.com
-    method: POST
-    parsed_body:
-      include:
-      - reasoning.encrypted_content
-      input:
-      - content: How do I cross the street?
-        role: user
-      model: o3-mini
-      reasoning:
-        effort: high
-        summary: detailed
-      stream: true
-    uri: https://api.openai.com/v1/responses
-  response:
     body:
-      string: |+
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - content: How do I cross the street?
+          role: user
+        model: o3-mini
+        reasoning:
+          effort: high
+          summary: detailed
+        stream: true
+  response:
+    status: 200
+    headers:
+      content-type:
+      - text/event-stream; charset=utf-8
+      transfer-encoding:
+      - chunked
+      connection:
+      - keep-alive
+      openai-organization:
+      - pydantic-28gund
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      alt-svc:
+      - h3=":443"; ma=86400
+      openai-processing-ms:
+      - '56'
+      openai-version:
+      - 2020-10-01
+    body:
+      type: text
+      content: |+
         event: response.created
         data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_68c42d0fb418819dbfa579f69406b49508fbf9b1584184ff","object":"response","created_at":1757687055,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"o3-mini-2025-01-31","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":"high","summary":"detailed"},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
 
@@ -2057,27 +2081,4 @@ interactions:
         event: response.completed
         data: {"type":"response.completed","sequence_number":675,"response":{"id":"resp_68c42d0fb418819dbfa579f69406b49508fbf9b1584184ff","object":"response","created_at":1757687055,"status":"completed","background":false,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"o3-mini-2025-01-31","output":[{"id":"rs_68c42d1d0878819d8266007cd3d1402c08fbf9b1584184ff","type":"reasoning","encrypted_content":"gAAAAABoxC0nHQBGQ9bUXnAnoNGUYzOI0TZ_q-nsyq4zXfIt-oL0JZi48LIcPCddrLyHt5GVzSPievMG2NYaQXGks_lsa-bwN0z_tZGQphxnMJ36NKqdYp42GCi4r_ZgRJ9iTOSiotxm7sWxEb4yKPpCdt3n6p9B2d7lm8l2rjoQx9YyvoVooScD-NhOR0-F21X2kCx4UBw4qmGW14f5vDzrWhxo5EfqHiNGJzdcber1GkDs7pGc5rorjl7FCHcLZStGBD7MZo4KR9Cl8-b2rVPb4TDbu5shfM5UH9OY5BzpqKnyO6PQK_zNN4LKgEbNEVloOWQuzaBtUAqTTEPyqb8tHuKKQp22LAFQd4fAWEUDXZD1Z9mxYEcDh5pjdiL_R7pNBhd1UHxbost8cRIineVXoW7Q33k-0-uy8_VsVZ4anBzBQ3u5mqw=","summary":[{"type":"summary_text","text":"**Providing street crossing instructions**\n\nThe user is asking how to cross the street, which seems to be a request for safety instructions. I think it’s important to interpret this as a request for guidance on safe behaviors like checking for traffic and using crosswalks. So, I'll explain how to cross safely. Since this is general advice on pedestrian safety, it definitely fits within providing helpful, non-harmful guidance for safely crossing the street."},{"type":"summary_text","text":"**Explaining street crossing safety**\n\nI see that the user is asking how to cross the street, which seems to call for standard safety instructions. I should emphasize that they need to wait for a traffic light and only cross at designated crosswalks. I don't think their question poses any risk of harm, but I must ensure I provide clear guidance. I’ll outline steps like looking both ways and checking for traffic and remind them that I’m not a safety professional—just sharing general tips for safe street crossing."},{"type":"summary_text","text":"**Sharing street crossing safety tips**\n\nWhen crossing the street, I'll provide clear and straightforward guidelines. It's essential to identify a safe crossing location, ideally at a crosswalk. I should remind the user to stop at the curb, look both ways, listen for traffic, and be vigilant for any vehicles. Following traffic signals is crucial. I have to include disclaimers, like mentioning I'm not a road safety expert. Lastly, I’ll list key steps, ensuring it’s plain language and easily understandable for anyone needing assistance."},{"type":"summary_text","text":"**Providing safe crossing advice**\n\nI’m going to share some straightforward advice for crossing the street safely. I think it’s important to note that rules can vary by location. I’ll present this information in a bullet list for clarity. I’ll remind the user that I'm not a road safety expert, but here are some general guidelines to follow. Main tips will include things like always looking left-right-left before crossing and using crosswalks whenever possible. It will be clear and easy to understand!"}]},{"id":"msg_68c42d26866c819da8d5c606621c911608fbf9b1584184ff","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"I'm not a road safety professional, but here are some generally accepted guidelines that might help you cross the street safely:\n\n1. Before approaching the curb, look around and prepare to stop—don’t assume vehicles will see you.\n2. If there’s a crosswalk or pedestrian crossing signal, use it. Wait for the “walk” signal or the gap in traffic before starting to cross.\n3. At the curb, stop and look left, right, then left again. This helps ensure you see vehicles coming from both directions.\n4. Even if the signal is in your favor, remain alert. Some drivers may not stop in time, so keep an eye on the traffic.\n5. If there isn’t a designated crossing area, choose the safest location available—ideally where drivers can see you from a distance.\n6. Avoid distractions (like using your phone) while you’re checking for traffic and crossing.\n7. Cross at a steady pace. Once you’re in the middle of the road, continue looking both ways and be ready to adjust if necessary.\n8. Once you’ve safely reached the other side, take a moment to ensure you’re completely past the area of moving vehicles.\n\nKeep in mind that local traffic laws and conditions might vary, so it’s a good idea to familiarize yourself with the rules specific to your area. Stay safe!"}],"role":"assistant"}],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":"high","summary":"detailed"},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":13,"input_tokens_details":{"cached_tokens":0},"output_tokens":1680,"output_tokens_details":{"reasoning_tokens":1408},"total_tokens":1693},"user":null,"metadata":{}}}
 
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream; charset=utf-8
-      openai-organization:
-      - pydantic-28gund
-      openai-processing-ms:
-      - '56'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:45:35.602357+00:00

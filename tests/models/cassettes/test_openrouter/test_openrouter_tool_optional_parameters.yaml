@@ -1,10 +1,11 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
     headers:
       accept:
       - application/json
-      accept-encoding:
-      - gzip, deflate
       connection:
       - keep-alive
       content-length:
@@ -13,74 +14,75 @@ interactions:
       - application/json
       host:
       - openrouter.ai
-    method: POST
-    parsed_body:
-      messages:
-      - content: Can you find me any education content?
-        role: user
-      model: anthropic/claude-sonnet-4.5
-      stream: false
-      tool_choice: auto
-      tools:
-      - function:
-          description: ''
-          name: find_education_content
-          parameters:
-            properties:
-              title:
-                anyOf:
-                - type: string
-                - type: 'null'
-                default: null
-            type: object
-        type: function
-    uri: https://openrouter.ai/api/v1/chat/completions
+      accept-encoding:
+      - gzip, deflate
+    body:
+      type: json
+      content:
+        messages:
+        - content: Can you find me any education content?
+          role: user
+        model: anthropic/claude-sonnet-4.5
+        stream: false
+        tool_choice: auto
+        tools:
+        - function:
+            description: ''
+            name: find_education_content
+            parameters:
+              properties:
+                title:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  default: null
+              type: object
+          type: function
   response:
+    status: 200
     headers:
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      content-type:
+      - application/json
       access-control-allow-origin:
       - '*'
       connection:
       - keep-alive
       content-length:
       - '611'
-      content-type:
-      - application/json
-      permissions-policy:
-      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
-        "https://hooks.stripe.com")
+      vary:
+      - Accept-Encoding
       referrer-policy:
       - no-referrer, strict-origin-when-cross-origin
       transfer-encoding:
       - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      choices:
-      - finish_reason: tool_calls
-        index: 0
-        logprobs: null
-        message:
-          content: I'll search for education content for you.
-          reasoning: null
-          refusal: null
-          role: assistant
-          tool_calls:
-          - function:
-              name: find_education_content
-            id: toolu_vrtx_015QAXScZzRDPttiPoc34AdD
-            index: 0
-            type: function
-        native_finish_reason: tool_calls
-      created: 1764308342
-      id: gen-1764308342-FInFdBZR9TF8jmnOwZGZ
-      model: anthropic/claude-sonnet-4.5
-      object: chat.completion
-      provider: Google
-      usage:
-        completion_tokens: 48
-        prompt_tokens: 568
-        total_tokens: 616
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: json
+      content:
+        choices:
+        - finish_reason: tool_calls
+          index: 0
+          logprobs: null
+          message:
+            content: I'll search for education content for you.
+            reasoning: null
+            refusal: null
+            role: assistant
+            tool_calls:
+            - function:
+                name: find_education_content
+              id: toolu_vrtx_015QAXScZzRDPttiPoc34AdD
+              index: 0
+              type: function
+          native_finish_reason: tool_calls
+        created: 1764308342
+        id: gen-1764308342-FInFdBZR9TF8jmnOwZGZ
+        model: anthropic/claude-sonnet-4.5
+        object: chat.completion
+        provider: Google
+        usage:
+          completion_tokens: 48
+          prompt_tokens: 568
+          total_tokens: 616
+  recorded_at: 2026-03-06T19:45:37.447828+00:00

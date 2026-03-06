@@ -1,47 +1,66 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
     headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
       content-length:
       - '593'
       content-type:
       - application/json
       host:
       - api.groq.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: Be concise. Never use pretty double quotes, just regular ones.
-        role: system
-      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the
-          second try you can use valid args
-        role: user
-      model: openai/gpt-oss-120b
-      n: 1
-      stream: true
-      tool_choice: auto
-      tools:
-      - function:
-          description: ''
-          name: get_something_by_name
-          parameters:
-            additionalProperties: false
-            properties:
-              name:
-                type: string
-            required:
-            - name
-            type: object
-        type: function
-    uri: https://api.groq.com/openai/v1/chat/completions
-  response:
+      accept:
+      - application/json
+      connection:
+      - keep-alive
+      accept-encoding:
+      - gzip, deflate, br, zstd
     body:
-      string: |+
+      type: json
+      content:
+        messages:
+        - content: Be concise. Never use pretty double quotes, just regular ones.
+          role: system
+        - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the second try you can use valid args
+          role: user
+        model: openai/gpt-oss-120b
+        n: 1
+        stream: true
+        tool_choice: auto
+        tools:
+        - function:
+            description: ''
+            name: get_something_by_name
+            parameters:
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+              required:
+              - name
+              type: object
+          type: function
+  response:
+    status: 200
+    headers:
+      strict-transport-security:
+      - max-age=15552000
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+    body:
+      type: text
+      content: |+
         data: {"id":"chatcmpl-4f39f3af-3267-4ac1-a0cf-6aa7451877dc","object":"chat.completion.chunk","created":1771434740,"model":"openai/gpt-oss-120b","system_fingerprint":"fp_e8236260a9","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"x_groq":{"id":"req_01khrvt2r6e9rb7e8qsg86ywkw","seed":27718886}}
 
         data: {"id":"chatcmpl-4f39f3af-3267-4ac1-a0cf-6aa7451877dc","object":"chat.completion.chunk","created":1771434740,"model":"openai/gpt-oss-120b","system_fingerprint":"fp_e8236260a9","choices":[{"index":0,"delta":{"reasoning":"We","channel":"analysis"},"logprobs":null,"finish_reason":null}]}
@@ -233,108 +252,109 @@ interactions:
         event: error
         data: {"error":{"message":"Tool call validation failed: tool call validation failed: parameters for tool get_something_by_name did not match schema: errors: [missing properties: 'name', additionalProperties 'invalid_param' not allowed]","type":"invalid_request_error","code":"tool_use_failed","failed_generation":"{\"name\": \"get_something_by_name\", \"arguments\": {\n  \"invalid_param\": \"value\"\n}}","status_code":400}}
 
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream
-      strict-transport-security:
-      - max-age=15552000
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-    status:
-      code: 200
-      message: OK
+  recorded_at: 2026-03-06T19:45:39.101275+00:00
 - request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
     headers:
       accept:
       - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '1760'
       content-type:
       - application/json
-      cookie:
-      - __cf_bm=4bJ1CVE2y5z7iolQc.k0qgMfDmxbGVUlZB77F9J.JG8-1771434740.4691696-1.0.1.1-Oa7kcLOgLJFUipTvsIQIYlYe5vgZ4cZ3VekDd7r0Tb4Z1CFMUUV2YYbVxO.lRer99iqDSVs8cSwth.X1c8f_VBIJI3nNj4nIaGX3m_W8ucwFtAOT6Wsk72SUwhpT4544
+      accept-encoding:
+      - gzip, deflate, br, zstd
       host:
       - api.groq.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: Be concise. Never use pretty double quotes, just regular ones.
-        role: system
-      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the
-          second try you can use valid args
-        role: user
-      - content: |-
-          <think>
-          We need to call the tool with invalid parameters first, then second call with valid args. The user wants us to test error handling. So first call should have wrong parameters (e.g., missing required "name" or extra param). The tool expects only "name". If we send extra property, that might cause error. Or missing "name". We'll do a call with missing name: {}. Then second call with name: "test". Let's do that.
-          </think>
-        role: assistant
-        tool_calls:
-        - function:
-            arguments: '{"invalid_param":"value"}'
-            name: get_something_by_name
-          id: pyd_ai_53c381537e5a4ce2852509adfb88b3d5
-          type: function
-      - content: |-
-          2 validation errors:
-          ```json
-          [
-            {
-              "type": "missing",
-              "loc": [
-                "name"
-              ],
-              "msg": "Field required",
-              "input": {
-                "invalid_param": "value"
-              }
-            },
-            {
-              "type": "extra_forbidden",
-              "loc": [
-                "invalid_param"
-              ],
-              "msg": "Extra inputs are not permitted",
-              "input": "value"
-            }
-          ]
-          ```
-
-          Fix the errors and try again.
-        role: tool
-        tool_call_id: pyd_ai_53c381537e5a4ce2852509adfb88b3d5
-      model: openai/gpt-oss-120b
-      n: 1
-      stream: true
-      tool_choice: auto
-      tools:
-      - function:
-          description: ''
-          name: get_something_by_name
-          parameters:
-            additionalProperties: false
-            properties:
-              name:
-                type: string
-            required:
-            - name
-            type: object
-        type: function
-    uri: https://api.groq.com/openai/v1/chat/completions
-  response:
+      cookie:
+      - __cf_bm=4bJ1CVE2y5z7iolQc.k0qgMfDmxbGVUlZB77F9J.JG8-1771434740.4691696-1.0.1.1-Oa7kcLOgLJFUipTvsIQIYlYe5vgZ4cZ3VekDd7r0Tb4Z1CFMUUV2YYbVxO.lRer99iqDSVs8cSwth.X1c8f_VBIJI3nNj4nIaGX3m_W8ucwFtAOT6Wsk72SUwhpT4544
+      content-length:
+      - '1760'
+      connection:
+      - keep-alive
     body:
-      string: |+
+      type: json
+      content:
+        messages:
+        - content: Be concise. Never use pretty double quotes, just regular ones.
+          role: system
+        - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the second try you can use valid args
+          role: user
+        - content: |-
+            <think>
+            We need to call the tool with invalid parameters first, then second call with valid args. The user wants us to test error handling. So first call should have wrong parameters (e.g., missing required "name" or extra param). The tool expects only "name". If we send extra property, that might cause error. Or missing "name". We'll do a call with missing name: {}. Then second call with name: "test". Let's do that.
+            </think>
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"invalid_param":"value"}'
+              name: get_something_by_name
+            id: pyd_ai_53c381537e5a4ce2852509adfb88b3d5
+            type: function
+        - content: |-
+            2 validation errors:
+            ```json
+            [
+              {
+                "type": "missing",
+                "loc": [
+                  "name"
+                ],
+                "msg": "Field required",
+                "input": {
+                  "invalid_param": "value"
+                }
+              },
+              {
+                "type": "extra_forbidden",
+                "loc": [
+                  "invalid_param"
+                ],
+                "msg": "Extra inputs are not permitted",
+                "input": "value"
+              }
+            ]
+            ```
+
+            Fix the errors and try again.
+          role: tool
+          tool_call_id: pyd_ai_53c381537e5a4ce2852509adfb88b3d5
+        model: openai/gpt-oss-120b
+        n: 1
+        stream: true
+        tool_choice: auto
+        tools:
+        - function:
+            description: ''
+            name: get_something_by_name
+            parameters:
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+              required:
+              - name
+              type: object
+          type: function
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      strict-transport-security:
+      - max-age=15552000
+      content-type:
+      - text/event-stream
+      connection:
+      - keep-alive
+      vary:
+      - Origin
+      transfer-encoding:
+      - chunked
+      alt-svc:
+      - h3=":443"; ma=86400
+    body:
+      type: text
+      content: |+
         data: {"id":"chatcmpl-e35442a8-12c0-4fb4-8be4-0e51727ce7b7","object":"chat.completion.chunk","created":1771434740,"model":"openai/gpt-oss-120b","system_fingerprint":"fp_caa2017b29","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"x_groq":{"id":"req_01khrvt32ze9rb75za4xqmdz13","seed":1367355884}}
 
         data: {"id":"chatcmpl-e35442a8-12c0-4fb4-8be4-0e51727ce7b7","object":"chat.completion.chunk","created":1771434740,"model":"openai/gpt-oss-120b","system_fingerprint":"fp_caa2017b29","choices":[{"index":0,"delta":{"reasoning":"We","channel":"analysis"},"logprobs":null,"finish_reason":null}]}
@@ -387,122 +407,123 @@ interactions:
 
         data: [DONE]
 
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream
-      strict-transport-security:
-      - max-age=15552000
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-    status:
-      code: 200
-      message: OK
+  recorded_at: 2026-03-06T19:45:39.101275+00:00
 - request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
     headers:
       accept:
       - application/json
       accept-encoding:
       - gzip, deflate, br, zstd
+      content-type:
+      - application/json
       connection:
       - keep-alive
       content-length:
       - '2206'
-      content-type:
-      - application/json
       cookie:
       - __cf_bm=4bJ1CVE2y5z7iolQc.k0qgMfDmxbGVUlZB77F9J.JG8-1771434740.4691696-1.0.1.1-Oa7kcLOgLJFUipTvsIQIYlYe5vgZ4cZ3VekDd7r0Tb4Z1CFMUUV2YYbVxO.lRer99iqDSVs8cSwth.X1c8f_VBIJI3nNj4nIaGX3m_W8ucwFtAOT6Wsk72SUwhpT4544
       host:
       - api.groq.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: Be concise. Never use pretty double quotes, just regular ones.
-        role: system
-      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the
-          second try you can use valid args
-        role: user
-      - content: |-
-          <think>
-          We need to call the tool with invalid parameters first, then second call with valid args. The user wants us to test error handling. So first call should have wrong parameters (e.g., missing required "name" or extra param). The tool expects only "name". If we send extra property, that might cause error. Or missing "name". We'll do a call with missing name: {}. Then second call with name: "test". Let's do that.
-          </think>
-        role: assistant
-        tool_calls:
-        - function:
-            arguments: '{"invalid_param":"value"}'
-            name: get_something_by_name
-          id: pyd_ai_53c381537e5a4ce2852509adfb88b3d5
-          type: function
-      - content: |-
-          2 validation errors:
-          ```json
-          [
-            {
-              "type": "missing",
-              "loc": [
-                "name"
-              ],
-              "msg": "Field required",
-              "input": {
-                "invalid_param": "value"
-              }
-            },
-            {
-              "type": "extra_forbidden",
-              "loc": [
-                "invalid_param"
-              ],
-              "msg": "Extra inputs are not permitted",
-              "input": "value"
-            }
-          ]
-          ```
-
-          Fix the errors and try again.
-        role: tool
-        tool_call_id: pyd_ai_53c381537e5a4ce2852509adfb88b3d5
-      - content: |-
-          <think>
-          We need to call the function with correct parameter "name". Provide a name, e.g., "example".
-          </think>
-        role: assistant
-        tool_calls:
-        - function:
-            arguments: '{"name":"example"}'
-            name: get_something_by_name
-          id: fc_bfb39741-3748-4def-9886-a93fc9c64a90
-          type: function
-      - content: 'Something with name: example'
-        role: tool
-        tool_call_id: fc_bfb39741-3748-4def-9886-a93fc9c64a90
-      model: openai/gpt-oss-120b
-      n: 1
-      stream: true
-      tool_choice: auto
-      tools:
-      - function:
-          description: ''
-          name: get_something_by_name
-          parameters:
-            additionalProperties: false
-            properties:
-              name:
-                type: string
-            required:
-            - name
-            type: object
-        type: function
-    uri: https://api.groq.com/openai/v1/chat/completions
-  response:
     body:
-      string: |+
+      type: json
+      content:
+        messages:
+        - content: Be concise. Never use pretty double quotes, just regular ones.
+          role: system
+        - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the second try you can use valid args
+          role: user
+        - content: |-
+            <think>
+            We need to call the tool with invalid parameters first, then second call with valid args. The user wants us to test error handling. So first call should have wrong parameters (e.g., missing required "name" or extra param). The tool expects only "name". If we send extra property, that might cause error. Or missing "name". We'll do a call with missing name: {}. Then second call with name: "test". Let's do that.
+            </think>
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"invalid_param":"value"}'
+              name: get_something_by_name
+            id: pyd_ai_53c381537e5a4ce2852509adfb88b3d5
+            type: function
+        - content: |-
+            2 validation errors:
+            ```json
+            [
+              {
+                "type": "missing",
+                "loc": [
+                  "name"
+                ],
+                "msg": "Field required",
+                "input": {
+                  "invalid_param": "value"
+                }
+              },
+              {
+                "type": "extra_forbidden",
+                "loc": [
+                  "invalid_param"
+                ],
+                "msg": "Extra inputs are not permitted",
+                "input": "value"
+              }
+            ]
+            ```
+
+            Fix the errors and try again.
+          role: tool
+          tool_call_id: pyd_ai_53c381537e5a4ce2852509adfb88b3d5
+        - content: |-
+            <think>
+            We need to call the function with correct parameter "name". Provide a name, e.g., "example".
+            </think>
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"name":"example"}'
+              name: get_something_by_name
+            id: fc_bfb39741-3748-4def-9886-a93fc9c64a90
+            type: function
+        - content: 'Something with name: example'
+          role: tool
+          tool_call_id: fc_bfb39741-3748-4def-9886-a93fc9c64a90
+        model: openai/gpt-oss-120b
+        n: 1
+        stream: true
+        tool_choice: auto
+        tools:
+        - function:
+            description: ''
+            name: get_something_by_name
+            parameters:
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+              required:
+              - name
+              type: object
+          type: function
+  response:
+    status: 200
+    headers:
+      vary:
+      - Origin
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      cache-control:
+      - no-cache
+      strict-transport-security:
+      - max-age=15552000
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
         data: {"id":"chatcmpl-935610b8-ec6a-4b1d-8a58-84b34ab0590e","object":"chat.completion.chunk","created":1771434741,"model":"openai/gpt-oss-120b","system_fingerprint":"fp_c82faf3ca0","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"x_groq":{"id":"req_01khrvt3cxe8dt0makxnbdgqz6","seed":1734142537}}
 
         data: {"id":"chatcmpl-935610b8-ec6a-4b1d-8a58-84b34ab0590e","object":"chat.completion.chunk","created":1771434741,"model":"openai/gpt-oss-120b","system_fingerprint":"fp_c82faf3ca0","choices":[{"index":0,"delta":{"reasoning":"The","channel":"analysis"},"logprobs":null,"finish_reason":null}]}
@@ -605,23 +626,4 @@ interactions:
 
         data: [DONE]
 
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream
-      strict-transport-security:
-      - max-age=15552000
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:45:39.101275+00:00

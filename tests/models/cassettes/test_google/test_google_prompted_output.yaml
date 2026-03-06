@@ -1,44 +1,46 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
     headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '533'
-      content-type:
-      - application/json
       host:
       - generativelanguage.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: What is the largest city in Mexico?
-        role: user
-      generationConfig:
-        responseMimeType: application/json
-      systemInstruction:
-        parts:
-        - text: |-
-            Always respond with a JSON object that's compatible with this schema:
-
-            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
-
-            Don't include any text or Markdown fencing before or after.
-        role: user
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      accept:
+      - '*/*'
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
       content-length:
-      - '699'
+      - '533'
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: What is the largest city in Mexico?
+          role: user
+        generationConfig:
+          responseMimeType: application/json
+        systemInstruction:
+          parts:
+          - text: |-
+              Always respond with a JSON object that's compatible with this schema:
+
+              {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+              Don't include any text or Markdown fencing before or after.
+          role: user
+  response:
+    status: 200
+    headers:
       content-type:
       - application/json; charset=UTF-8
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       server-timing:
       - gfet4t7; dur=270
       transfer-encoding:
@@ -47,27 +49,28 @@ interactions:
       - Origin
       - X-Origin
       - Referer
-    parsed_body:
-      candidates:
-      - avgLogprobs: -0.08075933273021992
-        content:
-          parts:
-          - text: '{"city": "Mexico City", "country": "Mexico"}'
-          role: model
-        finishReason: STOP
-      modelVersion: gemini-2.0-flash
-      responseId: P1teaNPqC5Tf1PIPmJOW8AE
-      usageMetadata:
-        candidatesTokenCount: 13
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 13
-        promptTokenCount: 80
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 80
-        totalTokenCount: 93
-    status:
-      code: 200
-      message: OK
-version: 1
+      content-length:
+      - '699'
+    body:
+      type: json
+      content:
+        candidates:
+        - avgLogprobs: -0.08075933273021992
+          content:
+            parts:
+            - text: '{"city": "Mexico City", "country": "Mexico"}'
+            role: model
+          finishReason: STOP
+        modelVersion: gemini-2.0-flash
+        responseId: P1teaNPqC5Tf1PIPmJOW8AE
+        usageMetadata:
+          candidatesTokenCount: 13
+          candidatesTokensDetails:
+          - modality: TEXT
+            tokenCount: 13
+          promptTokenCount: 80
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 80
+          totalTokenCount: 93
+  recorded_at: 2026-03-06T19:45:26.679678+00:00

@@ -1,45 +1,51 @@
+version: 1
 interactions:
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}], "system": [{"text": "You
-      are a helpful chatbot."}], "inferenceConfig": {"topP": 0.5}}'
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
     headers:
-      amz-sdk-invocation-id:
-      - !!binary |
-        OWMxYWJmZTEtZTRlMS00Mzg3LWFhMTItOTI3OWYyMjJhYTAy
-      amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
       content-length:
       - '175'
       content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+      - application/json
+      amz-sdk-request:
+      - attempt=1
+      amz-sdk-invocation-id:
+      - 9c1abfe1-e4e1-4387-aa12-9279f222aa02
+    body:
+      type: json
+      content:
+        inferenceConfig:
+          topP: 0.5
+        messages:
+        - content:
+          - text: What is the capital of France?
+          role: user
+        system:
+        - text: You are a helpful chatbot.
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
-      content-length:
-      - '399'
       content-type:
       - application/json
-    parsed_body:
-      metrics:
-        latencyMs: 379
-      output:
-        message:
-          content:
-          - text: The capital of France is Paris. Paris is not only the capital city but also the most populous city in France,
-              and it is a major center for culture, fashion, gastronomy, and international diplomacy.
-          role: assistant
-      stopReason: end_turn
-      usage:
-        inputTokens: 13
-        outputTokens: 41
-        serverToolUsage: {}
-        totalTokens: 54
-    status:
-      code: 200
-      message: OK
-version: 1
+      content-length:
+      - '399'
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 379
+        output:
+          message:
+            content:
+            - text: The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, fashion, gastronomy, and international diplomacy.
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 13
+          outputTokens: 41
+          serverToolUsage: {}
+          totalTokens: 54
+  recorded_at: 2026-03-06T20:14:05.728928+00:00

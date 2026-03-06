@@ -1,34 +1,59 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
     headers:
       accept:
       - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '144'
       content-type:
       - application/json
-      cookie:
-      - __cf_bm=EGlv.LzYbJ3w9GCuZFkTZc6oq0QWEOM0NG7aMJPGjvk-1759436802-1.0.1.1-6oxojh3oohGyLcgU4JW0tlAp58gjOtU_gxXDExM6TYMtkY__jPait0ymNkQmMfL4if.C.4i5xBwDmMoWScw7U9pDwoE_d_f999NvYqOWu0k;
-        _cfuvid=X9yhA1__xIYNmD8jrktglFeG98OLAwcfPSs_ukpzW4c-1759436802603-0.0.1.1-604800000
+      connection:
+      - keep-alive
       host:
       - api.openai.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: What is the capital of Mexico?
-        role: user
-      model: gpt-4o
-      stream: true
-      stream_options:
-        include_usage: true
-    uri: https://api.openai.com/v1/chat/completions
-  response:
+      accept-encoding:
+      - gzip, deflate
+      content-length:
+      - '144'
+      cookie:
+      - __cf_bm=EGlv.LzYbJ3w9GCuZFkTZc6oq0QWEOM0NG7aMJPGjvk-1759436802-1.0.1.1-6oxojh3oohGyLcgU4JW0tlAp58gjOtU_gxXDExM6TYMtkY__jPait0ymNkQmMfL4if.C.4i5xBwDmMoWScw7U9pDwoE_d_f999NvYqOWu0k; _cfuvid=X9yhA1__xIYNmD8jrktglFeG98OLAwcfPSs_ukpzW4c-1759436802603-0.0.1.1-604800000
     body:
-      string: |+
+      type: json
+      content:
+        messages:
+        - content: What is the capital of Mexico?
+          role: user
+        model: gpt-4o
+        stream: true
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      openai-version:
+      - 2020-10-01
+      openai-project:
+      - proj_nKlzMl1B51a3SCL1Rndf7JTx
+      openai-processing-ms:
+      - '406'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      openai-organization:
+      - user-xgcwoiiqpw3hpu7oxktn2g9g
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
         data: {"id":"chatcmpl-CMKBAQ4vWbdeHIVnqDgk62In6psws","object":"chat.completion.chunk","created":1759436820,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_f33640a400","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"uaF2tiolOC6T92"}
 
         data: {"id":"chatcmpl-CMKBAQ4vWbdeHIVnqDgk62In6psws","object":"chat.completion.chunk","created":1759436820,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_f33640a400","choices":[{"index":0,"delta":{"content":"The"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"9TqFtgojc4OKI"}
@@ -53,29 +78,4 @@ interactions:
 
         data: [DONE]
 
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream; charset=utf-8
-      openai-organization:
-      - user-xgcwoiiqpw3hpu7oxktn2g9g
-      openai-processing-ms:
-      - '406'
-      openai-project:
-      - proj_nKlzMl1B51a3SCL1Rndf7JTx
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:45:58.524552+00:00

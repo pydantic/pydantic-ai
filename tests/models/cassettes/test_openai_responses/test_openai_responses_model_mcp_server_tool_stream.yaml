@@ -1,41 +1,65 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
     headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
       connection:
       - keep-alive
-      content-length:
-      - '438'
       content-type:
       - application/json
+      content-length:
+      - '438'
       host:
       - api.openai.com
-    method: POST
-    parsed_body:
-      include:
-      - reasoning.encrypted_content
-      input:
-      - content: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
-        role: user
-      instructions: You are a helpful assistant.
-      model: o4-mini
-      stream: true
-      tool_choice: auto
-      tools:
-      - allowed_tools:
-        - ask_question
-        - read_wiki_structure
-        require_approval: never
-        server_label: deepwiki
-        server_url: https://mcp.deepwiki.com/mcp
-        type: mcp
-    uri: https://api.openai.com/v1/responses
-  response:
+      accept-encoding:
+      - gzip, deflate
+      accept:
+      - application/json
     body:
-      string: |+
+      type: json
+      content:
+        include:
+        - reasoning.encrypted_content
+        input:
+        - content: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
+          role: user
+        instructions: You are a helpful assistant.
+        model: o4-mini
+        stream: true
+        tool_choice: auto
+        tools:
+        - allowed_tools:
+          - ask_question
+          - read_wiki_structure
+          require_approval: never
+          server_label: deepwiki
+          server_url: https://mcp.deepwiki.com/mcp
+          type: mcp
+  response:
+    status: 200
+    headers:
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '254'
+      openai-version:
+      - 2020-10-01
+      alt-svc:
+      - h3=":443"; ma=86400
+      transfer-encoding:
+      - chunked
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+    body:
+      type: text
+      content: |+
         event: response.created
         data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_00b9cc7a23d047270068faa0e25934819f9c3bfdec80065bc4","object":"response","created_at":1761255650,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"o4-mini-2025-04-16","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"auto","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"mcp","allowed_tools":["ask_question","read_wiki_structure"],"headers":null,"require_approval":"never","server_description":null,"server_label":"deepwiki","server_url":"https://mcp.deepwiki.com/<redacted>"}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}}}
 
@@ -618,27 +642,4 @@ interactions:
         event: response.completed
         data: {"type":"response.completed","sequence_number":193,"response":{"id":"resp_00b9cc7a23d047270068faa0e25934819f9c3bfdec80065bc4","object":"response","created_at":1761255650,"status":"completed","background":false,"error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"max_tool_calls":null,"model":"o4-mini-2025-04-16","output":[{"id":"mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd","type":"mcp_list_tools","server_label":"deepwiki","tools":[{"annotations":{"read_only":false},"description":"Get a list of documentation topics for a GitHub repository","input_schema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"},"name":"read_wiki_structure"},{"annotations":{"read_only":false},"description":"Ask any question about a GitHub repository","input_schema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"},"question":{"type":"string","description":"The question to ask about the repository"}},"required":["repoName","question"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"},"name":"ask_question"}]},{"id":"rs_00b9cc7a23d047270068faa0e4cd5c819f8855c183ff0fe957","type":"reasoning","encrypted_content":"gAAAAABo-qD3VQyikAL6DCqJekitghySUvSx5cViETKf2rsb94u6S0mbFNnm2mh9aa32GgswtK2C_BqnLLm9L3ivBOFs2dz03CFqhhhZo7GexruY8g4kraqqLyzq-rc51XuGx_qDfkzSUWNXLsZH-DUT-m6kcFps7dBSfduvEmBl9rD0AdHQJ6qiXfFhH8ypvLQ6bzbG1YR5MYdRrp4Pq66_1TVGOIO5Vx41-bKqVcp48tbfR1MGY0HCJr_ILNrxLkhEbe6EeV571xXLLHxe1njl5rFrSY2uGZGJTPyQq3nHKKN3mtJCl98unOjp78G0k9QarFFMdtMVDPddKbn2UJYNdSWb6QummGHTGxRTnYGyuL5fWEr3pAi6KAvHG63rowNA8eyTiv4ESGCJjUUln0JG1WCg2Q_ReZffxGbWLTiTFN293m_hGHXvuBhdiquDkbE-WyDrkehT-CnEbIpykLzokMuN7ZYwtij1kM6YB-zOeJxD5HqmkccqNfq7DfgUMC1kwDwFfq0gfT2UE9Aaec6n7uPGYdhT1jaPXAn2LNAmLbxHcc6trmO7kxKYAZy0PWp_WnXRqvfyIwiULolp1XF83caKbK6Ly1Tv3dJ_m3I0GkT6ZfHnB7Xe198ie0T5Mxo31deY8CycgRhdBDbdOCVnzAVScT8LX5J9rGhtUOvj4J4yutrUHPWoxNn3nXTsOoRvWPI7QI4KmcYHdzPNxlVJFPpNqSdnR4DYZLnTjHbzWxXRDkTGuhKdfixrdpHZbZN1x4CIQNowvwT3uzzCGBknf12srpspSXXs6mi0H0EnEbuwiwGTbdSjaDgxPlVK7yCMDfOnqa2UJe0bIIX8na55o_Au5hxI5Bw323xIdYwkINGMfgy0VVViiGDuYyKSzYrpI1uOVZ7qCCM-Bxh9FwOBLhfa3JiswSfzRCwUYjHb5boDnOFI5d5B5219E0iVKLQ8rkkMNP5KrrTnLqvqJLzwMd588vz1WijLrruV9UIC3e361OitNpIinbTr0MjTV8Qo6Qv9pJ-1hTwiSXkgT-DVwrFSwKuVzCxlEZFEAEhsMXlb1Ea3j7lj-5_AofaInCM5NcYSm-tMRif5t9yYLRiEyb-VRRaLRmpQjyTNtMOZaf8pSYDKrfTTzrWEbA1rp1_btKBcS6pFKsZ7CQQ_nxiRTsjomVjLO7TrmoSu_A9zcxZQnb2aKaVMuavLosKlhxAofnr10AIAUU_to2SErDn23TsLgvpLQz0cjdlyDSf8ixcpaJio0ztgFBT0SJ2iOTT_iBJAeo7JMIFULG8ZFpmFB3EHJWaQEzyXlc_MNDK51pHP-c1K7wJmDnQQT4u8NWejHzGpA90l8TXN8Q8QmDmSRqok24w4PJfQQ8gq87hPDJkMJ-bK_5u-NGq46atVmOvT8G6Zu98wR4ilfjy6IoV1vN_tlvITbyG67ds9smj6qly45LJFZEQQXxltY5OBnxX0qR_7nHlyib8h9R_AdRyUmXVegPtJ-yKXAXYcl_TStDiY-ipyRas8qUR7Sf3yRnsGbsMYiZ5e6HKLWv3yVeBzBgszYTS5NS42VVQWRYlxWU33ufyu-XXJ9_POd-l3ypjguz5f2wcecsV-HumEOB07CowEw0wlvLnOzdJh76Ps1owfqO7KRBFUbU7XjyVDvgt8C_Rk-Ce3oWGhk_mA6n_pcNvTzNW8evx-2QzVIkiO5dVP2aJO1J1rngWPpw4G6PD2AA99wP32c5c8FYpjan7akGZgDCCSLXrdEKUtAZAZtn0BtGCR8zgokW6mx4_628FqyGDjGgsQSSACUBe0hHehlWop5Zx-nQ==","summary":[]},{"id":"mcp_00b9cc7a23d047270068faa0e67fb0819fa9e21302c398e9ac","type":"mcp_call","status":"completed","approval_request_id":null,"arguments":"{\"repoName\":\"pydantic/pydantic-ai\",\"question\":\"What is the pydantic/pydantic-ai repository about?\"}","error":null,"name":"ask_question","output":"The `pydantic/pydantic-ai` repository is a Python agent framework designed to simplify the development of production-grade applications using Generative AI . It aims to bring the ergonomic developer experience and type-safety philosophy of Pydantic and FastAPI to AI agent development .\n\n## Core Purpose and Features\n\nThe framework focuses on providing a robust and type-safe environment for building AI agents . Key features include:\n\n*   **Type-safe Agents**: Agents are generic `Agent[Deps, Output]` for compile-time validation, leveraging Pydantic for output validation and dependency injection .\n*   **Model-agnostic Design**: It supports over 15 LLM providers through a unified `Model` interface, allowing for easy switching between different models and providers  .\n*   **Structured Outputs**: Automatic Pydantic validation and reflection/self-correction ensure structured and reliable outputs from LLMs .\n*   **Comprehensive Observability**: Integration with OpenTelemetry and native Logfire provides real-time debugging, performance monitoring, and cost tracking  .\n*   **Production-ready Tooling**: This includes an evaluation framework (`pydantic-evals`), durable execution capabilities, and various protocol integrations like MCP, A2A, and AG-UI  .\n*   **Graph Support**: It provides a way to define graphs using type hints for complex applications .\n\n## Framework Architecture\n\nThe framework is structured as a UV workspace monorepo, containing several packages .\n\n### Core Packages\n\n*   `pydantic-ai-slim`: Contains the core framework components such as `Agent`, `Model`, and tools .\n*   `pydantic-ai`: A meta-package that includes all optional extras .\n\n### Supporting Packages\n\n*   `pydantic-graph`: Provides the graph execution engine with `Graph` and `BaseNode` .\n*   `pydantic-evals`: An evaluation framework for datasets and evaluators .\n*   `examples`: Contains example applications .\n*   `clai`: Provides a CLI interface .\n\n## Agent Execution Flow\n\nThe `Agent` class serves as the primary orchestrator . Agent execution is graph-based, utilizing a state machine from `pydantic_graph.Graph` . The execution involves three core node types:\n\n*   `UserPromptNode`: Processes user input and creates initial `ModelRequest` .\n*   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()` and handles retries .\n*   `CallToolsNode`: Executes tool functions via `RunContext[Deps]` .\n\nThe `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution scenarios .\n\n## Model Provider Support\n\nThe framework offers a unified `Model` abstract base class for various LLM providers . This includes native support for providers like OpenAI, Anthropic, Google, Groq, Mistral, Cohere, and Bedrock . Additionally, many OpenAI-compatible providers can be used with `OpenAIChatModel` .\n\n## Tool System\n\nTools are registered using the `@agent.tool` decorator . The system automatically generates JSON schemas from function signatures and docstrings, validates tool call arguments, and provides context injection via `RunContext[Deps]` .\n\n## Observability Integration\n\nPydantic AI integrates with OpenTelemetry, allowing for instrumentation of agent runs, model requests, and tool executions . It has native integration with Pydantic Logfire for enhanced monitoring and visualization .\n\n## Evaluation Framework\n\nThe `pydantic-evals` package provides a framework for systematically testing and evaluating AI systems . It supports defining datasets with `Case` objects and using various evaluators, including built-in and custom ones .\n\n## Integration Ecosystem\n\nPydantic AI supports various integrations for development and production:\n\n*   **Model Context Protocol (MCP)**: For external tool server access .\n*   **AG-UI Protocol**: For interactive application frontends .\n*   **Agent2Agent (A2A)**: For multi-agent communication and workflows .\n*   **Temporal**: For durable workflow execution .\n*   **DBOS**: For database-backed execution and state persistence .\n\n## Notes\n\nThe `CLAUDE.md` file provides guidance for Claude Code when working with the repository, including development commands and an overview of core components and design patterns . The `mkdocs.yml` file defines the structure and content of the project's documentation, including navigation, plugins, and watch directories for various packages  . The `docs/install.md` file details how to install the `pydantic-ai` package and its optional components, including a \"slim\" installation option for specific model dependencies .\n\nWiki pages you might want to explore:\n- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)\n\nView this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpydanticai_e234e9cf-d4aa-4c67-a257-56034816dd56\n","server_label":"deepwiki"},{"id":"rs_00b9cc7a23d047270068faa0f4ff54819f9fb9ff25bebe7f5f","type":"reasoning","encrypted_content":"gAAAAABo-qD3K7EGpLRQ1wIzsTvIeVZdZJsH3vNs16W9DRG-xQgJDG2JMaCu4rFRnWLHsQbqYOhfrPdoWQ2rIcf4g9usyeouSK18fj1gYHZjfad18ere7MQynQXerSFlAqJ7U08_ZDtADGrMhLBBDnavF4yDQ_GpRCDoRDD9Z-0sXr3T57cIBheFHBw4nd6UGaI9zNSLD-rwbmITJp_C7bHeP3Ho0XSwnFd9ekQmulSQwJmLRmTGhrZPIWySG-K6VdzESg1rgz5EV82d3IbRnJkW5mcKNHJq8KtgLpWi9z1BnjEFBcPIL2liXOVG7_yLgFtZNqSMpj625xc0sfr7Le5sYjMsb5kVzinr6DLytefN-Pl7xfGIUIQDayhrwORd5opkSmLnVpFCpDcDWb2WP-Z2OPS7WOtwBli5autVtqztWoWX-dxPWE6ndrJlJGNXCaorvjJXZElp7ZpJHtRCnMfIpgZayU3-OVKJ4D-aqM98VwB-pXeotFf5-mpn93bwmdcM8R8c2WqcJXhnbM6m3v-bZGX_V_Io6nOEjBRWL3XzDJbsPlVTFgofTlsllJhpIDlxxPUPmvq9OchQyPekMYtnfVtXxVOzYZz2_DmM5VobsMoNNZo05LN69PHGzhC5ME9WZZDBzNFl_GMyOU35wTaUYNudwsUiqFiFy-yuuxxHDbrqxedEtlS-bkUVohcA3HM3Mkt5Nb8EzAWndFhZpzCDmADwcDtBYbu4NEUYkIolFoKRg2il_JrqXBard8KNrg_He1amZqDeq_zbFchrDOI2TR0WJf5kZGrPElKI8BV4A47MfuQpzlsn6-5I9UwF4lVW58Te_qEuBvqPhoenFzOVv6LK5WXjV2cSmzqXbfxRLOIad8VPNZxy-kFiyC1flIU_b19WRAh5LwE_far3TwMh23pyw5skqk6tkNCV41qpMxEqU1ZWT_rBG1GCbUsRvlnqmE_01XbHCnmWPtzd7n-oALTf2Ll3HbPis297MxSZLq8yMWPpkbnzbs65KZsu_8g-N5wpRUSzmim31KytQtohQzNDgUxKKnGxYplPkR02LTJzAwMg_0cDSrU6piF2BQUZirEo-mPR9g6IDGl421Ln6b0-q05-Ccd24BwTO1UJ-zgLHgTEanHRtl9dYmR6tguOxz1A_KcolnCKZq599US868kZrMkkR1X4BlrUEVIOzbLdThR8bzqagUy3u2LztGh58sNb4Bf4QsRrWKD42CIP3UoxDkG7mJec2T_jCfLslAQ9HkN_HWgJTbDPCeQHEqgVqJml_sYXQaf2n4bcYNtYAIBAAK-q1LXNOZDaqRPnI4HL29cAh5zIINZCX5E5O7xyzZC-IXoNE2BL5U_aqRUJ5yJscejcQUrOczgZLvEWzYuKBMvCRol-gNb2NdvOO_fEptU5CWOIod-9hvOJhlnNWX0G8VLjSU9ayQs8GfXn6b8QycmMbzrl-EclhzYm0cnLy757hKMiaUKG3ZTOHfZwj0DxiwaM6tTGo4hVEETZ6dYBeXPMii0seN0yHduNdoVKUiWz9sSM6MBzGhFQwjAWzUqQ-4E_islx_MRPcHYaiiKwWnCl5jMuJyBrE-lEi4YCSMn0cIAGQVFp35DvPlvVTKdhnEjGK0ixnXciba4v2L6ewTq3uwFlO_EKCQuz8XTHBOV32sRdJc7l0zD8BjnoZ1AE5tsX4Dz24xLd6stKMxoSsGiWoDx2UIog6WEMd5G_bPUz2P1t","summary":[]},{"id":"msg_00b9cc7a23d047270068faa0f63798819f83c5348ca838d252","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"pydantic-ai is a Python “agent” framework that brings Pydantic’s type-safety and FastAPI-style ergonomics to building production-grade Generative AI apps. It provides:\n\n• A generic Agent[Deps, Output] API with automatic Pydantic validation  \n• A unified Model interface supporting 15+ LLM providers (OpenAI, Anthropic, Google, etc.)  \n• Structured output correction, dependency-injection tools, and graph-based execution  \n• Built-in observability (OpenTelemetry, Logfire), evaluation (pydantic-evals) and durable workflows  \n• A monorepo split into core (pydantic-ai-slim), graph, evals, CLI and example packages  \n\nIn short, it’s a turnkey, type-safe scaffold for AI agent development."}],"role":"assistant"}],"parallel_tool_calls":true,"previous_response_id":null,"prompt_cache_key":null,"reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"default","store":true,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tools":[{"type":"mcp","allowed_tools":["ask_question","read_wiki_structure"],"headers":null,"require_approval":"never","server_description":null,"server_label":"deepwiki","server_url":"https://mcp.deepwiki.com/<redacted>"}],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":1401,"input_tokens_details":{"cached_tokens":0},"output_tokens":480,"output_tokens_details":{"reasoning_tokens":256},"total_tokens":1881},"user":null,"metadata":{}}}
 
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream; charset=utf-8
-      openai-organization:
-      - pydantic-28gund
-      openai-processing-ms:
-      - '254'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
-      openai-version:
-      - '2020-10-01'
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:45:34.657728+00:00

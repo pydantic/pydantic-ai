@@ -1,6 +1,13 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
     headers:
+      host:
+      - openrouter.ai
+      content-type:
+      - application/json
       accept:
       - application/json
       accept-encoding:
@@ -9,24 +16,39 @@ interactions:
       - keep-alive
       content-length:
       - '169'
-      content-type:
-      - application/json
-      host:
-      - openrouter.ai
-    method: POST
-    parsed_body:
-      max_completion_tokens: 10
-      messages:
-      - content: Hello there
-        role: user
-      model: minimax/minimax-m2:free
-      stream: true
-      stream_options:
-        include_usage: true
-    uri: https://openrouter.ai/api/v1/chat/completions
-  response:
     body:
-      string: |+
+      type: json
+      content:
+        max_completion_tokens: 10
+        messages:
+        - content: Hello there
+          role: user
+        model: minimax/minimax-m2:free
+        stream: true
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      vary:
+      - Accept-Encoding
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      cache-control:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      access-control-allow-origin:
+      - '*'
+      content-type:
+      - text/event-stream
+    body:
+      type: text
+      content: |+
         : OPENROUTER PROCESSING
 
         : OPENROUTER PROCESSING
@@ -71,26 +93,4 @@ interactions:
 
         data: [DONE]
 
-    headers:
-      access-control-allow-origin:
-      - '*'
-      cache-control:
-      - no-cache
-      connection:
-      - keep-alive
-      content-type:
-      - text/event-stream
-      permissions-policy:
-      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
-        "https://hooks.stripe.com")
-      referrer-policy:
-      - no-referrer, strict-origin-when-cross-origin
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+  recorded_at: 2026-03-06T19:45:37.430184+00:00

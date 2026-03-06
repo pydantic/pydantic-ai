@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import BaseModel
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import (
     Agent,
@@ -433,7 +433,7 @@ This video features a giant panda in an enclosure designed to resemble its natur
 
 
 async def test_openrouter_binary_content_video_public_api(
-    allow_model_requests: None, openrouter_api_key: str, video_content: BinaryContent, vcr: Cassette
+    allow_model_requests: None, openrouter_api_key: str, video_content: BinaryContent, vcr_cassette: Cassette
 ) -> None:  # pragma: lax no cover
     """Test `BinaryContent` video support through the public `Agent.run` API."""
     provider = OpenRouterProvider(api_key=openrouter_api_key)
@@ -446,9 +446,9 @@ async def test_openrouter_binary_content_video_public_api(
         "The video shows a camera on a tripod recording a scenic mountain landscape, with a preview of the shot visible on the camera's screen."
     )
 
-    assert vcr is not None
-    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert vcr_cassette is not None
+    assert len(vcr_cassette.interactions) == 1
+    request_body = vcr_cassette.interactions[0].request.body.content
 
     video_content_part = request_body['messages'][0]['content'][1]
     assert video_content_part['type'] == 'video_url'
@@ -833,7 +833,7 @@ async def test_openrouter_url_citation_annotation_validation(openrouter_api_key:
 
 
 async def test_openrouter_document_url_no_force_download(
-    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+    allow_model_requests: None, openrouter_api_key: str, vcr_cassette: Cassette
 ) -> None:
     """Test that OpenRouter passes DocumentUrl directly without downloading when force_download=False.
 
@@ -852,9 +852,9 @@ async def test_openrouter_document_url_no_force_download(
     assert 'dummy' in result.output.lower() or 'pdf' in result.output.lower()
 
     # Verify URL was passed directly (not downloaded and base64-encoded)
-    assert vcr is not None
-    assert len(vcr.requests) == 1, 'Should only have one request (to OpenRouter, not a download)'  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert vcr_cassette is not None
+    assert len(vcr_cassette.interactions) == 1, 'Should only have one request (to OpenRouter, not a download)'
+    request_body = vcr_cassette.interactions[0].request.body.content
     file_content = request_body['messages'][0]['content'][1]
     assert file_content == snapshot(
         {
