@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run pytest with Vertex AI auth
-# Usage: .claude/skills/pytest-vcr/run-vertex-tests.sh [pytest args...]
+# Usage: .agents/skills/pytest-vcr/run-vertex-tests.sh [pytest args...]
 
 set -e
 

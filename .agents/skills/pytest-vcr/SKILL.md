@@ -1,7 +1,7 @@
 ---
 name: pytest-vcr
 description: Record, rewrite, and debug VCR cassettes for HTTP recordings. Use when running tests with --record-mode, verifying cassette playback, or inspecting request/response bodies in YAML cassettes.
-allowed-tools: Bash(uv run pytest *), Bash(uv run python .agents/skills/pytest-vcr/parse_cassette.py *), Bash(.agents/skills/pytest-vcr/run-vertex-tests.sh *), Bash(source .env *), Bash(git diff *)
+allowed-tools: Bash(uv run pytest *), Bash(uv run python .agents/skills/pytest-vcr/parse_cassette.py *), Bash(.agents/skills/pytest-vcr/run-vertex-tests.sh *), Bash(source .env && uv run pytest *), Bash(git diff *)
 ---
 
 # Pytest VCR Workflow

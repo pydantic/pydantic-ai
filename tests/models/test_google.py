@@ -4931,7 +4931,7 @@ async def test_gcs_video_url_raises_error_on_google_gla(disable_ssrf_protection_
     google-gla cannot access GCS buckets, so attempting to use gs:// URLs
     should fail with a helpful error message rather than a cryptic API error.
     Even without force_download, google-gla always downloads non-YouTube URLs
-    (see google.py _map_user_prompt FileUrl branch), so the gs:// protocol
+    (see the FileUrl branch in the user prompt mapping logic), so the gs:// protocol
     hits SSRF validation which rejects it — hence disable_ssrf_protection_for_vcr.
     """
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
