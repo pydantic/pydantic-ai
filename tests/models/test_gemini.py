@@ -13,7 +13,6 @@ from typing import Annotated, Literal, TypeAlias
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
 from pydantic_ai import (
@@ -62,6 +61,7 @@ from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import ClientWithHandler, IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = [

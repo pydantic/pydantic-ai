@@ -89,7 +89,7 @@ making it ideal for queries that require up-to-date data.
 ```py {title="web_search_anthropic.py"}
 from pydantic_ai import Agent, WebSearchTool
 
-agent = Agent('anthropic:claude-sonnet-4-5', builtin_tools=[WebSearchTool()])
+agent = Agent('anthropic:claude-sonnet-4-6', builtin_tools=[WebSearchTool()])
 
 result = agent.run_sync('Give me a sentence with the biggest news in AI this week.')
 print(result.output)
@@ -120,7 +120,7 @@ The `WebSearchTool` supports several configuration parameters:
 from pydantic_ai import Agent, WebSearchTool, WebSearchUserLocation
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     builtin_tools=[
         WebSearchTool(
             search_context_size='high',
@@ -252,7 +252,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 ```py {title="code_execution_basic.py"}
 from pydantic_ai import Agent, CodeExecutionTool
 
-agent = Agent('anthropic:claude-sonnet-4-5', builtin_tools=[CodeExecutionTool()])
+agent = Agent('anthropic:claude-sonnet-4-6', builtin_tools=[CodeExecutionTool()])
 
 result = agent.run_sync('Calculate the factorial of 15.')
 print(result.output)
@@ -507,7 +507,7 @@ The `WebFetchTool` supports several configuration parameters:
 from pydantic_ai import Agent, WebFetchTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     builtin_tools=[
         WebFetchTool(
             allowed_domains=['ai.pydantic.dev', 'docs.pydantic.dev'],
@@ -605,7 +605,7 @@ class FakeMemoryTool(BetaAbstractMemoryTool):
 
 fake_memory = FakeMemoryTool()
 
-agent = Agent('anthropic:claude-sonnet-4-5', builtin_tools=[MemoryTool()])
+agent = Agent('anthropic:claude-sonnet-4-6', builtin_tools=[MemoryTool()])
 
 
 @agent.tool_plain
@@ -654,7 +654,7 @@ but can result in optimized context use and caching, and faster performance due 
 from pydantic_ai import Agent, MCPServerTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     builtin_tools=[
         MCPServerTool(
             id='deepwiki',

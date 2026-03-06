@@ -6,11 +6,12 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_graph import BaseNode, End, GraphRunContext
 from pydantic_graph.beta import GraphBuilder, StepContext, StepNode
 from pydantic_graph.beta.join import JoinNode, reduce_list_append
+
+from ..._inline_snapshot import snapshot
 
 pytestmark = pytest.mark.anyio
 
