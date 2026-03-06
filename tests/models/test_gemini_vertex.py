@@ -52,11 +52,8 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
 
 
-@pytest.mark.skipif(
-    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
-)
 @pytest.mark.vcr()
-async def test_labels(allow_model_requests: None) -> None:  # pragma: lax no cover
+async def test_labels(skip_unless_vertex: None, allow_model_requests: None) -> None:  # pragma: lax no cover
     provider = GoogleVertexProvider(project_id='pydantic-ai', region='us-central1')
     m = GeminiModel('gemini-2.0-flash', provider=provider)
     agent = Agent(m)
@@ -68,9 +65,6 @@ async def test_labels(allow_model_requests: None) -> None:  # pragma: lax no cov
     assert result.output == snapshot('The capital of France is **Paris**.\n')
 
 
-@pytest.mark.skipif(
-    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
-)
 @pytest.mark.parametrize(
     'url,expected_output',
     [
@@ -123,7 +117,10 @@ async def test_labels(allow_model_requests: None) -> None:  # pragma: lax no cov
 )
 @pytest.mark.vcr()
 async def test_url_input(
-    url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl, expected_output: str, allow_model_requests: None
+    skip_unless_vertex: None,
+    url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl,
+    expected_output: str,
+    allow_model_requests: None,
 ) -> None:  # pragma: lax no cover
     provider = GoogleVertexProvider(project_id='pydantic-ai', region='us-central1')
     m = GeminiModel('gemini-2.0-flash', provider=provider)
@@ -158,12 +155,9 @@ async def test_url_input(
     )
 
 
-@pytest.mark.skipif(
-    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
-)
 @pytest.mark.vcr()
 async def test_url_input_force_download(
-    allow_model_requests: None, disable_ssrf_protection_for_vcr: None
+    skip_unless_vertex: None, allow_model_requests: None, disable_ssrf_protection_for_vcr: None
 ) -> None:  # pragma: lax no cover
     provider = GoogleVertexProvider(project_id='pydantic-ai', region='us-central1')
     m = GeminiModel('gemini-2.0-flash', provider=provider)

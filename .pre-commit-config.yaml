@@ -67,6 +67,12 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: check-skills-symlink
+        name: Check .claude/skills is a symlink
+        entry: test -L .claude/skills
+        language: system
+        always_run: true
+        pass_filenames: false
       - id: check-cassettes
         name: Check cassettes
         entry: uv

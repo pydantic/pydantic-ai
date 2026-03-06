@@ -5,6 +5,8 @@
       "Bash(ls:*)",
       "Bash(tree:*)",
       "Bash(grep:*)",
+      "Bash(git -C * diff:*)",
+      "Bash(git -C * log:*)",
       "Bash(git log:*)",
       "Bash(git diff:*)",
       "Bash(git grep:*)",
@@ -19,7 +21,8 @@
       "Bash(gh run view:*)",
       "Bash(gh run list:*)",
       "Bash(uv run:*)",
-      "Bash(make:*)"
+      "Bash(make:*)",
+      "Skill(pytest-vcr:*)"
     ]
   }
 }
