@@ -2662,9 +2662,11 @@ async def test_bedrock_cache_messages_no_user_messages(allow_model_requests: Non
         ModelRequestParameters(),
         BedrockModelSettings(bedrock_cache_messages=True),
     )
-    # Should not crash, no cache point added since no user message
-    assert len(bedrock_messages) == 1
-    assert bedrock_messages[0]['role'] == 'assistant'
+    # Should not crash, no cache point added since no real user message.
+    # Synthetic user message is prepended because Bedrock requires conversations to start with a user turn.
+    assert len(bedrock_messages) == 2
+    assert bedrock_messages[0] == {'role': 'user', 'content': [{'text': ' '}]}
+    assert bedrock_messages[1]['role'] == 'assistant'
 
 
 async def test_get_last_user_message_content_non_dict_block(
@@ -3153,6 +3155,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
     )
     assert bedrock_messages == snapshot(
         [
+            {'role': 'user', 'content': [{'text': ' '}]},
             {
                 'role': 'assistant',
                 'content': [
@@ -3188,7 +3191,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
                         }
                     },
                 ],
-            }
+            },
         ]
     )
 
@@ -3534,3 +3537,93 @@ async def test_uploaded_file_audio_not_supported(allow_model_requests: None, bed
                 UploadedFile(file_id='s3://bucket/audio.wav', provider_name='bedrock', media_type='audio/wav'),
             ]
         )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_model_with_instructions_only(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that agent.run() works without a user prompt, using only a system prompt.
+
+    Bedrock requires conversations to start with a user message. When called with only a
+    system prompt, the model layer synthesizes an empty user message automatically.
+    See: https://github.com/pydantic/pydantic-ai/issues/4495
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='Generate a short greeting.')
+
+    result = await agent.run()
+    assert result.output == snapshot('Hello! How are you today?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello! How are you today?')],
+                usage=RequestUsage(input_tokens=6, output_tokens=8),
+                model_name='us.amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_model_instructions_only_then_message_history(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that message_history from a system-prompt-only run works in a follow-up run.
+
+    Verifies the scenario where a first run with only instructions produces a history
+    starting with an assistant message (after system parts are extracted), and a second
+    run using that history doesn't fail.
+    See: https://github.com/pydantic/pydantic-ai/issues/4495
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='Generate a short greeting.')
+
+    first_result = await agent.run()
+    second_result = await agent.run('Now say goodbye.', message_history=first_result.all_messages())
+    assert second_result.output == snapshot('Goodbye for now! Have a wonderful day ahead!')
+    assert second_result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello! How are you today?')],
+                usage=RequestUsage(input_tokens=6, output_tokens=8),
+                model_name='us.amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Now say goodbye.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Goodbye for now! Have a wonderful day ahead!')],
+                usage=RequestUsage(input_tokens=22, output_tokens=11),
+                model_name='us.amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
