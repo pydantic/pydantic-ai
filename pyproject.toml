@@ -233,6 +233,7 @@ strict = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "docs/.hooks"]
+norecursedirs = ["tests/ai_sdk"]
 xfail_strict = true
 filterwarnings = [
     "error",

@@ -1,0 +1,11 @@
+{
+  "name": "pydantic-ai-ai-sdk-tests",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ai": "^6.0.57"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}
