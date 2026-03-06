@@ -1,0 +1,23 @@
+tests/test_deps.py
+  4ba2ad79974ff636 5-10,14-17,37,42,51,63,70,73,90,95,104,116,123,126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "4f77175b9fd2bfbc9bbfdd56e3ec3d0f1026dc7f",
+  "prompts": {
+    "4ba2ad79974ff636": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ea70ef1-2c5c-40ef-aa41-022a6e9e541d",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>",
+      "messages": [],
+      "total_additions": 18,
+      "total_deletions": 12,
+      "accepted_lines": 22,
+      "overriden_lines": 1
+    }
+  }
+}
