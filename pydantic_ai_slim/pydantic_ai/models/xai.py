@@ -1087,6 +1087,12 @@ def _extract_usage(
     if extracted.output_tokens == 0 and usage_data['completion_tokens']:
         extracted.output_tokens = usage_data['completion_tokens']
 
+    # Promote cache tokens to top-level fields if genai-prices didn't map them
+    if not extracted.cache_read_tokens and 'cache_read_tokens' in usage_data:
+        extracted.cache_read_tokens = usage_data['cache_read_tokens']
+    if not extracted.cache_write_tokens and 'cache_write_tokens' in usage_data:
+        extracted.cache_write_tokens = usage_data['cache_write_tokens']
+
     return extracted
 
 
