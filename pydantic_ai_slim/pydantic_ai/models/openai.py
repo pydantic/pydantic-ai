@@ -570,7 +570,7 @@ class OpenAIChatModel(Model):
     @property
     def provider(self) -> Provider[AsyncOpenAI]:
         """The provider for this model."""
-        return self._provider  # pragma: no cover
+        return self._provider
 
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
