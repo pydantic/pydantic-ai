@@ -542,6 +542,15 @@ class MCPServer(AbstractToolset[Any], ABC):
 
             raise exceptions.ModelRetry(message or 'MCP tool call failed')
 
+        # Audience filtering must happen before the structured-content path: if every
+        # content block is annotated as user-only, the model should not see the
+        # JSON-serialised equivalent either.
+        content_for_assistant = [part for part in result.content if _include_content_for_assistant(part)]
+        if not content_for_assistant and result.content:
+            # All content blocks were filtered out by audience annotations (audience=['user'] only).
+            # Return an informative placeholder so the model knows the tool ran.
+            return 'Tool executed successfully. (No model-visible content in result.)'
+
         # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
         if (structured := result.structuredContent) and not any(
@@ -553,15 +562,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 return structured['result']
             return structured
 
-        mapped = [
-            await self._map_tool_result_part(part)
-            for part in result.content
-            if _include_content_for_assistant(part)
-        ]
-        if not mapped and result.content:
-            # All content blocks were filtered out by audience annotations (audience=['user'] only).
-            # Return an informative placeholder so the model knows the tool ran.
-            return 'Tool executed successfully. (No model-visible content in result.)'
+        mapped = [await self._map_tool_result_part(part) for part in content_for_assistant]
         return mapped[0] if len(mapped) == 1 else mapped
 
     async def call_tool(
@@ -1334,10 +1335,10 @@ def _include_content_for_assistant(part: mcp_types.ContentBlock) -> bool:
 
     See: https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-result
     """
-    annotations = getattr(part, 'annotations', None)
+    annotations = part.annotations
     if annotations is None:
         return True
-    audience = getattr(annotations, 'audience', None)
+    audience = annotations.audience
     if audience is None:
         return True
     return 'assistant' in audience
