@@ -2,7 +2,7 @@ interactions:
 - recorded_at: '2026-01-01T00:00:00Z'
   request:
     body:
-      body_type: json
+      type: json
       content:
         include_domains:
         - arxiv.org
@@ -27,7 +27,7 @@ interactions:
     uri: https://api.tavily.com/search
   response:
     body:
-      body_type: json
+      type: json
       content:
         answer: null
         follow_up_questions: null
