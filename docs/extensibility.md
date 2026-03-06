@@ -99,7 +99,7 @@ Pydantic AI ships with several model wrappers that extend [`WrapperModel`][pydan
 
 [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] wraps a toolset to intercept tool definitions and/or tool calls. This is the most commonly extended wrapper.
 
-For a full example, see [Wrapping a Toolset](toolsets.md#wrapping-a-toolset) in the toolsets guide.
+For a full example, see [Changing Tool Execution](toolsets.md#changing-tool-execution) in the toolsets guide.
 
 ### Built-in toolset wrappers
 
@@ -153,6 +153,10 @@ from pydantic_ai import AbstractToolset, RunContext, ToolsetTool
 
 
 class MyCustomToolset(AbstractToolset):
+    @property
+    def id(self) -> str | None:
+        return 'my-custom-toolset'
+
     async def get_tools(self, ctx: RunContext) -> dict[str, ToolsetTool]:
         # Return your tool definitions
         ...
