@@ -179,7 +179,7 @@ Use the provider (or its model/agent) as an async context manager to ensure prop
     the warning matters. If the warning is noisy in your setup, you can silence it with a
     [warning filter](https://docs.python.org/3/library/warnings.html#the-warnings-filter):
 
-    ```python
+    ```python {test="skip" lint="skip"}
     import warnings
     warnings.filterwarnings('ignore', message='.*was garbage collected with an open HTTP client')
     ```
