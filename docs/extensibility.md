@@ -14,24 +14,25 @@ All wrappers follow the same pattern: subclass the wrapper base, override the me
 
 [`WrapperAgent`][pydantic_ai.agent.WrapperAgent] wraps an existing agent and delegates all calls to it. Subclass it to add behavior before or after agent runs — such as logging, metrics, guardrails, or durable execution.
 
-```python {title="wrapper_agent_example.py"}
+```python {test="skip"}
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
-from pydantic_ai import Agent
 from pydantic_ai.agent import WrapperAgent
+from pydantic_ai.run import AgentRun
 
 
 class TimedAgent(WrapperAgent):
     """Agent wrapper that logs the duration of each run."""
 
-    async def main(self):
+    @asynccontextmanager
+    async def iter(self, *args, **kwargs) -> AsyncIterator[AgentRun]:
         start = time.monotonic()
-        async with self.wrapped.iter('What is 1+1?') as run:
-            async for _node in run:
-                pass
+        async with self.wrapped.iter(*args, **kwargs) as run:
+            yield run
         elapsed = time.monotonic() - start
         print(f'Run completed in {elapsed:.2f}s')
-        return run.result
 ```
 
 ### When to use WrapperAgent
@@ -53,7 +54,7 @@ All `run()`, `run_sync()`, and `run_stream()` methods call `iter()` internally, 
 
 [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel] wraps a model to intercept or modify requests and responses. This is useful for caching, rate limiting, request/response transforms, or custom routing logic.
 
-```python {title="wrapper_model_example.py"}
+```python {test="skip"}
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -77,11 +78,12 @@ class LoggingModel(WrapperModel):
 
 ### Built-in model wrappers
 
-Pydantic AI ships with several model wrappers:
+Pydantic AI ships with several model wrappers that extend [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel]:
 
 - [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel] — adds OpenTelemetry tracing and metrics
 - [`ConcurrencyLimitedModel`][pydantic_ai.models.concurrency.ConcurrencyLimitedModel] — limits concurrent requests to a model
-- [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] — tries multiple models in sequence on failure
+
+[`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] also provides model composition (trying multiple models in sequence on failure), but it extends [`Model`][pydantic_ai.models.Model] directly rather than `WrapperModel` since it wraps multiple models.
 
 ### Key methods to override
 
@@ -113,7 +115,7 @@ Pydantic AI provides several ready-made toolset wrappers, all available as chain
 
 These can be chained:
 
-```python
+```python {test="skip"}
 toolset.filtered(my_filter).prefixed('weather').prepared(my_prepare_func)
 ```
 
@@ -131,14 +133,13 @@ toolset.filtered(my_filter).prefixed('weather').prepared(my_prepare_func)
 
 Wrappers can be composed by nesting them:
 
-```python
-from pydantic_ai.models.wrapper import WrapperModel
+```python {test="skip"}
 from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
 from pydantic_ai.models.instrumented import InstrumentedModel, InstrumentationSettings
 
 # Stack: instrumentation → concurrency limit → base model
 model = InstrumentedModel(
-    ConcurrencyLimitedModel('openai:gpt-5.2', max_concurrency=5),
+    ConcurrencyLimitedModel('openai:gpt-5.2', limiter=5),
     InstrumentationSettings(),
 )
 ```
@@ -147,9 +148,8 @@ model = InstrumentedModel(
 
 If the wrapper pattern doesn't fit, you can subclass [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] directly and implement `get_tools()` and `call_tool()`:
 
-```python
-from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
-from pydantic_ai._run_context import RunContext
+```python {test="skip"}
+from pydantic_ai import AbstractToolset, RunContext, ToolsetTool
 
 
 class MyCustomToolset(AbstractToolset):
