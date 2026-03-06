@@ -1,0 +1,23 @@
+tests/test_usage_limits.py
+  4ba2ad79974ff636 17,19,32,179,184,197,209,216,219,233,238,251,263,270,273,301,306,319,331,338,341,426,431,438,450,457,460,476,481,492,504,511,514,525,530,543,555,566,578,581,616,621,628,640,647,659,662,682,687,698,710,713,717,724,729,736,739
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "0c65b9a951609873508c9e361f38d3ca50e368de",
+  "prompts": {
+    "4ba2ad79974ff636": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ea70ef1-2c5c-40ef-aa41-022a6e9e541d",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>",
+      "messages": [],
+      "total_additions": 49,
+      "total_deletions": 39,
+      "accepted_lines": 57,
+      "overriden_lines": 0
+    }
+  }
+}
