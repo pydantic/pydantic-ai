@@ -14,8 +14,8 @@ class LazyToolset(WrapperToolset[AgentDepsT]):
     See [toolset docs](../toolsets.md#lazy-tools) for more information.
     """
 
-    tool_names: list[str] | None = None
-    """Optional list of tool names to mark as lazy. If `None`, all tools are marked as lazy."""
+    tool_names: frozenset[str] | None = None
+    """Optional set of tool names to mark as lazy. If `None`, all tools are marked as lazy."""
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await super().get_tools(ctx)

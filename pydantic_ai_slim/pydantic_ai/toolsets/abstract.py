@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
 
@@ -199,15 +199,15 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
         return ApprovalRequiredToolset(self, approval_required_func)
 
-    def lazy(self, tool_names: list[str] | None = None) -> LazyToolset[AgentDepsT]:
+    def lazy(self, tool_names: Sequence[str] | None = None) -> LazyToolset[AgentDepsT]:
         """Returns a new toolset that marks tools as lazy, hiding them until discovered via tool search.
 
         See [toolset docs](../toolsets.md#lazy-tools) for more information.
 
         Args:
-            tool_names: Optional list of tool names to mark as lazy.
+            tool_names: Optional sequence of tool names to mark as lazy.
                 If `None`, all tools are marked as lazy.
         """
         from .lazy import LazyToolset
 
-        return LazyToolset(self, tool_names=tool_names)
+        return LazyToolset(self, tool_names=frozenset(tool_names) if tool_names is not None else None)

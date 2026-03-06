@@ -370,7 +370,7 @@ class Tool(Generic[ToolAgentDepsT]):
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             lazy: Whether to hide this tool until it's discovered via tool search. Defaults to False.
-                See [Tool Search](tools-advanced.md#tool-search) for more info.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -557,7 +557,7 @@ class ToolDefinition:
     lazy: bool = False
     """Whether this tool should be hidden from the model until discovered via tool search.
 
-    See [Tool Search](tools-advanced.md#tool-search) for more info.
+    See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
 
     @property

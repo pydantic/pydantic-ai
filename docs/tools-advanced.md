@@ -467,6 +467,27 @@ Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of end
 
 For individual tools, set `lazy=True` on [`Tool`][pydantic_ai.tools.Tool], [`@agent.tool`][pydantic_ai.agent.Agent.tool], or [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain]. For entire toolsets (including [MCP servers](mcp/client.md) and [`FastMCPToolset`][pydantic_ai.toolsets.FastMCPToolset]), use the [`.lazy()`][pydantic_ai.toolsets.AbstractToolset.lazy] method — pass a list of tool names to hide only specific tools, or `None` to hide all.
 
+```python {title="tool_search.py" test="skip"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+
+@agent.tool_plain
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return f'Sunny in {city}'
+
+
+@agent.tool_plain(lazy=True)
+def mortgage_calculator(principal: float, rate: float, years: int) -> str:
+    """Calculate monthly mortgage payment for a home loan."""
+    monthly_rate = rate / 100 / 12
+    n_payments = years * 12
+    payment = principal * (monthly_rate * (1 + monthly_rate) ** n_payments) / ((1 + monthly_rate) ** n_payments - 1)
+    return f'${payment:.2f}/month'
+```
+
 See [`ToolDefinition.lazy`][pydantic_ai.tools.ToolDefinition.lazy] and [Lazy Tools](toolsets.md#lazy-tools) for more details.
 
 ## See Also

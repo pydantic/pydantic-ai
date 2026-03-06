@@ -16,7 +16,6 @@ _SEARCH_TOOLS_NAME = 'search_tools'
 
 _DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
 
-# TODO: make this user-configurable via SearchableToolset
 _MAX_SEARCH_RESULTS = 10
 
 _SEARCH_TOOLS_VALIDATOR = SchemaValidator(
@@ -145,12 +144,6 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
         query = tool_args['query']
         if not query:
             raise ModelRetry('Please provide a search query.')
-
-        if not search_tool.lazy_tools:
-            return ToolReturn(
-                return_value={'message': 'No searchable tools available.', 'tools': []},
-                metadata={_DISCOVERED_TOOLS_METADATA_KEY: []},
-            )
 
         query_lower = query.lower()
 

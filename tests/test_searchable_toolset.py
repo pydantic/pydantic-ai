@@ -15,9 +15,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturn, ToolRet
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets._searchable import (
     _DISCOVERED_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
-    _SEARCH_TOOL_DEF,  # pyright: ignore[reportPrivateUsage]
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
-    _SEARCH_TOOLS_VALIDATOR,  # pyright: ignore[reportPrivateUsage]
     SearchableToolset,
 )
 from pydantic_ai.usage import RunUsage
@@ -383,36 +381,6 @@ async def test_function_toolset_all_lazy():
     assert tool_names == snapshot(['search_tools'])
     assert 'lazy_tool1' not in tool_names
     assert 'lazy_tool2' not in tool_names
-
-
-async def test_searchable_toolset_search_no_lazy_tools():
-    """Covers the defensive branch in _search_tools that returns early when no lazy tools exist.
-
-    This branch is unreachable via call_tool (get_tools won't inject search_tools without lazy tools),
-    so we call the private method directly.
-    """
-    toolset: FunctionToolset[None] = FunctionToolset()
-
-    @toolset.tool
-    def normal_tool() -> str:  # pragma: no cover
-        """A normal non-lazy tool."""
-        return 'normal'
-
-    searchable = SearchableToolset(wrapped=toolset)
-
-    from pydantic_ai.toolsets._searchable import _SearchTool  # pyright: ignore[reportPrivateUsage]
-
-    mock_search_tool = _SearchTool(
-        toolset=searchable,
-        tool_def=_SEARCH_TOOL_DEF,
-        max_retries=1,
-        args_validator=_SEARCH_TOOLS_VALIDATOR,
-        lazy_tools={},
-        search_index=[],
-    )
-    result = await searchable._search_tools({'query': 'anything'}, mock_search_tool)  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(result, ToolReturn)
-    assert result.return_value == snapshot({'message': 'No searchable tools available.', 'tools': []})
 
 
 async def test_searchable_toolset_ignores_non_metadata_history():

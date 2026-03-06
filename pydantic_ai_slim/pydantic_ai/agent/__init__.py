@@ -1259,7 +1259,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
             lazy: Whether to hide this tool until it's discovered via tool search. Defaults to False.
-                See [Tool Search](tools-advanced.md#tool-search) for more info.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
         """
 
         def tool_decorator(
@@ -1390,7 +1390,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
             lazy: Whether to hide this tool until it's discovered via tool search. Defaults to False.
-                See [Tool Search](tools-advanced.md#tool-search) for more info.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
