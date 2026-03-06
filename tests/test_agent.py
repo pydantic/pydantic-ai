@@ -6718,7 +6718,7 @@ async def test_wrapper_agent():
 
 
 async def test_thinking_only_response_retry():
-    """Test that thinking-only responses trigger a retry mechanism."""
+    """Test that thinking-only responses are treated as empty and retried via resubmission."""
 
     call_count = 0
 
@@ -6765,20 +6765,14 @@ async def test_thinking_only_response_retry():
                 run_id=IsStr(),
             ),
             ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content='Please return text.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ],
+                parts=[],
                 instructions='You are a helpful assistant.',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
-                usage=RequestUsage(input_tokens=63, output_tokens=8),
+                usage=RequestUsage(input_tokens=51, output_tokens=8),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -6787,8 +6781,8 @@ async def test_thinking_only_response_retry():
     )
 
 
-async def test_retry_message_no_tools():
-    """Test that retry message triggered by thinking-only response, does not suggest 'call a tool' when no function tools are registered."""
+async def test_thinking_only_response_no_retry_prompt():
+    """Test that thinking-only responses are retried via resubmission, not a RetryPromptPart."""
     call_count = 0
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -6803,6 +6797,8 @@ async def test_retry_message_no_tools():
     agent = Agent(FunctionModel(model_function))
     result = await agent.run('Hello')
 
+    # Thinking-only responses should be retried via empty request resubmission,
+    # not via RetryPromptPart
     retry_parts = [
         part
         for msg in result.all_messages()
@@ -6810,8 +6806,57 @@ async def test_retry_message_no_tools():
         for part in msg.parts
         if isinstance(part, RetryPromptPart)
     ]
-    assert len(retry_parts) == 1
-    assert retry_parts[0].content == 'Please return text.'
+    assert len(retry_parts) == 0
+
+    # Verify the resubmission request has empty parts
+    requests = [msg for msg in result.all_messages() if isinstance(msg, ModelRequest)]
+    assert len(requests) == 2
+    assert requests[1].parts == []
+
+
+async def test_thinking_only_response_backward_looking_recovery():
+    """Test that thinking-only response after a tool call recovers text from prior model response."""
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # First call: return text alongside a tool call
+            return ModelResponse(
+                parts=[
+                    TextPart(content="Here's my analysis."),
+                    ToolCallPart(tool_name='save_progress', args='{"data": "test"}'),
+                ],
+            )
+        else:
+            # Second call (after tool return): return thinking-only
+            return ModelResponse(
+                parts=[ThinkingPart(content='Nothing more to say.')],
+            )
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def save_progress(data: str) -> str:
+        return 'saved'
+
+    result = await agent.run('Hello')
+
+    # The agent should recover the text from the first model response
+    # instead of retrying
+    assert result.output == "Here's my analysis."
+
+    # No RetryPromptPart should be in the message history
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart)
+    ]
+    assert len(retry_parts) == 0
 
 
 async def test_hitl_tool_approval():

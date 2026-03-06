@@ -635,7 +635,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_schema = ctx.deps.output_schema
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
-                if not self.model_response.parts:
+                if not self.model_response.parts or all(
+                    isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
+                ):
                     # Don't retry if the model returned an empty response because the token limit was exceeded, possibly during thinking.
                     if self.model_response.finish_reason == 'length':
                         model_settings = ctx.deps.model_settings
