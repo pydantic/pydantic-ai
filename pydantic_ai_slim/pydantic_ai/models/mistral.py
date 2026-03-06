@@ -800,11 +800,10 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str 
                 assert False, (  # pragma: no cover
                     f'Other data types like (Image) are not yet supported, got {type(chunk)}'
                 )
-    elif isinstance(content, str):
+    elif isinstance(content, str):  # pragma: no branch
         text = content
 
-    # Note: Check len to handle potential mismatch between function calls and responses from the API. (`msg: not the same number of function class and responses`)
-    if text and len(text) == 0:  # pragma: no cover
-        text = None
+    # Note: Empty strings may occur from function call/response mismatches from the API.
+    text = text or None
 
     return text, thinking

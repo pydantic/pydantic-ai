@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
-from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
+from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager, ValidatedToolCall
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
@@ -1390,7 +1390,7 @@ async def _call_tool(
         or isinstance(tool_return.return_value, list)
         and any(
             isinstance(content, _messages.MULTI_MODAL_CONTENT_TYPES)
-            for content in tool_return.return_value  # type: ignore
+            for content in tool_return.return_value  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
         )
     ):
         raise exceptions.UserError(
@@ -1401,7 +1401,7 @@ async def _call_tool(
     return_part = _messages.ToolReturnPart(
         tool_name=call.tool_name,
         tool_call_id=call.tool_call_id,
-        content=tool_return.return_value,  # type: ignore
+        content=tool_return.return_value,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         metadata=tool_return.metadata,
     )
 

@@ -383,7 +383,7 @@ class GoogleModel(Model):
         )
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
-        yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
+        yield await self._process_streamed_response(response, model_request_parameters)  # pyright: ignore[reportArgumentType]
 
     def _build_image_config(self, tool: ImageGenerationTool) -> ImageConfigDict:
         """Build ImageConfigDict from ImageGenerationTool with validation."""
@@ -508,7 +508,7 @@ class GoogleModel(Model):
         )
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
-            return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
+            return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 raise ModelHTTPError(

@@ -282,7 +282,7 @@ def _build_schema(
     if len(fields) == 1 and var_kwargs_schema is None:
         name = next(iter(fields))
         td_field = fields[name]
-        if td_field['metadata']['is_model_like']:  # type: ignore
+        if td_field['metadata']['is_model_like']:  # pyright: ignore[reportTypedDictNotRequiredAccess]
             return td_field['schema'], name
 
     extra_behavior: Literal['allow', 'forbid'] = 'allow' if var_kwargs_schema else 'forbid'
