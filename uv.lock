@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -78,7 +78,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohappyeyeballs" },
     { name = "aiosignal" },
-    { name = "async-timeout", marker = "python_full_version < '3.11'" },
+    { name = "async-timeout", marker = "python_full_version < '3.11' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "attrs" },
     { name = "frozenlist" },
     { name = "multidict" },
@@ -206,7 +206,7 @@ version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "frozenlist" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/61/62/06741b579156360248d1ec624842ad0edf697050bbaf7c3e46394e106ad1/aiosignal-1.4.0.tar.gz", hash = "sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7", size = 25007, upload-time = "2025-07-03T22:54:43.528Z" }
 wheels = [
@@ -299,10 +299,10 @@ name = "anyio"
 version = "4.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
+    { name = "exceptiongroup", marker = "python_full_version < '3.11' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "idna" },
     { name = "sniffio" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a3/73/199a98fc2dae33535d6b8e8e6ec01f8c1d76c9adb096c6b7d64823038cde/anyio-4.8.0.tar.gz", hash = "sha256:1d9fe889df5212298c0c0723fa20479d1b94883a2df44bd3897aa91083316f7a", size = 181126, upload-time = "2025-01-05T13:13:11.095Z" }
 wheels = [
@@ -991,7 +991,7 @@ name = "cffi"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
+    { name = "pycparser", marker = "implementation_name != 'PyPy' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/eb/56/b1ba7935a17738ae8453301356628e8147c79dbb825bcbc73dc7401f9846/cffi-2.0.0.tar.gz", hash = "sha256:44d1b5909021139fe36001ae048dbdde8214afa20200eda0f64c068cac5d5529", size = 523588, upload-time = "2025-09-08T23:24:04.541Z" }
 wheels = [
@@ -1181,7 +1181,7 @@ name = "click"
 version = "8.1.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b9/2e/0090cbf739cee7d23781ad4b89a9894a41538e4fcf4c31dcdd705b78eb8b/click-8.1.8.tar.gz", hash = "sha256:ed53c9d8990d83c2a27deae68e4ee337473f6330c040a31d4225c9574d16096a", size = 226593, upload-time = "2024-12-21T18:38:44.339Z" }
 wheels = [
@@ -1358,8 +1358,8 @@ name = "cryptography"
 version = "46.0.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "platform_python_implementation != 'PyPy'" },
-    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
+    { name = "cffi", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/60/04/ee2a9e8542e4fa2773b81771ff8349ff19cdd56b7258a0cc442639052edb/cryptography-46.0.5.tar.gz", hash = "sha256:abace499247268e3757271b2f1e244b36b06f8515cf27c4d49468fc9eb16e93d", size = 750064, upload-time = "2026-02-10T19:18:38.255Z" }
 wheels = [
@@ -1822,7 +1822,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -2934,16 +2934,16 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 dependencies = [
-    { name = "filelock", marker = "python_full_version >= '3.12'" },
-    { name = "fsspec", marker = "python_full_version >= '3.12'" },
-    { name = "hf-xet", marker = "(python_full_version >= '3.12' and platform_machine == 'AMD64') or (python_full_version >= '3.12' and platform_machine == 'aarch64') or (python_full_version >= '3.12' and platform_machine == 'amd64') or (python_full_version >= '3.12' and platform_machine == 'arm64') or (python_full_version >= '3.12' and platform_machine == 'x86_64')" },
-    { name = "httpx", marker = "python_full_version >= '3.12'" },
-    { name = "packaging", marker = "python_full_version >= '3.12'" },
-    { name = "pyyaml", marker = "python_full_version >= '3.12'" },
-    { name = "shellingham", marker = "python_full_version >= '3.12'" },
-    { name = "tqdm", marker = "python_full_version >= '3.12'" },
-    { name = "typer-slim", marker = "python_full_version >= '3.12'" },
-    { name = "typing-extensions", marker = "python_full_version >= '3.12'" },
+    { name = "filelock", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "fsspec", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "hf-xet", marker = "(python_full_version >= '3.12' and platform_machine == 'AMD64') or (python_full_version >= '3.12' and platform_machine == 'aarch64') or (python_full_version >= '3.12' and platform_machine == 'amd64') or (python_full_version >= '3.12' and platform_machine == 'arm64') or (python_full_version >= '3.12' and platform_machine == 'x86_64') or (platform_machine != 'AMD64' and platform_machine != 'aarch64' and platform_machine != 'amd64' and platform_machine != 'arm64' and platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'AMD64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'AMD64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'aarch64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'aarch64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'amd64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'amd64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'arm64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'arm64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (platform_machine == 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface') or (platform_machine == 'x86_64' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "httpx", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "packaging", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "pyyaml", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "shellingham", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "tqdm", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "typer-slim", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "typing-extensions", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/af/25/74af9d16cd59ae15b12467a79a84aa0fe24be4aba68fc4da0c1864d49c17/huggingface_hub-1.3.4.tar.gz", hash = "sha256:c20d5484a611b7b7891d272e8fc9f77d5de025b0480bdacfa858efb3780b455f", size = 627683, upload-time = "2026-01-26T14:05:10.656Z" }
 wheels = [
@@ -3989,12 +3989,12 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-multipart" },
-    { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "pywin32", marker = "sys_platform == 'win32' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "sse-starlette" },
     { name = "starlette" },
     { name = "typing-extensions" },
     { name = "typing-inspection" },
-    { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
+    { name = "uvicorn", marker = "sys_platform != 'emscripten' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d5/2d/649d80a0ecf6a1f82632ca44bec21c0461a9d9fc8934d38cb5b319f2db5e/mcp-1.25.0.tar.gz", hash = "sha256:56310361ebf0364e2d438e5b45f7668cbb124e158bb358333cd06e49e83a6802", size = 605387, upload-time = "2025-12-19T10:19:56.985Z" }
 wheels = [
@@ -4258,7 +4258,7 @@ name = "mlx"
 version = "0.30.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mlx-metal", marker = "sys_platform == 'darwin'" },
+    { name = "mlx-metal", marker = "sys_platform == 'darwin' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cd/8d/16a34feb957ac33525b9b787b5132053a44bc94d1bf40c18639f6e05cd2a/mlx-0.30.1-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:391c650f0578ce359c8cffddb204b42798b622f9ee2b57b865d87716c00db536", size = 592926, upload-time = "2025-12-18T01:55:28.757Z" },
@@ -4294,7 +4294,7 @@ version = "0.29.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
-    { name = "mlx", marker = "sys_platform == 'darwin'" },
+    { name = "mlx", marker = "sys_platform == 'darwin' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "numpy" },
     { name = "protobuf" },
     { name = "pyyaml" },
@@ -4499,7 +4499,7 @@ name = "multidict"
 version = "6.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/80/1e/5492c365f222f907de1039b91f922b93fa4f764c713ee858d235495d8f50/multidict-6.7.0.tar.gz", hash = "sha256:c6e99d9a65ca282e578dfea819cfa9c0a62b2499d8677392e09feaf305e9e6f5", size = 101834, upload-time = "2025-10-06T14:52:30.657Z" }
 wheels = [
@@ -4804,8 +4804,8 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 dependencies = [
-    { name = "llvmlite", version = "0.44.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", marker = "python_full_version < '3.12'" },
+    { name = "llvmlite", version = "0.44.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "numpy", marker = "python_full_version < '3.12' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/a0/e21f57604304aa03ebb8e098429222722ad99176a4f979d34af1d1ee80da/numba-0.61.2.tar.gz", hash = "sha256:8750ee147940a6637b80ecf7f95062185ad8726c8c28a2295b8ec1160a196f7d", size = 2820615, upload-time = "2025-04-09T02:58:07.659Z" }
 wheels = [
@@ -5163,7 +5163,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "2.25.0"
+version = "2.26.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -5175,9 +5175,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/43/2b/a442b206ed74908dd79e2ad1ef3ffaeae66422b1fb506af981f0ef671ba0/openai-2.25.0.tar.gz", hash = "sha256:c3e1965d83c333dbd341eb2c7c8aceb783c272cd57fc57353404d9a443634e29", size = 666577, upload-time = "2026-03-05T18:35:38.292Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d7/91/2a06c4e9597c338cac1e5e5a8dd6f29e1836fc229c4c523529dca387fda8/openai-2.26.0.tar.gz", hash = "sha256:b41f37c140ae0034a6e92b0c509376d907f3a66109935fba2c1b471a7c05a8fb", size = 666702, upload-time = "2026-03-05T23:17:35.874Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5b/e6/ca496976bacdd7f86d4fa69359c2d9b5a547d7acbf0ae5cac7bff107ff50/openai-2.25.0-py3-none-any.whl", hash = "sha256:7c7c01a0a4b69771a29913e28d06bc1e9cee8781b4d206bb56cb946d8d2fcb23", size = 1136347, upload-time = "2026-03-05T18:35:36.497Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/2e/3f73e8ca53718952222cacd0cf7eecc9db439d020f0c1fe7ae717e4e199a/openai-2.26.0-py3-none-any.whl", hash = "sha256:6151bf8f83802f036117f06cc8a57b3a4da60da9926826cc96747888b57f394f", size = 1136409, upload-time = "2026-03-05T23:17:34.072Z" },
 ]
 
 [[package]]
@@ -7690,7 +7690,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
     { name = "rpds-py" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2f/db/98b5c277be99dd18bfd91dd04e1b759cad18d1a338188c936e92f921c7e2/referencing-0.36.2.tar.gz", hash = "sha256:df2e89862cd09deabbdba16944cc3f10feb6b3e6f18e902f7cc25609a34775aa", size = 74744, upload-time = "2025-01-25T08:48:16.138Z" }
 wheels = [
@@ -8959,7 +8959,7 @@ version = "0.50.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ba/b8/73a0e6a6e079a9d9cfa64113d771e421640b6f679a52eeb9b32f72d871a1/starlette-0.50.0.tar.gz", hash = "sha256:a2a17b22203254bcbc2e1f926d2d55f3f9497f769416b3190768befe598fa3ca", size = 2646985, upload-time = "2025-11-01T15:25:27.516Z" }
 wheels = [
@@ -9254,24 +9254,24 @@ dependencies = [
     { name = "jinja2" },
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
-    { name = "nvidia-cublas-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "nvidia-cuda-cupti-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "nvidia-cuda-nvrtc-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "nvidia-cuda-runtime-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "nvidia-cudnn-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "nvidia-cufft-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "nvidia-cufile-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "nvidia-curand-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "nvidia-cusolver-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "nvidia-cusparse-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "nvidia-cusparselt-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "nvidia-nccl-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "nvidia-nvjitlink-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "nvidia-nvshmem-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "nvidia-nvtx-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "setuptools", marker = "python_full_version >= '3.12'" },
+    { name = "nvidia-cublas-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-cuda-cupti-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-cuda-nvrtc-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-cuda-runtime-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-cudnn-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-cufft-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-cufile-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-curand-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-cusolver-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-cusparse-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-cusparselt-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-nccl-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-nvshmem-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "nvidia-nvtx-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
+    { name = "setuptools", marker = "python_full_version >= '3.12' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "sympy" },
-    { name = "triton", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "triton", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline') or (sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
     { name = "typing-extensions" },
 ]
 wheels = [
@@ -9388,7 +9388,7 @@ name = "tqdm"
 version = "4.67.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a8/4b/29b4ef32e036bb34e4ab51796dd745cdba7ed47ad142a9f4a1eb8e0c744d/tqdm-4.67.1.tar.gz", hash = "sha256:f8aef9c52c08c13a65f30ea34f4e5aac3fd1a34959879d7e59e63027286627f2", size = 169737, upload-time = "2024-11-24T20:12:22.481Z" }
 wheels = [
@@ -9431,16 +9431,16 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 dependencies = [
-    { name = "filelock", marker = "python_full_version >= '3.12'" },
-    { name = "huggingface-hub", version = "1.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "numpy", marker = "python_full_version >= '3.12'" },
-    { name = "packaging", marker = "python_full_version >= '3.12'" },
-    { name = "pyyaml", marker = "python_full_version >= '3.12'" },
-    { name = "regex", marker = "python_full_version >= '3.12'" },
-    { name = "safetensors", marker = "python_full_version >= '3.12'" },
-    { name = "tokenizers", marker = "python_full_version >= '3.12'" },
-    { name = "tqdm", marker = "python_full_version >= '3.12'" },
-    { name = "typer-slim", marker = "python_full_version >= '3.12'" },
+    { name = "filelock", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "huggingface-hub", version = "1.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "numpy", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "packaging", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "pyyaml", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "regex", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "safetensors", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "tokenizers", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "tqdm", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
+    { name = "typer-slim", marker = "python_full_version >= '3.12' or extra == 'extra-16-pydantic-ai-slim-huggingface' or extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/bc/79/845941711811789c85fb7e2599cea425a14a07eda40f50896b9d3fda7492/transformers-5.0.0.tar.gz", hash = "sha256:5f5634efed6cf76ad068cc5834c7adbc32db78bbd6211fb70df2325a9c37dec8", size = 8424830, upload-time = "2026-01-26T10:46:46.813Z" }
 wheels = [
@@ -9640,7 +9640,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "h11" },
-    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11' or (extra == 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c3/d1/8f3c683c9561a4e6689dd3b1d345c815f10f86acd044ee1fb9a4dcd0b8c5/uvicorn-0.40.0.tar.gz", hash = "sha256:839676675e87e73694518b5574fd0f24c9d97b46bea16df7b8c05ea1a51071ea", size = 81761, upload-time = "2025-12-21T14:16:22.45Z" }
 wheels = [
