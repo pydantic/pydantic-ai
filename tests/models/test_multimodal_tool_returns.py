@@ -932,7 +932,7 @@ async def test_uploaded_file_validation_error_in_tool_return(
         with pytest.raises(UserError, match=case.match):
             await m_bedrock._map_messages(messages, params, None)  # pyright: ignore[reportPrivateUsage]
     elif provider == 'google_vertex':
-        m_google = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+        m_google = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
         with pytest.raises(UserError, match=case.match):
             with unittest.mock.patch.object(
                 type(m_google), 'system', new_callable=lambda: property(lambda self: 'google-vertex')
@@ -940,3 +940,18 @@ async def test_uploaded_file_validation_error_in_tool_return(
                 await m_google._map_messages(messages, params)  # pyright: ignore[reportPrivateUsage]
     else:
         assert_never(provider)  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.skipif(not google_available(), reason='google dependencies not installed')
+async def test_uploaded_file_vertex_valid_gcs_uri() -> None:
+    """Test that a valid Vertex UploadedFile with gs:// URI maps correctly."""
+    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    file = UploadedFile(
+        file_id='gs://bucket/path/file.pdf', provider_name='google-vertex', media_type='application/pdf'
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=file, tool_call_id='1')]),
+    ]
+    with unittest.mock.patch.object(type(model), 'system', new_callable=lambda: property(lambda self: 'google-vertex')):
+        _, contents = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    assert len(contents) == 1

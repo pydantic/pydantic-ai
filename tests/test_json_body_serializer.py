@@ -202,6 +202,18 @@ def test_scrub_xml_credentials_redacts_sts_tokens():
     assert headers['content-length'] == [str(len(body.encode('utf-8')))]
 
 
+def test_scrub_xml_credentials_string_body_no_content_length():
+    """Test scrub_xml_credentials with a plain string body and no content-length header."""
+    xml_body = '<Credentials><AccessKeyId>ASIA1234</AccessKeyId></Credentials>'
+    data: dict[str, Any] = {'body': xml_body}
+    headers: dict[str, list[str]] = {'content-type': ['text/xml']}
+
+    scrub_xml_credentials(data, headers, ['text/xml'])
+
+    assert data['body'] == snapshot({'string': '<Credentials><AccessKeyId>SCRUBBED</AccessKeyId></Credentials>'})
+    assert 'content-length' not in headers
+
+
 def test_scrub_xml_credentials_skips_non_xml():
     """Test that scrub_xml_credentials is a no-op for non-XML content types."""
     data: dict[str, Any] = {'body': {'string': '<Credentials>secret</Credentials>'}}
