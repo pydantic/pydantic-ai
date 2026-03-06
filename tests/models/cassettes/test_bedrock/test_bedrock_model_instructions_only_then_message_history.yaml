@@ -167,4 +167,89 @@ interactions:
     status:
       code: 200
       message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": " "}]}], "system": [{"text": "Generate a short greeting."}],
+      "inferenceConfig": {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        M2FkMTYzMWMtZTViYS00YjJmLTk4MmItYjg4MzhhYzUwM2Rh
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '135'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '245'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 207
+      output:
+        message:
+          content:
+          - text: Hello! How are you today?
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 6
+        outputTokens: 8
+        serverToolUsage: {}
+        totalTokens: 14
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": " "}]}, {"role": "assistant", "content": [{"text": "Hello!
+      How are you today?"}]}, {"role": "user", "content": [{"text": "Now say goodbye."}]}], "system": [{"text": "Generate
+      a short greeting."}], "inferenceConfig": {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZDcwZDk3Y2ItZWViNi00YTc2LWJlMzEtMzhmZmIzMmU0YjAw
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '271'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '266'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 479
+      output:
+        message:
+          content:
+          - text: Goodbye for now! Take care and see you soon!
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 22
+        outputTokens: 12
+        serverToolUsage: {}
+        totalTokens: 34
+    status:
+      code: 200
+      message: OK
 version: 1

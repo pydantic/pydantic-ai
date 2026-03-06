@@ -3547,7 +3547,7 @@ async def test_bedrock_model_with_instructions_only(allow_model_requests: None, 
     agent = Agent(model=model, system_prompt='Generate a short greeting.')
 
     result = await agent.run()
-    assert result.output == snapshot('Hello! How can I assist you today?')
+    assert result.output == snapshot('Hello! How are you today?')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -3556,8 +3556,8 @@ async def test_bedrock_model_with_instructions_only(allow_model_requests: None, 
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='Hello! How can I assist you today?')],
-                usage=RequestUsage(input_tokens=7, output_tokens=10),
+                parts=[TextPart(content='Hello! How are you today?')],
+                usage=RequestUsage(input_tokens=6, output_tokens=8),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
