@@ -1,0 +1,29 @@
+pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py
+  4ba2ad79974ff636 19,203
+pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py
+  4ba2ad79974ff636 16,112
+pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py
+  4ba2ad79974ff636 15,105
+pydantic_ai_slim/pydantic_ai/models/wrapper.py
+  4ba2ad79974ff636 6,10,17-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "799233b93faa4c2ffd1700351f22bfb63da36d16",
+  "prompts": {
+    "4ba2ad79974ff636": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ea70ef1-2c5c-40ef-aa41-022a6e9e541d",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>",
+      "messages": [],
+      "total_additions": 49,
+      "total_deletions": 123,
+      "accepted_lines": 48,
+      "overriden_lines": 0
+    }
+  }
+}
