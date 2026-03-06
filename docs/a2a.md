@@ -124,3 +124,38 @@ When using `to_a2a()`, Pydantic AI automatically:
   - String results become `TextPart` artifacts and also appear in the message history
   - Structured data (Pydantic models, dataclasses, tuples, etc.) become `DataPart` artifacts with the data wrapped as `{"result": <your_data>}`
   - Artifacts include metadata with type information and JSON schema when available
+
+### Accessing Context During Execution
+
+When executing tools or other callbacks within an A2A task, you might need access to the current task's metadata (e.g., to stream intermediate states or get the task ID).
+
+Pydantic AI provides several `ContextVar`s in the `pydantic_ai.a2a` module that are automatically populated during agent execution:
+
+- `current_task_id`: The ID of the currently executing A2A task.
+- `current_task`: The full task metadata dictionary.
+- `current_storage`: The storage instance being used, allowing for mid-run task updates.
+
+Here is an example of how you can access the current A2A task context inside a tool:
+
+```python {title="context_tool.py"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.a2a import current_task_id, current_storage
+
+agent = Agent('openai:gpt-4', instructions='You are a helpful assistant.')
+
+@agent.tool
+async def update_status(ctx: RunContext[None], status_message: str) -> str:
+    """Updates the task state with an intermediate status message."""
+    try:
+        task_id = current_task_id.get()
+        storage = current_storage.get()
+
+        # You can mutate the task state in storage mid-run
+        await storage.update_task(task_id, state='working')
+
+        return f"Status updated to: {status_message}"
+    except LookupError:
+        return "Not running inside an A2A task execution."
+
+app = agent.to_a2a()
+```
