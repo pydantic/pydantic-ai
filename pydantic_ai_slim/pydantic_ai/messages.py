@@ -1058,6 +1058,19 @@ class BaseToolReturnPart:
             return non_files, files, True
         return [self.content], [], False
 
+    def _unwrap_data(self) -> tuple[Any, list[MultiModalContent]]:
+        """Split content and unwrap single-item data lists.
+
+        Returns the unwrapped data value (or None if empty) and the file parts.
+        Single-item lists are unwrapped when content was scalar or when files were filtered out.
+        """
+        data, files, was_list = self._split_content()
+        if not data:
+            return None, files
+        if len(data) == 1 and (not was_list or bool(files)):
+            return data[0], files
+        return data, files
+
     @property
     def files(self) -> list[MultiModalContent]:
         """The multimodal file parts from `content` (`ImageUrl`, `AudioUrl`, `DocumentUrl`, `VideoUrl`, `BinaryContent`)."""
@@ -1112,15 +1125,9 @@ class BaseToolReturnPart:
 
         This excludes multimodal files - use `.files` to get those separately.
         """
-        data, files, was_list = self._split_content()
-        if not data:
+        value, _ = self._unwrap_data()
+        if value is None:
             return ''
-        # Unwrap single-item list when content was scalar or when files were filtered out,
-        # since the list may have only existed to bundle data alongside files
-        if len(data) == 1 and (not was_list or bool(files)):
-            value = data[0]
-        else:
-            value = data
         if isinstance(value, str):
             return value
         return tool_return_ta.dump_json(value).decode()
@@ -1131,15 +1138,9 @@ class BaseToolReturnPart:
         This excludes multimodal files - use `.files` to get those separately.
         Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
         """
-        data, files, was_list = self._split_content()
-        if not data:
+        value, _ = self._unwrap_data()
+        if value is None:
             return {}
-        # Unwrap single-item list when content was scalar or when files were filtered out,
-        # since the list may have only existed to bundle data alongside files
-        if len(data) == 1 and (not was_list or bool(files)):
-            value = data[0]
-        else:
-            value = data
         json_content = tool_return_ta.dump_python(value, mode='json')
         if _utils.is_str_dict(json_content):
             return json_content
@@ -1153,10 +1154,10 @@ class BaseToolReturnPart:
         by identifier in the tool result text ('See file {id}.') and included in full in the
         returned file content list ('This is file {id}:' followed by the file).
         """
-        if not self.files:
+        _, files, was_list = self._split_content()
+        if not files:
             return self.model_response_str(), []
 
-        _, _, was_list = self._split_content()
         tool_content_parts: list[str] = []
         file_content: list[UserContent] = []
 
