@@ -8,8 +8,8 @@ from __future__ import annotations
 import io
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from typing_extensions import assert_never
@@ -35,6 +35,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
@@ -51,8 +52,8 @@ from . import (
 try:
     from outlines.inputs import Chat, Image
     from outlines.models.base import AsyncModel as OutlinesAsyncBaseModel, Model as OutlinesBaseModel
-    from outlines.models.llamacpp import LlamaCpp, from_llamacpp
-    from outlines.models.mlxlm import MLXLM, from_mlxlm
+    from outlines.models.llamacpp import LlamaCpp, from_llamacpp  # pyright: ignore[reportUnknownVariableType]
+    from outlines.models.mlxlm import MLXLM, from_mlxlm  # pyright: ignore[reportUnknownVariableType]
     from outlines.models.sglang import AsyncSGLang, SGLang, from_sglang
     from outlines.models.transformers import (
         Transformers,
@@ -71,8 +72,8 @@ except ImportError as _import_error:
     ) from _import_error
 
 if TYPE_CHECKING:
-    import llama_cpp
-    import mlx.nn as nn
+    import llama_cpp  # pyright: ignore[reportMissingImports]
+    import mlx.nn as nn  # pyright: ignore[reportMissingImports]
     import transformers
 
 
@@ -109,8 +110,7 @@ class OutlinesModel(Model):
     def from_transformers(
         cls,
         hf_model: transformers.modeling_utils.PreTrainedModel,
-        hf_tokenizer_or_processor: transformers.tokenization_utils.PreTrainedTokenizer
-        | transformers.processing_utils.ProcessorMixin,
+        hf_tokenizer_or_processor: transformers.PreTrainedTokenizer | transformers.processing_utils.ProcessorMixin,
         *,
         provider: Literal['outlines'] | Provider[OutlinesBaseModel] = 'outlines',
         profile: ModelProfileSpec | None = None,
@@ -134,9 +134,9 @@ class OutlinesModel(Model):
         return cls(outlines_model, provider=provider, profile=profile, settings=settings)
 
     @classmethod
-    def from_llamacpp(
+    def from_llamacpp(  # pragma: lax no cover
         cls,
-        llama_model: llama_cpp.Llama,
+        llama_model: llama_cpp.Llama,  # pyright: ignore[reportUnknownMemberType, reportUnknownParameterType]
         *,
         provider: Literal['outlines'] | Provider[OutlinesBaseModel] = 'outlines',
         profile: ModelProfileSpec | None = None,
@@ -151,14 +151,14 @@ class OutlinesModel(Model):
             profile: The model profile to use. Defaults to a profile picked by the provider.
             settings: Default model settings for this model instance.
         """
-        outlines_model: OutlinesBaseModel = from_llamacpp(llama_model)
+        outlines_model: OutlinesBaseModel = from_llamacpp(llama_model)  # pyright: ignore[reportUnknownArgumentType]
         return cls(outlines_model, provider=provider, profile=profile, settings=settings)
 
     @classmethod
     def from_mlxlm(  # pragma: no cover
         cls,
-        mlx_model: nn.Module,
-        mlx_tokenizer: transformers.tokenization_utils.PreTrainedTokenizer,
+        mlx_model: nn.Module,  # pyright: ignore[reportUnknownParameterType, reportUnknownMemberType]
+        mlx_tokenizer: transformers.PreTrainedTokenizer,
         *,
         provider: Literal['outlines'] | Provider[OutlinesBaseModel] = 'outlines',
         profile: ModelProfileSpec | None = None,
@@ -174,7 +174,7 @@ class OutlinesModel(Model):
             profile: The model profile to use. Defaults to a profile picked by the provider.
             settings: Default model settings for this model instance.
         """
-        outlines_model: OutlinesBaseModel = from_mlxlm(mlx_model, mlx_tokenizer)
+        outlines_model: OutlinesBaseModel = from_mlxlm(mlx_model, mlx_tokenizer)  # pyright: ignore[reportUnknownArgumentType]
         return cls(outlines_model, provider=provider, profile=profile, settings=settings)
 
     @classmethod
@@ -282,7 +282,7 @@ class OutlinesModel(Model):
         if isinstance(self.model, OutlinesAsyncBaseModel):
             response = self.model.stream(prompt, output_type, None, **inference_kwargs)
             yield await self._process_streamed_response(response, model_request_parameters)
-        else:
+        else:  # pragma: lax no cover
             response = self.model.stream(prompt, output_type, None, **inference_kwargs)
 
             async def async_response():
@@ -298,12 +298,9 @@ class OutlinesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[Chat, JsonSchema | None, dict[str, Any]]:
         """Build the generation arguments for the model."""
-        if (
-            model_request_parameters.function_tools
-            or model_request_parameters.builtin_tools
-            or model_request_parameters.output_tools
-        ):
-            raise UserError('Outlines does not support function tools and builtin tools yet.')
+        # the builtin_tool check now happens in `Model.prepare_request()`
+        if model_request_parameters.function_tools or model_request_parameters.output_tools:
+            raise UserError('Outlines does not support function tools yet.')
 
         if model_request_parameters.output_object:
             output_type = JsonSchema(model_request_parameters.output_object.json_schema)
@@ -321,7 +318,7 @@ class OutlinesModel(Model):
 
         if isinstance(self.model, Transformers):
             settings_dict = self._format_transformers_inference_kwargs(settings_dict)
-        elif isinstance(self.model, LlamaCpp):
+        elif isinstance(self.model, LlamaCpp):  # pragma: lax no cover
             settings_dict = self._format_llama_cpp_inference_kwargs(settings_dict)
         elif isinstance(self.model, MLXLM):  # pragma: no cover
             settings_dict = self._format_mlxlm_inference_kwargs(settings_dict)
@@ -348,7 +345,9 @@ class OutlinesModel(Model):
 
         return filtered_settings
 
-    def _format_llama_cpp_inference_kwargs(self, model_settings: dict[str, Any]) -> dict[str, Any]:
+    def _format_llama_cpp_inference_kwargs(  # pragma: lax no cover
+        self, model_settings: dict[str, Any]
+    ) -> dict[str, Any]:
         """Select the model settings supported by the LlamaCpp model."""
         supported_args = [
             'max_tokens',
@@ -393,7 +392,9 @@ class OutlinesModel(Model):
         self, model_settings: dict[str, Any]
     ) -> dict[str, Any]:
         """Select the model settings supported by the vLLMOffline model."""
-        from vllm.sampling_params import SamplingParams  # pyright: ignore
+        from vllm.sampling_params import (  # pyright: ignore[reportMissingImports]
+            SamplingParams,  # pyright: ignore[reportUnknownVariableType]
+        )
 
         supported_args = [
             'max_tokens',
@@ -450,6 +451,8 @@ class OutlinesModel(Model):
                                 elif isinstance(item, BinaryContent) and item.is_image:
                                     image = self._create_PIL_image(item.data, item.media_type)
                                     outlines_input.append(Image(image))
+                                elif isinstance(item, UploadedFile):
+                                    raise NotImplementedError('UploadedFile is not supported by Outlines.')
                                 else:
                                     raise UserError(
                                         'Each element of the content sequence must be a string, an `ImageUrl`'
@@ -516,23 +519,13 @@ class OutlinesModel(Model):
         if isinstance(first_chunk, _utils.Unset):  # pragma: no cover
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        timestamp = datetime.now(tz=timezone.utc)
         return OutlinesStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _model_profile=self.profile,
             _response=peekable_response,
-            _timestamp=timestamp,
             _provider_name='outlines',
         )
-
-    def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
-        """Customize the model request parameters for the model."""
-        if model_request_parameters.output_mode in ('auto', 'native'):
-            # This way the JSON schema will be included in the instructions.
-            return replace(model_request_parameters, output_mode='prompted')
-        else:
-            return model_request_parameters
 
 
 @dataclass
@@ -542,18 +535,18 @@ class OutlinesStreamedResponse(StreamedResponse):
     _model_name: str
     _model_profile: ModelProfile
     _response: AsyncIterable[str]
-    _timestamp: datetime
     _provider_name: str
+    _provider_url: str | None = None
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        async for event in self._response:
-            event = self._parts_manager.handle_text_delta(
+        async for content in self._response:
+            for event in self._parts_manager.handle_text_delta(
                 vendor_part_id='content',
-                content=event,
+                content=content,
                 thinking_tags=self._model_profile.thinking_tags,
                 ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-            )
-            if event is not None:  # pragma: no branch
+            ):
                 yield event
 
     @property
@@ -565,6 +558,11 @@ class OutlinesStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:

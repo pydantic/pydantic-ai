@@ -5,7 +5,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        Yzg0YTcyNjUtYTJhNi00OGJiLWFhZTEtYWNkNzg2MDQwOTQy
+        OWMxYWJmZTEtZTRlMS00Mzg3LWFhMTItOTI3OWYyMjJhYTAy
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -21,25 +21,24 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '557'
+      - '399'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 417
+        latencyMs: 379
       output:
         message:
           content:
           - text: The capital of France is Paris. Paris is not only the capital city but also the most populous city in France,
-              known for its significant cultural, political, and economic influence both within the country and globally.
-              It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among
-              many other historical and architectural treasures.
+              and it is a major center for culture, fashion, gastronomy, and international diplomacy.
           role: assistant
       stopReason: end_turn
       usage:
         inputTokens: 13
-        outputTokens: 71
-        totalTokens: 84
+        outputTokens: 41
+        serverToolUsage: {}
+        totalTokens: 54
     status:
       code: 200
       message: OK

@@ -45,7 +45,8 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         profile = moonshotai_model_profile(model_name)
 
         # As the MoonshotAI API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
@@ -57,6 +58,8 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_supports_tool_choice_required=False,
             supports_json_object_output=True,
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='field',
         ).update(profile)
 
     @overload

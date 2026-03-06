@@ -1,0 +1,164 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '538'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Tell me about London, UK with population 9 million
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          description: A city and its country.
+          properties:
+            city:
+              type: string
+            country:
+              anyOf:
+              - type: string
+              - type: 'null'
+              default: null
+            population:
+              anyOf:
+              - type: integer
+              - type: 'null'
+              default: null
+          required:
+          - city
+          title: CityLocation
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '612'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1364
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: '{"city": "London", "country": "UK", "population": 9000000}'
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: C5MUaeyaDuzBxN8P-KjW-AY
+      usageMetadata:
+        candidatesTokenCount: 24
+        promptTokenCount: 12
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 12
+        thoughtsTokenCount: 130
+        totalTokenCount: 166
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '514'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: 'Just tell me a city: Paris'
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          description: A city and its country.
+          properties:
+            city:
+              type: string
+            country:
+              anyOf:
+              - type: string
+              - type: 'null'
+              default: null
+            population:
+              anyOf:
+              - type: integer
+              - type: 'null'
+              default: null
+          required:
+          - city
+          title: CityLocation
+          type: object
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '561'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1128
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: '{"city": "Paris"}'
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: DJMUaf3RGp7SxN8PlIu6wQY
+      usageMetadata:
+        candidatesTokenCount: 6
+        promptTokenCount: 8
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 8
+        thoughtsTokenCount: 99
+        totalTokenCount: 113
+    status:
+      code: 200
+      message: OK
+version: 1

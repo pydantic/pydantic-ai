@@ -6,7 +6,6 @@ from functools import cached_property
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -46,14 +45,15 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
+
+from ._inline_snapshot import snapshot
+
+pytest.importorskip('starlette')
+
+from starlette.requests import Request
+from starlette.responses import StreamingResponse
+
 from pydantic_ai.ui import NativeEvent, UIAdapter, UIEventStream
-
-from .conftest import try_import
-
-with try_import() as starlette_import_successful:
-    from starlette.requests import Request
-    from starlette.responses import StreamingResponse
-
 
 pytestmark = [
     pytest.mark.anyio,
@@ -68,9 +68,9 @@ pytestmark = [
 
 
 class DummyUIRunInput(BaseModel):
-    messages: list[ModelMessage] = field(default_factory=list)
-    tool_defs: list[ToolDefinition] = field(default_factory=list)
-    state: dict[str, Any] = field(default_factory=dict)
+    messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    tool_defs: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
+    state: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 class DummyUIState(BaseModel):
@@ -86,6 +86,10 @@ class DummyUIAdapter(UIAdapter[DummyUIRunInput, ModelMessage, str, AgentDepsT, O
     @classmethod
     def build_run_input(cls, body: bytes) -> DummyUIRunInput:
         return DummyUIRunInput.model_validate_json(body)
+
+    @classmethod
+    def dump_messages(cls, messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+        return list(messages)
 
     @classmethod
     def load_messages(cls, messages: Sequence[ModelMessage]) -> list[ModelMessage]:
@@ -439,7 +443,7 @@ async def test_run_stream_external_tools():
             '<request>',
             "<function-tool-call name='external_tool'>{}</function-tool-call>",
             '</request>',
-            "<run-result>DeferredToolRequests(calls=[ToolCallPart(tool_name='external_tool', args={}, tool_call_id='pyd_ai_tool_call_id__external_tool')], approvals=[])</run-result>",
+            "<run-result>DeferredToolRequests(calls=[ToolCallPart(tool_name='external_tool', args={}, tool_call_id='pyd_ai_tool_call_id__external_tool')], approvals=[], metadata={})</run-result>",
             '</stream>',
         ]
     )
@@ -620,7 +624,32 @@ async def test_run_stream_on_complete():
     )
 
 
-@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_run_stream_metadata_forwarded():
+    agent = Agent(model=TestModel(custom_output_text='meta'))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    captured_metadata: list[dict[str, Any] | None] = []
+
+    def on_complete(run_result: AgentRunResult[Any]) -> None:
+        captured_metadata.append(run_result.metadata)
+
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream(metadata={'ui': 'adapter'}, on_complete=on_complete)]
+
+    assert captured_metadata == [{'ui': 'adapter'}]
+    assert events[-2:] == ['<run-result>meta</run-result>', '</stream>']
+
+
+async def test_run_stream_native_metadata_forwarded():
+    agent = Agent(model=TestModel(custom_output_text='native meta'))
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
+
+    events = [event async for event in adapter.run_stream_native(metadata={'ui': 'native'})]
+    run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
+
+    assert run_result_event.result.metadata == {'ui': 'native'}
+
+
 async def test_adapter_dispatch_request():
     agent = Agent(model=TestModel())
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
@@ -639,7 +668,14 @@ async def test_adapter_dispatch_request():
         receive=receive,
     )
 
-    response = await DummyUIAdapter.dispatch_request(starlette_request, agent=agent)
+    captured_metadata: list[dict[str, Any] | None] = []
+
+    def on_complete(run_result: AgentRunResult[Any]) -> None:
+        captured_metadata.append(run_result.metadata)
+
+    response = await DummyUIAdapter.dispatch_request(
+        starlette_request, agent=agent, metadata={'ui': 'dispatch'}, on_complete=on_complete
+    )
 
     assert isinstance(response, StreamingResponse)
 
@@ -676,3 +712,13 @@ async def test_adapter_dispatch_request():
             {'type': 'http.response.body', 'body': b'', 'more_body': False},
         ]
     )
+    assert captured_metadata == [{'ui': 'dispatch'}]
+
+
+def test_dummy_adapter_dump_messages():
+    """Test that DummyUIAdapter.dump_messages returns messages as-is."""
+    from pydantic_ai.messages import UserPromptPart
+
+    messages = [ModelRequest(parts=[UserPromptPart(content='Hello')])]
+    result = DummyUIAdapter.dump_messages(messages)
+    assert result == messages

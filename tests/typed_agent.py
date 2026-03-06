@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, TypeAlias
 
+from starlette.requests import Request
 from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.output import StructuredDict, TextOutput, ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 # Define here so we can check `if MYPY` below. This will not be executed, MYPY will always set it to True
 MYPY = False
@@ -39,8 +41,8 @@ def system_prompt_ok2() -> str:
 
 
 # we have overloads for every possible signature of system_prompt, so the type of decorated functions is correct
-assert_type(system_prompt_ok1, Callable[[RunContext[MyDeps]], Awaitable[str]])
-assert_type(system_prompt_ok2, Callable[[], str])
+assert_type(system_prompt_ok1, Callable[[RunContext[MyDeps]], Awaitable[str | None]])
+assert_type(system_prompt_ok2, Callable[[], str | None])
 
 
 @typed_agent.tool
@@ -76,6 +78,66 @@ async def prep_wrong_type(ctx: RunContext[int], tool_def: ToolDefinition) -> Too
 @typed_agent.tool(prepare=prep_wrong_type)  # type: ignore[arg-type]
 def wrong_tool_prepare(ctx: RunContext[MyDeps], x: int, y: str) -> str:
     return f'{ctx.deps.foo} {x} {y}'
+
+
+# args_validator: matching params
+def args_validator_ok(ctx: RunContext[MyDeps], x: int, y: str) -> None:
+    pass
+
+
+@typed_agent.tool(args_validator=args_validator_ok)
+def ok_tool_args_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
+# args_validator: wrong params
+def args_validator_wrong_params(ctx: RunContext[MyDeps], a: float) -> None:
+    pass
+
+
+@typed_agent.tool(args_validator=args_validator_wrong_params)  # type: ignore[arg-type]
+def wrong_tool_args_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
+# args_validator: wrong deps type
+def args_validator_wrong_deps(ctx: RunContext[int], x: int, y: str) -> None:
+    pass
+
+
+@typed_agent.tool(args_validator=args_validator_wrong_deps)  # type: ignore[arg-type]
+def wrong_deps_tool_args_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
+# args_validator on tool_plain: matching params
+def plain_args_validator_ok(ctx: RunContext[MyDeps], x: str) -> None:
+    pass
+
+
+@typed_agent.tool_plain(args_validator=plain_args_validator_ok)
+def ok_tool_plain_args_validator(x: str) -> str:
+    return x
+
+
+# args_validator on tool_plain: wrong params
+def plain_args_validator_wrong(ctx: RunContext[MyDeps], a: float) -> None:
+    pass
+
+
+@typed_agent.tool_plain(args_validator=plain_args_validator_wrong)  # type: ignore[arg-type]
+def wrong_tool_plain_args_validator(x: str) -> str:
+    return x
+
+
+# args_validator on tool_plain: wrong deps
+def plain_args_validator_wrong_deps(ctx: RunContext[int], x: str) -> None:
+    pass
+
+
+@typed_agent.tool_plain(args_validator=plain_args_validator_wrong_deps)  # type: ignore[arg-type]
+def wrong_deps_tool_plain_args_validator(x: str) -> str:
+    return x
 
 
 @typed_agent.tool_plain
@@ -157,7 +219,7 @@ class Bar:
     b: str
 
 
-union_agent: Agent[None, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[call-overload]
+union_agent: Agent[None, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[arg-type]
 assert_type(union_agent, Agent[None, Foo | Bar])
 
 
@@ -191,6 +253,10 @@ async def foobar_plain(x: int, y: int) -> int:
 
 
 def str_to_regex(text: str) -> re.Pattern[str]:
+    return re.compile(text)
+
+
+def str_to_regex_with_ctx(ctx: RunContext[int], text: str) -> re.Pattern[str]:
     return re.compile(text)
 
 
@@ -263,6 +329,30 @@ Tool(foobar_plain, takes_ctx=False)
 assert_type(Tool(foobar_plain), Tool[object])
 assert_type(Tool(foobar_plain), Tool)
 
+
+# Tool constructor with args_validator: matching params
+def tool_init_validator_ok(ctx: RunContext[int], x: str, y: int) -> None:
+    pass
+
+
+Tool(foobar_ctx, args_validator=tool_init_validator_ok)
+
+
+# Tool constructor with args_validator: wrong params
+def tool_init_validator_wrong(ctx: RunContext[int], a: float) -> None:
+    pass
+
+
+Tool(foobar_ctx, args_validator=tool_init_validator_wrong)  # type: ignore[arg-type]
+
+
+# Tool constructor with args_validator: wrong deps
+def tool_init_validator_wrong_deps(ctx: RunContext[str], x: str, y: int) -> None:
+    pass
+
+
+Tool(foobar_ctx, args_validator=tool_init_validator_wrong_deps)  # type: ignore[arg-type]
+
 # unfortunately we can't type check these cases, since from a typing perspect `foobar_ctx` is valid as a plain tool
 Tool(foobar_ctx, takes_ctx=False)
 Tool(foobar_plain, takes_ctx=True)
@@ -280,6 +370,16 @@ Agent('test', tools=[foobar_ctx])  # pyright: ignore[reportArgumentType,reportCa
 Agent('test', tools=[Tool(foobar_ctx)])  # pyright: ignore[reportArgumentType,reportCallIssue]
 # since deps are not set, they default to `None`, so can't be `int`
 Agent('test', tools=[Tool(foobar_plain)], deps_type=int)  # pyright: ignore[reportArgumentType,reportCallIssue]
+
+# TextOutput with RunContext uses RunContext[Any], so deps_type is not checked.
+# This is intentional: type checking deps in output functions isn't feasible because
+# ToolOutput and plain output functions take arbitrary args, so the type checker
+# treats RunContext as just another arg rather than enforcing deps_type compatibility.
+text_output_with_ctx = TextOutput(str_to_regex_with_ctx)
+assert_type(text_output_with_ctx, TextOutput[re.Pattern[str]])
+Agent('test', output_type=text_output_with_ctx, deps_type=int)
+Agent('test', output_type=text_output_with_ctx, deps_type=str)
+Agent('test', output_type=text_output_with_ctx)
 
 # prepare example from docs:
 
@@ -310,3 +410,12 @@ if not MYPY:
 partial_agent: Agent[MyDeps] = Agent(deps_type=MyDeps)
 assert_type(partial_agent, Agent[MyDeps, str])
 assert_type(partial_agent, Agent[MyDeps])
+
+req = Request({})
+coro = VercelAIAdapter.dispatch_request(req, agent=Agent('test'))
+coro = VercelAIAdapter.dispatch_request(req, agent=Agent('test', deps_type=MyDeps), deps=MyDeps(foo=1, bar=2))
+coro = VercelAIAdapter.dispatch_request(req, agent=Agent('test', output_type=Foo))
+coro = VercelAIAdapter.dispatch_request(req, agent=Agent('test'), output_type=Foo)
+coro = VercelAIAdapter.dispatch_request(
+    req, agent=Agent('test', deps_type=MyDeps, output_type=Foo), deps=MyDeps(foo=1, bar=2)
+)

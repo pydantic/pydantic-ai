@@ -39,7 +39,7 @@ We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI
 [Pydantic Validation](https://docs.pydantic.dev/latest/) is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. _Why use the derivative when you can go straight to the source?_ :smiley:
 
 2. **Model-agnostic**:
-Supports virtually every [model](https://ai.pydantic.dev/models/overview) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, and Outlines. If your favorite model or provider is not listed, you can easily implement a [custom model](https://ai.pydantic.dev/models/overview#custom-models).
+Supports virtually every [model](https://ai.pydantic.dev/models/overview) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, Alibaba Cloud, SambaNova, and Outlines. If your favorite model or provider is not listed, you can easily implement a [custom model](https://ai.pydantic.dev/models/overview#custom-models).
 
 3. **Seamless Observability**:
 Tightly [integrates](https://ai.pydantic.dev/logfire) with [Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can [use that too](https://ai.pydantic.dev/logfire#alternative-observability-backends).
@@ -76,7 +76,7 @@ from pydantic_ai import Agent
 
 # Define a very simple agent including the model to use, you can also set the model when running the agent.
 agent = Agent(
-    'anthropic:claude-sonnet-4-0',
+    'anthropic:claude-sonnet-4-6',
     # Register static instructions using a keyword argument to the agent.
     # For more complex dynamically-generated instructions, see the example below.
     instructions='Be concise, reply with one sentence.',
@@ -130,7 +130,7 @@ class SupportOutput(BaseModel):
 # Agents are generic in the type of dependencies they accept and the type of output they return.
 # In this case, the support agent has type `Agent[SupportDependencies, SupportOutput]`.
 support_agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=SupportDependencies,
     # The response from the agent will, be guaranteed to be a SupportOutput,
     # if validation fails the agent is prompted to try again.

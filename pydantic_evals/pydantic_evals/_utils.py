@@ -112,7 +112,7 @@ async def task_group_gather(tasks: Sequence[Callable[[], Awaitable[T]]]) -> list
 
 try:
     from logfire._internal.config import (
-        LogfireNotConfiguredWarning,  # pyright: ignore[reportAssignmentType,reportPrivateImportUsage]
+        LogfireNotConfiguredWarning,  # pyright: ignore[reportAssignmentType]
     )
 # TODO: Remove this `pragma: no cover` once we test evals without pydantic-ai (which includes logfire)
 except ImportError:  # pragma: no cover

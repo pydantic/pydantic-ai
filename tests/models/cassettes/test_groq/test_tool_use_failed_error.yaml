@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '517'
+      - '594'
       content-type:
       - application/json
       host:
@@ -18,7 +18,8 @@ interactions:
       messages:
       - content: Be concise. Never use pretty double quotes, just regular ones.
         role: system
-      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling
+      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the
+          second try you can use valid args
         role: user
       model: openai/gpt-oss-120b
       n: 1
@@ -47,9 +48,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '401'
+      - '387'
       content-type:
       - application/json
+      strict-transport-security:
+      - max-age=15552000
       vary:
       - Origin
     parsed_body:
@@ -57,10 +60,10 @@ interactions:
         code: tool_use_failed
         failed_generation: |-
           {"name": "get_something_by_name", "arguments": {
-            "invalid_param": "test"
+            "foo": "bar"
           }}
         message: 'Tool call validation failed: tool call validation failed: parameters for tool get_something_by_name did
-          not match schema: errors: [missing properties: ''name'', additionalProperties ''invalid_param'' not allowed]'
+          not match schema: errors: [missing properties: ''name'', additionalProperties ''foo'' not allowed]'
         type: invalid_request_error
     status:
       code: 400
@@ -70,15 +73,15 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1194'
+      - '1271'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=WMG3BQS5HkdpU5Z0Li6BHrMf9LpbLVf439yJW6y0o_Y-1756847034-1.0.1.1-QyWCGYlk_BGpqUCXdhczqr0bBq94afUlKTqyv_FDO5ksNzCNdNY5QkKBCi.RoWCRo.oIhWHmFJ3mW_Ab3IyyI3wFCLdQql_yH0EkgoEi31M
+      - __cf_bm=HQGTURxq.ABKK5N.52ZTgVrLU4K9GpykjN9SFqzKTjw-1771434738.0598443-1.0.1.1-H9P7hzlzqAAxV9v8iF5AKL.au7Xomt.Rgkf1HC.N_5DEOxVMO_ouqSp.32Ucj46nc1bZiTXmGAzpLweq4vKkde2bCfPaNtNSlW8cUqmnAXQgy6pdJ6fJIoUgJnSahpsc
       host:
       - api.groq.com
     method: POST
@@ -86,17 +89,20 @@ interactions:
       messages:
       - content: Be concise. Never use pretty double quotes, just regular ones.
         role: system
-      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling
+      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the
+          second try you can use valid args
         role: user
       - role: assistant
         tool_calls:
         - function:
-            arguments: '{"invalid_param":"test"}'
+            arguments: '{"foo":"bar"}'
             name: get_something_by_name
-          id: pyd_ai_ad025dbe97d74d7f8693ee8fe14fa558
+          id: pyd_ai_445dbde6c4764cafb5782bb928ef6c2c
           type: function
       - content: |-
-          2 validation errors: [
+          2 validation errors:
+          ```json
+          [
             {
               "type": "missing",
               "loc": [
@@ -104,22 +110,23 @@ interactions:
               ],
               "msg": "Field required",
               "input": {
-                "invalid_param": "test"
+                "foo": "bar"
               }
             },
             {
               "type": "extra_forbidden",
               "loc": [
-                "invalid_param"
+                "foo"
               ],
               "msg": "Extra inputs are not permitted",
-              "input": "test"
+              "input": "bar"
             }
           ]
+          ```
 
           Fix the errors and try again.
         role: tool
-        tool_call_id: pyd_ai_ad025dbe97d74d7f8693ee8fe14fa558
+        tool_call_id: pyd_ai_445dbde6c4764cafb5782bb928ef6c2c
       model: openai/gpt-oss-120b
       n: 1
       stream: false
@@ -147,9 +154,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '827'
+      - '925'
       content-type:
       - application/json
+      strict-transport-security:
+      - max-age=15552000
       transfer-encoding:
       - chunked
       vary:
@@ -160,31 +169,34 @@ interactions:
         index: 0
         logprobs: null
         message:
-          reasoning: 'We need to call with correct param name: name. Provide a non-existent name perhaps "nonexistent".'
+          reasoning: 'We need to call with correct param: name field. Use some name, e.g., "test".'
           role: assistant
           tool_calls:
           - function:
-              arguments: '{"name":"nonexistent"}'
+              arguments: '{"name":"test"}'
               name: get_something_by_name
-            id: fc_c8fd1e7c-0e6b-4a28-8ef2-516c38aa9ba8
+            id: fc_311ba17b-89f9-48d3-8fd9-7e74a1264855
             type: function
-      created: 1756847034
-      id: chatcmpl-01583e50-828f-4759-82e2-08b35493ebe6
+      created: 1771434738
+      id: chatcmpl-b089cbdd-ca65-41a1-9409-639d476f87c0
       model: openai/gpt-oss-120b
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_213abb2467
+      system_fingerprint: fp_699d877a58
       usage:
-        completion_time: 0.097360195
-        completion_tokens: 49
-        prompt_time: 0.01243387
-        prompt_tokens: 283
-        queue_time: 0.245412094
-        total_time: 0.109794065
-        total_tokens: 332
+        completion_time: 0.110362968
+        completion_tokens: 52
+        completion_tokens_details:
+          reasoning_tokens: 22
+        prompt_time: 0.014400533
+        prompt_tokens: 301
+        queue_time: 0.005000903
+        total_time: 0.124763501
+        total_tokens: 353
       usage_breakdown: null
       x_groq:
-        id: req_01k463wm1xesw9bd2z9mvdrt70
+        id: req_01khrvt0x4e8cs577wtgjk872s
+        seed: 47864733
     status:
       code: 200
       message: OK
@@ -193,15 +205,15 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1500'
+      - '1693'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=WMG3BQS5HkdpU5Z0Li6BHrMf9LpbLVf439yJW6y0o_Y-1756847034-1.0.1.1-QyWCGYlk_BGpqUCXdhczqr0bBq94afUlKTqyv_FDO5ksNzCNdNY5QkKBCi.RoWCRo.oIhWHmFJ3mW_Ab3IyyI3wFCLdQql_yH0EkgoEi31M
+      - __cf_bm=HQGTURxq.ABKK5N.52ZTgVrLU4K9GpykjN9SFqzKTjw-1771434738.0598443-1.0.1.1-H9P7hzlzqAAxV9v8iF5AKL.au7Xomt.Rgkf1HC.N_5DEOxVMO_ouqSp.32Ucj46nc1bZiTXmGAzpLweq4vKkde2bCfPaNtNSlW8cUqmnAXQgy6pdJ6fJIoUgJnSahpsc
       host:
       - api.groq.com
     method: POST
@@ -209,17 +221,20 @@ interactions:
       messages:
       - content: Be concise. Never use pretty double quotes, just regular ones.
         role: system
-      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling
+      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling; on the
+          second try you can use valid args
         role: user
       - role: assistant
         tool_calls:
         - function:
-            arguments: '{"invalid_param":"test"}'
+            arguments: '{"foo":"bar"}'
             name: get_something_by_name
-          id: pyd_ai_ad025dbe97d74d7f8693ee8fe14fa558
+          id: pyd_ai_445dbde6c4764cafb5782bb928ef6c2c
           type: function
       - content: |-
-          2 validation errors: [
+          2 validation errors:
+          ```json
+          [
             {
               "type": "missing",
               "loc": [
@@ -227,32 +242,37 @@ interactions:
               ],
               "msg": "Field required",
               "input": {
-                "invalid_param": "test"
+                "foo": "bar"
               }
             },
             {
               "type": "extra_forbidden",
               "loc": [
-                "invalid_param"
+                "foo"
               ],
               "msg": "Extra inputs are not permitted",
-              "input": "test"
+              "input": "bar"
             }
           ]
+          ```
 
           Fix the errors and try again.
         role: tool
-        tool_call_id: pyd_ai_ad025dbe97d74d7f8693ee8fe14fa558
-      - role: assistant
+        tool_call_id: pyd_ai_445dbde6c4764cafb5782bb928ef6c2c
+      - content: |-
+          <think>
+          We need to call with correct param: name field. Use some name, e.g., "test".
+          </think>
+        role: assistant
         tool_calls:
         - function:
-            arguments: '{"name":"nonexistent"}'
+            arguments: '{"name":"test"}'
             name: get_something_by_name
-          id: fc_c8fd1e7c-0e6b-4a28-8ef2-516c38aa9ba8
+          id: fc_311ba17b-89f9-48d3-8fd9-7e74a1264855
           type: function
-      - content: 'Something with name: nonexistent'
+      - content: 'Something with name: test'
         role: tool
-        tool_call_id: fc_c8fd1e7c-0e6b-4a28-8ef2-516c38aa9ba8
+        tool_call_id: fc_311ba17b-89f9-48d3-8fd9-7e74a1264855
       model: openai/gpt-oss-120b
       n: 1
       stream: false
@@ -280,9 +300,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1019'
+      - '1155'
       content-type:
       - application/json
+      strict-transport-security:
+      - max-age=15552000
       transfer-encoding:
       - chunked
       vary:
@@ -293,29 +315,34 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: 'Something with name: nonexistent'
-          reasoning: 'The user asked: "Please call the ''get_something_by_name'' tool with non-existent parameters to test
-            error handling". They wanted to test error handling with non-existent parameters, but we corrected to proper parameters.
-            The response from tool: "Something with name: nonexistent". Should we respond? Probably just output the result.
-            Follow developer instruction: be concise, no fancy quotes. Use regular quotes only.'
+          content: 'The first call failed due to missing and extra parameters, as expected. The second call succeeded and
+            returned: "Something with name: test".'
+          reasoning: 'We need to respond to user request. They asked: "Please call the ... tool with non-existent parameters
+            to test error handling; on the second try you can use valid args". We already did that. Now we should respond
+            concisely, maybe acknowledging the result. Use regular quotes.'
           role: assistant
-      created: 1756847037
-      id: chatcmpl-5b729d91-3507-4942-bd0d-27e7732afc6d
+      created: 1771434739
+      id: chatcmpl-c7c67aaa-6e09-4a05-a43c-664a9db28d52
       model: openai/gpt-oss-120b
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_213abb2467
+      system_fingerprint: fp_699d877a58
       usage:
-        completion_time: 0.205303865
+        completion_time: 0.574329735
         completion_tokens: 96
-        prompt_time: 0.018679785
-        prompt_tokens: 319
-        queue_time: 2.222792642
-        total_time: 0.22398365
-        total_tokens: 415
+        completion_tokens_details:
+          reasoning_tokens: 59
+        prompt_time: 0.56585145
+        prompt_tokens: 336
+        prompt_tokens_details:
+          cached_tokens: 256
+        queue_time: 0.005052002
+        total_time: 1.140181185
+        total_tokens: 432
       usage_breakdown: null
       x_groq:
-        id: req_01k463wmgvfwwbcdj54311368h
+        id: req_01khrvt137e9qtvva4t9mk7bzr
+        seed: 1779532338
     status:
       code: 200
       message: OK

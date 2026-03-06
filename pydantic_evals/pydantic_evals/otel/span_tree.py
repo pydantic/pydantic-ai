@@ -241,7 +241,7 @@ class SpanNode:
 
         return self._matches_query(query)
 
-    def _matches_query(self, query: SpanQuery) -> bool:  # noqa C901
+    def _matches_query(self, query: SpanQuery) -> bool:  # noqa: C901
         """Check if the span matches the query conditions."""
         # Logical combinations
         if or_ := query.get('or_'):
@@ -433,8 +433,8 @@ class SpanTree:
     You can then search or iterate the tree to make your assertions (using DFS for traversal).
     """
 
-    roots: list[SpanNode] = field(default_factory=list)
-    nodes_by_id: dict[str, SpanNode] = field(default_factory=dict)
+    roots: list[SpanNode] = field(default_factory=list[SpanNode])
+    nodes_by_id: dict[str, SpanNode] = field(default_factory=dict[str, SpanNode])
 
     # -------------------------------------------------------------------------
     # Construction

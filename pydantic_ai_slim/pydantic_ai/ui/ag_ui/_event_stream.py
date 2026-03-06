@@ -10,7 +10,9 @@ import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from typing import Final
+from uuid import uuid4
 
+from ..._utils import now_utc
 from ...messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -26,7 +28,7 @@ from ...messages import (
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT
-from .. import SSE_CONTENT_TYPE, UIEventStream
+from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
 
 try:
     from ag_ui.core import (
@@ -72,7 +74,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     """UI event stream transformer for the Agent-User Interaction (AG-UI) protocol."""
 
     _thinking_text: bool = False
-    _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict)
+    _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
     _error: bool = False
 
     @property
@@ -86,10 +88,22 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     def encode_event(self, event: BaseEvent) -> str:
         return self._event_encoder.encode(event)
 
+    @staticmethod
+    def _get_timestamp() -> int:
+        return int(now_utc().timestamp() * 1_000)
+
+    async def handle_event(self, event: NativeEvent) -> AsyncIterator[BaseEvent]:
+        """Override to set timestamps on all AG-UI events."""
+        async for agui_event in super().handle_event(event):
+            if agui_event.timestamp is None:
+                agui_event.timestamp = self._get_timestamp()
+            yield agui_event
+
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
         yield RunStartedEvent(
             thread_id=self.run_input.thread_id,
             run_id=self.run_input.run_id,
+            timestamp=self._get_timestamp(),
         )
 
     async def before_response(self) -> AsyncIterator[BaseEvent]:
@@ -104,11 +118,12 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             yield RunFinishedEvent(
                 thread_id=self.run_input.thread_id,
                 run_id=self.run_input.run_id,
+                timestamp=self._get_timestamp(),
             )
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
         self._error = True
-        yield RunErrorEvent(message=str(error))
+        yield RunErrorEvent(message=str(error), timestamp=self._get_timestamp())
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseEvent]:
         if follows_text:
@@ -200,8 +215,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseEvent]:
         tool_call_id = self._builtin_tool_call_ids[part.tool_call_id]
+        # Use a one-off message ID instead of `self.new_message_id()` to avoid
+        # mutating `self.message_id`, which is used as `parent_message_id` for
+        # subsequent tool calls in the same response.
         yield ToolCallResultEvent(
-            message_id=self.new_message_id(),
+            message_id=str(uuid4()),
             type=EventType.TOOL_CALL_RESULT,
             role='tool',
             tool_call_id=tool_call_id,

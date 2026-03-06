@@ -22,21 +22,21 @@ interactions:
         role: user
       model: gpt-5
       stream: false
-    uri: http://localhost:8787/responses/responses
+    uri: http://localhost:8787/openai-responses/responses
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=86400
       content-length:
-      - '2651'
+      - '2169'
       content-type:
       - application/json
       openai-processing-ms:
-      - '2444'
+      - '1609'
       openai-version:
       - '2020-10-01'
       pydantic-ai-gateway-price-estimate:
-      - 0.0007USD
+      - 0.0001USD
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -45,9 +45,9 @@ interactions:
       background: false
       billing:
         payer: developer
-      created_at: 1762685402
+      created_at: 1762950190
       error: null
-      id: resp_0b0a499f6332473100691071da2f6081a184bad9183c461b04
+      id: resp_0d00b8a9619b08b00069147c2ee65881a092c57770a6d264af
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -56,8 +56,8 @@ interactions:
       model: gpt-5-2025-08-07
       object: response
       output:
-      - encrypted_content: gAAAAABpEHHcIjiqxbZXNndi9xNsTyvngDbxl8seH4HjGuU0P_aiyztPIEtTBwhaq7QRlf2pobZHONLRzflx_6xxB7Do7X9UkcJ_c0zjvwyMGK83CJEwb6_n5qQJy3VdtfQXJRfLJhUSn7ozk4iTn65h_qurYMntYCxP6Cq11I9bHKEaUesKGeYgCwUtF9mmvgTwfRBxefHohNCa8HpLbHUBETMfBecL4OBVJvk7RvpcRtELL8hZgQCvjJGQXYC23TjeN83ctuvIfA5l5n-y6fOtxIc-TcTgLPqUoa6CwYuQRFF_jXXrY8x4bLyPv6X6KI-we4S_lr8h6V-cG_k5f3ezTWq7V_AhCwodZFW0keNdsxVm9X4PDpDNo5_7vobA6XBC6HLzWWpwQDqNWaDmQ6hbA82WewrFKoUSur86ekXDA8Ju82U1HkSzakOs4xUE9Ix9djVNQowDD53BybUCF92SImLZko9j4dJM5TP3zCQ9SYJ_06B_rN3JG5IJ9MM0LNGHFfD6mAn4omBakgG_FCQfBD0t34cEn9VobNqcJffa3slLOikIy9jqy7jUdf2r3cdh4mJpzP5asvcrvm7sDCtnT3aUVOBSWkbLLHAcrT7N60aZjJZahKOi4xlLHAbjKnR4fFbs3qSUIL9Ig44568oNHrGCnIEZ2h7ojpIb1lgNUcEXdIGmhNzLyqkqoWk0Uk8Y_-tD38zPdy-g_xdJjgmHe0797o0pD12aJkMJ3Pkmo9hDe-kZtR4A1rIQFDIJF--NiE2SjT5rZM9ntGrEcEVD6Nc3dxzWnrziTPfWuomovRWDuEbBnSYJ2wYIVl-snX5fPn_ENPS8YBY5ymZhbqOp9r6GA-OrCU5Ipv46VIY521nPcx4pC7PJ6X877N9CCd1j-URlKAyySgZNx6PZ_NiDxLAnsAPx-YlhvuT3Y8qjms7r98RCwa5hmbisrGFBQoKK22Lsinu4Ak_qO673JMJPWNK_ZtFyD7BKfmqPZm_EtmAC8GMXyrvmRCGU7jlienzW8DoA_8z-hidaACvAoVqPpQURxocKUMmHLeAfALDcpJHmWB2vJjl1oKQZ1JerwLatQMIWwONe4eTSKKw5KX4nn9wiGkQQU4bJHnFuanoSiaQvuPAXucp7I7pBBDhJT5X5ixWsR5pcTjs32ILI7YDTwc0tMWZ9gR5910O_K6cZHMPqDN1cCJvuf_5qsGFkVe217Osl7QyXHODCVbK6YXO_D7RGN5FCCypLI4FinDxfewQbiIFAcizF1TlCmJ6gF5vRQyio271qOLKOT497_1TKTbLHcM37D2C7MXrO59sNwl9-UBq1eowuquFiy24vmQePi9A0lNVrSD3kAhMpd8j3sTwIaoWlGabm194Oqm-3kHfyrqR6ExU=
-        id: rs_0b0a499f6332473100691071db0c2c81a1943920f74bbe507b
+      - encrypted_content: gAAAAABpFHwwEZkll1her399Et9qM7G_dr8_ii_Kag7-8hScK5r1IfcV22tkblEezpHfDo6geDPx7tsaWId4Ct_Yyz_oZ2XetDrxa2ZQ85cjoEdCynLP0qDau1R3WESlVSn_keQfmaZf2bPcY15x4HKf-MTYnogdbsTK3xVBaeWbkLwT85k7fRPIsfxR5ZHiLQKecIaoQs9tEE2DVmcKYk77dSF6CZHJr5cbamv5t923CzngGa_fNefX6x9sTRBG0y05GKeh7lUfff_Lw3l28q08TMwox42ZtUrmjM_06hXqvZjjhpeYFQDEu0bAbARq47FwwoSnbvsfWHH4RthGZhAf7-PdM18PRuE44eOGfceM-R0Elb-iZnBClbrlIZVPebRHnsFk8K3t8kZbmUJ0xLh5eRk5MZz8JBiVtG1KWjOotPXwGO8izJxguAY8p_e5mZq27M5UI-fUB23Tp4AsxP8CzZbDJJlK8NF0VjpXkEd6FFiY8SHkjxSM-7S0qF2y6xdFQVskTZBpkPOc3oh12oRgY105e4evZ8KYS1xD1gq_wDPNRrV5aeFpsXBnMrgpI82NigHD7_jBZAOZVOxtQMF8QnrQaKMcFEIvPrA2UPWEAQhUIKW5ymgfnWVpSGFNAgNs8rgDmH920TtUqeTW7ehn5rwnD1ta8V56JInN26vMF98UOpUaleL7f0pGU0TJfLRpwKi_OgxWEWn01AYf4WaWzUxy0oPrL7tR33GbJJktQIKocQ5r75W8OcLTo65ReP8wwt0LbNvIq4VJr4_GwLJ9VecyrbrtNDhKm5HV7o_vBXcbdHKHcYiWMQOzukHJ1TkNPi4pO8SCY_Z3VtPGk5MmmIMtVRI04PWIdS71hEaVI38lgsAfpJuTUoITniKYlANEOji1kd5U
+        id: rs_0d00b8a9619b08b00069147c2f891c81a087f55bd9bd6902fc
         summary: []
         type: reasoning
       - content:
@@ -65,7 +65,7 @@ interactions:
           logprobs: []
           text: Paris.
           type: output_text
-        id: msg_0b0a499f6332473100691071dc471c81a1a55121b76f7d995e
+        id: msg_0d00b8a9619b08b00069147c2ffd7c81a0801f332c065f8381
         role: assistant
         status: completed
         type: message
@@ -94,12 +94,12 @@ interactions:
         input_tokens: 13
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 72
+        output_tokens: 8
         output_tokens_details:
-          reasoning_tokens: 64
+          reasoning_tokens: 0
         pydantic_ai_gateway:
-          cost_estimate: 0.00073625
-        total_tokens: 85
+          cost_estimate: 9.625000000000001e-05
+        total_tokens: 21
       user: null
     status:
       code: 200

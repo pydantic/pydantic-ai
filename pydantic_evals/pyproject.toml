@@ -32,6 +32,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "Intended Audience :: System Administrators",
@@ -49,7 +50,7 @@ requires-python = ">=3.10"
 dependencies = [
     "rich>=13.9.4",
     "logfire-api>=3.14.1",
-    "pydantic>=2.10",
+    "pydantic>=2.12",
     "pydantic-ai-slim=={{ version }}",
     "anyio>=0",
     "pyyaml>=6.0.2",

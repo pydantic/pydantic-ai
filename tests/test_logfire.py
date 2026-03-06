@@ -6,7 +6,6 @@ from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsInt, IsJson, IsList
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import NotRequired, Self, TypedDict
 
@@ -21,8 +20,10 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
+from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsStr
+from ._inline_snapshot import snapshot
+from .conftest import IsDatetime, IsStr
 
 try:
     import logfire
@@ -120,6 +121,7 @@ def test_logfire(
         model=TestModel(),
         toolsets=[toolset],
         instrument=instrument,
+        metadata={'env': 'test'},
     )
 
     result = my_agent.run_sync('Hello')
@@ -314,12 +316,14 @@ def test_logfire(
                         ]
                     )
                 ),
+                'metadata': '{"env": "test"}',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
                             'type': 'object',
                             'properties': {
                                 'pydantic_ai.all_messages': {'type': 'array'},
+                                'metadata': {'type': 'array'},
                                 'final_result': {'type': 'object'},
                             },
                         }
@@ -379,12 +383,14 @@ def test_logfire(
                     )
                 ),
                 'final_result': '{"my_ret":"1"}',
+                'metadata': '{"env": "test"}',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
                             'type': 'object',
                             'properties': {
                                 'all_messages_events': {'type': 'array'},
+                                'metadata': {'type': 'array'},
                                 'final_result': {'type': 'object'},
                             },
                         }
@@ -407,6 +413,7 @@ def test_logfire(
                             'data_points': [
                                 {
                                     'attributes': {
+                                        'gen_ai.provider.name': 'test',
                                         'gen_ai.system': 'test',
                                         'gen_ai.operation.name': 'chat',
                                         'gen_ai.request.model': 'test',
@@ -421,16 +428,17 @@ def test_logfire(
                                     'zero_count': 0,
                                     'positive': {
                                         'offset': 23234,
-                                        'bucket_counts': IsList(length=...),  # type: ignore
+                                        'bucket_counts': IsList(length=...),
                                     },
                                     'negative': {'offset': 0, 'bucket_counts': [0]},
                                     'flags': 0,
                                     'min': 51,
                                     'max': 52,
-                                    'exemplars': IsList(length=...),  # type: ignore
+                                    'exemplars': IsList(length=...),
                                 },
                                 {
                                     'attributes': {
+                                        'gen_ai.provider.name': 'test',
                                         'gen_ai.system': 'test',
                                         'gen_ai.operation.name': 'chat',
                                         'gen_ai.request.model': 'test',
@@ -445,13 +453,13 @@ def test_logfire(
                                     'zero_count': 0,
                                     'positive': {
                                         'offset': 255,
-                                        'bucket_counts': IsList(length=...),  # type: ignore
+                                        'bucket_counts': IsList(length=...),
                                     },
                                     'negative': {'offset': 0, 'bucket_counts': [0]},
                                     'flags': 0,
                                     'min': 4,
                                     'max': 8,
-                                    'exemplars': IsList(length=...),  # type: ignore
+                                    'exemplars': IsList(length=...),
                                 },
                             ],
                             'aggregation_temporality': 1,
@@ -527,6 +535,7 @@ def test_logfire(
     assert chat_span_attributes == snapshot(
         {
             'gen_ai.operation.name': 'chat',
+            'gen_ai.provider.name': 'test',
             'gen_ai.system': 'test',
             'gen_ai.request.model': 'test',
             'model_request_parameters': IsJson(
@@ -547,6 +556,7 @@ def test_logfire(
                                 'sequential': False,
                                 'kind': 'function',
                                 'metadata': None,
+                                'timeout': None,
                             }
                         ],
                         'builtin_tools': [],
@@ -559,6 +569,7 @@ def test_logfire(
                     }
                 )
             ),
+            'gen_ai.tool.definitions': '[{"type": "function", "name": "my_ret", "parameters": {"additionalProperties": false, "properties": {"x": {"type": "integer"}}, "required": ["x"], "type": "object"}}]',
             'logfire.json_schema': IsJson(),
             'logfire.span_type': 'span',
             'logfire.msg': 'chat test',
@@ -567,6 +578,40 @@ def test_logfire(
             'gen_ai.usage.output_tokens': 4,
         }
     )
+
+
+def _test_logfire_metadata_values_callable_dict(ctx: RunContext[Any]) -> dict[str, str]:
+    return {'model_name': ctx.model.model_name}
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize(
+    ('metadata', 'expected'),
+    [
+        pytest.param({'env': 'test'}, '{"env": "test"}', id='dict'),
+        pytest.param(_test_logfire_metadata_values_callable_dict, '{"model_name": "test"}', id='callable-dict'),
+    ],
+)
+def test_logfire_metadata_values(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    metadata: dict[str, Any] | Callable[[RunContext[Any]], dict[str, Any]],
+    expected: dict[str, Any],
+) -> None:
+    agent = Agent(model=TestModel(), instrument=InstrumentationSettings(version=2), metadata=metadata)
+    agent.run_sync('Hello')
+
+    summary = get_logfire_summary()
+    assert summary.attributes[0]['metadata'] == expected
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_logfire_metadata_override(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
+    agent = Agent(model=TestModel(), instrument=InstrumentationSettings(version=2), metadata={'env': 'base'})
+    with agent.override(metadata={'env': 'override'}):
+        agent.run_sync('Hello')
+
+    summary = get_logfire_summary()
+    assert summary.attributes[0]['metadata'] == '{"env": "override"}'
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -970,6 +1015,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
     assert chat_span_attributes == snapshot(
         {
             'gen_ai.operation.name': 'chat',
+            'gen_ai.provider.name': 'test',
             'gen_ai.system': 'test',
             'gen_ai.request.model': 'test',
             'model_request_parameters': IsJson(
@@ -994,6 +1040,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'sequential': False,
                                 'kind': 'output',
                                 'metadata': None,
+                                'timeout': None,
                             }
                         ],
                         'prompted_output_template': None,
@@ -1002,6 +1049,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     }
                 )
             ),
+            'gen_ai.tool.definitions': '[{"type": "function", "name": "final_result", "description": "The final response which ends this conversation", "parameters": {"properties": {"content": {"type": "string"}}, "required": ["content"], "title": "MyOutput", "type": "object"}}]',
             'logfire.span_type': 'span',
             'logfire.msg': 'chat test',
             'gen_ai.input.messages': IsJson(snapshot([{'role': 'user', 'parts': [{'type': 'text'}]}])),
@@ -1069,6 +1117,56 @@ def test_instrument_all():
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
+async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None:
+    """Test that use_aggregated_usage_attribute_names changes attribute names on agent run spans."""
+
+    def model_function(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+        # Return a response with usage that includes extra details (cache tokens)
+        # to test that all gen_ai.usage.* attributes are translated
+        return ModelResponse(
+            parts=[TextPart('Hello!')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5, cache_read_tokens=2),
+        )
+
+    settings = InstrumentationSettings(use_aggregated_usage_attribute_names=True)
+    agent = Agent(model=FunctionModel(model_function), instrument=settings)
+
+    await agent.run('Hello')
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+
+    # Verify that agent run span uses aggregated_usage attribute names
+    agent_run_span = next(s for s in spans if s['name'] == 'agent run')
+    assert agent_run_span['attributes'] == snapshot(
+        {
+            'model_name': 'function:model_function:',
+            'agent_name': 'agent',
+            'gen_ai.agent.name': 'agent',
+            'logfire.msg': 'agent run',
+            'logfire.span_type': 'span',
+            'final_result': 'Hello!',
+            'gen_ai.aggregated_usage.input_tokens': 10,
+            'gen_ai.aggregated_usage.output_tokens': 5,
+            'gen_ai.aggregated_usage.details.cache_read_tokens': 2,
+            'pydantic_ai.all_messages': [
+                {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+                {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Hello!'}]},
+            ],
+            'logfire.json_schema': {
+                'type': 'object',
+                'properties': {'pydantic_ai.all_messages': {'type': 'array'}, 'final_result': {'type': 'object'}},
+            },
+        }
+    )
+
+    # Verify that model/chat span still uses standard attribute names
+    chat_span = next(s for s in spans if 'chat' in s['name'])
+    assert chat_span['attributes']['gen_ai.usage.input_tokens'] == 10
+    assert chat_span['attributes']['gen_ai.usage.output_tokens'] == 5
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
 async def test_feedback(capfire: CaptureLogfire) -> None:
     from logfire.experimental.annotations import record_feedback
 
@@ -1094,6 +1192,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                 'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'gen_ai.provider.name': 'test',
                     'gen_ai.system': 'test',
                     'gen_ai.request.model': 'test',
                     'model_request_parameters': {
@@ -2738,7 +2837,11 @@ def test_function_instructions_with_history_in_agent_run_span(
     result = my_agent.run_sync(
         'Hello',
         message_history=[
-            ModelRequest(parts=[UserPromptPart(content='Hi')], instructions='Instructions from a previous agent run'),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hi')],
+                instructions='Instructions from a previous agent run',
+                timestamp=IsDatetime(),
+            ),
             ModelResponse(parts=[TextPart(content='Hello')]),
         ],
         output_type=MyOutput,

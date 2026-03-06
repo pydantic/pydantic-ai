@@ -59,7 +59,8 @@ class GroqProvider(Provider[AsyncGroq]):
     def client(self) -> AsyncGroq:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         prefix_to_profile = {
             'llama': meta_model_profile,
             'meta-llama/': meta_groq_model_profile,
@@ -107,7 +108,7 @@ class GroqProvider(Provider[AsyncGroq]):
             groq_client: An existing
                 [`AsyncGroq`](https://github.com/groq/groq-python?tab=readme-ov-file#async-usage)
                 client to use. If provided, `api_key` and `http_client` must be `None`.
-            http_client: An existing `AsyncHTTPClient` to use for making HTTP requests.
+            http_client: An existing `AsyncClient` to use for making HTTP requests.
         """
         if groq_client is not None:
             assert http_client is None, 'Cannot provide both `groq_client` and `http_client`'

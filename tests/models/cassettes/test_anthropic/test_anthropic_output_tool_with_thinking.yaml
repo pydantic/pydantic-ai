@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '475'
+      - '495'
       content-type:
       - application/json
       host:
@@ -39,26 +39,28 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1150'
+      - '1256'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
-      retry-after:
-      - '54'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
     parsed_body:
       content:
-      - signature: EuYCCkYICRgCKkBKb+DTJGUMVOQahj61RknYW0QUDawJfq0T0GPDVPY12LCBbS7YPklMKo29mW3gdTAfPBWgYGmOj51p1jkFst2/Egw0xpDI3vnsrcqx484aDB8G93CLqlAq112quyIwq1/wOAOxPiIRklQ/i2iN/UzmWwPrGHmSS+TAq7qh2VQdi32TUk2zVXlOmTJdOSquKs0BbVTmLPWPc7szqedimy5uTbErLKLALr6DH1RRXuvGeRNElsnJofVsDu48aqeZg36g3Pi9Hboj1oE/TpyclCbv9/CWrixeQ/L/GSggr3FxLJvDgpdtppZfRxWajS6DjTH0AOU2aEu1gvxGtrcIa8htRmo5ZwAxISkaiOAm1lY5pSMl31gRFwby3n/2Y32b3UbM4SSlidDCgOTrDtbJSuwygduhfu7OdPg/I737G+sLcB0RUq4rqnPQQ+T+NYuDHPOz5xyGooXi7UNygIrO2BgB
+      - signature: EvQCCkYICxgCKkAFV41lligOZH9tn6FZ3mHxjygCz2LlOjUJSwx0ud6E8iB23CRwk28pJlQqLx2tPVXC/aFwrk+nXGWB9yGtH2CZEgyR4giHA5Qtj0k2jfQaDJXiKKr8ahm/GuJYLCIw50P6MBSOFrmWCQ3SOXz9n42rME7hVN+aWLAQUPQNtECEA4nv8i6DYnW9iHF3RyBIKtsB+Kw+A1vCVlo/kmCgAGwxstcandOpePzZKVm6LrHL/wvO0N4HqgATViXG4zBdQIhQaUFoikq8YTJP4m7ptZ515+2Nt+Bu/1MSEUTusc/mO1FiuyBkP9fteurAYVL6JCy7I+MTLe+3Lgs3rEECIXfc/HJ5tsv1PdjXzqdt+fxVUW/s3R7GcatF6d1Vvmb1EJla6L5EVsT69oIT5eZbsDf0myvBjGUN3jAKuDp1JBQWoEPqRO4TjbLoaVFjXa2HhtDxjb/Oi2LPE5lTBACC5TSWFLvrqCndkDqUAjlWGAE=
         thinking: |-
-          The user is asking me to calculate 3 + 3, which equals 6. They want me to respond with a JSON object that has a "response" field with an integer value. So I need to return:
+          The user is asking me to calculate 3 + 3. This is a simple arithmetic problem.
 
-          {"response": 6}
+          3 + 3 = 6
+
+          I need to respond with a JSON object that has a "response" field containing an integer value, which should be 6.
         type: thinking
       - text: '{"response": 6}'
         type: text
-      id: msg_013vH3ViFyo8f85fA4HJuF8A
+      id: msg_01Ne9UEdkLhBdVXJ1z2K1HRv
       model: claude-sonnet-4-20250514
       role: assistant
       stop_reason: end_turn
@@ -70,8 +72,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 106
-        output_tokens: 71
+        inference_geo: not_available
+        input_tokens: 107
+        output_tokens: 75
         service_tier: standard
     status:
       code: 200

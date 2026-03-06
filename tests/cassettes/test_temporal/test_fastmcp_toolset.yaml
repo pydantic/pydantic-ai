@@ -1,0 +1,1176 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '152'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+    method: POST
+    parsed_body:
+      id: 0
+      jsonrpc: '2.0'
+      method: initialize
+      params:
+        capabilities: {}
+        clientInfo:
+          name: mcp
+          version: 0.1.0
+        protocolVersion: '2025-06-18'
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: |+
+        event: message
+        data: {"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2025-03-26","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"DeepWiki","version":"0.0.1"}}}
+
+        event: ping
+        data: ping
+
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      mcp-session-id:
+      - be0cdc7055588bec2a5eb23678e4e2786e5531c48f3f5e76e95ae8f234a38f13
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=1WIUSMLoMLOKxJmtDRd93zmEkfMIqRZ8C9LmvuTl7VfYUtAKSz9cvcZjWMJgCWZI7kNKVWGLlVVNJ5EaBjuuUu7ORJY9H2lWyvt0V%2F%2FMqwJvjk1wSCcCjFizr7Luq1rEKQcUpA%3D%3D"}]}'
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '54'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - be0cdc7055588bec2a5eb23678e4e2786e5531c48f3f5e76e95ae8f234a38f13
+    method: POST
+    parsed_body:
+      jsonrpc: '2.0'
+      method: notifications/initialized
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: ''
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '0'
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=1Gk4BlMBAVIuhOLjGOzfuyZMFHKHlb6yGR47Hl2tPygBcBN%2BQDcSVchZreX7Ys66B8l%2Fggh%2BrIw%2Bunvh1giLuPsbWGLdEqLw0xC4361izOIOAvBClV7%2BZ5J4nM5NCdTXFhH9gg%3D%3D"}]}'
+      vary:
+      - accept-encoding
+    status:
+      code: 202
+      message: Accepted
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json, text/event-stream, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      cache-control:
+      - no-store
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - be0cdc7055588bec2a5eb23678e4e2786e5531c48f3f5e76e95ae8f234a38f13
+    method: GET
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Method not allowed"},"id":null}'
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '82'
+      content-type:
+      - text/plain;charset=UTF-8
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=kSdUAnI6bRt51v3DMhP9PTMCip1uxVDlSNkGZQiYK7Q%2BzFkDpBbEmE%2B4asQXxsX94ekyJgQONyUzYd4gwKaRUwxzKDLHowjKP4IDsytsi1DwiQKvB6qQrornm5RWASaGANjfig%3D%3D"}]}'
+      vary:
+      - accept-encoding
+    status:
+      code: 405
+      message: Method Not Allowed
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '46'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - be0cdc7055588bec2a5eb23678e4e2786e5531c48f3f5e76e95ae8f234a38f13
+    method: POST
+    parsed_body:
+      id: 1
+      jsonrpc: '2.0'
+      method: tools/list
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: |+
+        event: message
+        data: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"read_wiki_structure","description":"Get a list of documentation topics for a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}},{"name":"read_wiki_contents","description":"View documentation about a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}},{"name":"ask_question","description":"Ask any question about a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"},"question":{"type":"string","description":"The question to ask about the repository"}},"required":["repoName","question"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}}]}}
+
+        event: ping
+        data: ping
+
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      mcp-session-id:
+      - be0cdc7055588bec2a5eb23678e4e2786e5531c48f3f5e76e95ae8f234a38f13
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=cVIp5Pbl8JrtWW5lu6H0droi9p1M%2BYTUNGRTB50sxvlVIrYVhZFiD7fp6sbpPdDEFyqPImKhGojDbXLYE66TumgKF0QEe8xWyU3BH1SF7VRVmZgyhjATTsiNmX%2FO7o9jBFr1bA%3D%3D"}]}'
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - be0cdc7055588bec2a5eb23678e4e2786e5531c48f3f5e76e95ae8f234a38f13
+    method: DELETE
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Method not allowed"},"id":null}'
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '82'
+      content-type:
+      - text/plain;charset=UTF-8
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=YjI231SpTy1ds1h1rvDA%2FHWvA%2BdFSQVOpj8hkaN9HMd%2Fl5uIYLvrqtWEub%2Fk5YAHu%2FJXBN9tDxv%2FVrOqJtiCQZqOTKxWLSFSKBqNjxVV3gGiQSRs79RT1nP5t82WHL2M2pMXeg%3D%3D"}]}'
+      vary:
+      - accept-encoding
+    status:
+      code: 405
+      message: Method Not Allowed
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1298'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
+        role: user
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get a list of documentation topics for a GitHub repository
+          name: read_wiki_structure
+          parameters:
+            additionalProperties: false
+            properties:
+              repoName:
+                description: 'GitHub repository: owner/repo (e.g. "facebook/react")'
+                type: string
+            required:
+            - repoName
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: View documentation about a GitHub repository
+          name: read_wiki_contents
+          parameters:
+            additionalProperties: false
+            properties:
+              repoName:
+                description: 'GitHub repository: owner/repo (e.g. "facebook/react")'
+                type: string
+            required:
+            - repoName
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Ask any question about a GitHub repository
+          name: ask_question
+          parameters:
+            additionalProperties: false
+            properties:
+              question:
+                description: The question to ask about the repository
+                type: string
+              repoName:
+                description: 'GitHub repository: owner/repo (e.g. "facebook/react")'
+                type: string
+            required:
+            - repoName
+            - question
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1168'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '718'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"repoName":"pydantic/pydantic-ai","question":"What is the purpose and focus of this repository?"}'
+              name: ask_question
+            id: call_8s5wIpz38o0xHH9xcLBRJXAn
+            type: function
+      created: 1763053689
+      id: chatcmpl-CbV5lz48x6KDZG6cSf8PwWqY4cNe7
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_b1442291a8
+      usage:
+        completion_tokens: 34
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 181
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 215
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '152'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+    method: POST
+    parsed_body:
+      id: 0
+      jsonrpc: '2.0'
+      method: initialize
+      params:
+        capabilities: {}
+        clientInfo:
+          name: mcp
+          version: 0.1.0
+        protocolVersion: '2025-06-18'
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: |+
+        event: message
+        data: {"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2025-03-26","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"DeepWiki","version":"0.0.1"}}}
+
+        event: ping
+        data: ping
+
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      mcp-session-id:
+      - 32f3f05be9ed60bf698ed51ab1d745dd9b8376170f1f0a8b68d8067552c580bc
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=JMXw5dUZmzubODSItI%2Bk%2BOlV%2FXXfea5RKWhsranafFFODfF%2FyfSctAWcJAJxzcVUCBp3j5e18l0GghOQpXuXe97MvHimFC4%2F5FJDThHPRuitHNAhU0X%2FHajiNMOafjNlNKecgQ%3D%3D"}]}'
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json, text/event-stream, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      cache-control:
+      - no-store
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - 32f3f05be9ed60bf698ed51ab1d745dd9b8376170f1f0a8b68d8067552c580bc
+    method: GET
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Method not allowed"},"id":null}'
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '82'
+      content-type:
+      - text/plain;charset=UTF-8
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=qOPyGEWPnJZjj7UqXGqd3pS%2FpIxwY0cMffBPPSZSjD%2FwVpItbmT6SmXovqic4j9YFDJnJbOWgyRWb9t2sHNDh59o7S6vdDGsPU1czesFCDJKwb1jG3LrL8ycu4JWf4tpIdtZBA%3D%3D"}]}'
+      vary:
+      - accept-encoding
+    status:
+      code: 405
+      message: Method Not Allowed
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '54'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - 32f3f05be9ed60bf698ed51ab1d745dd9b8376170f1f0a8b68d8067552c580bc
+    method: POST
+    parsed_body:
+      jsonrpc: '2.0'
+      method: notifications/initialized
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: ''
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '0'
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=WNJsmq607%2F9BXnDpEiImHTCmNkOO1LexKd6npj5en9SAwEwZg0S4kaE8UqkNzv8tPxihvrOMiSbjxlQy0p3pOH%2B4G8rlIziGTY7gBwbdDHPrlCG9NN5qYTzInKhlqoNe1wE%2FlA%3D%3D"}]}'
+      vary:
+      - accept-encoding
+    status:
+      code: 202
+      message: Accepted
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '218'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - 32f3f05be9ed60bf698ed51ab1d745dd9b8376170f1f0a8b68d8067552c580bc
+    method: POST
+    parsed_body:
+      id: 1
+      jsonrpc: '2.0'
+      method: tools/call
+      params:
+        _meta:
+          progressToken: 1
+        arguments:
+          question: What is the purpose and focus of this repository?
+          repoName: pydantic/pydantic-ai
+        name: ask_question
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: |+
+        event: ping
+        data: ping
+
+        event: message
+        data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"This repository, `pydantic/pydantic-ai`, is a Python agent framework designed for building production-grade Generative AI applications. It focuses on providing a type-safe, model-agnostic, and extensible environment for developing AI agents. \n\n## Purpose and Core Features\n\nThe primary purpose of `pydantic-ai` is to simplify the development of robust and reliable Generative AI applications by abstracting away complexities associated with different Large Language Model (LLM) providers and managing agent workflows. \n\nKey features include:\n*   **Type-safe Agents**: Agents are defined using `Agent[Deps, Output]` for compile-time validation, leveraging Pydantic for output validation and dependency injection. \n*   **Model-Agnostic Design**: It supports over 15 LLM providers through a unified `Model` interface, allowing for easy switching between different models and providers. \n*   **Structured Outputs**: Automatic Pydantic validation and self-correction ensure structured and reliable outputs from LLMs. \n*   **Tool Integration**: The framework provides a system for registering and executing tools, with automatic JSON schema generation and support for various output types. \n*   **Graph-based Execution**: `pydantic-graph` manages agent workflows as finite state machines, allowing for detailed tracking of message history and usage. \n*   **Observability**: Integration with OpenTelemetry and Logfire provides comprehensive observability for tracing agent runs, model requests, and tool executions. \n*   **Durable Execution**: Integrations with systems like DBOS and Temporal enable agents to maintain state and resume execution after failures. \n\n## Repository Structure\n\nThe repository is organized as a monorepo using `uv` for package management. \nKey packages include:\n*   `pydantic-ai-slim`: Contains the core framework components such as `Agent`, `Model`, and tools. \n*   `pydantic-graph`: Provides the graph execution engine. \n*   `pydantic-evals`: An evaluation framework for datasets and evaluators. \n*   `examples`: Contains example applications. \n*   `clai`: Provides a CLI interface. \n\n## Agent Execution Flow\n\nThe `Agent` class serves as the primary orchestrator.  Agent execution is graph-based, utilizing a state machine from `pydantic_graph.Graph`.  The execution involves three core node types:\n*   `UserPromptNode`: Processes user input and creates initial `ModelRequest`. \n*   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()` and handles retries. \n*   `CallToolsNode`: Executes tool functions via `RunContext[Deps]`. \n\nThe `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()` for different execution scenarios. \n\n## Model Provider Support\n\nThe framework offers a unified `Model` abstract base class for various LLM providers, including native support for OpenAI, Anthropic, Google, Groq, Mistral,\n\nWiki pages you might want to explore:\n- [OpenAI, Anthropic, and Groq Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.2)\n\nView this search on DeepWiki: https://deepwiki.com/search/what-is-the-purpose-and-focus_a1b523d4-fbf7-4465-90d5-9d88141df70d\n"}]}}
+
+        event: ping
+        data: ping
+
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      mcp-session-id:
+      - 32f3f05be9ed60bf698ed51ab1d745dd9b8376170f1f0a8b68d8067552c580bc
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=BmDT%2F3BFHKwIe42mdKPv5fvTbHapCIoGF50stowHdCBH5Tgi7HCKBVfQ8HxS08aXbSXNim6Vhh4P14DXXu5PYSAQLegHpRW8rEI8uHCkU5rOn9pU5J%2BmaHIpW9ZXNnye0JPBKQ%3D%3D"}]}'
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '46'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - 32f3f05be9ed60bf698ed51ab1d745dd9b8376170f1f0a8b68d8067552c580bc
+    method: POST
+    parsed_body:
+      id: 2
+      jsonrpc: '2.0'
+      method: tools/list
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: |+
+        event: message
+        data: {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"read_wiki_structure","description":"Get a list of documentation topics for a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}},{"name":"read_wiki_contents","description":"View documentation about a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}},{"name":"ask_question","description":"Ask any question about a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"},"question":{"type":"string","description":"The question to ask about the repository"}},"required":["repoName","question"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}}]}}
+
+        event: ping
+        data: ping
+
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      mcp-session-id:
+      - 32f3f05be9ed60bf698ed51ab1d745dd9b8376170f1f0a8b68d8067552c580bc
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=QHOnncK4nhS2VQFmcDYCW79OjDB68B4yH%2F6anGULZjxqXd1kclE6qOrmzXBEkkElKcDQR2CY7lGXsIQ51OJHH2sznaJsS7WGentfxassk7492nQyOgWF3PKeMWCJpaYOVVp2fQ%3D%3D"}]}'
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - 32f3f05be9ed60bf698ed51ab1d745dd9b8376170f1f0a8b68d8067552c580bc
+    method: DELETE
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Method not allowed"},"id":null}'
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '82'
+      content-type:
+      - text/plain;charset=UTF-8
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=DqQx36LLhYntFOuu1Y149BCmhqX6C6ntvAYdwPDMRO7Vi4mi4JcW5QXjm%2B8ciE8nwcD66QthVMfGVCJ0MllDAnE8kQgKsbfnFbCcYM34KKvZ5dlJJ4u3ghBYLns8LNUMJfJlpg%3D%3D"}]}'
+      vary:
+      - accept-encoding
+    status:
+      code: 405
+      message: Method Not Allowed
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '152'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+    method: POST
+    parsed_body:
+      id: 0
+      jsonrpc: '2.0'
+      method: initialize
+      params:
+        capabilities: {}
+        clientInfo:
+          name: mcp
+          version: 0.1.0
+        protocolVersion: '2025-06-18'
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: |+
+        event: message
+        data: {"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2025-03-26","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"DeepWiki","version":"0.0.1"}}}
+
+        event: ping
+        data: ping
+
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      mcp-session-id:
+      - d04081e6eb0cd9f61a374890eef78afe51f89178f6b69557e0fdb409aeb26e1d
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=KBZMl8q4OinVC2zOFjEAl%2FRrh%2BOqcb7wArbY7SUgCa1MCCVugXRb6pL7d0l8%2BdjvQidjxqVaPsnkMSe59TEOOeCZ%2FmualHJWIBCa6hlLDMT%2BfeTbMgv2%2FT0kjBk1CBhnM0jJpg%3D%3D"}]}'
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '54'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - d04081e6eb0cd9f61a374890eef78afe51f89178f6b69557e0fdb409aeb26e1d
+    method: POST
+    parsed_body:
+      jsonrpc: '2.0'
+      method: notifications/initialized
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: ''
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '0'
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=lkxGIQcAU%2BAWE4WQXte%2FYjfyEfd5KTg0OkZCWjfmL1BbKx3T8RQgQimh22SDWP4r2sKEPUiMn%2BFmkIXfOXP196gR6n2FlQnjM8drzzp4l1aoHizj7ZBpTA7FYLhsE3F80dKAFA%3D%3D"}]}'
+      vary:
+      - accept-encoding
+    status:
+      code: 202
+      message: Accepted
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json, text/event-stream, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      cache-control:
+      - no-store
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - d04081e6eb0cd9f61a374890eef78afe51f89178f6b69557e0fdb409aeb26e1d
+    method: GET
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Method not allowed"},"id":null}'
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '82'
+      content-type:
+      - text/plain;charset=UTF-8
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=UI%2B%2BwtaYvTdhLSVek8IDfCMmjCnbFOqzn4xHR35PmcGOL2iLlJ8BMGq9pYc8Ob1c54LYO0i8jHTolzdHZO4FtXPoy5iUtCKRzhOMEOC7MX29ebV9DhcfertitX15LkcCcy4YhA%3D%3D"}]}'
+      vary:
+      - accept-encoding
+    status:
+      code: 405
+      message: Method Not Allowed
+- request:
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '46'
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - d04081e6eb0cd9f61a374890eef78afe51f89178f6b69557e0fdb409aeb26e1d
+    method: POST
+    parsed_body:
+      id: 1
+      jsonrpc: '2.0'
+      method: tools/list
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: |+
+        event: message
+        data: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"read_wiki_structure","description":"Get a list of documentation topics for a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}},{"name":"read_wiki_contents","description":"View documentation about a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"}},"required":["repoName"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}},{"name":"ask_question","description":"Ask any question about a GitHub repository","inputSchema":{"type":"object","properties":{"repoName":{"type":"string","description":"GitHub repository: owner/repo (e.g. \"facebook/react\")"},"question":{"type":"string","description":"The question to ask about the repository"}},"required":["repoName","question"],"additionalProperties":false,"$schema":"http://json-schema.org/draft-07/schema#"}}]}}
+
+        event: ping
+        data: ping
+
+    headers:
+      access-control-allow-headers:
+      - Content-Type, mcp-session-id, mcp-protocol-version
+      access-control-allow-methods:
+      - GET, POST, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - mcp-session-id
+      access-control-max-age:
+      - '86400'
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      mcp-session-id:
+      - d04081e6eb0cd9f61a374890eef78afe51f89178f6b69557e0fdb409aeb26e1d
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=L2c%2Bs%2BRhVowRoUCsybytKlMHR7356H%2FmVmTKOOw%2BJMtVW4%2BcJgwUvoLEbAjKdgMzpvfiFcBb%2FZAOZtb%2BXhLP74poGdx%2FiRssJQk5iRN%2FZ0ss6W1E4DTrd%2BXsLX2Jvr6LF66OYg%3D%3D"}]}'
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json, text/event-stream
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - mcp.deepwiki.com
+      mcp-protocol-version:
+      - '2025-03-26'
+      mcp-session-id:
+      - d04081e6eb0cd9f61a374890eef78afe51f89178f6b69557e0fdb409aeb26e1d
+    method: DELETE
+    uri: https://mcp.deepwiki.com/mcp
+  response:
+    body:
+      string: '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Method not allowed"},"id":null}'
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '82'
+      content-type:
+      - text/plain;charset=UTF-8
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}'
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=bgFHzu1l2ebZ2hG8%2Fp9hV1tavMzV%2BWspYSQcpSqjtgqCC3g0MEGdfHkWXRSS5J4bN4PKdOMjXkBB%2Be0YwqTHqrnDng2Eur3BR9VJ5oHt%2Bip0YFLPQeaj9%2B3iKTDYo6VN5U%2BhbQ%3D%3D"}]}'
+      vary:
+      - accept-encoding
+    status:
+      code: 405
+      message: Method Not Allowed
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '4806'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=mdtNvtxKbr1dB.XrU65TOEt70CNSMdDUMx9Wlx2A.30-1763053690-1.0.1.1-b_3eyqt.Nk4vKnw1kCsP4PxZwd9LEiYC1GUUBFKMWwI1YBM0y1Sik_YR4iLl26tqTXtjJA7m1IH9A1___mlPrd8Up8GMNxb39eVq3Y43o0E;
+        _cfuvid=mjB2o5.4PKSK8El7l77.EFbsmSwMaFzNBp3YgBGvclk-1763053690464-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"repoName":"pydantic/pydantic-ai","question":"What is the purpose and focus of this repository?"}'
+            name: ask_question
+          id: call_8s5wIpz38o0xHH9xcLBRJXAn
+          type: function
+      - content: "This repository, `pydantic/pydantic-ai`, is a Python agent framework designed for building production-grade
+          Generative AI applications. It focuses on providing a type-safe, model-agnostic, and extensible environment for
+          developing AI agents. \n\n## Purpose and Core Features\n\nThe primary purpose of `pydantic-ai` is to simplify the
+          development of robust and reliable Generative AI applications by abstracting away complexities associated with different
+          Large Language Model (LLM) providers and managing agent workflows. \n\nKey features include:\n*   **Type-safe Agents**:
+          Agents are defined using `Agent[Deps, Output]` for compile-time validation, leveraging Pydantic for output validation
+          and dependency injection. \n*   **Model-Agnostic Design**: It supports over 15 LLM providers through a unified `Model`
+          interface, allowing for easy switching between different models and providers. \n*   **Structured Outputs**: Automatic
+          Pydantic validation and self-correction ensure structured and reliable outputs from LLMs. \n*   **Tool Integration**:
+          The framework provides a system for registering and executing tools, with automatic JSON schema generation and support
+          for various output types. \n*   **Graph-based Execution**: `pydantic-graph` manages agent workflows as finite state
+          machines, allowing for detailed tracking of message history and usage. \n*   **Observability**: Integration with
+          OpenTelemetry and Logfire provides comprehensive observability for tracing agent runs, model requests, and tool
+          executions. \n*   **Durable Execution**: Integrations with systems like DBOS and Temporal enable agents to maintain
+          state and resume execution after failures. \n\n## Repository Structure\n\nThe repository is organized as a monorepo
+          using `uv` for package management. \nKey packages include:\n*   `pydantic-ai-slim`: Contains the core framework
+          components such as `Agent`, `Model`, and tools. \n*   `pydantic-graph`: Provides the graph execution engine. \n*
+          \  `pydantic-evals`: An evaluation framework for datasets and evaluators. \n*   `examples`: Contains example applications.
+          \n*   `clai`: Provides a CLI interface. \n\n## Agent Execution Flow\n\nThe `Agent` class serves as the primary orchestrator.
+          \ Agent execution is graph-based, utilizing a state machine from `pydantic_graph.Graph`.  The execution involves
+          three core node types:\n*   `UserPromptNode`: Processes user input and creates initial `ModelRequest`. \n*   `ModelRequestNode`:
+          Calls `model.request()` or `model.request_stream()` and handles retries. \n*   `CallToolsNode`: Executes tool functions
+          via `RunContext[Deps]`. \n\nThe `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()` for different
+          execution scenarios. \n\n## Model Provider Support\n\nThe framework offers a unified `Model` abstract base class
+          for various LLM providers, including native support for OpenAI, Anthropic, Google, Groq, Mistral,\n\nWiki pages
+          you might want to explore:\n- [OpenAI, Anthropic, and Groq Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.2)\n\nView
+          this search on DeepWiki: https://deepwiki.com/search/what-is-the-purpose-and-focus_a1b523d4-fbf7-4465-90d5-9d88141df70d\n"
+        role: tool
+        tool_call_id: call_8s5wIpz38o0xHH9xcLBRJXAn
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get a list of documentation topics for a GitHub repository
+          name: read_wiki_structure
+          parameters:
+            additionalProperties: false
+            properties:
+              repoName:
+                description: 'GitHub repository: owner/repo (e.g. "facebook/react")'
+                type: string
+            required:
+            - repoName
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: View documentation about a GitHub repository
+          name: read_wiki_contents
+          parameters:
+            additionalProperties: false
+            properties:
+              repoName:
+                description: 'GitHub repository: owner/repo (e.g. "facebook/react")'
+                type: string
+            required:
+            - repoName
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Ask any question about a GitHub repository
+          name: ask_question
+          parameters:
+            additionalProperties: false
+            properties:
+              question:
+                description: The question to ask about the repository
+                type: string
+              repoName:
+                description: 'GitHub repository: owner/repo (e.g. "facebook/react")'
+                type: string
+            required:
+            - repoName
+            - question
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1269'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1857'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The `pydantic/pydantic-ai` repository is a Python agent framework crafted for developing production-grade
+            Generative AI applications. It emphasizes type safety, model-agnostic design, and extensibility. The framework
+            supports various LLM providers, manages agent workflows using graph-based execution, and ensures structured, reliable
+            LLM outputs. Key packages include core framework components, graph execution engines, evaluation tools, and example
+            applications.
+          refusal: null
+          role: assistant
+      created: 1763053762
+      id: chatcmpl-CbV6wIVJebfetfZK4gljnVkk0AYZa
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_b1442291a8
+      usage:
+        completion_tokens: 85
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 925
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 1010
+    status:
+      code: 200
+      message: OK
+version: 1
+...

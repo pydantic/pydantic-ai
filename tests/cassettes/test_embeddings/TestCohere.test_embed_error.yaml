@@ -1,0 +1,52 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '137'
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    method: POST
+    parsed_body:
+      input_type: search_query
+      max_tokens: null
+      model: nonexistent
+      output_dimension: null
+      texts:
+      - Hello, world!
+      truncate: NONE
+    uri: https://api.cohere.com/v2/embed
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-length:
+      - '167'
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin,Accept-Encoding
+    parsed_body:
+      id: 8bd5b608-887c-49f7-a6b3-d3bd5830c3de
+      message: model 'nonexistent' not found, make sure the correct model ID was used and that you have access to the model.
+    status:
+      code: 404
+      message: Not Found
+version: 1

@@ -43,7 +43,8 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The client for the provider."""
         raise NotImplementedError()
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
 
@@ -53,6 +54,18 @@ class Provider(ABC, Generic[InterfaceClient]):
 
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
+    # Normalize gateway-prefixed providers (e.g. 'gateway/openai' -> 'openai')
+    if provider.startswith('gateway/'):
+        from .gateway import normalize_gateway_provider
+
+        provider = normalize_gateway_provider(provider)
+
+    # Normalize deprecated/alias provider names
+    if provider == 'vertexai':
+        provider = 'google-vertex'
+    elif provider == 'google':
+        provider = 'google-gla'
+
     if provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
@@ -102,9 +115,13 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
 
         return CohereProvider
     elif provider == 'grok':
-        from .grok import GrokProvider
+        from .grok import GrokProvider  # pyright: ignore[reportDeprecated]
 
-        return GrokProvider
+        return GrokProvider  # pyright: ignore[reportDeprecated]
+    elif provider == 'xai':
+        from .xai import XaiProvider
+
+        return XaiProvider
     elif provider == 'moonshotai':
         from .moonshotai import MoonshotAIProvider
 
@@ -145,11 +162,27 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .ovhcloud import OVHcloudProvider
 
         return OVHcloudProvider
+    elif provider == 'alibaba':
+        from .alibaba import AlibabaProvider
+
+        return AlibabaProvider
+    elif provider == 'sambanova':
+        from .sambanova import SambaNovaProvider
+
+        return SambaNovaProvider
     elif provider == 'outlines':
         from .outlines import OutlinesProvider
 
         return OutlinesProvider
-    else:  # pragma: no cover
+    elif provider == 'sentence-transformers':
+        from .sentence_transformers import SentenceTransformersProvider
+
+        return SentenceTransformersProvider
+    elif provider == 'voyageai':
+        from .voyageai import VoyageAIProvider
+
+        return VoyageAIProvider
+    else:
         raise ValueError(f'Unknown provider: {provider}')
 
 
@@ -158,12 +191,12 @@ def infer_provider(provider: str) -> Provider[Any]:
     if provider.startswith('gateway/'):
         from .gateway import gateway_provider
 
-        api_type = provider.removeprefix('gateway/')
-        return gateway_provider(api_type)
-    elif provider in ('google-vertex', 'google-gla'):
+        upstream_provider = provider.removeprefix('gateway/')
+        return gateway_provider(upstream_provider)
+    elif provider in ('google-vertex', 'google-gla', 'vertexai'):
         from .google import GoogleProvider
 
-        return GoogleProvider(vertexai=provider == 'google-vertex')
+        return GoogleProvider(vertexai=provider in ('google-vertex', 'vertexai'))
     else:
         provider_class = infer_provider_class(provider)
         return provider_class()

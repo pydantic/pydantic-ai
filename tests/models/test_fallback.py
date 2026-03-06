@@ -4,17 +4,16 @@ import json
 import sys
 from collections.abc import AsyncIterator
 from datetime import timezone
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import pytest
-from _pytest.python_api import RaisesContext
 from dirty_equals import IsJson
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pydantic_core import to_json
 
 from pydantic_ai import (
     Agent,
+    ModelAPIError,
     ModelHTTPError,
     ModelMessage,
     ModelProfile,
@@ -32,7 +31,8 @@ from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsDatetime, IsNow, try_import
+from .._inline_snapshot import snapshot
+from ..conftest import IsDatetime, IsNow, IsStr, try_import
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
@@ -61,6 +61,9 @@ failure_model = FunctionModel(failure_response)
 def test_init() -> None:
     fallback_model = FallbackModel(failure_model, success_model)
     assert fallback_model.model_name == snapshot('fallback:function:failure_response:,function:success_response:')
+    assert fallback_model.model_id == snapshot(
+        'fallback:function:function:failure_response:,function:function:success_response:'
+    )
     assert fallback_model.system == 'fallback:function,function'
     assert fallback_model.base_url is None
 
@@ -75,13 +78,16 @@ def test_first_successful() -> None:
             ModelRequest(
                 parts=[
                     UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -100,13 +106,16 @@ def test_first_failed() -> None:
                         content='hello',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -126,13 +135,16 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         content='hello',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:success_response:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -157,6 +169,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                         'allow_image_output': False,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.provider.name': 'function',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:success_response:',
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:success_response:',
@@ -239,6 +252,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -265,6 +279,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                         'allow_image_output': False,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.provider.name': 'function',
                     'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function::success_response_stream',
@@ -320,7 +335,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
 def test_all_failed() -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
     agent = Agent(model=fallback_model)
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
+    with pytest.raises(ExceptionGroup) as exc_info:
         agent.run_sync('hello')
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     exceptions = exc_info.value.exceptions
@@ -343,7 +358,7 @@ def add_missing_response_model(spans: list[dict[str, Any]]) -> list[dict[str, An
 def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
     agent = Agent(model=fallback_model, instrument=True)
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
+    with pytest.raises(ExceptionGroup) as exc_info:
         agent.run_sync('hello')
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     exceptions = exc_info.value.exceptions
@@ -362,6 +377,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'end_time': 4000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'gen_ai.provider.name': 'fallback:function,function',
                     'gen_ai.system': 'fallback:function,function',
                     'gen_ai.request.model': 'fallback:function:failure_response:,function:failure_response:',
                     'model_request_parameters': {
@@ -408,6 +424,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
+                    'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
                     'pydantic_ai.all_messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
                     'logfire.json_schema': {
                         'type': 'object',
@@ -479,6 +496,7 @@ async def test_first_success_streaming() -> None:
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -514,6 +532,7 @@ async def test_first_failed_streaming() -> None:
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsDatetime(),
+                    run_id=IsStr(),
                 ),
             ]
         )
@@ -523,7 +542,7 @@ async def test_first_failed_streaming() -> None:
 async def test_all_failed_streaming() -> None:
     fallback_model = FallbackModel(failure_model_stream, failure_model_stream)
     agent = Agent(model=fallback_model)
-    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
+    with pytest.raises(ExceptionGroup) as exc_info:
         async with agent.run_stream('hello') as result:
             [c async for c, _is_last in result.stream_responses(debounce_by=None)]  # pragma: lax no cover
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
@@ -555,6 +574,18 @@ def potato_exception_response(_model_messages: list[ModelMessage], _agent_info: 
 async def test_fallback_condition_tuple() -> None:
     potato_model = FunctionModel(potato_exception_response)
     fallback_model = FallbackModel(potato_model, success_model, fallback_on=(PotatoException, ModelHTTPError))
+    agent = Agent(model=fallback_model)
+
+    response = await agent.run('hello')
+    assert response.output == 'success'
+
+
+async def test_fallback_connection_error() -> None:
+    def connection_error_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError(model_name='test-connection-model', message='Connection timed out')
+
+    connection_error_model = FunctionModel(connection_error_response)
+    fallback_model = FallbackModel(connection_error_model, success_model)
     agent = Agent(model=fallback_model)
 
     response = await agent.run('hello')
@@ -793,13 +824,16 @@ Don't include any text or Markdown fencing before or after.
                         timestamp=IsNow(tz=timezone.utc),
                     )
                 ],
+                timestamp=IsDatetime(),
                 instructions='Be kind',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"bar":"baz"}')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='function:prompted_output_func:',
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
             ),
         ]
     )
@@ -813,6 +847,19 @@ Don't include any text or Markdown fencing before or after.
                 'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
+                    'gen_ai.tool.definitions': [
+                        {
+                            'type': 'function',
+                            'name': 'final_result',
+                            'description': 'The final response which ends this conversation',
+                            'parameters': {
+                                'properties': {'bar': {'type': 'string'}},
+                                'required': ['bar'],
+                                'title': 'Foo',
+                                'type': 'object',
+                            },
+                        }
+                    ],
                     'model_request_parameters': {
                         'function_tools': [],
                         'builtin_tools': [],
@@ -841,6 +888,7 @@ Don't include any text or Markdown fencing before or after.
                         'allow_image_output': False,
                     },
                     'logfire.span_type': 'span',
+                    'gen_ai.provider.name': 'function',
                     'logfire.msg': 'chat fallback:function:tool_output_func:,function:prompted_output_func:',
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:prompted_output_func:',

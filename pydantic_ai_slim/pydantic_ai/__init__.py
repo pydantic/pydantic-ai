@@ -11,19 +11,35 @@ from .agent import (
 )
 from .builtin_tools import (
     CodeExecutionTool,
+    FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
-    UrlContextTool,
+    UrlContextTool,  # pyright: ignore[reportDeprecated]
+    WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
+)
+from .concurrency import (
+    AbstractConcurrencyLimiter,
+    AnyConcurrencyLimit,
+    ConcurrencyLimit,
+    ConcurrencyLimiter,
+)
+from .embeddings import (
+    Embedder,
+    EmbeddingModel,
+    EmbeddingResult,
+    EmbeddingSettings,
 )
 from .exceptions import (
     AgentRunError,
     ApprovalRequired,
     CallDeferred,
+    ConcurrencyLimitExceeded,
     FallbackExceptionGroup,
     IncompleteToolCall,
+    ModelAPIError,
     ModelHTTPError,
     ModelRetry,
     UnexpectedModelBehavior,
@@ -42,6 +58,7 @@ from .messages import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
@@ -77,12 +94,14 @@ from .messages import (
     ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
+    UploadedFile,
     UserContent,
     UserPromptPart,
     VideoFormat,
     VideoMediaType,
     VideoUrl,
 )
+from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .profiles import (
     DEFAULT_PROFILE,
@@ -120,11 +139,25 @@ __all__ = (
     'UserPromptNode',
     'capture_run_messages',
     'InstrumentationSettings',
+    # embeddings
+    'Embedder',
+    'EmbeddingModel',
+    'EmbeddingSettings',
+    'EmbeddingResult',
+    # concurrency
+    'AbstractConcurrencyLimiter',
+    'AnyConcurrencyLimit',
+    'ConcurrencyLimit',
+    'ConcurrencyLimitedModel',
+    'ConcurrencyLimiter',
+    'limit_model_concurrency',
     # exceptions
     'AgentRunError',
     'CallDeferred',
     'ApprovalRequired',
+    'ConcurrencyLimitExceeded',
     'ModelRetry',
+    'ModelAPIError',
     'ModelHTTPError',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
@@ -141,6 +174,7 @@ __all__ = (
     'BinaryContent',
     'BuiltinToolCallPart',
     'BuiltinToolReturnPart',
+    'CachePoint',
     'DocumentFormat',
     'DocumentMediaType',
     'DocumentUrl',
@@ -177,6 +211,7 @@ __all__ = (
     'ToolCallPartDelta',
     'ToolReturn',
     'ToolReturnPart',
+    'UploadedFile',
     'UserContent',
     'UserPromptPart',
     'VideoFormat',
@@ -210,13 +245,15 @@ __all__ = (
     'ToolsetTool',
     'WrapperToolset',
     # builtin_tools
+    'CodeExecutionTool',
+    'FileSearchTool',
+    'ImageGenerationTool',
+    'MCPServerTool',
+    'MemoryTool',
+    'UrlContextTool',
+    'WebFetchTool',
     'WebSearchTool',
     'WebSearchUserLocation',
-    'UrlContextTool',
-    'CodeExecutionTool',
-    'ImageGenerationTool',
-    'MemoryTool',
-    'MCPServerTool',
     # output
     'ToolOutput',
     'NativeOutput',

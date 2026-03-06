@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
-from pydantic import BaseModel, Json, ValidationError
+from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
 from typing_extensions import assert_never
 
@@ -15,8 +15,8 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..builtin_tools import WebSearchTool
-from ..exceptions import UserError
+from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -36,6 +36,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
@@ -52,7 +53,7 @@ from . import (
 )
 
 try:
-    from groq import NOT_GIVEN, APIError, APIStatusError, AsyncGroq, AsyncStream
+    from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream
     from groq.types import chat
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
     from groq.types.chat.chat_completion_message import ExecutedTool
@@ -63,33 +64,26 @@ except ImportError as _import_error:
     ) from _import_error
 
 ProductionGroqModelNames = Literal[
-    'distil-whisper-large-v3-en',
-    'gemma2-9b-it',
-    'llama-3.3-70b-versatile',
     'llama-3.1-8b-instant',
-    'llama-guard-3-8b',
-    'llama3-70b-8192',
-    'llama3-8b-8192',
+    'llama-3.3-70b-versatile',
+    'meta-llama/llama-guard-4-12b',
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
     'whisper-large-v3',
     'whisper-large-v3-turbo',
 ]
 """Production Groq models from <https://console.groq.com/docs/models#production-models>."""
 
 PreviewGroqModelNames = Literal[
+    'meta-llama/llama-4-maverick-17b-128e-instruct',
+    'meta-llama/llama-4-scout-17b-16e-instruct',
+    'meta-llama/llama-prompt-guard-2-22m',
+    'meta-llama/llama-prompt-guard-2-86m',
+    'moonshotai/kimi-k2-instruct-0905',
+    'openai/gpt-oss-safeguard-20b',
     'playai-tts',
     'playai-tts-arabic',
-    'qwen-qwq-32b',
-    'mistral-saba-24b',
-    'qwen-2.5-coder-32b',
-    'qwen-2.5-32b',
-    'deepseek-r1-distill-qwen-32b',
-    'deepseek-r1-distill-llama-70b',
-    'llama-3.3-70b-specdec',
-    'llama-3.2-1b-preview',
-    'llama-3.2-3b-preview',
-    'llama-3.2-11b-vision-preview',
-    'llama-3.2-90b-vision-preview',
-    'moonshotai/kimi-k2-instruct',
+    'qwen/qwen-3-32b',
 ]
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
@@ -179,6 +173,11 @@ class GroqModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle."""
+        return frozenset({WebSearchTool})
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -195,24 +194,26 @@ class GroqModel(Model):
                 messages, False, cast(GroqModelSettings, model_settings or {}), model_request_parameters
             )
         except ModelHTTPError as e:
-            if isinstance(e.body, dict):  # pragma: no branch
-                # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
-                # but we'd rather handle it ourselves so we can tell the model to retry the tool call.
-                try:
-                    error = _GroqToolUseFailedError.model_validate(e.body)  # pyright: ignore[reportUnknownMemberType]
-                    tool_call_part = ToolCallPart(
-                        tool_name=error.error.failed_generation.name,
-                        args=error.error.failed_generation.arguments,
+            # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
+            # but we'd rather handle it ourselves so we can tell the model to retry the tool call.
+            if (failed_generation := _parse_tool_use_failed_error(e.body)) is not None:
+                if isinstance(failed_generation, _GroqToolUseFailedGeneration):
+                    part = ToolCallPart(
+                        tool_name=failed_generation.name,
+                        args=failed_generation.arguments,
                     )
-                    return ModelResponse(
-                        parts=[tool_call_part],
-                        model_name=e.model_name,
-                        timestamp=_utils.now_utc(),
-                        provider_name=self._provider.name,
-                        finish_reason='error',
-                    )
-                except ValidationError:
-                    pass
+                elif failed_generation:
+                    part = TextPart(content=failed_generation)
+                else:  # pragma: no cover
+                    part = None
+
+                return ModelResponse(
+                    parts=[part] if part else [],
+                    model_name=e.model_name,
+                    provider_name=self._provider.name,
+                    provider_url=self.base_url,
+                    finish_reason='error',
+                )
             raise
         model_response = self._process_response(response)
         return model_response
@@ -314,11 +315,12 @@ class GroqModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e  # pragma: no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = number_to_datetime(response.created)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         if choice.message.reasoning is not None:
@@ -338,15 +340,17 @@ class GroqModel(Model):
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
 
         raw_finish_reason = choice.finish_reason
-        provider_details = {'finish_reason': raw_finish_reason}
+        provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
+        if response.created:  # pragma: no branch
+            provider_details['timestamp'] = number_to_datetime(response.created)
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
         return ModelResponse(
             parts=items,
             usage=_map_usage(response),
             model_name=response.model,
-            timestamp=timestamp,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            provider_url=self.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
@@ -367,8 +371,9 @@ class GroqModel(Model):
             _response=peekable_response,
             _model_name=first_chunk.model,
             _model_profile=self.profile,
-            _timestamp=number_to_datetime(first_chunk.created),
             _provider_name=self._provider.name,
+            _provider_url=self.base_url,
+            _provider_timestamp=number_to_datetime(first_chunk.created),
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -382,7 +387,7 @@ class GroqModel(Model):
             if isinstance(tool, WebSearchTool):
                 if not GroqModelProfile.from_profile(self.profile).groq_always_has_web_search_builtin_tool:
                     raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
-            else:
+            else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `GroqModel`. If it should be, please file an issue.'
                 )
@@ -426,7 +431,10 @@ class GroqModel(Model):
             else:
                 assert_never(message)
         if instructions := self._get_instructions(messages, model_request_parameters):
-            groq_messages.insert(0, chat.ChatCompletionSystemMessageParam(role='system', content=instructions))
+            system_prompt_count = sum(1 for m in groq_messages if m.get('role') == 'system')
+            groq_messages.insert(
+                system_prompt_count, chat.ChatCompletionSystemMessageParam(role='system', content=instructions)
+            )
         return groq_messages
 
     @staticmethod
@@ -476,9 +484,7 @@ class GroqModel(Model):
                 )
             elif isinstance(part, RetryPromptPart):  # pragma: no branch
                 if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
-                        role='user', content=part.model_response()
-                    )
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
@@ -507,6 +513,8 @@ class GroqModel(Model):
                         raise RuntimeError('Only images are supported for binary content in Groq.')
                 elif isinstance(item, DocumentUrl):  # pragma: no cover
                     raise RuntimeError('DocumentUrl is not supported in Groq.')
+                elif isinstance(item, UploadedFile):
+                    raise RuntimeError('UploadedFile is not supported by Groq.')
                 else:  # pragma: no cover
                     raise RuntimeError(f'Unsupported content type: {type(item)}')
 
@@ -520,14 +528,18 @@ class GroqStreamedResponse(StreamedResponse):
     _model_name: GroqModelName
     _model_profile: ModelProfile
     _response: AsyncIterable[chat.ChatCompletionChunk]
-    _timestamp: datetime
     _provider_name: str
+    _provider_url: str
+    _provider_timestamp: datetime | None = None
+    _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         try:
             executed_tool_call_id: str | None = None
             reasoning_index = 0
             reasoning = False
+            if self._provider_timestamp is not None:  # pragma: no branch
+                self.provider_details = {'timestamp': self._provider_timestamp}
             async for chunk in self._response:
                 self._usage += _map_usage(chunk)
 
@@ -540,7 +552,7 @@ class GroqStreamedResponse(StreamedResponse):
                     continue
 
                 if raw_finish_reason := choice.finish_reason:
-                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
                 if choice.delta.reasoning is not None:
@@ -549,9 +561,10 @@ class GroqStreamedResponse(StreamedResponse):
                         reasoning = True
 
                     # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
-                    yield self._parts_manager.handle_thinking_delta(
+                    for event in self._parts_manager.handle_thinking_delta(
                         vendor_part_id=f'reasoning-{reasoning_index}', content=choice.delta.reasoning
-                    )
+                    ):
+                        yield event
                 else:
                     reasoning = False
 
@@ -574,14 +587,13 @@ class GroqStreamedResponse(StreamedResponse):
                 # Handle the text part of the response
                 content = choice.delta.content
                 if content:
-                    maybe_event = self._parts_manager.handle_text_delta(
+                    for event in self._parts_manager.handle_text_delta(
                         vendor_part_id='content',
                         content=content,
                         thinking_tags=self._model_profile.thinking_tags,
                         ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    ):
+                        yield event
 
                 # Handle the tool calls
                 for dtc in choice.delta.tool_calls or []:
@@ -594,19 +606,27 @@ class GroqStreamedResponse(StreamedResponse):
                     if maybe_event is not None:
                         yield maybe_event
         except APIError as e:
-            if isinstance(e.body, dict):  # pragma: no branch
-                # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
-                # but we'd rather handle it ourselves so we can tell the model to retry the tool call
-                try:
-                    error = _GroqToolUseFailedInnerError.model_validate(e.body)  # pyright: ignore[reportUnknownMemberType]
+            # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
+            # but we'd rather handle it ourselves so we can tell the model to retry the tool call
+            if (failed_generation := _parse_tool_use_failed_error(e.body)) is not None:
+                if isinstance(failed_generation, _GroqToolUseFailedGeneration):
                     yield self._parts_manager.handle_tool_call_part(
                         vendor_part_id='tool_use_failed',
-                        tool_name=error.failed_generation.name,
-                        args=error.failed_generation.arguments,
+                        tool_name=failed_generation.name,
+                        args=failed_generation.arguments,
                     )
-                    return
-                except ValidationError as e:  # pragma: no cover
-                    pass
+                elif failed_generation:  # pragma: no cover
+                    # This branch is not covered because when streaming, the non-tool call text would already
+                    # have streamed before the `tool_use_failed` error which comes with `failed_generation=''`,
+                    # but we keep this here for (hypothetical?) cases where that field would not be empty.
+                    for event in self._parts_manager.handle_text_delta(
+                        vendor_part_id='tool_use_failed',
+                        content=failed_generation,
+                        thinking_tags=self._model_profile.thinking_tags,
+                        ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                    ):
+                        yield event
+                return
             raise  # pragma: no cover
 
     @property
@@ -618,6 +638,11 @@ class GroqStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
 
     @property
     def timestamp(self) -> datetime:
@@ -650,7 +675,7 @@ class _GroqToolUseFailedInnerError(BaseModel):
     message: str
     type: Literal['invalid_request_error']
     code: Literal['tool_use_failed']
-    failed_generation: Json[_GroqToolUseFailedGeneration]
+    failed_generation: str
 
 
 class _GroqToolUseFailedError(BaseModel):
@@ -667,6 +692,25 @@ class _GroqToolUseFailedError(BaseModel):
     # }
 
     error: _GroqToolUseFailedInnerError
+
+
+def _parse_tool_use_failed_error(body: Any) -> _GroqToolUseFailedGeneration | str | None:
+    if not isinstance(body, dict):
+        return None  # pragma: no cover
+
+    try:
+        error = _GroqToolUseFailedError.model_validate(body)
+        error = error.error
+    except ValidationError:
+        try:
+            error = _GroqToolUseFailedInnerError.model_validate(body)
+        except ValidationError:
+            return None
+
+    try:
+        return _GroqToolUseFailedGeneration.model_validate_json(error.failed_generation)
+    except ValidationError:
+        return error.failed_generation
 
 
 def _map_executed_tool(

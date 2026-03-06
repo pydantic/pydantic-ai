@@ -1,3 +1,7 @@
+"""Tests for GrokProvider."""
+
+# pyright: reportDeprecated=false
+
 import re
 
 import httpx
@@ -14,7 +18,10 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.grok import GrokProvider
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
+    pytest.mark.filterwarnings('ignore:`GrokProvider` is deprecated:DeprecationWarning'),
+]
 
 
 def test_grok_provider():
@@ -55,3 +62,9 @@ def test_grok_model_profile():
     assert isinstance(model.profile, OpenAIModelProfile)
     assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
     assert model.profile.openai_supports_strict_tool_definition is False
+
+
+def test_grok_provider_is_deprecated():
+    """Test that GrokProvider shows a deprecation warning."""
+    with pytest.warns(DeprecationWarning, match=r'`GrokProvider` is deprecated, use `XaiProvider` with `XaiModel`'):
+        GrokProvider(api_key='api-key')

@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from inspect import Signature
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from griffe import Docstring, DocstringSectionKind, Object as GriffeObject
+from griffe import Docstring, DocstringSectionKind, GoogleOptions, Object as GriffeObject
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat
@@ -42,13 +42,17 @@ def doc_descriptions(
     parent = cast(GriffeObject, sig)
 
     docstring_style = _infer_docstring_style(doc) if docstring_format == 'auto' else docstring_format
+    # These options are only valid for Google-style docstrings
+    # https://mkdocstrings.github.io/griffe/reference/docstrings/#google-options
+    parser_options = (
+        GoogleOptions(returns_named_value=False, returns_multiple_items=False) if docstring_style == 'google' else None
+    )
     docstring = Docstring(
         doc,
         lineno=1,
         parser=docstring_style,
         parent=parent,
-        # https://mkdocstrings.github.io/griffe/reference/docstrings/#google-options
-        parser_options={'returns_named_value': False, 'returns_multiple_items': False},
+        parser_options=parser_options,
     )
     with _disable_griffe_logging():
         sections = docstring.parse()

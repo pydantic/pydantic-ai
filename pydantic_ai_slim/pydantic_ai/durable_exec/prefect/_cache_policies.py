@@ -35,6 +35,7 @@ def _replace_run_context(
                 'tool_call_id': value.tool_call_id,
                 'tool_name': value.tool_name,
                 'tool_call_approved': value.tool_call_approved,
+                'tool_call_metadata': value.tool_call_metadata,
                 'retry': value.retry,
                 'max_retries': value.max_retries,
                 'run_step': value.run_step,

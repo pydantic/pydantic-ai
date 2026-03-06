@@ -30,11 +30,13 @@ class OutlinesProvider(Provider[Any]):
             + 'with a set of different underlying models.'
         )
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return ModelProfile(
             supports_tools=False,
             supports_json_schema_output=True,
             supports_json_object_output=True,
             default_structured_output_mode='native',
+            native_output_requires_schema_in_instructions=True,
         )

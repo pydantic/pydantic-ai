@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '173'
+      - '203'
       content-type:
       - application/json
       host:
@@ -19,22 +19,24 @@ interactions:
       - parts:
         - text: ''
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a helpful assistant.
         role: user
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '701'
+      - '796'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=444
+      - gfet4t7; dur=4764
       transfer-encoding:
       - chunked
       vary:
@@ -43,25 +45,27 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.11437161529765409
-        content:
+      - content:
           parts:
-          - text: |
-              I'm ready to assist you.  Please tell me what you need.
+          - text: |-
+              Hello! That's correct. I am designed to be a helpful assistant.
+
+              I'm ready to assist you with a wide range of tasks, from answering questions and providing information to brainstorming ideas and generating creative content.
+
+              How can I help you today?
           role: model
         finishReason: STOP
-      modelVersion: gemini-1.5-flash
-      responseId: 5lpeaN7wJ___698Pv8HGgAg
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: KY8gadCXGtqnmtkPvdGvsQg
       usageMetadata:
-        candidatesTokenCount: 17
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 17
-        promptTokenCount: 7
+        candidatesTokenCount: 53
+        promptTokenCount: 8
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 7
-        totalTokenCount: 24
+          tokenCount: 8
+        thoughtsTokenCount: 725
+        totalTokenCount: 786
     status:
       code: 200
       message: OK

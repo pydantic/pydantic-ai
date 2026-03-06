@@ -8,6 +8,7 @@ from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
@@ -21,6 +22,7 @@ from .. import (
     _output,
     _system_prompt,
     _utils,
+    concurrency as _concurrency,
     exceptions,
     messages as _messages,
     models,
@@ -32,10 +34,11 @@ from .._agent_graph import (
     HistoryProcessor,
     ModelRequestNode,
     UserPromptNode,
+    build_run_context,
     capture_run_messages,
 )
 from .._output import OutputToolset
-from .._tool_manager import ToolManager
+from .._tool_manager import ParallelExecutionMode, ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
@@ -43,6 +46,8 @@ from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
     AgentDepsT,
+    ArgsValidatorFunc,
+    BuiltinToolFunc,
     DeferredToolResults,
     DocstringFormat,
     GenerateToolJsonSchema,
@@ -63,11 +68,17 @@ from ..toolsets._dynamic import (
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
-from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutputDataT
+from .abstract import AbstractAgent, AgentMetadata, EventStreamHandler, Instructions, RunOutputDataT
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
+    from starlette.applications import Starlette
+
+    from pydantic_graph import GraphRunContext
+
+    from ..builtin_tools import AbstractBuiltinTool
     from ..mcp import MCPServer
+    from ..ui._web import ModelsParam
 
 __all__ = (
     'Agent',
@@ -79,6 +90,7 @@ __all__ = (
     'ModelRequestNode',
     'UserPromptNode',
     'InstrumentationSettings',
+    'ParallelExecutionMode',
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
@@ -104,7 +116,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ```python
     from pydantic_ai import Agent
 
-    agent = Agent('openai:gpt-4o')
+    agent = Agent('openai:gpt-5.2')
     result = agent.run_sync('What is the capital of France?')
     print(result.output)
     #> The capital of France is Paris.
@@ -115,7 +127,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _name: str | None
     end_strategy: EndStrategy
-    """Strategy for handling tool calls when a final result is found."""
+    """The strategy for handling multiple tool calls when a final result is found.
+
+    - `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
+    - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
+    """
 
     model_settings: ModelSettings | None
     """Optional model request settings to use for this agents's runs, by default.
@@ -130,6 +146,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     """Options to automatically instrument with OpenTelemetry."""
 
     _instrument_default: ClassVar[InstrumentationSettings | bool] = False
+    _metadata: AgentMetadata[AgentDepsT] | None = dataclasses.field(repr=False)
 
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _output_schema: _output.OutputSchema[OutputDataT] = dataclasses.field(repr=False)
@@ -147,8 +164,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
     _max_tool_retries: int = dataclasses.field(repr=False)
+    _tool_timeout: float | None = dataclasses.field(repr=False)
+    _validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = dataclasses.field(repr=False)
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
+
+    _concurrency_limiter: _concurrency.AbstractConcurrencyLimiter | None = dataclasses.field(repr=False)
 
     _enter_lock: Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
@@ -166,17 +187,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
+        validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[AbstractBuiltinTool] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
     ) -> None: ...
 
     @overload
@@ -192,17 +217,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
+        validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[AbstractBuiltinTool] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
     ) -> None: ...
 
     def __init__(
@@ -216,17 +245,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
+        validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[AbstractBuiltinTool] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -237,9 +270,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_type: The type of the output data, used to validate the data returned by the model,
                 defaults to `str`.
             instructions: Instructions to use for this agent, you can also register instructions via a function with
-                [`instructions`][pydantic_ai.Agent.instructions] or pass additional, temporary, instructions when executing a run.
+                [`instructions`][pydantic_ai.agent.Agent.instructions] or pass additional, temporary, instructions when executing a run.
             system_prompt: Static system prompts to use for this agent, you can also register system
-                prompts via a function with [`system_prompt`][pydantic_ai.Agent.system_prompt].
+                prompts via a function with [`system_prompt`][pydantic_ai.agent.Agent.system_prompt].
             deps_type: The type used for dependency injection, this parameter exists solely to allow you to fully
                 parameterize the agent, and therefore get the best out of static type checking.
                 If you're not using deps, but want type checking to pass, you can set `deps=None` to satisfy Pyright
@@ -249,9 +282,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional model request settings to use for this agent's runs, by default.
             retries: The default number of retries to allow for tool calls and output validation, before raising an error.
                 For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
+            validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
             output_retries: The maximum number of retries to allow for output validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
-                [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
+                [`@agent.tool`][pydantic_ai.agent.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain].
             builtin_tools: The builtin tools that the agent will use. This depends on the model, as some models may not
                 support certain tools. If the model doesn't support the builtin tools, an error will be raised.
             prepare_tools: Custom function to prepare the tool definition of all tools for each step, except output tools.
@@ -266,20 +300,38 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
                 which checks for the necessary environment variables. Set this to `false`
                 to defer the evaluation until the first run. Useful if you want to
-                [override the model][pydantic_ai.Agent.override] for testing.
+                [override the model][pydantic_ai.agent.Agent.override] for testing.
             end_strategy: Strategy for handling tool calls that are requested alongside a final result.
                 See [`EndStrategy`][pydantic_ai.agent.EndStrategy] for more information.
             instrument: Set to True to automatically instrument with OpenTelemetry,
                 which will use Logfire if it's configured.
                 Set to an instance of [`InstrumentationSettings`][pydantic_ai.agent.InstrumentationSettings] to customize.
                 If this isn't set, then the last value set by
-                [`Agent.instrument_all()`][pydantic_ai.Agent.instrument_all]
+                [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all]
                 will be used, which defaults to False.
                 See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+            metadata: Optional metadata to store with each run.
+                Provide a dictionary of primitives, or a callable returning one
+                computed from the [`RunContext`][pydantic_ai.tools.RunContext] on each run.
+                Metadata is resolved when a run starts and recomputed after a successful run finishes so it
+                can reflect the final state.
+                Resolved metadata can be read after the run completes via
+                [`AgentRun.metadata`][pydantic_ai.agent.AgentRun],
+                [`AgentRunResult.metadata`][pydantic_ai.agent.AgentRunResult], and
+                [`StreamedRunResult.metadata`][pydantic_ai.result.StreamedRunResult],
+                and is attached to the agent run span when instrumentation is enabled.
             history_processors: Optional list of callables to process the message history before sending it to the model.
                 Each processor takes a list of messages and returns a modified list of messages.
                 Processors can be sync or async and are applied in sequence.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools.
+            tool_timeout: Default timeout in seconds for tool execution. If a tool takes longer than this,
+                the tool is considered to have failed and a retry prompt is returned to the model (counting towards the retry limit).
+                Individual tools can override this with their own timeout. Defaults to None (no timeout).
+            max_concurrency: Optional limit on concurrent agent runs. Can be an integer for simple limiting,
+                a [`ConcurrencyLimit`][pydantic_ai.ConcurrencyLimit] for advanced configuration with backpressure,
+                a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
+                multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
+                to `run()` or `iter()` will wait until a slot becomes available.
         """
         if model is None or defer_model_check:
             self._model = model
@@ -292,6 +344,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._output_type = output_type
         self.instrument = instrument
+        self._metadata = metadata
         self._deps_type = deps_type
 
         if mcp_servers := _deprecated_kwargs.pop('mcp_servers', None):
@@ -313,6 +366,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._max_result_retries = output_retries if output_retries is not None else retries
         self._max_tool_retries = retries
+        self._tool_timeout = tool_timeout
+
+        self._validation_context = validation_context
 
         self._builtin_tools = builtin_tools
 
@@ -324,7 +380,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._output_toolset.max_retries = self._max_result_retries
 
         self._function_toolset = _AgentFunctionToolset(
-            tools, max_retries=self._max_tool_retries, output_schema=self._output_schema
+            tools,
+            max_retries=self._max_tool_retries,
+            timeout=self._tool_timeout,
+            output_schema=self._output_schema,
         )
         self._dynamic_toolsets = [
             DynamicToolset[AgentDepsT](toolset_func=toolset)
@@ -336,6 +395,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.history_processors = history_processors or []
 
         self._event_stream_handler = event_stream_handler
+
+        self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)
 
         self._override_name: ContextVar[_utils.Option[str]] = ContextVar('_override_name', default=None)
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
@@ -349,6 +410,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_instructions: ContextVar[
             _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
         ] = ContextVar('_override_instructions', default=None)
+        self._override_metadata: ContextVar[_utils.Option[AgentMetadata[AgentDepsT]]] = ContextVar(
+            '_override_metadata', default=None
+        )
 
         self._enter_lock = Lock()
         self._entered_count = 0
@@ -418,9 +482,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -437,9 +502,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -456,9 +522,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -476,7 +543,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         async def main():
             nodes = []
@@ -500,15 +567,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                 content='What is the capital of France?',
                                 timestamp=datetime.datetime(...),
                             )
-                        ]
+                        ],
+                        timestamp=datetime.datetime(...),
+                        run_id='...',
                     )
                 ),
                 CallToolsNode(
                     model_response=ModelResponse(
                         parts=[TextPart(content='The capital of France is Paris.')],
                         usage=RequestUsage(input_tokens=56, output_tokens=7),
-                        model_name='gpt-4o',
+                        model_name='gpt-5.2',
                         timestamp=datetime.datetime(...),
+                        run_id='...',
                     )
                 ),
                 End(data=FinalResult(output='The capital of France is Paris.')),
@@ -530,6 +600,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
+                [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             builtin_tools: Optional additional builtin tools for this run.
@@ -560,7 +632,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
-        tool_manager = ToolManager[AgentDepsT](toolset)
+        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
 
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
@@ -603,6 +675,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             user_deps=deps,
             prompt=user_prompt,
             new_message_index=len(message_history) if message_history else 0,
+            resumed_request=None,
             model=model_used,
             model_settings=model_settings,
             usage_limits=usage_limits,
@@ -610,6 +683,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             end_strategy=self.end_strategy,
             output_schema=output_schema,
             output_validators=output_validators,
+            validation_context=self._validation_context,
             history_processors=self.history_processors,
             builtin_tools=[*self._builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
@@ -643,37 +717,95 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             },
         )
 
+        run_metadata: dict[str, Any] | None = None
         try:
-            async with graph.iter(
-                inputs=user_prompt_node,
-                state=state,
-                deps=graph_deps,
-                span=use_span(run_span) if run_span.is_recording() else None,
-                infer_name=False,
-            ) as graph_run:
+            async with (
+                _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}'),
+                graph.iter(
+                    inputs=user_prompt_node,
+                    state=state,
+                    deps=graph_deps,
+                    span=use_span(run_span) if run_span.is_recording() else None,
+                    infer_name=False,
+                ) as graph_run,
+            ):
                 async with toolset:
                     agent_run = AgentRun(graph_run)
-                    yield agent_run
-                    if (final_result := agent_run.result) is not None and run_span.is_recording():
-                        if instrumentation_settings and instrumentation_settings.include_content:
-                            run_span.set_attribute(
-                                'final_result',
-                                (
-                                    final_result.output
-                                    if isinstance(final_result.output, str)
-                                    else json.dumps(InstrumentedModel.serialize_any(final_result.output))
-                                ),
-                            )
+                    run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
+
+                    try:
+                        yield agent_run
+                    finally:
+                        if agent_run.result is not None:
+                            run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
+                        else:
+                            run_metadata = graph_run.state.metadata
+
+                    final_result = agent_run.result
+                    if (
+                        instrumentation_settings
+                        and instrumentation_settings.include_content
+                        and run_span.is_recording()
+                        and final_result is not None
+                    ):
+                        run_span.set_attribute(
+                            'final_result',
+                            (
+                                final_result.output
+                                if isinstance(final_result.output, str)
+                                else json.dumps(InstrumentedModel.serialize_any(final_result.output))
+                            ),
+                        )
         finally:
             try:
                 if instrumentation_settings and run_span.is_recording():
                     run_span.set_attributes(
                         self._run_span_end_attributes(
-                            instrumentation_settings, usage, state.message_history, graph_deps.new_message_index
+                            instrumentation_settings,
+                            usage,
+                            state.message_history,
+                            graph_deps.new_message_index,
+                            run_metadata,
                         )
                     )
             finally:
                 run_span.end()
+
+    def _get_metadata(
+        self,
+        ctx: RunContext[AgentDepsT],
+        additional_metadata: AgentMetadata[AgentDepsT] | None = None,
+    ) -> dict[str, Any] | None:
+        metadata_override = self._override_metadata.get()
+        if metadata_override is not None:
+            return self._resolve_metadata_config(metadata_override.value, ctx)
+
+        base_metadata = self._resolve_metadata_config(self._metadata, ctx)
+        run_metadata = self._resolve_metadata_config(additional_metadata, ctx)
+
+        if base_metadata and run_metadata:
+            return {**base_metadata, **run_metadata}
+        return run_metadata or base_metadata
+
+    def _resolve_metadata_config(
+        self,
+        config: AgentMetadata[AgentDepsT] | None,
+        ctx: RunContext[AgentDepsT],
+    ) -> dict[str, Any] | None:
+        if config is None:
+            return None
+        metadata = config(ctx) if callable(config) else config
+        return metadata
+
+    def _resolve_and_store_metadata(
+        self,
+        graph_run_ctx: GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]],
+        metadata: AgentMetadata[AgentDepsT] | None,
+    ) -> dict[str, Any] | None:
+        run_context = build_run_context(graph_run_ctx)
+        resolved_metadata = self._get_metadata(run_context, metadata)
+        graph_run_ctx.state.metadata = resolved_metadata
+        return resolved_metadata
 
     def _run_span_end_attributes(
         self,
@@ -681,7 +813,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage,
         message_history: list[_messages.ModelMessage],
         new_message_index: int,
-    ):
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, str | int | float | bool]:
         if settings.version == 1:
             attrs = {
                 'all_messages_events': json.dumps(
@@ -714,8 +847,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ):
                 attrs['pydantic_ai.variable_instructions'] = True
 
+        if metadata is not None:
+            attrs['metadata'] = json.dumps(InstrumentedModel.serialize_any(metadata))
+
+        usage_attrs = (
+            {
+                k.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): v
+                for k, v in usage.opentelemetry_attributes().items()
+            }
+            if settings.use_aggregated_usage_attribute_names
+            else usage.opentelemetry_attributes()
+        )
+
         return {
-            **usage.opentelemetry_attributes(),
+            **usage_attrs,
             **attrs,
             'logfire.json_schema': json.dumps(
                 {
@@ -738,6 +883,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
@@ -751,6 +897,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
+                per-run `metadata` argument is ignored.
         """
         if _utils.is_set(name):
             name_token = self._override_name.set(_utils.Some(name))
@@ -783,6 +931,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             instructions_token = None
 
+        if _utils.is_set(metadata):
+            metadata_token = self._override_metadata.set(_utils.Some(metadata))
+        else:
+            metadata_token = None
+
         try:
             yield
         finally:
@@ -798,22 +951,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_tools.reset(tools_token)
             if instructions_token is not None:
                 self._override_instructions.reset(instructions_token)
+            if metadata_token is not None:
+                self._override_metadata.reset(metadata_token)
 
     @overload
     def instructions(
-        self, func: Callable[[RunContext[AgentDepsT]], str], /
-    ) -> Callable[[RunContext[AgentDepsT]], str]: ...
+        self, func: Callable[[RunContext[AgentDepsT]], str | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | None]: ...
 
     @overload
     def instructions(
-        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str]], /
-    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]: ...
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | None]]: ...
 
     @overload
-    def instructions(self, func: Callable[[], str], /) -> Callable[[], str]: ...
+    def instructions(self, func: Callable[[], str | None], /) -> Callable[[], str | None]: ...
 
     @overload
-    def instructions(self, func: Callable[[], Awaitable[str]], /) -> Callable[[], Awaitable[str]]: ...
+    def instructions(self, func: Callable[[], Awaitable[str | None]], /) -> Callable[[], Awaitable[str | None]]: ...
 
     @overload
     def instructions(
@@ -868,19 +1023,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @overload
     def system_prompt(
-        self, func: Callable[[RunContext[AgentDepsT]], str], /
-    ) -> Callable[[RunContext[AgentDepsT]], str]: ...
+        self, func: Callable[[RunContext[AgentDepsT]], str | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | None]: ...
 
     @overload
     def system_prompt(
-        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str]], /
-    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]: ...
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | None]]: ...
 
     @overload
-    def system_prompt(self, func: Callable[[], str], /) -> Callable[[], str]: ...
+    def system_prompt(self, func: Callable[[], str | None], /) -> Callable[[], str | None]: ...
 
     @overload
-    def system_prompt(self, func: Callable[[], Awaitable[str]], /) -> Callable[[], Awaitable[str]]: ...
+    def system_prompt(self, func: Callable[[], Awaitable[str | None]], /) -> Callable[[], Awaitable[str | None]]: ...
 
     @overload
     def system_prompt(
@@ -1014,6 +1169,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -1021,6 +1177,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -1032,6 +1189,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -1039,6 +1197,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1078,6 +1237,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
+            args_validator: custom method to validate tool arguments after schema validation has passed,
+                before execution. The validator receives the already-validated and type-converted parameters,
+                with `RunContext` as the first argument.
+                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
+                return `None` on success.
+                See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
@@ -1088,6 +1253,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
         """
 
         def tool_decorator(
@@ -1101,6 +1268,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 description=description,
                 retries=retries,
                 prepare=prepare,
+                args_validator=args_validator,
                 docstring_format=docstring_format,
                 require_parameter_descriptions=require_parameter_descriptions,
                 schema_generator=schema_generator,
@@ -1108,6 +1276,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                timeout=timeout,
             )
             return func_
 
@@ -1125,6 +1294,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -1132,6 +1302,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1143,6 +1314,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -1150,6 +1322,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1189,6 +1362,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
+            args_validator: custom method to validate tool arguments after schema validation has passed,
+                before execution. The validator receives the already-validated and type-converted parameters,
+                with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument — even though the
+                tool function itself does not take `RunContext` when using `tool_plain`.
+                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
+                return `None` on success.
+                See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
@@ -1199,6 +1379,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
+                Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1210,6 +1392,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 description=description,
                 retries=retries,
                 prepare=prepare,
+                args_validator=args_validator,
                 docstring_format=docstring_format,
                 require_parameter_descriptions=require_parameter_descriptions,
                 schema_generator=schema_generator,
@@ -1217,6 +1400,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                timeout=timeout,
             )
             return func_
 
@@ -1231,6 +1415,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         per_run_step: bool = True,
+        id: str | None = None,
     ) -> Callable[[ToolsetFunc[AgentDepsT]], ToolsetFunc[AgentDepsT]]: ...
 
     def toolset(
@@ -1239,6 +1424,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         per_run_step: bool = True,
+        id: str | None = None,
     ) -> Any:
         """Decorator to register a toolset function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
 
@@ -1260,10 +1446,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The toolset function to register.
             per_run_step: Whether to re-evaluate the toolset for each run step. Defaults to True.
+            id: An optional unique ID for the dynamic toolset. Required for use with durable execution
+                environments like Temporal, where the ID identifies the toolset's activities within the workflow.
         """
 
         def toolset_decorator(func_: ToolsetFunc[AgentDepsT]) -> ToolsetFunc[AgentDepsT]:
-            self._dynamic_toolsets.append(DynamicToolset(func_, per_run_step=per_run_step))
+            self._dynamic_toolsets.append(DynamicToolset(func_, per_run_step=per_run_step, id=id))
             return func_
 
         return toolset_decorator if func is None else toolset_decorator(func)
@@ -1364,10 +1552,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         toolset = CombinedToolset(toolsets)
 
-        # Copy the dynamic toolsets to ensure each run has its own instances
         def copy_dynamic_toolsets(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             if isinstance(toolset, DynamicToolset):
-                return dataclasses.replace(toolset)
+                return toolset.copy()
             else:
                 return toolset
 
@@ -1394,7 +1581,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         if some_tools := self._override_tools.get():
             function_toolset = _AgentFunctionToolset(
-                some_tools.value, max_retries=self._max_tool_retries, output_schema=self._output_schema
+                some_tools.value,
+                max_retries=self._max_tool_retries,
+                timeout=self._tool_timeout,
+                output_schema=self._output_schema,
             )
         else:
             function_toolset = self._function_toolset
@@ -1468,6 +1658,78 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._get_toolset().apply(_set_sampling_model)
 
+    def to_web(
+        self,
+        *,
+        models: ModelsParam = None,
+        builtin_tools: list[AbstractBuiltinTool] | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        instructions: str | None = None,
+        html_source: str | Path | None = None,
+    ) -> Starlette:
+        """Create a Starlette app that serves a web chat UI for this agent.
+
+        This method returns a pre-configured Starlette application that provides a web-based
+        chat interface for interacting with the agent. By default, the UI is fetched from a
+        CDN and cached on first use.
+
+        The returned Starlette application can be mounted into a FastAPI app or run directly
+        with any ASGI server (uvicorn, hypercorn, etc.).
+
+        Note that the `deps` and `model_settings` will be the same for each request.
+        To provide different `deps` for each request use the lower-level adapters directly.
+
+        Args:
+            models: Additional models to make available in the UI. Can be:
+                - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-6']`)
+                - A dict mapping display labels to model names/instances
+                  (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-6'}`)
+                The agent's model is always included. Builtin tool support is automatically
+                determined from each model's profile.
+            builtin_tools: Additional builtin tools to make available in the UI.
+                The agent's configured builtin tools are always included. Tool labels
+                in the UI are derived from the tool's `label` property.
+            deps: Optional dependencies to use for all requests.
+            model_settings: Optional settings to use for all model requests.
+            instructions: Optional extra instructions to pass to each agent run.
+            html_source: Path or URL for the chat UI HTML. Can be:
+                - None (default): Fetches from CDN and caches locally
+                - A Path instance: Reads from the local file
+                - A URL string (http:// or https://): Fetches from the URL
+                - A file path string: Reads from the local file
+
+        Returns:
+            A configured Starlette application ready to be served (e.g., with uvicorn)
+
+        Example:
+            ```python
+            from pydantic_ai import Agent
+            from pydantic_ai.builtin_tools import WebSearchTool
+
+            agent = Agent('openai:gpt-5', builtin_tools=[WebSearchTool()])
+
+            # Simple usage - uses agent's model and builtin tools
+            app = agent.to_web()
+
+            # Or provide additional models for UI selection
+            app = agent.to_web(models=['openai:gpt-5', 'anthropic:claude-sonnet-4-6'])
+
+            # Then run with: uvicorn app:app --reload
+            ```
+        """
+        from ..ui._web import create_web_app
+
+        return create_web_app(
+            self,
+            models=models,
+            builtin_tools=builtin_tools,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            html_source=html_source,
+        )
+
     @asynccontextmanager
     @deprecated(
         '`run_mcp_servers` is deprecated, use `async with agent:` instead. If you need to set a sampling model on all MCP servers, use `agent.set_mcp_sampling_model()`.'
@@ -1501,11 +1763,12 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
         max_retries: int = 1,
+        timeout: float | None = None,
         id: str | None = None,
         output_schema: _output.OutputSchema[Any],
     ):
         self.output_schema = output_schema
-        super().__init__(tools, max_retries=max_retries, id=id)
+        super().__init__(tools, max_retries=max_retries, timeout=timeout, id=id)
 
     @property
     def id(self) -> str:

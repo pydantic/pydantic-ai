@@ -1,0 +1,95 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '556'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Create a simple tree with root "A" and two children "B" and "C"
+        role: user
+      generationConfig:
+        responseJsonSchema:
+          $defs:
+            TreeNode:
+              description: A node in a tree structure.
+              properties:
+                children:
+                  default: []
+                  items:
+                    $ref: '#/$defs/TreeNode'
+                  type: array
+                value:
+                  type: string
+              required:
+              - value
+              title: TreeNode
+              type: object
+          $ref: '#/$defs/TreeNode'
+          title: TreeNode
+        responseMimeType: application/json
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '773'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=859
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.03688501318295797
+        content:
+          parts:
+          - text: |-
+              {
+                "value": "A",
+                "children": [
+                  {
+                    "value": "B"
+                  },
+                  {
+                    "value": "C"
+                  }
+                ]
+              }
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: mpMUaYufEZ2qxN8Pr4qf6Qs
+      usageMetadata:
+        candidatesTokenCount: 48
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 48
+        promptTokenCount: 19
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 19
+        totalTokenCount: 67
+    status:
+      code: 200
+      message: OK
+version: 1

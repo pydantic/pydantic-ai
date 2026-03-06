@@ -1,7 +1,9 @@
 """Vercel AI response types (SSE chunks).
 
 Converted to Python from:
-https://github.com/vercel/ai/blob/ai%405.0.59/packages/ai/src/ui-message-stream/ui-message-chunks.ts
+https://github.com/vercel/ai/blob/ai%406.0.57/packages/ai/src/ui-message-stream/ui-message-chunks.ts
+
+Tool approval types (`ToolApprovalRequestChunk`, `ToolOutputDeniedChunk`) require AI SDK UI v6 or later.
 """
 
 from abc import ABC
@@ -9,18 +11,21 @@ from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
-from ._utils import CamelBaseModel
+from ._models import CamelBaseModel
 
 # Technically this is recursive union of JSON types; for simplicity, we call it Any
 JSONValue = Any
 ProviderMetadata = dict[str, dict[str, JSONValue]]
 """Provider metadata."""
 
+FinishReason = Literal['stop', 'length', 'content-filter', 'tool-calls', 'error', 'other'] | None
+"""Reason why the model finished generating."""
+
 
 class BaseChunk(CamelBaseModel, ABC):
     """Abstract base class for response SSE events."""
 
-    def encode(self) -> str:
+    def encode(self, sdk_version: int) -> str:
         return self.model_dump_json(by_alias=True, exclude_none=True)
 
 
@@ -88,7 +93,12 @@ class ToolInputStartChunk(BaseChunk):
     tool_call_id: str
     tool_name: str
     provider_executed: bool | None = None
+    provider_metadata: ProviderMetadata | None = None
     dynamic: bool | None = None
+
+    def encode(self, sdk_version: int) -> str:
+        exclude = {'provider_metadata'} if sdk_version < 6 else None
+        return self.model_dump_json(by_alias=True, exclude_none=True, exclude=exclude)
 
 
 class ToolInputDeltaChunk(BaseChunk):
@@ -145,6 +155,27 @@ class ToolOutputErrorChunk(BaseChunk):
     dynamic: bool | None = None
 
 
+class ToolApprovalRequestChunk(BaseChunk):
+    """Tool approval request chunk for human-in-the-loop approval.
+
+    Requires AI SDK UI v6 or later.
+    """
+
+    type: Literal['tool-approval-request'] = 'tool-approval-request'
+    approval_id: str
+    tool_call_id: str
+
+
+class ToolOutputDeniedChunk(BaseChunk):
+    """Tool output denied chunk when user denies tool execution.
+
+    Requires AI SDK UI v6 or later.
+    """
+
+    type: Literal['tool-output-denied'] = 'tool-output-denied'
+    tool_call_id: str
+
+
 class SourceUrlChunk(BaseChunk):
     """Source URL chunk."""
 
@@ -178,7 +209,9 @@ class DataChunk(BaseChunk):
     """Data chunk with dynamic type."""
 
     type: Annotated[str, Field(pattern=r'^data-')]
+    id: str | None = None
     data: Any
+    transient: bool | None = None
 
 
 class StartStepChunk(BaseChunk):
@@ -205,6 +238,7 @@ class FinishChunk(BaseChunk):
     """Finish chunk."""
 
     type: Literal['finish'] = 'finish'
+    finish_reason: FinishReason = None
     message_metadata: Any | None = None
 
 
@@ -212,6 +246,7 @@ class AbortChunk(BaseChunk):
     """Abort chunk."""
 
     type: Literal['abort'] = 'abort'
+    reason: str | None = None
 
 
 class MessageMetadataChunk(BaseChunk):
@@ -226,5 +261,5 @@ class DoneChunk(BaseChunk):
 
     type: Literal['done'] = 'done'
 
-    def encode(self) -> str:
+    def encode(self, sdk_version: int) -> str:
         return '[DONE]'

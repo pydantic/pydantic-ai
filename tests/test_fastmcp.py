@@ -8,7 +8,6 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
@@ -16,6 +15,7 @@ from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
+from ._inline_snapshot import snapshot
 from .conftest import try_import
 
 with try_import() as imports_successful:
@@ -521,7 +521,7 @@ async def test_tool(param1: str, param2: int = 0) -> str:
 server.run()"""
         with TemporaryDirectory() as temp_dir:
             server_py = Path(temp_dir) / 'server.py'
-            server_py.write_text(server_script)
+            server_py.write_text(server_script, encoding='utf-8')
             toolset = FastMCPToolset(server_py)
 
             assert isinstance(toolset, FastMCPToolset)
@@ -544,14 +544,14 @@ server.run()"""
 
         with TemporaryDirectory() as temp_dir:
             server_py: Path = Path(temp_dir) / 'server.py'
-            server_py.write_text(data='')
+            server_py.write_text(data='', encoding='utf-8')
             toolset = FastMCPToolset(server_py)
             assert isinstance(toolset.client.transport, PythonStdioTransport)
             toolset = FastMCPToolset(str(server_py))
             assert isinstance(toolset.client.transport, PythonStdioTransport)
 
             server_js: Path = Path(temp_dir) / 'server.js'
-            server_js.write_text(data='')
+            server_js.write_text(data='', encoding='utf-8')
             toolset = FastMCPToolset(server_js)
             assert isinstance(toolset.client.transport, NodeStdioTransport)
             toolset = FastMCPToolset(str(server_js))

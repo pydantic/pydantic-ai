@@ -1,7 +1,6 @@
 import functools
 from dataclasses import KW_ONLY, dataclass
 
-import anyio
 import anyio.to_thread
 from pydantic import TypeAdapter
 from typing_extensions import Any, TypedDict

@@ -1,10 +1,11 @@
 """Tests for parent fork identification and dominator analysis."""
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_graph.beta.parent_forks import ParentForkFinder
 from pydantic_graph.exceptions import GraphBuildingError
+
+from ..._inline_snapshot import snapshot
 
 
 def test_parent_fork_basic():

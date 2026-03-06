@@ -4,7 +4,7 @@ Demonstrates:
 
 * [agent delegation](../multi-agent-applications.md#agent-delegation)
 * [programmatic agent hand-off](../multi-agent-applications.md#programmatic-agent-hand-off)
-* [usage limits](../agents.md#usage-limits)
+* [usage limits](../agent.md#usage-limits)
 
 In this scenario, a group of agents work together to find the best flight for a user.
 
