@@ -1,0 +1,23 @@
+tests/test_validation_context.py
+  4ba2ad79974ff636 9,17-18,22,25,94,99,108,120,127,130,148,153,164,176,179,198,203,214,226,229,255,260,271,283,294,306,309
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "5d2076c6fb5a0ccc5304a8ced453031d0b8fe204",
+  "prompts": {
+    "4ba2ad79974ff636": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ea70ef1-2c5c-40ef-aa41-022a6e9e541d",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 15,
+      "accepted_lines": 28,
+      "overriden_lines": 0
+    }
+  }
+}
