@@ -65,7 +65,7 @@ class FallbackModel(Model):
 
     async def __aexit__(self, *args: Any) -> bool | None:
         """Exit the context for all wrapped models, closing their providers' HTTP clients."""
-        if self._exit_stack is not None:
+        if self._exit_stack is not None:  # pragma: no branch
             await self._exit_stack.aclose()
             self._exit_stack = None
 

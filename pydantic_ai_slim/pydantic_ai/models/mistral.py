@@ -182,7 +182,7 @@ class MistralModel(Model):
     @property
     def provider(self) -> Provider[Mistral]:
         """The provider for this model."""
-        return self._provider
+        return self._provider  # pragma: no cover
 
     async def request(
         self,

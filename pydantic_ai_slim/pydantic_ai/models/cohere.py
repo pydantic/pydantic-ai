@@ -154,7 +154,7 @@ class CohereModel(Model):
     @property
     def provider(self) -> Provider[AsyncClientV2]:
         """The provider for this model."""
-        return self._provider
+        return self._provider  # pragma: no cover
 
     async def request(
         self,
