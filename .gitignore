@@ -22,6 +22,9 @@ node_modules/
 .mcp.json
 .claude/*
 !.claude/skills/
+.claude/skills/*
+!.claude/skills/address-feedback
+!.claude/skills/pre-push-review
 .github/.review-context/
 /.cursor/
 /.devcontainer/

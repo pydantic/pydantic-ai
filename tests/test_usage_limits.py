@@ -7,8 +7,6 @@ from decimal import Decimal
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
-from inline_snapshot import snapshot
-from inline_snapshot.extra import warns
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -28,6 +26,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
+from ._inline_snapshot import snapshot, warns
 from .conftest import IsNow, IsStr
 
 pytestmark = pytest.mark.anyio

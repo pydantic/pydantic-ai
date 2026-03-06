@@ -13,7 +13,6 @@ import httpx
 import pytest
 from asgi_lifespan import LifespanManager
 from dirty_equals import IsStr
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -31,6 +30,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -57,6 +57,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsSameStr, try_import
 
 with try_import() as imports_successful:
@@ -1534,11 +1535,63 @@ async def test_callback_sync() -> None:
     # Verify we can access messages
     messages = run_result.all_messages()
     assert len(messages) >= 1
+    assert isinstance(messages[0], ModelRequest)
+    assert messages[0].run_id == run_result.run_id
 
     # Verify events were still streamed normally
     assert len(events) > 0
     assert events[0]['type'] == 'RUN_STARTED'
     assert events[-1]['type'] == 'RUN_FINISHED'
+
+
+async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
+    """The adapter sets `run_id` on the current run's mapped request, not older history."""
+    captured_results: list[AgentRunResult[Any]] = []
+
+    def sync_callback(run_result: AgentRunResult[Any]) -> None:
+        captured_results.append(run_result)
+
+    agent = Agent(TestModel())
+    run_input = create_input(
+        UserMessage(id='msg0', content='Previous question'),
+        AssistantMessage(id='msg1', content='Previous response'),
+        UserMessage(id='msg2', content='Hello!'),
+    )
+
+    await run_and_collect_events(agent, run_input, on_complete=sync_callback)
+
+    assert len(captured_results) == 1
+    run_result = captured_results[0]
+    messages = run_result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())],
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Previous response')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello!', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=(run_id := IsSameStr()),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=run_id,
+            ),
+        ]
+    )
+    assert messages[0].run_id is None
+    assert messages[1].run_id is None
+    assert messages[2].run_id == run_result.run_id
+    assert messages[3].run_id == run_result.run_id
+    assert run_result.new_messages() == messages[-2:]
 
 
 async def test_callback_async() -> None:
@@ -1796,6 +1849,15 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
 
 
 async def test_builtin_tool_call() -> None:
+    """Test back-to-back builtin tool calls share the same parent_message_id.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4098:
+    When a model performs multiple builtin tool calls (e.g. web searches) in
+    the same response, the BuiltinToolReturn handling would mutate the shared
+    message_id, causing subsequent tool calls to reference a non-existent
+    parent message.
+    """
+
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
@@ -1828,6 +1890,29 @@ async def test_builtin_tool_call() -> None:
                 provider_name='function',
             )
         }
+        yield {
+            2: BuiltinToolCallPart(
+                tool_name=WebSearchTool.kind,
+                args='{"query": "Hello world history"}',
+                tool_call_id='search_2',
+                provider_name='function',
+            )
+        }
+        yield {
+            3: BuiltinToolReturnPart(
+                tool_name=WebSearchTool.kind,
+                content={
+                    'results': [
+                        {
+                            'title': 'History of Hello World',
+                            'url': 'https://en.wikipedia.org/wiki/Hello_World_history',
+                        }
+                    ]
+                },
+                tool_call_id='search_2',
+                provider_name='function',
+            )
+        }
         yield 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". '
 
     agent = Agent(
@@ -1855,7 +1940,7 @@ async def test_builtin_tool_call() -> None:
                 'timestamp': IsInt(),
                 'toolCallId': 'pyd_ai_builtin|function|search_1',
                 'toolCallName': 'web_search',
-                'parentMessageId': IsStr(),
+                'parentMessageId': (parent_message_id := IsSameStr()),
             },
             {
                 'type': 'TOOL_CALL_ARGS',
@@ -1876,6 +1961,28 @@ async def test_builtin_tool_call() -> None:
                 'messageId': IsStr(),
                 'toolCallId': 'pyd_ai_builtin|function|search_1',
                 'content': '{"results":[{"title":"\\"Hello, World!\\" program","url":"https://en.wikipedia.org/wiki/%22Hello,_World!%22_program"}]}',
+                'role': 'tool',
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'pyd_ai_builtin|function|search_2',
+                'toolCallName': 'web_search',
+                'parentMessageId': parent_message_id,
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'pyd_ai_builtin|function|search_2',
+                'delta': '{"query": "Hello world history"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'pyd_ai_builtin|function|search_2'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': 'pyd_ai_builtin|function|search_2',
+                'content': '{"results":[{"title":"History of Hello World","url":"https://en.wikipedia.org/wiki/Hello_World_history"}]}',
                 'role': 'tool',
             },
             {
@@ -1986,10 +2093,12 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         )
 
         yield FunctionToolCallEvent(
-            part=ToolCallPart(tool_name='tool_call_1', args='{"query": "Hello world"}', tool_call_id='tool_call_1')
+            part=ToolCallPart(tool_name='tool_call_1', args='{"query": "Hello world"}', tool_call_id='tool_call_1'),
+            args_valid=True,
         )
         yield FunctionToolCallEvent(
-            part=ToolCallPart(tool_name='tool_call_2', args='{"query": "Goodbye world"}', tool_call_id='tool_call_2')
+            part=ToolCallPart(tool_name='tool_call_2', args='{"query": "Goodbye world"}', tool_call_id='tool_call_2'),
+            args_valid=True,
         )
 
         yield FunctionToolResultEvent(
@@ -2028,10 +2137,12 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         )
 
         yield FunctionToolCallEvent(
-            part=ToolCallPart(tool_name='tool_call_3', args='{"query": "Hello world"}', tool_call_id='tool_call_3')
+            part=ToolCallPart(tool_name='tool_call_3', args='{"query": "Hello world"}', tool_call_id='tool_call_3'),
+            args_valid=True,
         )
         yield FunctionToolCallEvent(
-            part=ToolCallPart(tool_name='tool_call_4', args='{"query": "Goodbye world"}', tool_call_id='tool_call_4')
+            part=ToolCallPart(tool_name='tool_call_4', args='{"query": "Goodbye world"}', tool_call_id='tool_call_4'),
+            args_valid=True,
         )
 
         yield FunctionToolResultEvent(

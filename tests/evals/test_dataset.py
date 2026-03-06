@@ -9,9 +9,9 @@ from typing import Any, Literal
 import pytest
 import yaml
 from dirty_equals import HasRepr, IsNumber
-from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsStr, try_import
 from .utils import render_table
 
@@ -718,7 +718,7 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
                             name='output',
                             value='a',
                             reason=None,
-                            source=EvaluatorSpec(name='MockEvaluator', arguments=({'output': 'a'},)),
+                            source=EvaluatorSpec(name='MockEvaluator', arguments={'output': {'output': 'a'}}),
                         )
                     },
                     assertions={},
@@ -741,7 +741,7 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
                             name='output',
                             value='a',
                             reason=None,
-                            source=EvaluatorSpec(name='MockEvaluator', arguments=({'output': 'a'},)),
+                            source=EvaluatorSpec(name='MockEvaluator', arguments={'output': {'output': 'a'}}),
                         )
                     },
                     assertions={},

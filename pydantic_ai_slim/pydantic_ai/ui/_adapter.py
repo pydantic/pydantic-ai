@@ -17,7 +17,7 @@ from typing import (
 )
 
 from pydantic import BaseModel, ValidationError
-from typing_extensions import TypeVar
+from typing_extensions import Self, TypeVar
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.agent import AbstractAgent
@@ -127,13 +127,18 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     @classmethod
     async def from_request(
-        cls, request: Request, *, agent: AbstractAgent[AgentDepsT, OutputDataT]
-    ) -> UIAdapter[RunInputT, MessageT, EventT, AgentDepsT, OutputDataT]:
-        """Create an adapter from a request."""
+        cls, request: Request, *, agent: AbstractAgent[AgentDepsT, OutputDataT], **kwargs: Any
+    ) -> Self:
+        """Create an adapter from a request.
+
+        Extra keyword arguments are forwarded to the adapter constructor, allowing subclasses
+        to accept additional adapter-specific parameters.
+        """
         return cls(
             agent=agent,
             run_input=cls.build_run_input(await request.body()),
             accept=request.headers.get('accept'),
+            **kwargs,
         )
 
     @classmethod
@@ -172,6 +177,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     @cached_property
     def state(self) -> dict[str, Any] | None:
         """Frontend state from the protocol-specific run input."""
+        return None
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        """Deferred tool results extracted from the request, used for tool approval workflows."""
         return None
 
     def transform_stream(
@@ -246,6 +256,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if toolset:
             output_type = [output_type or self.agent.output_type, DeferredToolRequests]
             toolsets = [*(toolsets or []), toolset]
+
+        if deferred_tool_results is None:
+            deferred_tool_results = self.deferred_tool_results
 
         if isinstance(deps, StateHandler):
             raw_state = self.state or {}
@@ -356,8 +369,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
         on_complete: OnCompleteFunc[EventT] | None = None,
+        **kwargs: Any,
     ) -> Response:
         """Handle a protocol-specific HTTP request by running the agent and returning a streaming response of protocol-specific events.
+
+        Extra keyword arguments are forwarded to [`from_request`][pydantic_ai.ui.UIAdapter.from_request],
+        allowing subclasses to accept additional adapter-specific parameters.
 
         Args:
             request: The incoming Starlette/FastAPI request.
@@ -379,6 +396,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             builtin_tools: Optional additional builtin tools to use for this run.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
+            **kwargs: Additional keyword arguments forwarded to [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
 
         Returns:
             A streaming Starlette response with protocol-specific events encoded per the request's `Accept` header value.
@@ -395,7 +413,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             # The DepsT and OutputDataT come from `agent`, not from `cls`; the cast is necessary to explain this to pyright
             adapter = cast(
                 UIAdapter[RunInputT, MessageT, EventT, DispatchDepsT, DispatchOutputDataT],
-                await cls.from_request(request, agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent)),
+                await cls.from_request(request, agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent), **kwargs),
             )
         except ValidationError as e:  # pragma: no cover
             return Response(

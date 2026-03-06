@@ -209,6 +209,15 @@ nav:
 extra:
   # hide the "Made with Material for MkDocs" message
   generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/pydantic/pydantic-ai
+    - icon: fontawesome/brands/bluesky
+      link: https://bsky.app/profile/pydantic.dev
+    - icon: fontawesome/brands/x-twitter
+      link: https://x.com/pydantic
+    - icon: fontawesome/brands/linkedin
+      link: https://www.linkedin.com/company/pydantic
 
 theme:
   name: "material"
@@ -360,13 +369,13 @@ plugins:
           - troubleshooting.md
         Concepts documentation:
           - a2a.md
-          - ag-ui.md
-          - Agents: agent.md
+          - agent.md
           - builtin-tools.md
           - dependencies.md
           - deferred-tools.md
           - direct.md
           - embeddings.md
+          - gateway.md
           - input.md
           - tools.md
           - common-tools.md
@@ -378,14 +387,17 @@ plugins:
           - third-party-tools.md
           - tools-advanced.md
           - toolsets.md
+          - web.md
         Models:
           - models/*.md
         Graphs:
           - graph.md
+          - graph/*.md
         API Reference:
           - api/*.md
         Evals:
           - evals.md
+          - evals/*.md
         Durable Execution:
           - durable_execution/*.md
         MCP:

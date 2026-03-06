@@ -90,7 +90,9 @@ class TestConcurrencyLimiter:
 
             for _ in range(3):
                 tg.start_soon(waiter)
-            await anyio.sleep(0.01)
+            with anyio.fail_after(2):
+                while limiter.waiting_count < 3:
+                    await anyio.sleep(0.01)
             assert limiter.waiting_count == 3
 
             release.set()
