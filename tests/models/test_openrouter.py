@@ -865,3 +865,235 @@ async def test_openrouter_document_url_no_force_download(
             'type': 'file',
         }
     )
+
+
+def test_openrouter_validate_completion_nested_response() -> None:
+    """Test that _process_response handles nested response in provider field.
+
+    OpenRouter occasionally returns a response where top-level fields (id, choices,
+    model, object) are null but the real response is nested inside the 'provider' dict.
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/3994.
+    """
+    from openai.types.chat import ChatCompletion
+
+    from pydantic_ai.models.openrouter import OpenRouterModel
+
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    # Simulate the nested-response format: top-level fields are null,
+    # real data is nested inside 'provider'.
+    nested_completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider={
+            'id': 'gen-123',
+            'choices': [
+                {
+                    'index': 0,
+                    'message': {'role': 'assistant', 'content': 'Hello from nested!'},
+                    'finish_reason': 'stop',
+                    'native_finish_reason': 'STOP',
+                    'logprobs': None,
+                }
+            ],
+            'model': 'google/gemini-3-flash-preview',
+            'object': 'chat.completion',
+            'provider': 'Google',
+        },
+        created=1234567890,
+        usage=None,
+    )
+
+    # Use _process_response (one level above _validate_completion) to test through
+    # a higher-level entry point while still avoiding a full HTTP round-trip.
+    model_response = model._process_response(nested_completion)  # type: ignore[reportPrivateUsage]
+    from pydantic_ai.messages import TextPart
+
+    assert any(isinstance(part, TextPart) and part.content == 'Hello from nested!' for part in model_response.parts)
+
+
+def test_openrouter_validate_completion_error_with_null_fields() -> None:
+    """Test that _process_response raises ModelHTTPError for error responses with null fields.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/3994.
+    """
+    from openai.types.chat import ChatCompletion
+
+    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai.models.openrouter import OpenRouterModel
+
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    error_completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider=None,
+        created=1234567890,
+        usage=None,
+        error={'code': 400, 'message': 'Invalid request parameters'},
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        model._process_response(error_completion)  # type: ignore[reportPrivateUsage]
+
+    assert exc_info.value.status_code == 400
+    assert 'Invalid request parameters' in str(exc_info.value)
+
+
+def test_openrouter_normalize_null_metadata_fallbacks() -> None:
+    """_normalize_openrouter_response fills in null id/model/object/provider fields."""
+    from openai.types.chat import ChatCompletion
+
+    from pydantic_ai.models.openrouter import OpenRouterModel
+
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    # All metadata fields null — the normalizer should fill in safe defaults.
+    completion = ChatCompletion.model_construct(
+        id=None,
+        choices=[
+            {
+                'index': 0,
+                'message': {'role': 'assistant', 'content': 'Hi'},
+                'finish_reason': 'stop',
+                'native_finish_reason': None,
+                'logprobs': None,
+            }
+        ],
+        model=None,
+        object=None,
+        provider=None,
+        created=1234567890,
+        usage=None,
+    )
+
+    model_response = model._process_response(completion)  # type: ignore[reportPrivateUsage]
+    from pydantic_ai.messages import TextPart
+
+    assert any(isinstance(p, TextPart) and p.content == 'Hi' for p in model_response.parts)
+
+
+def test_openrouter_provider_details_null_provider() -> None:
+    """When provider is None, _normalize_openrouter_response fills it with 'unknown'.
+
+    The normalizer always sets a string provider fallback so Pydantic validation passes.
+    _map_openrouter_provider_details then records downstream_provider='unknown'.
+    """
+    from openai.types.chat import ChatCompletion
+
+    from pydantic_ai.models.openrouter import OpenRouterModel
+
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    completion = ChatCompletion.model_construct(
+        id='gen-test',
+        choices=[
+            {
+                'index': 0,
+                'message': {'role': 'assistant', 'content': 'Hello'},
+                'finish_reason': 'stop',
+                'native_finish_reason': None,
+                'logprobs': None,
+            }
+        ],
+        model='openai/gpt-4.1-mini',
+        object='chat.completion',
+        provider=None,
+        created=1234567890,
+        usage=None,
+    )
+
+    model_response = model._process_response(completion)  # type: ignore[reportPrivateUsage]
+    # The normalizer fills provider=None with the 'unknown' sentinel, so
+    # downstream_provider will be 'unknown' rather than absent.
+    details = model_response.provider_details or {}
+    assert details.get('downstream_provider') == 'unknown'
+
+
+def test_openrouter_validate_completion_malformed_error_fallthrough() -> None:
+    """Malformed error_data falls through the except clause and surfaces as UnexpectedModelBehavior.
+
+    When error is a plain string, _OpenRouterError.model_validate() raises ValidationError
+    which is caught; then _OpenRouterChatCompletion.model_validate() raises ValidationError
+    which _process_response (in the parent openai.py) wraps as UnexpectedModelBehavior.
+    """
+    from openai.types.chat import ChatCompletion
+
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+    from pydantic_ai.models.openrouter import OpenRouterModel
+
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    # error is a plain string — _OpenRouterError.model_validate() will raise ValidationError
+    # which is caught; the fall-through to _OpenRouterChatCompletion.model_validate() then
+    # fails with ValidationError, which _process_response wraps as UnexpectedModelBehavior.
+    completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider=None,
+        created=1234567890,
+        usage=None,
+        error='something went wrong',
+    )
+
+    with pytest.raises(UnexpectedModelBehavior):
+        model._process_response(completion)  # type: ignore[reportPrivateUsage]
+
+
+def test_openrouter_map_provider_details_null_provider_skips_key() -> None:
+    """_map_openrouter_provider_details omits downstream_provider when provider is None.
+
+    This covers the if response.provider is not None: false branch (line 489→491).
+    """
+    from pydantic_ai.models.openrouter import (
+        _map_openrouter_provider_details,  # type: ignore[reportPrivateUsage]
+        _OpenRouterChatCompletion,  # type: ignore[reportPrivateUsage]
+    )
+
+    # Build a minimal _OpenRouterChatCompletion with provider=None
+    resp = _OpenRouterChatCompletion.model_construct(
+        id='gen-direct',
+        choices=[
+            {
+                'index': 0,
+                'message': {'role': 'assistant', 'content': 'Hi'},
+                'finish_reason': 'stop',
+                'native_finish_reason': None,
+                'logprobs': None,
+            }
+        ],
+        model='openai/gpt-4.1-mini',
+        object='chat.completion',
+        provider=None,
+        created=1234567890,
+        usage=None,
+    )
+
+    details = _map_openrouter_provider_details(resp)
+    assert 'downstream_provider' not in details
+
+
+def test_openrouter_normalize_openrouter_response_module_function() -> None:
+    """_normalize_openrouter_response (module-level) is accessible and fills null metadata."""
+    from pydantic_ai.models.openrouter import _normalize_openrouter_response  # type: ignore[reportPrivateUsage]
+
+    result = _normalize_openrouter_response(
+        {'id': None, 'model': None, 'object': None, 'provider': None, 'choices': []},
+        model_name='openai/gpt-4.1-mini',
+        fallback_object_type='chat.completion',
+    )
+    assert result['id'] == 'openrouter-fallback-id'
+    assert result['model'] == 'openai/gpt-4.1-mini'
+    assert result['object'] == 'chat.completion'
+    assert result['provider'] == 'unknown'
