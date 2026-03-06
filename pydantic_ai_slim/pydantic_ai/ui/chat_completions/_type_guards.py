@@ -1,11 +1,23 @@
-from typing import TypeGuard, TypeVar, Literal, Any, Callable
+from typing import TypeGuard
 
-from openai.types.chat import CompletionCreateParams, ChatCompletionToolUnionParam, ChatCompletionFunctionToolParam, \
-    ChatCompletionCustomToolParam, ChatCompletionContentPartParam, ChatCompletionContentPartTextParam, \
-    ChatCompletionContentPartImageParam, ChatCompletionContentPartInputAudioParam, ChatCompletionMessageParam, \
-    ChatCompletionAssistantMessageParam, ChatCompletionSystemMessageParam, ChatCompletionUserMessageParam, \
-    ChatCompletionToolMessageParam, ChatCompletionFunctionMessageParam, ChatCompletionMessageToolCallUnionParam, \
-    ChatCompletionMessageFunctionToolCallParam, ChatCompletionMessageCustomToolCallParam
+from openai.types.chat import (
+    ChatCompletionAssistantMessageParam,
+    ChatCompletionContentPartImageParam,
+    ChatCompletionContentPartInputAudioParam,
+    ChatCompletionContentPartParam,
+    ChatCompletionContentPartTextParam,
+    ChatCompletionCustomToolParam,
+    ChatCompletionFunctionMessageParam,
+    ChatCompletionFunctionToolParam,
+    ChatCompletionMessageCustomToolCallParam,
+    ChatCompletionMessageFunctionToolCallParam,
+    ChatCompletionMessageParam,
+    ChatCompletionMessageToolCallUnionParam,
+    ChatCompletionSystemMessageParam,
+    ChatCompletionToolMessageParam,
+    ChatCompletionToolUnionParam,
+    ChatCompletionUserMessageParam,
+)
 from openai.types.chat.chat_completion_assistant_message_param import ContentArrayOfContentPart
 from openai.types.chat.chat_completion_content_part_param import File
 from openai.types.chat.chat_completion_content_part_refusal_param import ChatCompletionContentPartRefusalParam
@@ -69,12 +81,12 @@ def _is_assistant_refusal_part(part: ContentArrayOfContentPart) -> TypeGuard[Cha
 
 # Tool call params
 def _is_message_function_tool_call_param(
-        part: ChatCompletionMessageToolCallUnionParam
+    part: ChatCompletionMessageToolCallUnionParam,
 ) -> TypeGuard[ChatCompletionMessageFunctionToolCallParam]:
     return isinstance(part, dict) and part.get('type') == 'function'
 
 
 def _is_message_custom_tool_call_param(
-        part: ChatCompletionMessageToolCallUnionParam
+    part: ChatCompletionMessageToolCallUnionParam,
 ) -> TypeGuard[ChatCompletionMessageCustomToolCallParam]:
     return isinstance(part, dict) and part.get('type') == 'custom'

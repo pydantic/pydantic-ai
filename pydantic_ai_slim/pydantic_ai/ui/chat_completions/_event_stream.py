@@ -14,15 +14,10 @@ from openai.types.chat import ChatCompletionChunk, CompletionCreateParams
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
 
 from ...messages import (
-    FunctionToolResultEvent,
-    PartDeltaEvent,
-    PartEndEvent,
-    PartStartEvent,
     TextPart,
     TextPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
-    ToolReturnPart,
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT
@@ -115,8 +110,9 @@ class ChatCompletionsEventStream(UIEventStream[CompletionCreateParams, ChatCompl
         if choice_delta.role or choice_delta.content:
             yield self._create_chunk(choice_delta)
 
-    async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[
-        ChatCompletionChunk]:
+    async def handle_text_end(
+        self, part: TextPart, followed_by_text: bool = False
+    ) -> AsyncIterator[ChatCompletionChunk]:
         """Handle the end of a text part."""
         # No specific chunk needed for text end
         return

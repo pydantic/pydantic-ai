@@ -53,4 +53,4 @@ def _is_text_content_part(part: Any) -> TypeGuard[dict[str, Any]]:
     if not isinstance(part, dict):
         return False
     ptype = part.get('type')
-    return ptype in ('input_text', 'text', 'output_text')
+    return ptype is not None and ptype in ('input_text', 'text', 'output_text')

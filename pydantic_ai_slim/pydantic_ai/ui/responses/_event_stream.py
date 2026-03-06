@@ -157,8 +157,8 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[Any]:
         """Handle the start of a text part."""
         from openai.types.responses import (
-            ResponseOutputItemAddedEvent,
             ResponseContentPartAddedEvent,
+            ResponseOutputItemAddedEvent,
         )
 
         events: list[Any] = []
@@ -231,8 +231,8 @@ class ResponsesEventStream(UIEventStream[ResponseCreateParamsStreaming, Any, Age
     async def handle_tool_call_start(self, part: ToolCallPart) -> AsyncIterator[Any]:
         """Handle the start of a tool call."""
         from openai.types.responses import (
-            ResponseOutputItemAddedEvent,
             ResponseFunctionToolCall,
+            ResponseOutputItemAddedEvent,
         )
 
         # Tool calls are separate output items in Responses protocol

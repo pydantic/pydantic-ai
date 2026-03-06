@@ -1,12 +1,11 @@
 """Responses protocol adapter for Pydantic AI agents."""
 
-import base64
 import json
+from collections.abc import Sequence
 from functools import cached_property
-from pathlib import Path
-from typing import Any, cast, Sequence, Union
+from typing import Any, Union, cast
 
-from openai.types.responses import ResponseCreateParams, ResponseInputParam, ToolParam
+from openai.types.responses import ResponseInputParam
 from openai.types.responses.response_create_params import ResponseCreateParamsStreaming
 from pydantic import TypeAdapter
 
@@ -14,9 +13,6 @@ from ... import ExternalToolset, ModelMessage, ToolDefinition
 from ...messages import (
     BinaryContent,
     ImageUrl,
-    ModelRequest,
-    ModelRequestPart,
-    ModelResponse,
     SystemPromptPart,
     TextPart,
     ToolReturnPart,
@@ -26,19 +22,18 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT
 from ...toolsets import AbstractToolset
-from ...ui import UIAdapter, UIEventStream, MessagesBuilder
-
+from ...ui import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import ResponsesEventStream
 from ._type_guards import (
-    _is_input_text_item,
-    _is_input_image_item,
-    _is_input_file_item,
-    _is_message_item,
-    _is_function_call_output_item,
-    _is_system_role,
-    _is_user_role,
     _is_assistant_role,
+    _is_function_call_output_item,
+    _is_input_file_item,
+    _is_input_image_item,
+    _is_input_text_item,
+    _is_message_item,
+    _is_system_role,
     _is_text_content_part,
+    _is_user_role,
 )
 
 # Format mappings for media types
@@ -185,13 +180,13 @@ class ResponsesAdapter(
 
         # Build a sequence of message items for load_messages
         # We need to handle both input_data and instructions together
-        messages_seq: list[Union[str, ResponseInputParam]] = []
-        
+        messages_seq: list[str | ResponseInputParam] = []
+
         # Add instructions first if present (wrap as system message item)
         if instructions:
             # Wrap instructions as a message item with system role
             messages_seq.append([{'role': 'system', 'content': instructions}])
-        
+
         # Add input data
         # The Responses API allows input to be either a string or a list of items
         if input_data is not None:
@@ -220,12 +215,12 @@ class ResponsesAdapter(
         return None
 
     @classmethod
-    def load_messages(cls, messages: Sequence[Union[str, ResponseInputParam]]) -> list[ModelMessage]:
+    def load_messages(cls, messages: Sequence[str | ResponseInputParam]) -> list[ModelMessage]:
         """Transform OpenAI Responses API input into Pydantic AI messages.
-        
+
         Args:
             messages: Sequence of input data - each can be str or list of items.
-            
+
         Returns:
             A list of ModelMessage objects representing the conversation history.
         """
@@ -278,11 +273,7 @@ class ResponsesAdapter(
                             if isinstance(content, str):
                                 builder.add(TextPart(content=content))
                             elif isinstance(content, list):
-                                txt = ''.join(
-                                    str(c.get('text', ''))
-                                    for c in content
-                                    if _is_text_content_part(c)
-                                )
+                                txt = ''.join(str(c.get('text', '')) for c in content if _is_text_content_part(c))
                                 if txt:
                                     builder.add(TextPart(content=txt))
 

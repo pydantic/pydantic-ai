@@ -1,20 +1,22 @@
 import base64
 import json
 import warnings
+from collections.abc import Sequence
 from functools import cached_property
 from pathlib import Path
-from typing import cast, Iterable, Any, Literal, TypeAlias, Sequence
+from typing import Any, Literal, TypeAlias, cast
 
 from openai.types.chat import (
-    CompletionCreateParams,
-    ChatCompletionMessageParam,
     ChatCompletionChunk,
     ChatCompletionContentPartParam,
+    ChatCompletionMessageParam,
 )
-from openai.types.chat.completion_create_params import CompletionCreateParamsBase, CompletionCreateParamsNonStreaming, CompletionCreateParamsStreaming
-from pydantic import TypeAdapter, ConfigDict, field_validator, ValidationError
+from openai.types.chat.completion_create_params import (
+    CompletionCreateParamsStreaming,
+)
+from pydantic import TypeAdapter
 
-from ... import ModelMessage, AbstractToolset, ExternalToolset, ToolDefinition
+from ... import AbstractToolset, ExternalToolset, ModelMessage, ToolDefinition
 from ...messages import (
     BinaryContent,
     ImageUrl,
@@ -27,14 +29,24 @@ from ...messages import (
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT
-from ...ui import UIAdapter, UIEventStream, MessagesBuilder
-
+from ...ui import MessagesBuilder, UIAdapter, UIEventStream
 from ._event_stream import ChatCompletionsEventStream
 from ._type_guards import (
-    _is_function_tool_param, _is_custom_tool_param, _is_text_part, _is_image_part, _is_audio_part,
-    _is_file_part, _is_assistant_message, _is_system_message, _is_user_message, _is_tool_message,
-    _is_function_message, _is_assistant_text_part, _is_assistant_refusal_part, _is_message_function_tool_call_param,
-    _is_message_custom_tool_call_param
+    _is_assistant_message,
+    _is_assistant_refusal_part,
+    _is_assistant_text_part,
+    _is_audio_part,
+    _is_custom_tool_param,
+    _is_file_part,
+    _is_function_message,
+    _is_function_tool_param,
+    _is_image_part,
+    _is_message_custom_tool_call_param,
+    _is_message_function_tool_call_param,
+    _is_system_message,
+    _is_text_part,
+    _is_tool_message,
+    _is_user_message,
 )
 
 OpenAIRole: TypeAlias = Literal['developer', 'system', 'assistant', 'user', 'tool', 'function']
@@ -110,13 +122,13 @@ class ChatCompletionsAdapter(
     UIAdapter[CompletionCreateParamsStreaming, ChatCompletionMessageParam, ChatCompletionChunk, AgentDepsT, OutputDataT]
 ):
     """UI adapter for the Chat Completions protocol."""
+
     _COMPLETIONS_TA: TypeAdapter[CompletionCreateParamsStreaming] = TypeAdapter(CompletionCreateParamsStreaming)
     _MESSAGES_TA: TypeAdapter[Sequence[ChatCompletionMessageParam]] = TypeAdapter(Sequence[ChatCompletionMessageParam])
 
     @classmethod
     def build_run_input(cls, body: bytes) -> CompletionCreateParamsStreaming:
         """Build a Chat Completions input object from the request object."""
-
         data = json.loads(body)
 
         # Iterable[ChatCompletionMessageParam] yields a ValidatorIterator which breaks with a panic because
@@ -126,7 +138,9 @@ class ChatCompletionsAdapter(
 
         return CompletionCreateParamsStreaming(**data)
 
-    def build_event_stream(self) -> UIEventStream[CompletionCreateParamsStreaming, ChatCompletionChunk, AgentDepsT, OutputDataT]:
+    def build_event_stream(
+        self,
+    ) -> UIEventStream[CompletionCreateParamsStreaming, ChatCompletionChunk, AgentDepsT, OutputDataT]:
         """Build a Chat Completions event stream transformer."""
         return ChatCompletionsEventStream(self.run_input, accept=self.accept)
 
@@ -135,7 +149,7 @@ class ChatCompletionsAdapter(
         """Pydantic AI messages from the Chat Completions input"""
         run_input = cast(CompletionCreateParamsStreaming, self.run_input)
 
-        messages = self._MESSAGES_TA.validate_python(run_input["messages"])
+        messages = self._MESSAGES_TA.validate_python(run_input['messages'])
 
         return self.load_messages(messages)
 
@@ -144,22 +158,24 @@ class ChatCompletionsAdapter(
         """Toolset representing frontend tools from the Chat Completions run input."""
         run_input = cast(CompletionCreateParamsStreaming, self.run_input)
 
-        if tools := run_input.get("tools"):
+        if tools := run_input.get('tools'):
             tool_defs = []
 
             for tool in tools:
                 if _is_function_tool_param(tool):
-                    fn = tool["function"]
-                    tool_defs.append(ToolDefinition(
-                        name=fn["name"],
-                        description=fn["description"],
-                        parameters_json_schema=fn["parameters"],
-                        strict=fn.get("strict")
-                    ))
+                    fn = tool['function']
+                    tool_defs.append(
+                        ToolDefinition(
+                            name=fn['name'],
+                            description=fn['description'],
+                            parameters_json_schema=fn['parameters'],
+                            strict=fn.get('strict'),
+                        )
+                    )
 
                 elif _is_custom_tool_param(tool):
                     warnings.warn(  # pragma: no cover
-                        f'Custom tool parameters are not supported in the Chat Completions adapter.',
+                        'Custom tool parameters are not supported in the Chat Completions adapter.',
                         UserWarning,
                     )
 
@@ -175,10 +191,10 @@ class ChatCompletionsAdapter(
     @classmethod
     def load_messages(cls, messages: Sequence[ChatCompletionMessageParam]) -> list[ModelMessage]:
         """Transform OpenAI Chat Completion messages into Pydantic AI messages.
-        
+
         Args:
             messages: An iterable of OpenAI chat completion message parameters.
-            
+
         Returns:
             A list of ModelMessage objects representing the conversation history.
         """
@@ -248,9 +264,9 @@ class ChatCompletionsAdapter(
             elif _is_tool_message(message):
                 builder.add(
                     ToolReturnPart(
-                        tool_name=message["tool_call_id"],
+                        tool_name=message['tool_call_id'],
                         tool_call_id=message['tool_call_id'],
-                        content=str(message['content'])
+                        content=str(message['content']),
                     )
                 )
 
@@ -258,7 +274,7 @@ class ChatCompletionsAdapter(
                 # Function messages are deprecated but still supported
                 builder.add(
                     ToolReturnPart(
-                        tool_name=message["name"],
+                        tool_name=message['name'],
                         tool_call_id=message['name'],  # function role uses 'name' field
                         content=str(message['content']),
                     )

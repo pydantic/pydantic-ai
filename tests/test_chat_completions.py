@@ -9,7 +9,6 @@ from typing import Any
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
-from inline_snapshot import snapshot
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -22,8 +21,8 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    models,
 )
-from pydantic_ai import models
 from pydantic_ai.agent import Agent
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -67,12 +66,10 @@ def get_weather(location: str) -> WeatherResult:
 
 async def test_load_messages_user_text() -> None:
     """Test converting user text message from Chat Completions to Pydantic AI."""
-    messages = [
-        {'role': 'user', 'content': 'Hello, how are you?'}
-    ]
-    
+    messages = [{'role': 'user', 'content': 'Hello, how are you?'}]
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     assert len(result) == 1
     assert isinstance(result[0], ModelRequest)
     assert len(result[0].parts) == 1
@@ -82,12 +79,10 @@ async def test_load_messages_user_text() -> None:
 
 async def test_load_messages_system() -> None:
     """Test converting system message from Chat Completions to Pydantic AI."""
-    messages = [
-        {'role': 'system', 'content': 'You are a helpful assistant.'}
-    ]
-    
+    messages = [{'role': 'system', 'content': 'You are a helpful assistant.'}]
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     assert len(result) == 1
     assert isinstance(result[0], ModelRequest)
     assert len(result[0].parts) == 1
@@ -97,12 +92,10 @@ async def test_load_messages_system() -> None:
 
 async def test_load_messages_assistant_text() -> None:
     """Test converting assistant text message from Chat Completions to Pydantic AI."""
-    messages = [
-        {'role': 'assistant', 'content': 'I am doing well, thank you!'}
-    ]
-    
+    messages = [{'role': 'assistant', 'content': 'I am doing well, thank you!'}]
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     assert len(result) == 1
     assert isinstance(result[0], ModelResponse)
     assert len(result[0].parts) == 1
@@ -128,9 +121,9 @@ async def test_load_messages_assistant_with_tool_calls() -> None:
             ],
         }
     ]
-    
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     assert len(result) == 1
     assert isinstance(result[0], ModelResponse)
     assert len(result[0].parts) == 1
@@ -149,9 +142,9 @@ async def test_load_messages_tool_response() -> None:
             'content': '{"location": "London", "temperature": 20}',
         }
     ]
-    
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     assert len(result) == 1
     assert isinstance(result[0], ModelRequest)
     assert len(result[0].parts) == 1
@@ -186,9 +179,9 @@ async def test_load_messages_conversation() -> None:
         },
         {'role': 'assistant', 'content': 'The weather in London is 20 degrees.'},
     ]
-    
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     # MessagesBuilder combines consecutive request parts into a single ModelRequest
     assert len(result) == 4
     assert isinstance(result[0], ModelRequest)
@@ -213,9 +206,9 @@ async def test_load_messages_multimodal() -> None:
             ],
         }
     ]
-    
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     assert len(result) == 1
     assert isinstance(result[0], ModelRequest)
     assert len(result[0].parts) == 1
@@ -238,9 +231,9 @@ async def test_load_messages_assistant_content_array() -> None:
             ],
         }
     ]
-    
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     assert len(result) == 1
     assert isinstance(result[0], ModelResponse)
     assert len(result[0].parts) == 1
@@ -257,9 +250,9 @@ async def test_load_messages_function_deprecated() -> None:
             'content': '{"location": "London", "temperature": 20}',
         }
     ]
-    
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     assert len(result) == 1
     assert isinstance(result[0], ModelRequest)
     assert len(result[0].parts) == 1
@@ -269,12 +262,10 @@ async def test_load_messages_function_deprecated() -> None:
 
 async def test_load_messages_developer_role() -> None:
     """Test converting developer role message (alias for system) from Chat Completions to Pydantic AI."""
-    messages = [
-        {'role': 'system', 'content': 'You are a helpful assistant.'}
-    ]
-    
+    messages = [{'role': 'system', 'content': 'You are a helpful assistant.'}]
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     assert len(result) == 1
     assert isinstance(result[0], ModelRequest)
     assert len(result[0].parts) == 1
@@ -284,12 +275,10 @@ async def test_load_messages_developer_role() -> None:
 
 async def test_load_messages_assistant_empty_content() -> None:
     """Test converting assistant message with empty content from Chat Completions to Pydantic AI."""
-    messages = [
-        {'role': 'assistant', 'content': None}
-    ]
-    
+    messages = [{'role': 'assistant', 'content': None}]
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     # Should create empty ModelResponse or skip it
     assert len(result) == 0
 
@@ -305,9 +294,9 @@ async def test_load_messages_assistant_refusal_part() -> None:
             ],
         }
     ]
-    
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     assert len(result) == 1
     assert isinstance(result[0], ModelResponse)
     assert len(result[0].parts) == 1
@@ -333,9 +322,9 @@ async def test_load_messages_custom_tool_call() -> None:
             ],
         }
     ]
-    
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     assert len(result) == 1
     assert isinstance(result[0], ModelResponse)
     assert len(result[0].parts) == 1
@@ -363,9 +352,9 @@ async def test_load_messages_mixed_text_and_tool_calls() -> None:
             ],
         }
     ]
-    
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     assert len(result) == 1
     assert isinstance(result[0], ModelResponse)
     assert len(result[0].parts) == 2
@@ -377,12 +366,10 @@ async def test_load_messages_mixed_text_and_tool_calls() -> None:
 
 async def test_load_messages_user_empty_content_list() -> None:
     """Test converting user message with empty content list from Chat Completions to Pydantic AI."""
-    messages = [
-        {'role': 'user', 'content': []}
-    ]
-    
+    messages = [{'role': 'user', 'content': []}]
+
     result = ChatCompletionsAdapter.load_messages(messages)
-    
+
     # Should skip empty user messages
     assert len(result) == 0
 
@@ -394,32 +381,34 @@ async def test_load_messages_user_empty_content_list() -> None:
 
 async def test_toolset_parsing_single_function() -> None:
     """Test parsing a single function tool from Chat Completions input."""
-    body = json.dumps({
-        'model': 'test',
-        'messages': [{'role': 'user', 'content': 'Hello'}],
-        'tools': [
-            {
-                'type': 'function',
-                'function': {
-                    'name': 'get_weather',
-                    'description': 'Get the weather for a location.',
-                    'parameters': {
-                        'type': 'object',
-                        'properties': {
-                            'location': {'type': 'string'},
+    body = json.dumps(
+        {
+            'model': 'test',
+            'messages': [{'role': 'user', 'content': 'Hello'}],
+            'tools': [
+                {
+                    'type': 'function',
+                    'function': {
+                        'name': 'get_weather',
+                        'description': 'Get the weather for a location.',
+                        'parameters': {
+                            'type': 'object',
+                            'properties': {
+                                'location': {'type': 'string'},
+                            },
+                            'required': ['location'],
                         },
-                        'required': ['location'],
                     },
-                },
-            }
-        ],
-        'stream': True,
-    }).encode()
-    
+                }
+            ],
+            'stream': True,
+        }
+    ).encode()
+
     agent = Agent(TestModel())
     run_input = ChatCompletionsAdapter.build_run_input(body)
     adapter = ChatCompletionsAdapter(agent=agent, run_input=run_input, accept='text/event-stream')
-    
+
     toolset = adapter.toolset
     assert toolset is not None
     assert len(toolset.tool_defs) == 1
@@ -436,34 +425,36 @@ async def test_toolset_parsing_single_function() -> None:
 
 async def test_toolset_parsing_multiple_functions() -> None:
     """Test parsing multiple function tools from Chat Completions input."""
-    body = json.dumps({
-        'model': 'test',
-        'messages': [{'role': 'user', 'content': 'Hello'}],
-        'tools': [
-            {
-                'type': 'function',
-                'function': {
-                    'name': 'get_weather',
-                    'description': 'Get the weather.',
-                    'parameters': {'type': 'object', 'properties': {}},
+    body = json.dumps(
+        {
+            'model': 'test',
+            'messages': [{'role': 'user', 'content': 'Hello'}],
+            'tools': [
+                {
+                    'type': 'function',
+                    'function': {
+                        'name': 'get_weather',
+                        'description': 'Get the weather.',
+                        'parameters': {'type': 'object', 'properties': {}},
+                    },
                 },
-            },
-            {
-                'type': 'function',
-                'function': {
-                    'name': 'get_time',
-                    'description': 'Get the current time.',
-                    'parameters': {'type': 'object', 'properties': {}},
+                {
+                    'type': 'function',
+                    'function': {
+                        'name': 'get_time',
+                        'description': 'Get the current time.',
+                        'parameters': {'type': 'object', 'properties': {}},
+                    },
                 },
-            },
-        ],
-        'stream': True,
-    }).encode()
-    
+            ],
+            'stream': True,
+        }
+    ).encode()
+
     agent = Agent(TestModel())
     run_input = ChatCompletionsAdapter.build_run_input(body)
     adapter = ChatCompletionsAdapter(agent=agent, run_input=run_input, accept='text/event-stream')
-    
+
     toolset = adapter.toolset
     assert toolset is not None
     assert len(toolset.tool_defs) == 2
@@ -473,27 +464,29 @@ async def test_toolset_parsing_multiple_functions() -> None:
 
 async def test_toolset_parsing_with_strict() -> None:
     """Test parsing function tool with strict parameter from Chat Completions input."""
-    body = json.dumps({
-        'model': 'test',
-        'messages': [{'role': 'user', 'content': 'Hello'}],
-        'tools': [
-            {
-                'type': 'function',
-                'function': {
-                    'name': 'get_weather',
-                    'description': 'Get the weather.',
-                    'parameters': {'type': 'object', 'properties': {}},
-                    'strict': True,
-                },
-            }
-        ],
-        'stream': True,
-    }).encode()
-    
+    body = json.dumps(
+        {
+            'model': 'test',
+            'messages': [{'role': 'user', 'content': 'Hello'}],
+            'tools': [
+                {
+                    'type': 'function',
+                    'function': {
+                        'name': 'get_weather',
+                        'description': 'Get the weather.',
+                        'parameters': {'type': 'object', 'properties': {}},
+                        'strict': True,
+                    },
+                }
+            ],
+            'stream': True,
+        }
+    ).encode()
+
     agent = Agent(TestModel())
     run_input = ChatCompletionsAdapter.build_run_input(body)
     adapter = ChatCompletionsAdapter(agent=agent, run_input=run_input, accept='text/event-stream')
-    
+
     toolset = adapter.toolset
     assert toolset is not None
     assert len(toolset.tool_defs) == 1
@@ -502,32 +495,36 @@ async def test_toolset_parsing_with_strict() -> None:
 
 async def test_toolset_parsing_no_tools() -> None:
     """Test that toolset is None when no tools are provided."""
-    body = json.dumps({
-        'model': 'test',
-        'messages': [{'role': 'user', 'content': 'Hello'}],
-        'stream': True,
-    }).encode()
-    
+    body = json.dumps(
+        {
+            'model': 'test',
+            'messages': [{'role': 'user', 'content': 'Hello'}],
+            'stream': True,
+        }
+    ).encode()
+
     agent = Agent(TestModel())
     run_input = ChatCompletionsAdapter.build_run_input(body)
     adapter = ChatCompletionsAdapter(agent=agent, run_input=run_input, accept='text/event-stream')
-    
+
     assert adapter.toolset is None
 
 
 async def test_toolset_parsing_empty_tools_list() -> None:
     """Test that toolset is None when tools list is empty."""
-    body = json.dumps({
-        'model': 'test',
-        'messages': [{'role': 'user', 'content': 'Hello'}],
-        'tools': [],
-        'stream': True,
-    }).encode()
-    
+    body = json.dumps(
+        {
+            'model': 'test',
+            'messages': [{'role': 'user', 'content': 'Hello'}],
+            'tools': [],
+            'stream': True,
+        }
+    ).encode()
+
     agent = Agent(TestModel())
     run_input = ChatCompletionsAdapter.build_run_input(body)
     adapter = ChatCompletionsAdapter(agent=agent, run_input=run_input, accept='text/event-stream')
-    
+
     assert adapter.toolset is None
 
 
@@ -538,19 +535,19 @@ async def test_toolset_parsing_empty_tools_list() -> None:
 
 async def test_state_always_none() -> None:
     """Test that state is always None for Chat Completions adapter."""
-    body = json.dumps({
-        'model': 'test',
-        'messages': [{'role': 'user', 'content': 'Hello'}],
-        'stream': True,
-    }).encode()
-    
+    body = json.dumps(
+        {
+            'model': 'test',
+            'messages': [{'role': 'user', 'content': 'Hello'}],
+            'stream': True,
+        }
+    ).encode()
+
     agent = Agent(TestModel())
     run_input = ChatCompletionsAdapter.build_run_input(body)
     adapter = ChatCompletionsAdapter(agent=agent, run_input=run_input, accept='text/event-stream')
-    
+
     assert adapter.state is None
-
-
 
 
 # ============================================================================
@@ -599,6 +596,7 @@ async def test_chat_completions_streaming() -> None:
 
 async def test_chat_completions_tool_call_streaming() -> None:
     """Test streaming chat completions with tool calls."""
+
     def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
         return ModelResponse(
             parts=[
@@ -653,8 +651,6 @@ async def test_chat_completions_tool_call_streaming() -> None:
                         tool_calls_found = True
 
             assert tool_calls_found
-
-
 
 
 # ============================================================================
