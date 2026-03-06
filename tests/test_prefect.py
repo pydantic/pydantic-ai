@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import contextmanager
@@ -44,10 +45,12 @@ try:
         PrefectFunctionToolset,
         PrefectMCPServer,
         PrefectModel,
+        TaskConfig,
     )
     from pydantic_ai.durable_exec.prefect._cache_policies import PrefectAgentInputs
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
+
 
 try:
     import logfire
@@ -73,8 +76,6 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='prefect'),
-    # TODO(Marcelo): We are temporarily disabling it. We should enable them again.
-    pytest.mark.skip('This test suite is hanging with the latest versions of all packages.'),
 ]
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
@@ -1116,6 +1117,20 @@ async def test_cache_policy_custom():
     assert hash3 != hash1
 
 
+async def test_cache_policy_excludes_run_id():
+    """Test that run_id is excluded from cache key computation."""
+    cache_policy = PrefectAgentInputs()
+
+    messages1 = [ModelRequest(parts=[UserPromptPart(content='test')], run_id='run-1')]
+    messages2 = [ModelRequest(parts=[UserPromptPart(content='test')], run_id='run-2')]
+
+    mock_task_ctx = MagicMock()
+    hash1 = cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': messages1}, flow_parameters={})
+    hash2 = cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': messages2}, flow_parameters={})
+
+    assert hash1 == hash2
+
+
 async def test_cache_policy_with_tuples():
     """Test that cache policy handles tuples with timestamps correctly."""
     cache_policy = PrefectAgentInputs()
@@ -1165,6 +1180,43 @@ async def test_cache_policy_empty_inputs():
     )
 
     assert result is None
+
+
+async def test_repeated_run_hits_cache():
+    """Test that running the same prompt twice hits the cache on the second run.
+
+    By default, the cache policy includes RUN_ID which means each flow run has
+    its own cache namespace. To enable cross-flow caching, we use CROSS_FLOW_CACHE_POLICY
+    which excludes RUN_ID.
+
+    We use a unique prompt (via UUID) per test run to avoid cross-run cache hits.
+
+    If caching is broken, the model will be called twice instead of once.
+    """
+    call_count = 0
+    CROSS_FLOW_CACHE_POLICY = PrefectAgentInputs()
+
+    def counting_model(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[TextPart('4')])
+
+    agent = Agent(FunctionModel(counting_model), name='cache_test_agent')
+    prefect_agent = PrefectAgent(
+        agent,
+        model_task_config=TaskConfig(
+            cache_policy=CROSS_FLOW_CACHE_POLICY,
+        ),
+    )
+
+    # Use unique prompt per test run to avoid cross-run cache hits
+    prompt = f'What is 2+2? {uuid.uuid4()}'
+    prefect_agent.run_sync(prompt)
+    assert call_count == 1
+
+    # Cache hit here, should not call the model again (cross-flow caching enabled)
+    prefect_agent.run_sync(prompt)
+    assert call_count == 1
 
 
 # Test custom model settings
