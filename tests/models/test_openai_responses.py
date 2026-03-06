@@ -329,8 +329,11 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
                         },
                     )
                 ],
+                usage=RequestUsage(input_tokens=154, output_tokens=177, details={'reasoning_tokens': 0}),
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='and: 5, 5?', timestamp=IsDatetime())],
@@ -404,8 +407,11 @@ async def test_openai_responses_compact_messages_with_previous_response_id(
                         },
                     )
                 ],
+                usage=RequestUsage(input_tokens=143, output_tokens=155, details={'reasoning_tokens': 0}),
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='and: 5, 5?', timestamp=IsDatetime())],
@@ -481,8 +487,11 @@ async def test_openai_responses_compact_messages_output_type(allow_model_request
                         },
                     )
                 ],
+                usage=RequestUsage(input_tokens=243, output_tokens=169, details={'reasoning_tokens': 0}),
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[

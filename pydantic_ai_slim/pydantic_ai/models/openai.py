@@ -1385,7 +1385,14 @@ class OpenAIResponsesModel(Model):
         item = CompactionPart(
             content=None, id=compaction.id, provider_name=self.system, provider_details=compaction.model_dump()
         )
-        return ModelResponse(parts=[item], provider_name=self.system)
+        return ModelResponse(
+            parts=[item],
+            usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
+            provider_response_id=response.id,
+            timestamp=_now_utc(),
+            provider_name=self._provider.name,
+            provider_url=self._provider.base_url,
+        )
 
     async def request(
         self,
@@ -2866,7 +2873,7 @@ def _map_logprobs(
 
 
 def _map_usage(
-    response: chat.ChatCompletion | ChatCompletionChunk | responses.Response,
+    response: chat.ChatCompletion | ChatCompletionChunk | responses.Response | responses.CompactedResponse,
     provider: str,
     provider_url: str,
     model: str,
