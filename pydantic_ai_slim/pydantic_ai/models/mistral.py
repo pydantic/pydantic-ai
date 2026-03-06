@@ -803,8 +803,7 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str 
     elif isinstance(content, str):
         text = content
 
-    # Note: Check len to handle potential mismatch between function calls and responses from the API. (`msg: not the same number of function class and responses`)
-    if text and len(text) == 0:  # pragma: no cover
-        text = None
+    # Note: Empty strings may occur from function call/response mismatches from the API.
+    text = text or None
 
     return text, thinking
