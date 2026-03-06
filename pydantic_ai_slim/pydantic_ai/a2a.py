@@ -31,6 +31,12 @@ from pydantic_ai import (
 
 from .agent import AbstractAgent, AgentDepsT, OutputDataT
 
+__all__ = (
+    'current_task_id',
+    'current_task',
+    'current_storage',
+)
+
 # AgentWorker output type needs to be invariant for use in both parameter and return positions
 WorkerOutputT = TypeVar('WorkerOutputT')
 
