@@ -1087,7 +1087,7 @@ class AnthropicModel(Model):
         # Anthropic SDK accepts file-like objects (IO[bytes]) and handles base64 encoding internally
         if media_type.startswith('image/'):
             return BetaImageBlockParam(
-                source={'data': io.BytesIO(data), 'media_type': media_type, 'type': 'base64'},  # type: ignore
+                source={'data': io.BytesIO(data), 'media_type': media_type, 'type': 'base64'},  # pyright: ignore[reportArgumentType]
                 type='image',
             )
         elif media_type == 'application/pdf':
