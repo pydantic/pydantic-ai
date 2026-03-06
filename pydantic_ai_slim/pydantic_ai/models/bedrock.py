@@ -842,7 +842,7 @@ class BedrockConverseModel(Model):
         # system-prompt-only run). Prepend a synthetic user message in either case.
         # Note: Bedrock also rejects blank text fields, so we use a single period.
         if not processed_messages or processed_messages[0]['role'] != 'user':
-            processed_messages.insert(0, {'role': 'user', 'content': [{'text': '.'}]})
+            processed_messages.insert(0, {'role': 'user', 'content': [{'text': ' '}]})
 
         return system_prompt, processed_messages
 

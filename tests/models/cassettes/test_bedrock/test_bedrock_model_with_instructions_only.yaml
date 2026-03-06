@@ -21,7 +21,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '200'
+      - '232'
       content-type:
       - application/json
     parsed_body:
@@ -37,6 +37,90 @@ interactions:
         inputTokens: 7
         outputTokens: 10
         totalTokens: 17
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "."}]}], "system": [{"text": "Generate a short greeting."}],
+      "inferenceConfig": {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YTQxMWUwZDYtYzBmMy00NDczLWI4OTUtOTNhZGFjOTM2MGYy
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '135'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '255'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 525
+      output:
+        message:
+          content:
+          - text: Hello! How can I assist you today?
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 7
+        outputTokens: 10
+        serverToolUsage: {}
+        totalTokens: 17
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": " "}]}], "system": [{"text": "Generate a short greeting."}],
+      "inferenceConfig": {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YTkxZGYwYzYtOGI3Ni00OWU5LTkwNzMtMzI1N2Y5NWJiMThl
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '135'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '245'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 393
+      output:
+        message:
+          content:
+          - text: Hello! How are you today?
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 6
+        outputTokens: 8
+        serverToolUsage: {}
+        totalTokens: 14
     status:
       code: 200
       message: OK
