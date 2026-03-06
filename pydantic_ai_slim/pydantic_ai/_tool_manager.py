@@ -8,14 +8,14 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic, Literal
 
-from opentelemetry.trace import Tracer
+from opentelemetry.trace import Status, StatusCode, Tracer, use_span
 from pydantic import ValidationError
 from typing_extensions import deprecated
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
+from .exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -406,6 +406,46 @@ class ToolManager(Generic[AgentDepsT]):
                 }
             ),
         }
+
+        # In instrumentation version 5+, we manually control error recording so control-flow
+        # exceptions (CallDeferred / ApprovalRequired) are not marked as span errors.
+        if instrumentation_version >= 5:
+            span = tracer.start_span(
+                instrumentation_names.get_tool_span_name(call.tool_name),
+                attributes=span_attributes,
+            )
+            try:
+                with use_span(span, end_on_exit=False):
+                    try:
+                        tool_result = await self._execute_tool_call_impl(validated, usage=usage)
+                    except ToolRetryError as e:
+                        part = e.tool_retry
+                        if include_content and span.is_recording():
+                            span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
+                        raise
+                    except (CallDeferred, ApprovalRequired) as e:
+                        if span.is_recording():
+                            span.set_attribute('pydantic_ai.tool.control_flow_exception', e.__class__.__name__)
+                            if e.metadata is not None:
+                                span.set_attribute('pydantic_ai.tool.control_flow_metadata', json.dumps(e.metadata))
+                        raise
+                    except Exception as e:
+                        if span.is_recording():
+                            span.record_exception(e)
+                            span.set_status(Status(StatusCode.ERROR, str(e)))
+                        raise
+
+                    if include_content and span.is_recording():
+                        span.set_attribute(
+                            instrumentation_names.tool_result_attr,
+                            tool_result
+                            if isinstance(tool_result, str)
+                            else _messages.tool_return_ta.dump_json(tool_result).decode(),
+                        )
+            finally:
+                span.end()
+
+            return tool_result
 
         with tracer.start_as_current_span(
             instrumentation_names.get_tool_span_name(call.tool_name),
