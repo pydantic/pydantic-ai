@@ -309,6 +309,7 @@ def _is_call_history_processor_ctx(annotation: Any) -> bool:
         warnings.warn(
             'RunContext is deprecated for history processors, use HistoryProcessorContext instead',
             DeprecationWarning,
+            stacklevel=2,
         )
         return True
 
