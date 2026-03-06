@@ -519,15 +519,13 @@ def _normalize_openrouter_response(
     Works for both regular completions and streaming chunks.
     """
     # 1. Unwrap nested provider data
-    provider_data = response_dict.get('provider')
-    if (
-        isinstance(provider_data, dict)
-        and isinstance(provider_data.get('choices'), list)
-        and response_dict.get('choices') is None
-    ):
-        nested_provider_name = provider_data.pop('provider', 'unknown')
-        response_dict.update(provider_data)
-        response_dict['provider'] = nested_provider_name
+    raw_provider: Any = response_dict.get('provider')
+    if isinstance(raw_provider, dict) and response_dict.get('choices') is None:
+        provider_data = cast(dict[str, Any], raw_provider)
+        if isinstance(provider_data.get('choices'), list):
+            nested_provider_name: str = cast(str, provider_data.pop('provider', 'unknown'))
+            response_dict.update(provider_data)
+            response_dict['provider'] = nested_provider_name
 
     # 2. Sanitize missing metadata
     if response_dict.get('id') is None:
