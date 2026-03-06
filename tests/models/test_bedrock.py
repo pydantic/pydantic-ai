@@ -3586,9 +3586,7 @@ async def test_bedrock_model_instructions_only_then_message_history(
 
     first_result = await agent.run()
     second_result = await agent.run('Now say goodbye.', message_history=first_result.all_messages())
-    assert second_result.output == snapshot(
-        'Farewell for now! It was a pleasure chatting with you. Have a fantastic day ahead!'
-    )
+    assert second_result.output == snapshot('Goodbye for now! Take care and see you soon!')
     assert second_result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -3597,8 +3595,8 @@ async def test_bedrock_model_instructions_only_then_message_history(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='Hello there! How are you doing today?')],
-                usage=RequestUsage(input_tokens=7, output_tokens=10),
+                parts=[TextPart(content='Hello! How are you today?')],
+                usage=RequestUsage(input_tokens=6, output_tokens=8),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -3613,12 +3611,8 @@ async def test_bedrock_model_instructions_only_then_message_history(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[
-                    TextPart(
-                        content='Farewell for now! It was a pleasure chatting with you. Have a fantastic day ahead!'
-                    )
-                ],
-                usage=RequestUsage(input_tokens=25, output_tokens=19),
+                parts=[TextPart(content='Goodbye for now! Take care and see you soon!')],
+                usage=RequestUsage(input_tokens=22, output_tokens=12),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
