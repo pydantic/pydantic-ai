@@ -1,0 +1,27 @@
+pydantic_ai_slim/pydantic_ai/models/google.py
+  4ba2ad79974ff636 386,511
+pydantic_ai_slim/pydantic_ai/models/anthropic.py
+  4ba2ad79974ff636 1090
+pydantic_ai_slim/pydantic_ai/models/cohere.py
+  4ba2ad79974ff636 141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "7f931f44a8a267ade218017a27b715e885d48e90",
+  "prompts": {
+    "4ba2ad79974ff636": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ea70ef1-2c5c-40ef-aa41-022a6e9e541d",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 4,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
