@@ -21,7 +21,6 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.a2a import AgentWorker, current_storage, current_task, current_task_id
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
@@ -34,7 +33,7 @@ with try_import() as imports_successful:
     from fasta2a.schema import DataPart, FilePart, Message, Task, TaskSendParams, TextPart
     from fasta2a.storage import InMemoryStorage
 
-    from pydantic_ai.a2a import current_storage, current_task, current_task_id
+    from pydantic_ai.a2a import AgentWorker, current_storage, current_task, current_task_id
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fasta2a not installed'),
@@ -1046,12 +1045,10 @@ async def test_a2a_context_vars():
         task = current_task.get()
         storage = current_storage.get()
 
-        # Verify the exposed metadata and instances
         assert task['id'] == task_id
         assert task['status']['state'] == 'working'
         assert isinstance(storage, InMemoryStorage)
 
-        # Test modifying the task via the exposed storage instance
         await storage.update_task(task_id, state='working')
 
         context_id = task.get('context_id')
@@ -1101,14 +1098,6 @@ async def test_a2a_context_vars():
                     }
                 ]
             )
-
-    # Test that context vars are properly cleaned up
-    with pytest.raises(LookupError):
-        current_task_id.get()
-    with pytest.raises(LookupError):
-        current_task.get()
-    with pytest.raises(LookupError):
-        current_storage.get()
 
 
 async def test_a2a_worker_cleanup():

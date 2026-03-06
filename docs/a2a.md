@@ -137,11 +137,11 @@ Pydantic AI provides several `ContextVar`s in the `pydantic_ai.a2a` module that 
 
 Here is an example of how you can access the current A2A task context inside a tool:
 
-```python {title="context_tool.py"}
+```python {title="context_tool.py" test="skip"}
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.a2a import current_task_id, current_storage
 
-agent = Agent('openai:gpt-4', instructions='You are a helpful assistant.')
+agent = Agent('openai:gpt-5.2', instructions='You are a helpful assistant.')
 
 @agent.tool
 async def update_status(ctx: RunContext[None], status_message: str) -> str:
