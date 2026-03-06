@@ -1,0 +1,23 @@
+pydantic_ai_slim/pydantic_ai/models/mistral.py
+  4ba2ad79974ff636 806-807
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "45ee66863cdfe129d1a0e253548db963d5854554",
+  "prompts": {
+    "4ba2ad79974ff636": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ea70ef1-2c5c-40ef-aa41-022a6e9e541d",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 3,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
