@@ -4292,6 +4292,32 @@ async def test_adapter_dump_messages_id_fallback():
     assert len(ids) == len(set(ids))
 
 
+async def test_event_stream_server_message_id():
+    """Test that VercelAIEventStream passes server_message_id to the StartChunk."""
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, server_message_id='server-generated-id-abc123')
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events[0] == snapshot({'type': 'start', 'messageId': 'server-generated-id-abc123'})
+
+
 async def test_adapter_dump_messages_with_invalid_json_args():
     """Test that dump_messages handles invalid JSON args gracefully."""
     messages: list[ModelMessage] = [
