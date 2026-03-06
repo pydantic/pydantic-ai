@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
 from enum import IntEnum
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias, cast
 
 import httpx
 import pytest
@@ -85,6 +85,20 @@ async def test_model_simple(allow_model_requests: None):
     tool_config = m._get_tool_config(mrp, tools)
     assert tools is None
     assert tool_config is None
+
+
+async def test_gemini_client_property_reflects_provider_changes():
+    provider = GoogleGLAProvider(api_key='via-arg')
+    model = GeminiModel('gemini-1.5-flash', provider=provider)
+
+    client_a = provider.client
+    assert model.client is client_a
+
+    client_b = httpx.AsyncClient(base_url='https://example.com/')
+    cast(Any, provider)._client = client_b
+    assert model.client is client_b
+    assert model.base_url == 'https://example.com/'
+    await client_b.aclose()
 
 
 async def test_model_tools(allow_model_requests: None):
