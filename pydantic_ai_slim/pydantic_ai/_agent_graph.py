@@ -68,11 +68,11 @@ FINAL_RESULT_PROCESSED: str = 'Final result processed.'
 """Message sent to the model when an output tool call produces a final result."""
 TOOL_NOT_EXECUTED_FINAL_RESULT: str = 'Tool not executed - a final result was already processed.'
 """Message sent to the model when a tool call is skipped because a final result already exists."""
-OUTPUT_TOOL_NOT_USED_FINAL_RESULT: str = OUTPUT_TOOL_NOT_USED_FINAL_RESULT
+OUTPUT_TOOL_NOT_USED_FINAL_RESULT: str = 'Output tool not used - a final result was already processed.'
 """Message sent to the model when an output tool is skipped because a final result already exists."""
-OUTPUT_TOOL_NOT_USED_VALIDATION_FAILED: str = OUTPUT_TOOL_NOT_USED_VALIDATION_FAILED
+OUTPUT_TOOL_NOT_USED_VALIDATION_FAILED: str = 'Output tool not used - output failed validation.'
 """Message sent to the model when an output tool is skipped because validation failed."""
-OUTPUT_TOOL_NOT_USED_EXECUTION_FAILED: str = OUTPUT_TOOL_NOT_USED_EXECUTION_FAILED
+OUTPUT_TOOL_NOT_USED_EXECUTION_FAILED: str = 'Output tool not used - output function execution failed.'
 """Message sent to the model when an output tool is skipped because execution raised an error."""
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
