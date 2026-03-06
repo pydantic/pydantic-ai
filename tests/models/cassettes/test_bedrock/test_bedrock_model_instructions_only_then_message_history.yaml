@@ -5,7 +5,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        MGQxMzI4MDEtNDE1MS00YjgxLWFiZTAtNDgxOWM4MjFlNTg0
+        YzU0ZThkNjMtNDRjOC00MGUwLTlhNjktNTQ2ZjJjMDg0OWE1
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -26,7 +26,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 565
+        latencyMs: 537
       output:
         message:
           content:
@@ -48,7 +48,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        MzYxODIwMjYtNjA4MS00M2Q2LTlhNjktMWNjMDU5ZTFlN2Y4
+        OTRlNDBhODgtZmU0ZS00YmE5LWIzMzgtY2Q5YmJjYzA1YWE4
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -64,23 +64,23 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '266'
+      - '268'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 551
+        latencyMs: 17012
       output:
         message:
           content:
-          - text: Goodbye for now! Take care and see you soon!
+          - text: Goodbye for now! Have a wonderful day ahead!
           role: assistant
       stopReason: end_turn
       usage:
         inputTokens: 22
-        outputTokens: 12
+        outputTokens: 11
         serverToolUsage: {}
-        totalTokens: 34
+        totalTokens: 33
     status:
       code: 200
       message: OK
