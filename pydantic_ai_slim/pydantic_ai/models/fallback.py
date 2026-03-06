@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
@@ -76,22 +77,17 @@ class _ResponseCheckingStream(StreamedResponse):
     def __init__(
         self,
         wrapped: StreamedResponse,
-        should_fallback: Callable[[ModelResponse], Awaitable[bool]],
+        should_fallback: Callable[[Exception | ModelResponse], Awaitable[bool]],
     ):
         # Skip super().__init__() so dataclass field defaults don't create instance attributes
         object.__setattr__(self, '_wrapped', wrapped)
         object.__setattr__(self, '_should_fallback', should_fallback)
+        object.__setattr__(self, '_cached_iter', None)
 
-    # Fields from StreamedResponse that have class-level defaults (from dataclass field(default=None))
-    # which would shadow __getattr__. We list them here so __getattribute__ can intercept reads.
+    # Dataclass fields with default=None create class-level attributes that shadow __getattr__.
+    # Derived from StreamedResponse's fields so new fields are automatically included.
     _PROXIED_FIELDS = frozenset(
-        {
-            'final_result_event',
-            'provider_response_id',
-            'provider_details',
-            'finish_reason',
-            '_event_iterator',
-        }
+        f.name for f in dataclasses.fields(StreamedResponse) if not f.init and f.default is not dataclasses.MISSING
     )
 
     def __getattribute__(self, name: str) -> Any:
@@ -106,13 +102,15 @@ class _ResponseCheckingStream(StreamedResponse):
 
     def __setattr__(self, name: str, value: Any) -> None:
         # Redirect writes to the wrapped stream (e.g. final_result_event set by agent loop)
-        if name in ('_wrapped', '_should_fallback'):
+        if name in ('_wrapped', '_should_fallback', '_cached_iter'):
             object.__setattr__(self, name, value)
         else:
             setattr(self._wrapped, name, value)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        return self._iterate()
+        if self._cached_iter is None:
+            object.__setattr__(self, '_cached_iter', self._iterate())
+        return self._cached_iter
 
     async def _iterate(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for event in self._wrapped:

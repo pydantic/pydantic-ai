@@ -1504,10 +1504,36 @@ async def test_streaming_response_handler_accepts() -> None:
     )
     agent = Agent(model=fallback)
     async with agent.run_stream('hello') as result:
-        chunks = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
-    # Stream completed normally — response handler accepted
-    assert len(chunks) > 0
-    assert result.is_complete
+        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+            [
+                ModelResponse(
+                    parts=[TextPart(content='hello ')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function::success_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function::success_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function::success_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='hello world')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=2),
+                    model_name='function::success_response_stream',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+        assert result.is_complete
 
 
 async def test_streaming_response_handler_rejects() -> None:
