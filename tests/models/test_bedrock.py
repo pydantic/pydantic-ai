@@ -3152,6 +3152,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
     )
     assert bedrock_messages == snapshot(
         [
+            {'role': 'user', 'content': [{'text': ' '}]},
             {
                 'role': 'assistant',
                 'content': [
@@ -3187,7 +3188,7 @@ async def test_bedrock_map_messages_builtin_tool_provider_filtering(
                         }
                     },
                 ],
-            }
+            },
         ]
     )
 

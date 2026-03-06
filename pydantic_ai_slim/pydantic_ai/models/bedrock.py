@@ -428,11 +428,6 @@ class BedrockConverseModel(Model):
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         settings = cast(BedrockModelSettings, model_settings or {})
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
-
-        # Bedrock requires conversations to start with a user message (see _messages_create).
-        if not bedrock_messages or bedrock_messages[0]['role'] != 'user':
-            bedrock_messages.insert(0, {'role': 'user', 'content': [{'text': ' '}]})
-
         params: CountTokensRequestTypeDef = {
             'modelId': remove_bedrock_geo_prefix(self.model_name),
             'input': {
@@ -585,15 +580,6 @@ class BedrockConverseModel(Model):
     ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
         settings = model_settings or BedrockModelSettings()
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
-
-        # Bedrock requires conversations to start with a user message.
-        # This can happen when there are no messages at all (only system prompt/instructions),
-        # or when message_history starts with an assistant response (e.g. from a previous
-        # system-prompt-only run). Prepend a synthetic user message in either case.
-        # Note: Bedrock also rejects blank text fields, so we use a single space.
-        if not bedrock_messages or bedrock_messages[0]['role'] != 'user':
-            bedrock_messages.insert(0, {'role': 'user', 'content': [{'text': ' '}]})
-
         inference_config = self._map_inference_config(settings)
 
         params: ConverseRequestTypeDef = {
@@ -849,6 +835,14 @@ class BedrockConverseModel(Model):
             if last_user_content is not None:
                 # Note: _get_last_user_message_content ensures content doesn't already end with a cachePoint.
                 _insert_cache_point_before_trailing_documents(last_user_content)
+
+        # Bedrock requires conversations to start with a user message.
+        # This can happen when there are no messages at all (only system prompt/instructions),
+        # or when message_history starts with an assistant response (e.g. from a previous
+        # system-prompt-only run). Prepend a synthetic user message in either case.
+        # Note: Bedrock also rejects blank text fields, so we use a single space.
+        if not processed_messages or processed_messages[0]['role'] != 'user':
+            processed_messages.insert(0, {'role': 'user', 'content': [{'text': ' '}]})
 
         return system_prompt, processed_messages
 
