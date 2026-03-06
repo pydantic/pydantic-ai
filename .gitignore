@@ -22,11 +22,11 @@ node_modules/
 .mcp.json
 .claude/*
 !.claude/settings.json
-!.claude/skills/
-.claude/skills/*
-!.claude/skills/pytest-vcr/
-!.claude/skills/address-feedback
-!.claude/skills/pre-push-review
+!.claude/skills
+.agents/skills/*
+!.agents/skills/pytest-vcr/
+!.agents/skills/address-feedback
+!.agents/skills/pre-push-review
 .github/.review-context/
 /.cursor/
 /.devcontainer/

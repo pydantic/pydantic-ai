@@ -23,6 +23,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Verify .claude/skills symlink
+        run: |
+          if [ ! -L .claude/skills ]; then
+            echo "ERROR: .claude/skills must be a symlink to ../.agents/skills"
+            echo "Skills live in .agents/skills/. See .agents/README.md"
+            echo "If this happened after a merge conflict, move new skills to .agents/skills/ and run:"
+            echo "  rm -rf .claude/skills && ln -s ../.agents/skills .claude/skills"
+            exit 1
+          fi
+
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.13"

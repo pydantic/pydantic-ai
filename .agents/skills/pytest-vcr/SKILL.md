@@ -1,7 +1,7 @@
 ---
 name: pytest-vcr
 description: Record, rewrite, and debug VCR cassettes for HTTP recordings. Use when running tests with --record-mode, verifying cassette playback, or inspecting request/response bodies in YAML cassettes.
-allowed-tools: Bash(uv run pytest *), Bash(uv run python .claude/skills/pytest-vcr/parse_cassette.py *), Bash(.claude/skills/pytest-vcr/run-vertex-tests.sh *), Bash(source .env *), Bash(git diff *)
+allowed-tools: Bash(uv run pytest *), Bash(uv run python .agents/skills/pytest-vcr/parse_cassette.py *), Bash(.agents/skills/pytest-vcr/run-vertex-tests.sh *), Bash(source .env *), Bash(git diff *)
 ---
 
 # Pytest VCR Workflow
@@ -55,17 +55,17 @@ Parse VCR cassette YAML files to inspect request/response bodies without dealing
 ### Usage
 
 ```bash
-uv run python .claude/skills/pytest-vcr/parse_cassette.py <cassette_path> [--interaction N]
+uv run python .agents/skills/pytest-vcr/parse_cassette.py <cassette_path> [--interaction N]
 ```
 
 ### Examples
 
 ```bash
 # Parse all interactions in a cassette
-uv run python .claude/skills/pytest-vcr/parse_cassette.py tests/models/cassettes/test_foo/test_bar.yaml
+uv run python .agents/skills/pytest-vcr/parse_cassette.py tests/models/cassettes/test_foo/test_bar.yaml
 
 # Parse only interaction 1 (0-indexed)
-uv run python .claude/skills/pytest-vcr/parse_cassette.py tests/models/cassettes/test_foo/test_bar.yaml --interaction 1
+uv run python .agents/skills/pytest-vcr/parse_cassette.py tests/models/cassettes/test_foo/test_bar.yaml --interaction 1
 ```
 
 ### Output
@@ -89,10 +89,10 @@ Use the provided script:
 
 ```bash
 # Record Vertex cassettes
-.claude/skills/pytest-vcr/run-vertex-tests.sh tests/path/to/test.py -v --tb=line --record-mode=rewrite
+.agents/skills/pytest-vcr/run-vertex-tests.sh tests/path/to/test.py -v --tb=line --record-mode=rewrite
 
 # Verify playback
-.claude/skills/pytest-vcr/run-vertex-tests.sh tests/path/to/test.py -vv --tb=line
+.agents/skills/pytest-vcr/run-vertex-tests.sh tests/path/to/test.py -vv --tb=line
 ```
 
 If using gcloud and auth fails:
@@ -117,5 +117,5 @@ git diff tests/ -- ':!**/cassettes/**'
 git diff --name-only tests/ -- '**/cassettes/**'
 
 # 5. Inspect cassette contents if needed
-uv run python .claude/skills/pytest-vcr/parse_cassette.py tests/models/cassettes/test_openai/test_chat_completion.yaml
+uv run python .agents/skills/pytest-vcr/parse_cassette.py tests/models/cassettes/test_openai/test_chat_completion.yaml
 ```

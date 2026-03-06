@@ -71,7 +71,7 @@ async def test_feature(model: Model, stream: bool, request: pytest.FixtureReques
 ## VCR Workflow
 
 Record cassettes with `--record-mode=rewrite`, verify playback without the flag, and review diffs.
-For detailed workflows see `.claude/skills/pytest-vcr/SKILL.md`.
+For detailed workflows see `.agents/skills/pytest-vcr/SKILL.md`.
 
 ## Key Fixtures
 
