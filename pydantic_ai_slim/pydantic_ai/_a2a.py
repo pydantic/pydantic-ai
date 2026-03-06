@@ -140,7 +140,7 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
         message_history.extend(self.build_message_history(task.get('history', [])))
 
         try:
-            result = await self.agent.run(message_history=message_history)  # type: ignore
+            result = await self.agent.run(message_history=message_history)  # pyright: ignore[reportArgumentType]
 
             await self.storage.update_context(task['context_id'], result.all_messages())
 
