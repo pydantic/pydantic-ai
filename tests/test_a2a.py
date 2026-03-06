@@ -1,6 +1,7 @@
 import base64
 import uuid
 from datetime import timezone
+from typing import cast
 
 import anyio
 import httpx
@@ -20,6 +21,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.a2a import AgentWorker, current_storage, current_task, current_task_id
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
@@ -27,8 +29,9 @@ from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
+    from fasta2a.broker import InMemoryBroker
     from fasta2a.client import A2AClient
-    from fasta2a.schema import DataPart, FilePart, Message, TextPart
+    from fasta2a.schema import DataPart, FilePart, Message, Task, TaskSendParams, TextPart
     from fasta2a.storage import InMemoryStorage
 
     from pydantic_ai.a2a import current_storage, current_task, current_task_id
@@ -1100,6 +1103,49 @@ async def test_a2a_context_vars():
             )
 
     # Test that context vars are properly cleaned up
+    with pytest.raises(LookupError):
+        current_task_id.get()
+    with pytest.raises(LookupError):
+        current_task.get()
+    with pytest.raises(LookupError):
+        current_storage.get()
+
+
+async def test_a2a_worker_cleanup():
+    """Verify context vars are cleaned up properly when AgentWorker executes a task in the caller's context."""
+
+    def simple_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[PydanticAITextPart(content='ok')])
+
+    agent = Agent(model=FunctionModel(simple_model), output_type=str)
+    storage = InMemoryStorage()
+    broker = InMemoryBroker()
+    worker = AgentWorker(agent=agent, storage=storage, broker=broker)
+
+    task_id = str(uuid.uuid4())
+
+    task = cast(
+        Task,
+        {
+            'id': task_id,
+            'context_id': str(uuid.uuid4()),
+            'kind': 'task',
+            'status': {'state': 'submitted', 'timestamp': '2024-01-01T00:00:00Z'},
+            'history': [
+                {
+                    'role': 'user',
+                    'parts': [{'kind': 'text', 'text': 'Hello'}],
+                    'kind': 'message',
+                    'message_id': str(uuid.uuid4()),
+                }
+            ],
+        },
+    )
+    storage.tasks[task_id] = task
+
+    params = cast(TaskSendParams, {'id': task_id})
+    await worker.run_task(params)
+
     with pytest.raises(LookupError):
         current_task_id.get()
     with pytest.raises(LookupError):

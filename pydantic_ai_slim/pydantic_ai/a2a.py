@@ -162,7 +162,8 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
         # Re-load the task to ensure we expose the most up-to-date state (e.g. state='working' and any new timestamps).
         # This is critical for persistent storage backends that do not mutate the task dictionary in-place.
         updated_task = await self.storage.load_task(task['id'])
-        assert updated_task is not None, f'Task {task["id"]} not found after update'
+        if updated_task is None:
+            raise ValueError(f'Task {task["id"]} not found after update')  # pragma: no cover
         task = updated_task
 
         # Load context - contains pydantic-ai message history from previous tasks in this conversation
@@ -207,11 +208,11 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
                 task['id'], state='completed', new_artifacts=artifacts, new_messages=a2a_messages
             )
         finally:
-            if task_id_token is not None:
+            if task_id_token is not None:  # pragma: no branch
                 current_task_id.reset(task_id_token)
-            if task_token is not None:
+            if task_token is not None:  # pragma: no branch
                 current_task.reset(task_token)
-            if storage_token is not None:
+            if storage_token is not None:  # pragma: no branch
                 current_storage.reset(storage_token)
 
     async def cancel_task(self, params: TaskIdParams) -> None:
