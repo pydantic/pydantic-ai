@@ -7,6 +7,7 @@ Built-in tools are native tools provided by LLM providers that can be used to en
 Pydantic AI supports the following built-in tools:
 
 - **[`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]**: Allows agents to search the web
+- **[`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool]**: Allows agents to search X/Twitter (xAI only)
 - **[`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]**: Enables agents to execute code in a secure environment
 - **[`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool]**: Enables agents to generate images
 - **[`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool]**: Enables agents to fetch web pages
@@ -155,6 +156,76 @@ _(This example is complete, it can be run "as is")_
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
+
+## X Search Tool
+
+The [`XSearchTool`][pydantic_ai.builtin_tools.XSearchTool] allows your agent to search X/Twitter for real-time posts and content. This tool is exclusive to xAI models. See the [xAI X Search documentation](https://docs.x.ai/docs/guides/tools/search-tools#x-search) for more details.
+
+### Provider Support
+
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| xAI | ✅ | Full feature support including date filtering and handle filtering. |
+| All other providers | ❌ | Not supported |
+
+### Usage
+
+```py {title="x_search_xai.py"}
+from pydantic_ai import Agent, XSearchTool
+
+agent = Agent('xai:grok-4-1-fast', builtin_tools=[XSearchTool()])
+
+result = agent.run_sync('What are people saying about AI on X today?')
+print(result.output)
+#> There's a lot of excitement about new AI models being released...
+```
+
+_(This example is complete, it can be run "as is")_
+
+### Configuration Options
+
+The `XSearchTool` supports several configuration parameters:
+
+```py {title="x_search_configured.py"}
+from datetime import datetime
+
+from pydantic_ai import Agent, XSearchTool
+
+agent = Agent(
+    'xai:grok-4-1-fast',
+    builtin_tools=[
+        XSearchTool(
+            allowed_x_handles=['OpenAI', 'AnthropicAI', 'xaboratory'],
+            from_date=datetime(2024, 1, 1),
+            to_date=datetime(2024, 12, 31),
+            enable_image_understanding=True,
+            enable_video_understanding=True,
+        )
+    ],
+)
+
+result = agent.run_sync('What have AI companies been posting about?')
+print(result.output)
+"""
+OpenAI announced their latest model updates, while Anthropic shared research on AI safety...
+"""
+```
+
+_(This example is complete, it can be run "as is")_
+
+#### Parameter Reference
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `allowed_x_handles` | `list[str] \| None` | Only include posts from these X handles (max 10). Cannot be used with `excluded_x_handles`. |
+| `excluded_x_handles` | `list[str] \| None` | Exclude posts from these X handles (max 10). Cannot be used with `allowed_x_handles`. |
+| `from_date` | `datetime \| date \| None` | Start date filter. Accepts `datetime` or `date` objects. |
+| `to_date` | `datetime \| date \| None` | End date filter. Accepts `datetime` or `date` objects. |
+| `enable_image_understanding` | `bool` | Enable image analysis from X posts (default: False). |
+| `enable_video_understanding` | `bool` | Enable video analysis from X content (default: False). |
+
+!!! note "Handle Filtering"
+    You can only use one of `allowed_x_handles` or `excluded_x_handles`, not both. Each list is limited to 10 handles maximum.
 
 ## Code Execution Tool
 
