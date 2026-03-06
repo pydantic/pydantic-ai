@@ -1165,7 +1165,7 @@ class BaseToolReturnPart:
                 tool_content_parts.append(f'See file {item.identifier}.')
                 file_content.append(f'This is file {item.identifier}:')
                 file_content.append(item)
-            elif isinstance(item, str):
+            elif isinstance(item, str):  # pragma: no branch
                 tool_content_parts.append(item)
 
         if was_list:

@@ -14,6 +14,7 @@ The SUPPORT_MATRIX determines expected behavior for each (provider, file_type) p
 from __future__ import annotations
 
 import os
+import unittest.mock
 from dataclasses import dataclass
 from itertools import count
 from pathlib import Path
@@ -37,7 +38,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.usage import UsageLimits
 from tests.cassette_utils import CassetteContext
 
@@ -839,3 +840,103 @@ async def test_s3_video_url_bedrock():
     assert 'video' in result
     assert result['video']['format'] == 'mp4'
     assert result['video']['source']['s3Location']['uri'] == 's3://my-bucket/videos/clip.mp4'  # pyright: ignore[reportTypedDictNotRequiredAccess]
+
+
+# --- UploadedFile validation error tests (tool return path) ---
+# These test that UploadedFile validation errors in tool returns are raised correctly.
+# The user-prompt path is covered in provider-specific test files; these cover the
+# tool-return code path which maps UploadedFile inside ToolReturnPart.
+
+
+@dataclass
+class UploadedFileErrorCase:
+    """A test case for UploadedFile validation errors in tool returns."""
+
+    id: str
+    provider: ProviderName
+    uploaded_file: UploadedFile
+    match: str
+
+
+UPLOADED_FILE_ERROR_CASES: list[UploadedFileErrorCase] = [
+    UploadedFileErrorCase(
+        id='anthropic_wrong_provider',
+        provider='anthropic',
+        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='openai'),
+        match="provider_name='openai'.*cannot be used with AnthropicModel",
+    ),
+    UploadedFileErrorCase(
+        id='anthropic_unsupported_media_type',
+        provider='anthropic',
+        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='anthropic', media_type='audio/mpeg'),
+        match='Unsupported media type.*audio/mpeg',
+    ),
+    UploadedFileErrorCase(
+        id='bedrock_wrong_provider',
+        provider='bedrock_nova',
+        uploaded_file=UploadedFile(file_id='s3://bucket/file.pdf', provider_name='openai'),
+        match="provider_name='openai'.*cannot be used with BedrockConverseModel",
+    ),
+    UploadedFileErrorCase(
+        id='bedrock_non_s3_url',
+        provider='bedrock_nova',
+        uploaded_file=UploadedFile(
+            file_id='https://example.com/file.pdf', provider_name='bedrock', media_type='application/pdf'
+        ),
+        match='UploadedFile for Bedrock must use an S3 URL',
+    ),
+    UploadedFileErrorCase(
+        id='bedrock_unsupported_format',
+        provider='bedrock_nova',
+        uploaded_file=UploadedFile(
+            file_id='s3://bucket/file.bin', provider_name='bedrock', media_type='application/octet-stream'
+        ),
+        match='Unsupported media type for Bedrock UploadedFile',
+    ),
+    UploadedFileErrorCase(
+        id='google_vertex_non_gcs_uri',
+        provider='google_vertex',
+        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google-vertex'),
+        match=r'UploadedFile for GoogleModel \(Vertex\) must use a GCS URI',
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    'case',
+    [pytest.param(c, id=c.id) for c in UPLOADED_FILE_ERROR_CASES],
+)
+async def test_uploaded_file_validation_error_in_tool_return(
+    case: UploadedFileErrorCase,
+    bedrock_provider: Any,
+) -> None:
+    """Test that invalid UploadedFile in a tool return raises UserError before the API call."""
+    provider = case.provider
+
+    if not is_provider_available(provider):  # pragma: no cover
+        pytest.skip(f'{provider} dependencies not installed')
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=case.uploaded_file, tool_call_id='1')]),
+    ]
+    params = ModelRequestParameters()
+
+    if provider == 'anthropic':
+        m_anthropic = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
+        with pytest.raises(UserError, match=case.match):
+            await m_anthropic._map_message(messages, params, {})  # pyright: ignore[reportPrivateUsage]
+    elif provider in ('bedrock_nova', 'bedrock_claude'):
+        assert bedrock_provider is not None
+        model_name = MODEL_CONFIGS[provider][0]
+        m_bedrock = BedrockConverseModel(model_name, provider=bedrock_provider)
+        with pytest.raises(UserError, match=case.match):
+            await m_bedrock._map_messages(messages, params, None)  # pyright: ignore[reportPrivateUsage]
+    elif provider == 'google_vertex':
+        m_google = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+        with pytest.raises(UserError, match=case.match):
+            with unittest.mock.patch.object(
+                type(m_google), 'system', new_callable=lambda: property(lambda self: 'google-vertex')
+            ):
+                await m_google._map_messages(messages, params)  # pyright: ignore[reportPrivateUsage]
+    else:
+        assert_never(provider)  # pyright: ignore[reportArgumentType]
