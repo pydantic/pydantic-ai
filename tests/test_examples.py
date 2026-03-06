@@ -6,6 +6,8 @@ import re
 import shutil
 import ssl
 import sys
+import tempfile
+import types
 from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field
 from inspect import FrameInfo
@@ -40,6 +42,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.embeddings import EmbeddingModel, infer_embedding_model
 from pydantic_ai.embeddings.test import TestEmbeddingModel
+from pydantic_ai.environments.local import LocalEnvironment as _LocalEnvironment
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
@@ -58,6 +61,35 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
 ]
+
+# ---------------------------------------------------------------------------
+# Mock DockerEnvironment backed by LocalEnvironment for testing doc examples
+# without requiring the `docker` package or a running Docker daemon.
+# ---------------------------------------------------------------------------
+
+
+class _MockDockerEnvironment(_LocalEnvironment):
+    """Test stand-in for DockerEnvironment that uses LocalEnvironment under the hood."""
+
+    def __init__(self, **_kwargs: Any) -> None:
+        # Use mkdtemp (no finalizer) instead of TemporaryDirectory to avoid
+        # PytestUnraisableExceptionWarning when constructor-only examples
+        # never enter the async context manager.
+        self._temp_path = Path(tempfile.mkdtemp())
+        super().__init__(root_dir=self._temp_path)
+
+    @classmethod
+    def hardened(cls, **kwargs: Any) -> _MockDockerEnvironment:
+        return cls(**kwargs)
+
+    async def __aexit__(self, *_args: Any) -> None:
+        shutil.rmtree(self._temp_path, ignore_errors=True)
+
+
+_mock_docker_env_module = types.ModuleType('pydantic_ai.environments.docker')
+_mock_docker_env_module.__package__ = 'pydantic_ai.environments'
+_mock_docker_env_module.DockerEnvironment = _MockDockerEnvironment  # type: ignore[attr-defined]
+
 code_examples: dict[str, CodeExample] = {}
 
 
@@ -169,6 +201,10 @@ def test_docs_examples(
         mocker.patch('sentence_transformers.SentenceTransformer')
     except ModuleNotFoundError:
         pass
+
+    # Replace DockerEnvironment with a LocalEnvironment-backed mock so doc
+    # examples that reference Docker can run without the docker package or daemon.
+    mocker.patch.dict(sys.modules, {'pydantic_ai.environments.docker': _mock_docker_env_module})
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
@@ -573,6 +609,13 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
+    # Execution environment doc examples
+    'Create a Python script that prints the first 10 Fibonacci numbers, then run it.': 'Done! The first 10 Fibonacci numbers are: 0, 1, 1, 2, 3, 5, 8, 13, 21, 34',
+    'Fetch https://httpbin.org/get and print the response': 'Successfully fetched the URL. The response contains request metadata including headers and origin IP.',
+    'echo "running locally"': 'Command executed successfully.',
+    'echo "running in Docker"': 'Command executed successfully.',
+    'task A': 'Task A completed.',
+    'task B': 'Task B completed.',
 }
 
 tool_responses: dict[tuple[str, str], str] = {
