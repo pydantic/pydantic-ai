@@ -1,0 +1,35 @@
+pydantic_ai_slim/pydantic_ai/_a2a.py
+  4ba2ad79974ff636 143
+pydantic_ai_slim/pydantic_ai/providers/huggingface.py
+  4ba2ad79974ff636 122
+pydantic_ai_slim/pydantic_ai/_agent_graph.py
+  4ba2ad79974ff636 19,1393,1404
+pydantic_ai_slim/pydantic_ai/providers/voyageai.py
+  4ba2ad79974ff636 27
+pydantic_ai_slim/pydantic_ai/providers/cohere.py
+  4ba2ad79974ff636 31
+pydantic_ai_slim/pydantic_ai/_function_schema.py
+  4ba2ad79974ff636 285
+pydantic_ai_slim/pydantic_ai/providers/google_vertex.py
+  4ba2ad79974ff636 188
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.8",
+  "base_commit_sha": "8c382705026a8a14fbfe634995dc0ce0928da553",
+  "prompts": {
+    "4ba2ad79974ff636": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ea70ef1-2c5c-40ef-aa41-022a6e9e541d",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>",
+      "messages": [],
+      "total_additions": 14,
+      "total_deletions": 14,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    }
+  }
+}
