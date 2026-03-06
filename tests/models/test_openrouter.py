@@ -5,7 +5,7 @@ from typing import Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 from vcr.cassette import Cassette
 
 from pydantic_ai import (
@@ -1019,16 +1019,23 @@ def test_openrouter_provider_details_null_provider() -> None:
 
 
 def test_openrouter_validate_completion_malformed_error_fallthrough() -> None:
-    """Malformed error_data falls through the except clause rather than raising ValidationError."""
+    """Malformed error_data falls through the except clause and surfaces as UnexpectedModelBehavior.
+
+    When error is a plain string, _OpenRouterError.model_validate() raises ValidationError
+    which is caught; then _OpenRouterChatCompletion.model_validate() raises ValidationError
+    which _process_response (in the parent openai.py) wraps as UnexpectedModelBehavior.
+    """
     from openai.types.chat import ChatCompletion
 
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
     from pydantic_ai.models.openrouter import OpenRouterModel
 
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
 
     # error is a plain string — _OpenRouterError.model_validate() will raise ValidationError
-    # which should be caught and fall through to let model_validate produce a clearer error.
+    # which is caught; the fall-through to _OpenRouterChatCompletion.model_validate() then
+    # fails with ValidationError, which _process_response wraps as UnexpectedModelBehavior.
     completion = ChatCompletion.model_construct(
         id=None,
         choices=None,
@@ -1040,7 +1047,7 @@ def test_openrouter_validate_completion_malformed_error_fallthrough() -> None:
         error='something went wrong',
     )
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(UnexpectedModelBehavior):
         model._process_response(completion)  # type: ignore[reportPrivateUsage]
 
 
