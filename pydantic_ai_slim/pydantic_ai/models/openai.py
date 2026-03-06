@@ -833,7 +833,7 @@ class OpenAIChatModel(Model):
             provider_details['timestamp'] = number_to_datetime(response.created)
 
         return ModelResponse(
-            parts=items,
+            parts=list(self._process_parts(choice.message)),
             usage=self._map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
@@ -844,14 +844,13 @@ class OpenAIChatModel(Model):
             finish_reason=self._map_finish_reason(choice.finish_reason),
         )
 
-    def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
+    def _process_thinking(self, message: chat.ChatCompletionMessage) -> Iterable[ThinkingPart]:
         """Hook that maps reasoning tokens to thinking parts.
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
         """
         profile = OpenAIModelProfile.from_profile(self.profile)
         custom_field = profile.openai_chat_thinking_field
-        items: list[ThinkingPart] = []
 
         # Prefer the configured custom reasoning field, if present in profile.
         # Fall back to built-in fields if no custom field result was found.
@@ -867,10 +866,44 @@ class OpenAIChatModel(Model):
                 continue
             reasoning: str | None = getattr(message, field_name, None)
             if reasoning:  # pragma: no branch
-                items.append(ThinkingPart(id=field_name, content=reasoning, provider_name=self.system))
-                return items
+                yield ThinkingPart(id=field_name, content=reasoning, provider_name=self.system)
+                break
 
-        return items or None
+    def _process_content(self, message: chat.ChatCompletionMessage) -> Iterable[TextPart | ThinkingPart]:
+        """Hook that maps the message content to thinking or text parts.
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
+        """
+        if message.content:
+            for part in split_content_into_text_and_thinking(message.content, self.profile.thinking_tags):
+                yield replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part
+
+    def _process_tool_calls(self, message: chat.ChatCompletionMessage) -> Iterable[ToolCallPart]:
+        """Hook that maps tool calls to tool call parts.
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
+        """
+        if message.tool_calls is not None:
+            for c in message.tool_calls:
+                if isinstance(c, ChatCompletionMessageFunctionToolCall):
+                    part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
+                elif isinstance(c, ChatCompletionMessageCustomToolCall):  # pragma: no cover
+                    # NOTE: Custom tool calls are not supported.
+                    # See <https://github.com/pydantic/pydantic-ai/issues/2513> for more details.
+                    raise RuntimeError('Custom tool calls are not supported')
+                else:
+                    assert_never(c)
+                part.tool_call_id = _guard_tool_call_id(part)
+                yield part
+
+    def _process_parts(self, message: chat.ChatCompletionMessage) -> Iterable[ModelResponsePart]:
+        """Hook that defines the mappings to transform message contents to response parts.
+
+        This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
+        """
+        return itertools.chain(
+            self._process_thinking(message), self._process_content(message), self._process_tool_calls(message)
+        )
 
     async def _process_streamed_response(
         self,
@@ -966,7 +999,7 @@ class OpenAIChatModel(Model):
                     self._map_response_tool_call_part(item)
                 elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                     self._map_response_builtin_part(item)
-                elif isinstance(item, FilePart):  # pragma: no cover
+                elif isinstance(item, FilePart):
                     self._map_response_file_part(item)
                 else:
                     assert_never(item)
