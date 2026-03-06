@@ -685,12 +685,6 @@ Toolsets for multi-agent orchestration help agents delegate tasks to specialized
 
 - [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai) by [Vstorm](https://vstorm.co/) — `SubAgentToolset` with sync, async, and auto execution modes. Supports nested sub-agents, dynamic agent creation, and parent-child communication. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
 
-### Context Management
-
-Processors for managing conversation context help agents handle long sessions without exceeding token limits:
-
-- [`summarization-pydantic-ai`](https://github.com/vstorm-co/summarization-pydantic-ai) by [Vstorm](https://vstorm.co/) — `SummarizationProcessor` for LLM-based context compression and `SlidingWindowProcessor` for zero-cost message trimming. Works with Pydantic AI's [`history_processors`](message-history.md#processing-message-history) mechanism. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
-
 ### File Operations
 
 Toolsets for file operations help agents read, write, and edit files:
@@ -710,12 +704,6 @@ Toolsets for sandboxed code execution help agents run code in a sandboxed enviro
 Toolsets for database access help agents explore schemas, run queries, and interact with SQL databases:
 
 - [`database-pydantic-ai`](https://github.com/vstorm-co/database-pydantic-ai) by [Vstorm](https://vstorm.co/) — `DatabaseToolset` with `list_tables`, `get_schema`, `describe_table`, `explain_query`, and `query` tools. Supports SQLite and PostgreSQL with built-in security controls (read-only mode, query timeouts, row limits).
-
-### Middleware & Guardrails
-
-Middleware for intercepting and transforming agent behavior with lifecycle hooks:
-
-- [`pydantic-ai-middleware`](https://github.com/vstorm-co/pydantic-ai-middleware) by [Vstorm](https://vstorm.co/) — `MiddlewareAgent` wrapper with 7 lifecycle hooks (`before_run`, `after_run`, `before_tool_call`, etc.), tool permission system, cost tracking with budget enforcement, parallel middleware execution, and async guardrails. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
 
 ### LangChain Tools {#langchain-tools}
 

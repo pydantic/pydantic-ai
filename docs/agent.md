@@ -1150,6 +1150,16 @@ Pydantic AI's instrumentation is built on [OpenTelemetry](https://opentelemetry.
 
 [Full Logfire integration guide →](logfire.md)
 
+## Middleware & Guardrails
+
+Pydantic AI does not currently have built-in middleware or guardrails support. See [#1197](https://github.com/pydantic/pydantic-ai/issues/1197) for discussion.
+
+### Third-Party Solutions
+
+The community maintains packages that add middleware capabilities:
+
+- [`pydantic-ai-middleware`](https://github.com/vstorm-co/pydantic-ai-middleware) by [Vstorm](https://vstorm.co/) — `MiddlewareAgent` wrapper with lifecycle hooks (`before_run`, `after_run`, `before_tool_call`, etc.), tool permission system, cost tracking with budget enforcement, and async guardrails. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
+
 ## Model errors
 
 If models behave unexpectedly (e.g., the retry limit is exceeded, or their API returns `503`), agent runs will raise [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
