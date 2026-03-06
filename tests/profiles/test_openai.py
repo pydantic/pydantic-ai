@@ -48,6 +48,7 @@ SAMPLING_PARAMS_CASES = [
     SamplingParamsCase(model='gpt-5.2-turbo', supports_reasoning=True, supports_reasoning_effort_none=True),
     SamplingParamsCase(model='gpt-5.2-mini', supports_reasoning=True, supports_reasoning_effort_none=True),
     SamplingParamsCase(model='gpt-5.3-codex', supports_reasoning=True, supports_reasoning_effort_none=True),
+    SamplingParamsCase(model='gpt-5.3-mini', supports_reasoning=True, supports_reasoning_effort_none=True),
     SamplingParamsCase(model='gpt-5.4', supports_reasoning=True, supports_reasoning_effort_none=True),
     SamplingParamsCase(model='gpt-5.4-pro', supports_reasoning=True, supports_reasoning_effort_none=True),
     # no reasoning
