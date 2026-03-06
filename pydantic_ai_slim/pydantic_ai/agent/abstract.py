@@ -588,8 +588,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # When we get here, the `ModelRequestNode` has completed streaming after the final result was found.
                                 # When running an agent with `agent.run`, we'd then move to `CallToolsNode` to execute the tool calls and
                                 # find the final result.
-                                # We also want to execute tool calls (in case `agent.end_strategy == 'exhaustive'`) here, but
-                                # we don't want to use run the `CallToolsNode` logic to determine the final output, as it would be
+                                # We also want to execute tool calls (in case `agent.end_strategy` is not `'early'`) here, but
+                                # we don't want to run the `CallToolsNode` logic to determine the final output, as it would be
                                 # wasteful and could produce a different result (e.g. when text output is followed by tool calls).
                                 # So we call `process_tool_calls` directly and then end the run with the found final result.
 
