@@ -646,7 +646,11 @@ class TestAudienceFiltering:
         assert result == 'hello model'
 
     async def test_call_tool_no_annotation_passes_through(self, run_context: RunContext[None]) -> None:
-        """Content with no audience annotation is always forwarded to the model."""
+        """Content with no audience annotation is always forwarded to the model.
+
+        FastMCP wraps plain str returns in a ``{'result': ...}`` structured-content dict;
+        the toolset returns that dict as-is since no audience filtering applies.
+        """
         fastmcp_server = FastMCP('test_server')
 
         @fastmcp_server.tool()
@@ -657,7 +661,7 @@ class TestAudienceFiltering:
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool(name='plain_tool', tool_args={}, ctx=run_context, tool=tools['plain_tool'])
-        assert result == 'plain result'
+        assert result == {'result': 'plain result'}
 
     async def test_call_tool_empty_content_returns_structured_content(self, run_context: RunContext[None]) -> None:
         """A tool that returns an empty list gets wrapped in structured_content by FastMCP."""

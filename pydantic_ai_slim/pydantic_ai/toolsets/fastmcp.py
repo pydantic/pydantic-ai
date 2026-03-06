@@ -34,7 +34,10 @@ try:
         TextResourceContents,
     )
 
-    from pydantic_ai.mcp import TOOL_SCHEMA_VALIDATOR
+    from pydantic_ai.mcp import (  # type: ignore[reportPrivateUsage]
+        TOOL_SCHEMA_VALIDATOR,
+        _include_content_for_assistant,
+    )
 
 except ImportError as _import_error:
     raise ImportError(
@@ -119,7 +122,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
         return self
 
-    async def __aexit__(self, *args: Any) -> bool | None:
+    async def __aexit__(self, *args: object) -> bool | None:
         async with self._enter_lock:
             self._running_count -= 1
             if self._running_count == 0 and self._exit_stack:
@@ -158,12 +161,10 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                 else:
                     raise e
 
-        # If we have structured content, return that
-        if call_tool_result.structured_content:
-            return call_tool_result.structured_content
-
-        # Otherwise, return the content
-        filtered = [p for p in call_tool_result.content if _include_for_assistant(p)]
+        # Audience filtering must happen before the structured-content path: if every
+        # content block is annotated as user-only, the model should not see the
+        # JSON-serialised equivalent either.
+        filtered = [p for p in call_tool_result.content if _include_content_for_assistant(p)]
         # If the original content was empty (tool returned nothing), return an empty list rather
         # than the audience-filtered placeholder.
         if not filtered and not call_tool_result.content:
@@ -172,6 +173,11 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         # model knows the tool ran but produced no model-visible output.
         if not filtered:
             return 'Tool executed successfully. (No model-visible content in result.)'
+
+        # If we have structured content, return that (audience check already passed above)
+        if call_tool_result.structured_content:
+            return call_tool_result.structured_content
+
         return _map_fastmcp_tool_results(parts=filtered)
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
@@ -181,24 +187,6 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             max_retries=self.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
-
-
-def _include_for_assistant(part: ContentBlock) -> bool:
-    """Return True if this content block should be forwarded to the model (assistant).
-
-    Per the MCP specification, content blocks may carry ``annotations.audience`` listing
-    the intended recipients.  An absent audience means *all* audiences; when present, only
-    the listed audiences should receive the content.
-
-    See: https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-result
-    """
-    annotations = getattr(part, 'annotations', None)
-    if annotations is None:
-        return True
-    audience = getattr(annotations, 'audience', None)
-    if audience is None:
-        return True
-    return 'assistant' in audience
 
 
 def _map_fastmcp_tool_results(parts: list[ContentBlock]) -> list[FastMCPToolResult] | FastMCPToolResult:
