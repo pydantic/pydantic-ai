@@ -302,7 +302,7 @@ Both names are emitted simultaneously so that existing tooling continues to work
 
 #### Migrating between versions
 
-When upgrading your `InstrumentationSettings` version, you may need to update dashboards, alerts, or queries that reference span or attribute names. Here's a checklist:
+When upgrading your [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings] version, you may need to update dashboards, alerts, or queries that reference span or attribute names. Here's a checklist:
 
 1. **Update span name filters.** If you filter or group by span names:
     - `agent run` → `invoke_agent {agent_name}` (v3+)
@@ -320,7 +320,7 @@ When upgrading your `InstrumentationSettings` version, you may need to update da
 
 4. **Test in parallel.** Consider running the new version alongside the old one in a staging environment before switching in production. You can instrument different agents with different versions:
 
-    ```python
+    ```python {test="skip"}
     from pydantic_ai import Agent
     from pydantic_ai.models.instrumented import InstrumentationSettings
 
