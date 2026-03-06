@@ -4,10 +4,10 @@ The BedrockJsonSchemaTransformer strips Bedrock-incompatible constraints when
 strict=True (native output or explicit strict tools) while preserving constraints
 that Bedrock accepts (string constraints, enum, const, $defs/$ref, etc.).
 
-The is_strict_compatible flag is set based on the strict parameter:
-- strict=True  → is_strict_compatible=True  (constraints stripped, schema is clean)
-- strict=False → is_strict_compatible=False
-- strict=None  → is_strict_compatible=False  (no auto-promotion to strict)
+The is_strict_compatible flag indicates whether the schema can be used with strict mode:
+- strict=True  → always True (incompatible constraints are stripped, making the schema clean)
+- strict=None  → True if schema is compatible, False if incompatible constraints found
+  (used to decide whether to auto-promote to strict)
 """
 
 from __future__ import annotations as _annotations
@@ -15,9 +15,9 @@ from __future__ import annotations as _annotations
 from typing import Annotated, Literal
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -133,7 +133,7 @@ def test_strict_true_nested_model():
 
 
 def test_strict_false_preserves_schema():
-    """With strict=False, schema is preserved, is_strict_compatible=False."""
+    """With strict=False, schema is preserved as-is (no additionalProperties injection, no constraint stripping)."""
 
     class User(BaseModel):
         username: Annotated[str, Field(min_length=3)]
