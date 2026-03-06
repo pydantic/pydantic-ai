@@ -1,0 +1,103 @@
+interactions:
+- request:
+    body:
+      messages:
+      - content: Tell me about Paris
+        role: user
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      stream: false
+      tool_choice:
+        function:
+          name: final_result
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+        type: function
+    headers:
+      content-type:
+      - application/json
+    method: POST
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"4c6-qTfEsDuwQTdF4XoFPHCQqLt1f3U"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '2'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: ''
+          reasoning: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Paris", "summary": "Paris, the capital of France, is known for its stunning architecture,
+                art museums, and romantic atmosphere. The Eiffel Tower, Louvre Museum, and Notre-Dame Cathedral are just a
+                few of the many famous landmarks that attract millions of visitors each year. The city is also famous for
+                its fashion industry, haute couture, and delicious French cuisine."}'
+              name: final_result
+            id: call_f5275ab3b4dc412a839ff0b4
+            index: 0
+            type: function
+        seed: null
+      created: 1769718276
+      id: oVGwk1K-z1gNr-9c5b742fbbec369b
+      metadata:
+        weight_version: default
+      model: meta-llama/Llama-4-Scout-17B-16E-Instruct
+      object: chat.completion
+      prompt: []
+      usage:
+        completion_tokens: 106
+        prompt_tokens: 634
+        total_tokens: 740
+    status:
+      code: 200
+      message: OK
+version: 1

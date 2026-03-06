@@ -1,0 +1,82 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '414'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What's the weather in Paris?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get weather for a city
+          name: get_weather
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '818'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1451
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Paris
+              name: get_weather
+            thoughtSignature: CuUBAXLI2ny28Xe0MvRz6Nbwt3AZO6eH1lLQSGHgbWevy2AcNuy+oI36NuffzfvW3HUjnYau409Vd3TiGd/EMf+ruMk5hnxit1ox45hYCAcsfz8lXMcAMDW1AycWsq5lelwKPMH7J5yZ6yG8j/YNIiFf5LiqiahpnxP8qkVQiSw4dT9CQSrPzdmq55giegT5Mm5vln+RA1ULwRhhUHGhRHUkzfdXcqJi9uBZPHuiOBtnKGfJnwfytHjNBYUJXu6rHfn59A8Hog+/FT8dsmH+1Jk0Xqc7lBbId8QUs304r3Fs0+gLcpbeOw==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: _cF7adWFD6u-qtsPvbuDoQI
+      usageMetadata:
+        candidatesTokenCount: 15
+        promptTokenCount: 46
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 46
+        thoughtsTokenCount: 48
+        totalTokenCount: 109
+    status:
+      code: 200
+      message: OK
+version: 1
