@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
+import logging
 import mimetypes
 import os
 from abc import ABC, abstractmethod
@@ -29,6 +30,8 @@ from .usage import RequestUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
+
+_logger = logging.getLogger(__name__)
 
 _mime_types = MimeTypes()
 # Replicate what is being done in `mimetypes.init()`
@@ -1410,18 +1413,36 @@ class BaseToolCallPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
-    def args_as_dict(self) -> dict[str, Any]:
+    def args_as_dict(self, *, raise_if_invalid: bool = False) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
         This is just for convenience with models that require dicts as input.
+
+        Args:
+            raise_if_invalid: If ``True``, a ``ValueError`` or ``AssertionError``
+                caused by malformed JSON in ``args`` will be re-raised.  When
+                ``False`` (the default), malformed JSON is handled gracefully by
+                returning ``{'INVALID_JSON': '<raw args>'}`` so that the value
+                can still be sent to a model API (e.g. during a retry flow)
+                without crashing.
         """
         if not self.args:
             return {}
         if isinstance(self.args, dict):
             return self.args
-        args = pydantic_core.from_json(self.args)
-        assert isinstance(args, dict), 'args should be a dict'
-        return cast(dict[str, Any], args)
+        try:
+            args = pydantic_core.from_json(self.args)
+            assert isinstance(args, dict), 'args should be a dict'
+            return cast(dict[str, Any], args)
+        except (ValueError, AssertionError):
+            if raise_if_invalid:
+                raise
+            _logger.debug(
+                'Malformed tool call args for %r, falling back to INVALID_JSON wrapper: %s',
+                self.tool_name,
+                self.args,
+            )
+            return {'INVALID_JSON': self.args}
 
     def args_as_json_str(self) -> str:
         """Return the arguments as a JSON string.

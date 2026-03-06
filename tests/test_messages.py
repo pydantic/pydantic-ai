@@ -1155,3 +1155,37 @@ def test_tool_return_content_nested_multimodal():
     assert isinstance(reloaded_content['images'][0], ImageUrl)
     assert isinstance(reloaded_content['documents'][0], DocumentUrl)
     assert reloaded_content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
+
+
+def test_args_as_dict_valid_json():
+    """args_as_dict should return parsed dict for valid JSON args."""
+    part = ToolCallPart(tool_name='test_tool', args='{"key": "value"}')
+    assert part.args_as_dict() == {'key': 'value'}
+
+
+def test_args_as_dict_dict_args():
+    """args_as_dict should return the dict directly when args is already a dict."""
+    part = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
+    assert part.args_as_dict() == {'key': 'value'}
+
+
+def test_args_as_dict_malformed_json_returns_invalid_json_wrapper():
+    """args_as_dict should return INVALID_JSON wrapper for malformed JSON by default."""
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    result = part.args_as_dict()
+    assert result == {'INVALID_JSON': malformed}
+
+
+def test_args_as_dict_empty_args():
+    """args_as_dict should return {} when args is None/empty."""
+    part = ToolCallPart(tool_name='test_tool', args=None)
+    assert part.args_as_dict() == {}
+
+
+def test_args_as_dict_raise_if_invalid():
+    """args_as_dict(raise_if_invalid=True) should raise on malformed JSON."""
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    with pytest.raises(ValueError):
+        part.args_as_dict(raise_if_invalid=True)
