@@ -49,3 +49,18 @@ async def test_init_with_http_client():
     async with httpx.AsyncClient() as http_client:
         provider = OpenAIProvider(http_client=http_client, api_key='foobar')
         assert provider.client._client == http_client  # type: ignore
+
+
+def test_init_with_max_retries():
+    provider = OpenAIProvider(api_key='foobar', max_retries=5)
+    assert provider.client.max_retries == 5
+
+
+def test_init_with_max_retries_zero():
+    provider = OpenAIProvider(api_key='foobar', max_retries=0)
+    assert provider.client.max_retries == 0
+
+
+def test_init_max_retries_default():
+    provider = OpenAIProvider(api_key='foobar')
+    assert provider.client.max_retries == 2  # OpenAI SDK default

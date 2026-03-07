@@ -53,3 +53,18 @@ def test_deep_seek_model_profile():
     provider = DeepSeekProvider(api_key='api-key')
     model = OpenAIChatModel('deepseek-r1', provider=provider)
     assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+
+def test_deep_seek_provider_max_retries():
+    provider = DeepSeekProvider(api_key='api-key', max_retries=5)
+    assert provider.client.max_retries == 5
+
+
+def test_deep_seek_provider_max_retries_zero():
+    provider = DeepSeekProvider(api_key='api-key', max_retries=0)
+    assert provider.client.max_retries == 0
+
+
+def test_deep_seek_provider_max_retries_default():
+    provider = DeepSeekProvider(api_key='api-key')
+    assert provider.client.max_retries == 2  # OpenAI SDK default
