@@ -7,12 +7,12 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import count
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from botocore.exceptions import ClientError
-from typing_extensions import ParamSpec, assert_never
+from typing_extensions import NotRequired, ParamSpec, TypedDict, assert_never
 
 from pydantic_ai import (
     AudioUrl,
@@ -86,6 +86,18 @@ if TYPE_CHECKING:
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
 _SUPPORTED_VIDEO_FORMATS = ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
 _SUPPORTED_DOCUMENT_FORMATS = ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
+
+BedrockPromptCacheTTL = Literal['5m', '1h']
+BedrockPromptCacheSetting: TypeAlias = bool | BedrockPromptCacheTTL
+
+
+class _BedrockCachePointBlock(TypedDict):
+    type: Literal['default']
+    ttl: NotRequired[BedrockPromptCacheTTL]
+
+
+class _BedrockCachePoint(TypedDict):
+    cachePoint: _BedrockCachePointBlock
 
 
 def _make_image_block(format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
@@ -201,6 +213,7 @@ def _parse_s3_source(url: str) -> DocumentSourceTypeDef:
 
 def _insert_cache_point_before_trailing_documents(
     content: list[Any],
+    cache_point: _BedrockCachePoint,
     *,
     raise_if_cannot_insert: bool = False,
 ) -> bool:
@@ -212,6 +225,7 @@ def _insert_cache_point_before_trailing_documents(
 
     Args:
         content: The content list to modify in place.
+        cache_point: The cache point block to insert.
         raise_if_cannot_insert: If True, raises UserError when cache point cannot be inserted
             (e.g., when the message contains only documents/videos). If False, silently skips.
 
@@ -235,11 +249,11 @@ def _insert_cache_point_before_trailing_documents(
         prev_block = content[trailing_start - 1]
         if isinstance(prev_block, dict) and 'cachePoint' in prev_block:
             return False
-        content.insert(trailing_start, {'cachePoint': {'type': 'default'}})
+        content.insert(trailing_start, cache_point)
         return True
     elif trailing_start is None:
         # No trailing document/video content, append cache point at the end
-        content.append({'cachePoint': {'type': 'default'}})
+        content.append(cache_point)
         return True
     else:
         # trailing_start == 0, can't insert at start
@@ -297,7 +311,7 @@ class BedrockModelSettings(ModelSettings, total=False):
     See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters.html>.
     """
 
-    bedrock_cache_tool_definitions: bool
+    bedrock_cache_tool_definitions: BedrockPromptCacheSetting
     """Whether to add a cache point after the last tool definition.
 
     When enabled, the last tool in the `tools` array will include a `cachePoint`, allowing Bedrock to cache tool
@@ -305,14 +319,14 @@ class BedrockModelSettings(ModelSettings, total=False):
     See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
     """
 
-    bedrock_cache_instructions: bool
+    bedrock_cache_instructions: BedrockPromptCacheSetting
     """Whether to add a cache point after the system prompt blocks.
 
     When enabled, an extra `cachePoint` is appended to the system prompt so Bedrock can cache system instructions.
     See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
     """
 
-    bedrock_cache_messages: bool
+    bedrock_cache_messages: BedrockPromptCacheSetting
     """Convenience setting to enable caching for the last user message.
 
     When enabled, this automatically adds a cache point to the last content block
@@ -665,12 +679,9 @@ class BedrockConverseModel(Model):
             return None
 
         profile = BedrockModelProfile.from_profile(self.profile)
-        if (
-            model_settings
-            and model_settings.get('bedrock_cache_tool_definitions')
-            and profile.bedrock_supports_tool_caching
-        ):
-            tools.append({'cachePoint': {'type': 'default'}})
+        if cache_tool_definitions := (model_settings or {}).get('bedrock_cache_tool_definitions'):
+            if profile.bedrock_supports_tool_caching:
+                tools.append(cast('ToolTypeDef', self._get_cache_point(cache_tool_definitions)))
 
         tool_choice: ToolChoiceTypeDef
         if not model_request_parameters.allow_text_output:
@@ -706,9 +717,7 @@ class BedrockConverseModel(Model):
                         if part.content:  # pragma: no branch
                             system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
-                        bedrock_messages.extend(
-                            await self._map_user_prompt(part, document_count, profile.bedrock_supports_prompt_caching)
-                        )
+                        bedrock_messages.extend(await self._map_user_prompt(part, document_count, profile))
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
                         bedrock_messages.append(
@@ -827,14 +836,18 @@ class BedrockConverseModel(Model):
         if instructions := self._get_instructions(messages, model_request_parameters):
             system_prompt.append({'text': instructions})
 
-        if system_prompt and settings.get('bedrock_cache_instructions') and profile.bedrock_supports_prompt_caching:
-            system_prompt.append({'cachePoint': {'type': 'default'}})
+        if system_prompt and (cache_instructions := settings.get('bedrock_cache_instructions')):
+            if profile.bedrock_supports_prompt_caching:
+                system_prompt.append(cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions)))
 
-        if processed_messages and settings.get('bedrock_cache_messages') and profile.bedrock_supports_prompt_caching:
-            last_user_content = self._get_last_user_message_content(processed_messages)
-            if last_user_content is not None:
-                # Note: _get_last_user_message_content ensures content doesn't already end with a cachePoint.
-                _insert_cache_point_before_trailing_documents(last_user_content)
+        if processed_messages and (cache_messages := settings.get('bedrock_cache_messages')):
+            if profile.bedrock_supports_prompt_caching:
+                last_user_content = self._get_last_user_message_content(processed_messages)
+                if last_user_content is not None:
+                    # Note: `_get_last_user_message_content` ensures content doesn't already end with a `cachePoint`.
+                    _insert_cache_point_before_trailing_documents(
+                        last_user_content, self._get_cache_point(cache_messages)
+                    )
 
         return system_prompt, processed_messages
 
@@ -868,7 +881,7 @@ class BedrockConverseModel(Model):
         self,
         part: UserPromptPart,
         document_count: Iterator[int],
-        supports_prompt_caching: bool,
+        profile: BedrockModelProfile,
     ) -> list[MessageUnionTypeDef]:
         content: list[ContentBlockUnionTypeDef] = []
         if isinstance(part.content, str):
@@ -938,7 +951,7 @@ class BedrockConverseModel(Model):
                     else:
                         content.append(_make_document_block(f'Document {next(document_count)}', format, source))
                 elif isinstance(item, CachePoint):
-                    if not supports_prompt_caching:
+                    if not profile.bedrock_supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching
                         continue
                     if not content or 'cachePoint' in content[-1]:
@@ -946,7 +959,11 @@ class BedrockConverseModel(Model):
                             'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
                             'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
                         )
-                    _insert_cache_point_before_trailing_documents(content, raise_if_cannot_insert=True)
+                    _insert_cache_point_before_trailing_documents(
+                        content,
+                        BedrockConverseModel._get_cache_point(item.ttl),
+                        raise_if_cannot_insert=True,
+                    )
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
@@ -956,6 +973,13 @@ class BedrockConverseModel(Model):
         return {
             'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
         }
+
+    @staticmethod
+    def _get_cache_point(cache_setting: BedrockPromptCacheSetting) -> _BedrockCachePoint:
+        cache_point: _BedrockCachePointBlock = {'type': 'default'}
+        if isinstance(cache_setting, str):
+            cache_point['ttl'] = cache_setting
+        return {'cachePoint': cache_point}
 
     @staticmethod
     def _limit_cache_points(
