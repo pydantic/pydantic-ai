@@ -1097,3 +1097,44 @@ def test_openrouter_normalize_openrouter_response_module_function() -> None:
     assert result['model'] == 'openai/gpt-4.1-mini'
     assert result['object'] == 'chat.completion'
     assert result['provider'] == 'unknown'
+
+
+def test_openrouter_normalize_provider_dict_without_choices_skips_unwrap() -> None:
+    """When provider is a dict but has no 'choices' list, skip unwrapping (coverage for false branch)."""
+    from pydantic_ai.models.openrouter import _normalize_openrouter_response  # type: ignore[reportPrivateUsage]
+
+    # provider is a dict without a choices list — should NOT unwrap
+    d = {
+        'id': None,
+        'model': None,
+        'object': None,
+        'choices': None,
+        'provider': {'some_key': 'some_value'},  # dict but no 'choices'
+    }
+    result = _normalize_openrouter_response(d, 'openai/gpt-4.1-mini', 'chat.completion')
+    # Unwrap should NOT have happened; metadata fallbacks should still apply
+    assert result['id'] == 'openrouter-fallback-id'
+    assert result['model'] == 'openai/gpt-4.1-mini'
+    assert result['provider'] == 'unknown'  # dict → not str → falls back to 'unknown'
+    assert result['choices'] is None  # unchanged, no unwrap occurred
+
+
+def test_openrouter_normalize_provider_dict_with_null_provider_name() -> None:
+    """When nested provider dict has provider=None, fall back to 'unknown' (not None)."""
+    from pydantic_ai.models.openrouter import _normalize_openrouter_response  # type: ignore[reportPrivateUsage]
+
+    # nested provider dict has provider=None (key exists, value is None)
+    d = {
+        'id': 'orig-id',
+        'model': 'orig-model',
+        'object': 'chat.completion',
+        'choices': None,
+        'provider': {
+            'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': 'hi'}, 'finish_reason': 'stop'}],
+            'provider': None,  # key present but value is None
+        },
+    }
+    result = _normalize_openrouter_response(d, 'openai/gpt-4.1-mini', 'chat.completion')
+    # Unwrap happened; provider name should be 'unknown' not None
+    assert result['provider'] == 'unknown'
+    assert result['choices'] is not None
