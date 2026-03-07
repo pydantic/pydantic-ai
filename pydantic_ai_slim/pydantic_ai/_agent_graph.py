@@ -635,9 +635,34 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_schema = ctx.deps.output_schema
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
-                if not self.model_response.parts or all(
+                async def _recover_text_from_previous_response() -> bool:
+                    if text_processor := output_schema.text_processor:  # pragma: no branch
+                        # In this scenario, if text responses are allowed, we return text from the most recent model
+                        # response, if any.
+                        for message in reversed(ctx.state.message_history):
+                            if isinstance(message, _messages.ModelResponse):
+                                text = ''
+                                for part in message.parts:
+                                    if isinstance(part, _messages.TextPart):
+                                        text += part.content
+                                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                                        # Text parts before a built-in tool call are essentially thoughts,
+                                        # not part of the final result output, so we reset the accumulated text.
+                                        text = ''  # pragma: no cover
+                                if text:
+                                    try:
+                                        self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                                        return True
+                                    except ToolRetryError:  # pragma: no cover
+                                        # If the text from the previous response was invalid, ignore it.
+                                        pass
+                    return False
+
+                is_thinking_only_response = bool(self.model_response.parts) and all(
                     isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
-                ):
+                )
+
+                if not self.model_response.parts:
                     # Don't retry if the model returned an empty response because the token limit was exceeded, possibly during thinking.
                     if self.model_response.finish_reason == 'length':
                         model_settings = ctx.deps.model_settings
@@ -665,26 +690,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # we got an empty response.
                     # this sometimes happens with anthropic (and perhaps other models)
                     # when the model has already returned text along side tool calls
-                    if text_processor := output_schema.text_processor:  # pragma: no branch
-                        # in this scenario, if text responses are allowed, we return text from the most recent model
-                        # response, if any
-                        for message in reversed(ctx.state.message_history):
-                            if isinstance(message, _messages.ModelResponse):
-                                text = ''
-                                for part in message.parts:
-                                    if isinstance(part, _messages.TextPart):
-                                        text += part.content
-                                    elif isinstance(part, _messages.BuiltinToolCallPart):
-                                        # Text parts before a built-in tool call are essentially thoughts,
-                                        # not part of the final result output, so we reset the accumulated text
-                                        text = ''  # pragma: no cover
-                                if text:
-                                    try:
-                                        self._next_node = await self._handle_text_response(ctx, text, text_processor)
-                                        return
-                                    except ToolRetryError:  # pragma: no cover
-                                        # If the text from the previous response was invalid, ignore it.
-                                        pass
+                    if await _recover_text_from_previous_response():
+                        return
 
                     # Go back to the model request node with an empty request, which means we'll essentially
                     # resubmit the most recent request that resulted in an empty response,
@@ -696,6 +703,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                         _messages.ModelRequest(parts=[], instructions=instructions)
                     )
+                    return
+
+                # For thinking-only responses, first try to recover text from an earlier model response
+                # (e.g. text that came with a tool call). If recovery fails, fall back to normal retry prompting.
+                if is_thinking_only_response and await _recover_text_from_previous_response():
                     return
 
                 text = ''
