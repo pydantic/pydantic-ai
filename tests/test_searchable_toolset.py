@@ -163,18 +163,26 @@ async def test_searchable_toolset_search_empty_query():
 
 
 async def test_searchable_toolset_max_results():
-    """Test that results are capped at `_MAX_SEARCH_RESULTS`."""
-    toolset = create_function_toolset()
+    """Test that results are capped at `_MAX_SEARCH_RESULTS` (10)."""
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    for i in range(15):
+
+        @toolset.tool(lazy=True, name=f'tool_{i}')
+        def tool_func() -> str:  # pragma: no cover
+            """A tool for testing."""
+            return 'result'
+
     searchable = SearchableToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'price'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'tool'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     rv: dict[str, Any] = result.return_value  # pyright: ignore[reportAssignmentType]
-    assert len(rv['tools']) == 2
+    assert len(rv['tools']) == 10
 
 
 async def test_searchable_toolset_discovered_tools_available():
@@ -432,6 +440,54 @@ async def test_searchable_toolset_ignores_non_metadata_history():
     assert 'calculate_mortgage' in tools
     assert 'stock_price' not in tools
     assert 'crypto_price' not in tools
+
+
+async def test_lazy_toolset_marks_all_tools():
+    """Test that LazyToolset marks all tools as lazy when tool_names is None."""
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool
+    def tool_a() -> str:  # pragma: no cover
+        """Tool A."""
+        return 'a'
+
+    @toolset.tool
+    def tool_b() -> str:  # pragma: no cover
+        """Tool B."""
+        return 'b'
+
+    lazy = toolset.lazy()
+    searchable = SearchableToolset(wrapped=lazy)
+    ctx = build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    assert 'search_tools' in tools
+    assert 'tool_a' not in tools
+    assert 'tool_b' not in tools
+
+
+async def test_lazy_toolset_marks_specific_tools():
+    """Test that LazyToolset marks only named tools as lazy."""
+    toolset: FunctionToolset[None] = FunctionToolset()
+
+    @toolset.tool
+    def tool_a() -> str:  # pragma: no cover
+        """Tool A."""
+        return 'a'
+
+    @toolset.tool
+    def tool_b() -> str:  # pragma: no cover
+        """Tool B."""
+        return 'b'
+
+    lazy = toolset.lazy(['tool_b'])
+    searchable = SearchableToolset(wrapped=lazy)
+    ctx = build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    assert 'search_tools' in tools
+    assert 'tool_a' in tools
+    assert 'tool_b' not in tools
 
 
 async def test_call_tool_returns_tool_return_with_metadata():
