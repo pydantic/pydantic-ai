@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import uuid
 from base64 import b64decode
 from collections.abc import Mapping, Sequence
 from functools import cached_property
@@ -11,19 +13,28 @@ from typing import (
     cast,
 )
 
+from typing_extensions import assert_never
+
 from ... import ExternalToolset, ToolDefinition
 from ...messages import (
     AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
+    FilePart,
     ImageUrl,
     ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -38,17 +49,20 @@ try:
         BaseEvent,
         BinaryInputContent,
         DeveloperMessage,
+        FunctionCall,
         Message,
+        ReasoningMessage,
         RunAgentInput,
         SystemMessage,
         TextInputContent,
         Tool as AGUITool,
+        ToolCall,
         ToolMessage,
         UserMessage,
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from ._event_stream import BUILTIN_TOOL_CALL_ID_PREFIX, AGUIEventStream
+    from ._event_stream import BUILTIN_TOOL_CALL_ID_PREFIX, AGUIEventStream, thinking_encrypted_metadata
 except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install the `ag-ui-protocol` package to use AG-UI integration, '
@@ -88,6 +102,31 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
     def label(self) -> str:
         """Return the label for this toolset."""
         return 'the AG-UI frontend tools'  # pragma: no cover
+
+
+def _new_message_id() -> str:
+    """Generate a new unique message ID."""
+    return str(uuid.uuid4())
+
+
+def _user_content_to_input(
+    item: str | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
+) -> TextInputContent | BinaryInputContent | None:
+    """Convert a user content item to AG-UI input content."""
+    if isinstance(item, str):
+        return TextInputContent(type='text', text=item)
+    elif isinstance(item, (ImageUrl, VideoUrl, AudioUrl, DocumentUrl)):
+        return BinaryInputContent(type='binary', url=item.url, mime_type=item.media_type or '')
+    elif isinstance(item, BinaryContent):
+        return BinaryInputContent(type='binary', data=item.base64, mime_type=item.media_type)
+    elif isinstance(item, UploadedFile):
+        # UploadedFile holds an opaque provider file_id (e.g. 'file-abc123'), not a URL or
+        # binary data, so it can't be mapped to AG-UI's BinaryInputContent. Skipped like CachePoint.
+        return None
+    elif isinstance(item, CachePoint):
+        return None
+    else:
+        assert_never(item)
 
 
 class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
@@ -162,8 +201,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                     else:  # pragma: no cover
                                         raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
                                     user_prompt_content.append(binary_part)
-                                case _:  # pragma: no cover
-                                    raise ValueError(f'Unsupported user message part type: {type(part)}')
+                                case _:
+                                    assert_never(part)
 
                         if user_prompt_content:  # pragma: no branch
                             content_to_add = (
@@ -228,7 +267,210 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                         )
 
-                case ActivityMessage():
-                    pass
+                case ReasoningMessage() as reasoning_msg:
+                    metadata: dict[str, Any] = (
+                        json.loads(reasoning_msg.encrypted_value) if reasoning_msg.encrypted_value else {}
+                    )
+                    builder.add(
+                        ThinkingPart(
+                            content=reasoning_msg.content,
+                            id=metadata.get('id'),
+                            signature=metadata.get('signature'),
+                            provider_name=metadata.get('provider_name'),
+                            provider_details=metadata.get('provider_details'),
+                        )
+                    )
+
+                case ActivityMessage() as activity_msg:
+                    content = activity_msg.content
+                    if activity_msg.activity_type == 'pydantic_ai_file':
+                        builder.add(
+                            FilePart(
+                                content=BinaryContent.from_data_uri(content.get('url', '')),
+                                id=content.get('id'),
+                                provider_name=content.get('provider_name'),
+                                provider_details=content.get('provider_details'),
+                            )
+                        )
+
+                case _:
+                    assert_never(msg)
 
         return builder.messages
+
+    @staticmethod
+    def _dump_request_parts(msg: ModelRequest) -> tuple[list[Message], dict[str, str]]:
+        """Convert a `ModelRequest` into AG-UI messages.
+
+        Returns:
+            A tuple of (messages, tool_call_id_to_name mapping).
+        """
+        result: list[Message] = []
+        tool_call_names: dict[str, str] = {}
+        system_content: list[str] = []
+        user_content: list[TextInputContent | BinaryInputContent] = []
+
+        for part in msg.parts:
+            if isinstance(part, SystemPromptPart):
+                system_content.append(part.content)
+            elif isinstance(part, UserPromptPart):
+                if isinstance(part.content, str):
+                    user_content.append(TextInputContent(type='text', text=part.content))
+                else:
+                    for item in part.content:
+                        converted = _user_content_to_input(item)
+                        if converted is not None:
+                            user_content.append(converted)
+            elif isinstance(part, ToolReturnPart):
+                tool_call_names[part.tool_call_id] = part.tool_name
+                result.append(
+                    ToolMessage(
+                        id=_new_message_id(),
+                        content=part.model_response_str(),
+                        tool_call_id=part.tool_call_id,
+                    )
+                )
+            elif isinstance(part, RetryPromptPart):
+                if part.tool_name:
+                    tool_call_names[part.tool_call_id] = part.tool_name
+                    result.append(
+                        ToolMessage(
+                            id=_new_message_id(),
+                            content=part.model_response(),
+                            tool_call_id=part.tool_call_id,
+                            error=part.model_response(),
+                        )
+                    )
+                else:
+                    user_content.append(TextInputContent(type='text', text=part.model_response()))
+            else:
+                assert_never(part)
+
+        messages: list[Message] = []
+        if system_content:
+            messages.append(SystemMessage(id=_new_message_id(), content='\n'.join(system_content)))
+        if user_content:
+            # Simplify to plain string if only single text item
+            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
+                messages.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
+            else:
+                messages.append(UserMessage(id=_new_message_id(), content=user_content))
+        messages.extend(result)
+        return messages, tool_call_names
+
+    @staticmethod
+    def _dump_response_parts(msg: ModelResponse) -> list[Message]:
+        """Convert a `ModelResponse` into AG-UI messages.
+
+        Uses a flush pattern to preserve part ordering: text that appears after tool calls
+        gets its own AssistantMessage, and ThinkingPart/FilePart boundaries trigger a flush
+        so content on either side doesn't get merged.
+        """
+        result: list[Message] = []
+        text_content: list[str] = []
+        tool_calls_list: list[ToolCall] = []
+        tool_messages: list[ToolMessage] = []
+
+        builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, BuiltinToolReturnPart)}
+
+        def flush() -> None:
+            nonlocal text_content, tool_calls_list, tool_messages
+            if not text_content and not tool_calls_list:
+                return
+            result.append(
+                AssistantMessage(
+                    id=_new_message_id(),
+                    content='\n'.join(text_content) if text_content else None,
+                    tool_calls=tool_calls_list if tool_calls_list else None,
+                )
+            )
+            result.extend(tool_messages)
+            text_content = []
+            tool_calls_list = []
+            tool_messages = []
+
+        for part in msg.parts:
+            if isinstance(part, TextPart):
+                if tool_calls_list:
+                    flush()
+                text_content.append(part.content)
+            elif isinstance(part, ThinkingPart):
+                flush()
+                encrypted = thinking_encrypted_metadata(part)
+                result.append(
+                    ReasoningMessage(
+                        id=_new_message_id(),
+                        content=part.content,
+                        encrypted_value=json.dumps(encrypted) if encrypted else None,
+                    )
+                )
+            elif isinstance(part, ToolCallPart):
+                tool_calls_list.append(
+                    ToolCall(
+                        id=part.tool_call_id,
+                        function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
+                    )
+                )
+            elif isinstance(part, BuiltinToolCallPart):
+                prefixed_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', part.tool_call_id])
+                tool_calls_list.append(
+                    ToolCall(
+                        id=prefixed_id,
+                        function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
+                    )
+                )
+                if builtin_return := builtin_returns.get(part.tool_call_id):
+                    tool_messages.append(
+                        ToolMessage(
+                            id=_new_message_id(),
+                            content=builtin_return.model_response_str(),
+                            tool_call_id=prefixed_id,
+                        )
+                    )
+            elif isinstance(part, BuiltinToolReturnPart):
+                # Emitted when matching BuiltinToolCallPart is processed above.
+                pass
+            elif isinstance(part, FilePart):
+                flush()
+                file_content: dict[str, Any] = {
+                    'url': part.content.data_uri,
+                    'media_type': part.content.media_type,
+                }
+                for attr in ['id', 'provider_name', 'provider_details']:
+                    if (value := getattr(part, attr)) is not None:
+                        file_content[attr] = value
+                result.append(
+                    ActivityMessage(
+                        id=_new_message_id(),
+                        activity_type='pydantic_ai_file',
+                        content=file_content,
+                    )
+                )
+            else:
+                assert_never(part)
+
+        flush()
+        return result
+
+    @classmethod
+    def dump_messages(cls, messages: Sequence[ModelMessage]) -> list[Message]:
+        """Transform Pydantic AI messages into AG-UI messages.
+
+        Args:
+            messages: A sequence of ModelMessage objects to convert.
+
+        Returns:
+            A list of AG-UI Message objects.
+        """
+        result: list[Message] = []
+
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                request_messages, _ = cls._dump_request_parts(msg)
+                result.extend(request_messages)
+            elif isinstance(msg, ModelResponse):
+                result.extend(cls._dump_response_parts(msg))
+            else:
+                assert_never(msg)
+
+        return result

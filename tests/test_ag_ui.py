@@ -12,15 +12,17 @@ from typing import Any
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
-from dirty_equals import IsStr
 from pydantic import BaseModel
 
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
+    FilePart,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
@@ -31,13 +33,16 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -58,7 +63,7 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsSameStr, try_import
+from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import (
@@ -71,6 +76,7 @@ with try_import() as imports_successful:
         EventType,
         FunctionCall,
         Message,
+        ReasoningMessage,
         RunAgentInput,
         StateSnapshotEvent,
         SystemMessage,
@@ -93,6 +99,10 @@ with try_import() as imports_successful:
         run_ag_ui,
     )
     from pydantic_ai.ui.ag_ui import AGUIEventStream
+
+with try_import() as anthropic_imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 
 pytestmark = [
@@ -1059,8 +1069,7 @@ async def test_thinking() -> None:
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
-            {'type': 'THINKING_START', 'timestamp': IsInt()},
-            {'type': 'THINKING_END', 'timestamp': IsInt()},
+            # Part 0: empty thinking — skipped (no content, no metadata)
             {
                 'type': 'TEXT_MESSAGE_START',
                 'timestamp': IsInt(),
@@ -1080,32 +1089,781 @@ async def test_thinking() -> None:
                 'delta': ' and some more',
             },
             {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
-            {'type': 'THINKING_START', 'timestamp': IsInt()},
-            {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
-            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'delta': 'Thinking '},
-            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'delta': 'about the weather'},
-            {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
-            {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
+            # Part 1: "Thinking about the weather"
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r1 := IsSameStr())},
             {
-                'type': 'THINKING_TEXT_MESSAGE_CONTENT',
+                'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
+                'messageId': r1,
+                'role': 'assistant',
+            },
+            {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r1, 'delta': 'Thinking '},
+            {
+                'type': 'REASONING_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': r1,
+                'delta': 'about the weather',
+            },
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r1},
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r1},
+            # Part 2: empty thinking — skipped (no content, no metadata)
+            # Part 3: "Thinking about the meaning of life"
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r3 := IsSameStr())},
+            {
+                'type': 'REASONING_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': r3,
+                'role': 'assistant',
+            },
+            {
+                'type': 'REASONING_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': r3,
                 'delta': 'Thinking about the meaning of life',
             },
-            {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
-            {'type': 'THINKING_TEXT_MESSAGE_START', 'timestamp': IsInt()},
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r3},
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r3},
+            # Part 4: "Thinking about the universe"
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r4 := IsSameStr())},
             {
-                'type': 'THINKING_TEXT_MESSAGE_CONTENT',
+                'type': 'REASONING_MESSAGE_START',
                 'timestamp': IsInt(),
+                'messageId': r4,
+                'role': 'assistant',
+            },
+            {
+                'type': 'REASONING_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': r4,
                 'delta': 'Thinking about the universe',
             },
-            {'type': 'THINKING_TEXT_MESSAGE_END', 'timestamp': IsInt()},
-            {'type': 'THINKING_END', 'timestamp': IsInt()},
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r4},
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r4},
             {
                 'type': 'RUN_FINISHED',
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
             },
+        ]
+    )
+
+
+async def test_thinking_with_signature() -> None:
+    """Test that ReasoningEncryptedValueEvent is emitted with thinking metadata."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        yield {0: DeltaThinkingPart(content='Thinking deeply', signature='sig_abc123')}
+        yield 'Here is my response'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    run_input = create_input(
+        UserMessage(id='msg_1', content='Think about something'),
+    )
+
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (reasoning_id := IsSameStr())},
+            {
+                'type': 'REASONING_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': reasoning_id,
+                'role': 'assistant',
+            },
+            {
+                'type': 'REASONING_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': reasoning_id,
+                'delta': 'Thinking deeply',
+            },
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': reasoning_id},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'timestamp': IsInt(),
+                'subtype': 'message',
+                'entityId': reasoning_id,
+                'encryptedValue': IsStr(),
+            },
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': reasoning_id},
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': message_id,
+                'delta': 'Here is my response',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {'type': 'RUN_FINISHED', 'timestamp': IsInt(), 'threadId': thread_id, 'runId': run_id},
+        ]
+    )
+
+
+async def test_thinking_consecutive_signatures() -> None:
+    """Test that consecutive ThinkingParts each preserve their own metadata via separate REASONING blocks."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaThinkingCalls | str]:
+        yield {0: DeltaThinkingPart(content='First thought', signature='sig_aaa')}
+        yield {1: DeltaThinkingPart(content='Second thought', signature='sig_bbb')}
+        yield {2: DeltaThinkingPart(content='Third thought', signature='sig_ccc')}
+        yield 'Final answer'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    run_input = create_input(
+        UserMessage(id='msg_1', content='Think deeply'),
+    )
+
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            # Part 0: signature=sig_aaa
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r0 := IsSameStr())},
+            {
+                'type': 'REASONING_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': r0,
+                'role': 'assistant',
+            },
+            {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r0, 'delta': 'First thought'},
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r0},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'timestamp': IsInt(),
+                'subtype': 'message',
+                'entityId': r0,
+                'encryptedValue': IsStr(),
+            },
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r0},
+            # Part 1: signature=sig_bbb
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r1 := IsSameStr())},
+            {
+                'type': 'REASONING_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': r1,
+                'role': 'assistant',
+            },
+            {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r1, 'delta': 'Second thought'},
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r1},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'timestamp': IsInt(),
+                'subtype': 'message',
+                'entityId': r1,
+                'encryptedValue': IsStr(),
+            },
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r1},
+            # Part 2: signature=sig_ccc
+            {'type': 'REASONING_START', 'timestamp': IsInt(), 'messageId': (r2 := IsSameStr())},
+            {
+                'type': 'REASONING_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': r2,
+                'role': 'assistant',
+            },
+            {'type': 'REASONING_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': r2, 'delta': 'Third thought'},
+            {'type': 'REASONING_MESSAGE_END', 'timestamp': IsInt(), 'messageId': r2},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'timestamp': IsInt(),
+                'subtype': 'message',
+                'entityId': r2,
+                'encryptedValue': IsStr(),
+            },
+            {'type': 'REASONING_END', 'timestamp': IsInt(), 'messageId': r2},
+            # Text response
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': message_id,
+                'delta': 'Final answer',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {'type': 'RUN_FINISHED', 'timestamp': IsInt(), 'threadId': thread_id, 'runId': run_id},
+        ]
+    )
+
+
+def test_reasoning_message_thinking_roundtrip() -> None:
+    """Test that ReasoningMessage converts to ThinkingPart with metadata from encrypted_value."""
+    messages = AGUIAdapter.load_messages(
+        [
+            ReasoningMessage(
+                id='reasoning-1',
+                content='Let me think about this...',
+                encrypted_value=json.dumps(
+                    {
+                        'id': 'thinking-1',
+                        'signature': 'sig_abc123',
+                        'provider_name': 'anthropic',
+                        'provider_details': {'some': 'details'},
+                    }
+                ),
+            ),
+            AssistantMessage(id='msg-1', content='Here is my response'),
+        ]
+    )
+
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='Let me think about this...',
+                        id='thinking-1',
+                        signature='sig_abc123',
+                        provider_name='anthropic',
+                        provider_details={'some': 'details'},
+                    ),
+                    TextPart(content='Here is my response'),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_reasoning_events_with_all_metadata() -> None:
+    """Test that REASONING_* events emit encryptedValue with all metadata fields."""
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE)
+
+    part = ThinkingPart(
+        content='Thinking content',
+        id='thinking-123',
+        signature='sig_xyz',
+        provider_name='anthropic',
+        provider_details={'model': 'claude-sonnet-4-5'},
+    )
+
+    events: list[BaseEvent] = []
+    async for e in event_stream.handle_thinking_start(part):
+        events.append(e)
+    async for e in event_stream.handle_thinking_end(part):
+        events.append(e)
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'REASONING_START', 'message_id': IsStr()},
+            {'type': 'REASONING_MESSAGE_START', 'message_id': IsStr(), 'role': 'assistant'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'message_id': IsStr(), 'delta': 'Thinking content'},
+            {'type': 'REASONING_MESSAGE_END', 'message_id': IsStr()},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'subtype': 'message',
+                'entity_id': IsStr(),
+                'encrypted_value': '{"id": "thinking-123", "signature": "sig_xyz", "provider_name": "anthropic", "provider_details": {"model": "claude-sonnet-4-5"}}',
+            },
+            {'type': 'REASONING_END', 'message_id': IsStr()},
+        ]
+    )
+
+
+def test_activity_message_other_types_ignored() -> None:
+    """Test that ActivityMessage with other activity types are ignored."""
+    messages = AGUIAdapter.load_messages(
+        [
+            ActivityMessage(
+                id='activity-1',
+                activity_type='some_other_activity',
+                content={'foo': 'bar'},
+            ),
+            AssistantMessage(id='msg-1', content='Response'),
+        ]
+    )
+
+    assert messages == snapshot([ModelResponse(parts=[TextPart(content='Response')], timestamp=IsDatetime())])
+
+
+def _sync_part_timestamps(original_part: Any, new_part: Any) -> None:
+    """Sync timestamp attribute if both parts have it."""
+    if hasattr(new_part, 'timestamp') and hasattr(original_part, 'timestamp'):
+        object.__setattr__(new_part, 'timestamp', original_part.timestamp)
+
+
+def _sync_timestamps(original: list[ModelMessage], reloaded: list[ModelMessage]) -> None:
+    """Sync timestamps between original and reloaded messages for comparison."""
+    for o, n in zip(original, reloaded):
+        if isinstance(n, ModelResponse) and isinstance(o, ModelResponse):
+            n.timestamp = o.timestamp
+            for op, np in zip(o.parts, n.parts):
+                _sync_part_timestamps(op, np)
+        elif isinstance(n, ModelRequest) and isinstance(o, ModelRequest):  # pragma: no branch
+            for op, np in zip(o.parts, n.parts):
+                _sync_part_timestamps(op, np)
+
+
+def test_dump_load_roundtrip_basic() -> None:
+    """Test that load_messages(dump_messages(msgs)) preserves basic messages."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='You are helpful'), UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_thinking() -> None:
+    """Test full round-trip for thinking parts with all metadata."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Think about this')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='Deep thoughts...',
+                    id='think-001',
+                    signature='sig_xyz',
+                    provider_name='anthropic',
+                    provider_details={'model': 'claude-sonnet-4-5'},
+                ),
+                TextPart(content='Conclusion'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_tools() -> None:
+    """Test full round-trip for tool calls and returns."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{"x": 1}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', tool_call_id='call_abc', content='result')]),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_multiple_thinking_parts() -> None:
+    """Test round-trip preserves multiple ThinkingParts with their metadata."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Think hard')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='First thought', id='think-1', signature='sig_1'),
+                ThinkingPart(content='Second thought', id='think-2', signature='sig_2'),
+                TextPart(content='Final answer'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_binary_content() -> None:
+    """Test round-trip for binary content in user prompts (images, documents, etc.)."""
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Describe this image',
+                        ImageUrl(url='https://example.com/image.png', media_type='image/png'),
+                        BinaryContent(data=b'raw image data', media_type='image/jpeg'),
+                    ]
+                ),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='I see an image.')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_file_part() -> None:
+    """Test round-trip for FilePart in model responses.
+
+    Note: BinaryImage is used because from_data_uri() returns BinaryImage for image/* media types.
+    """
+    file_data = b'generated file content'
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Generate an image')]),
+        ModelResponse(
+            parts=[
+                FilePart(
+                    content=BinaryImage(data=file_data, media_type='image/png'),
+                    id='file-001',
+                    provider_name='openai',
+                    provider_details={'model': 'gpt-image'},
+                ),
+                TextPart(content='Here is your generated image.'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_builtin_tool_return() -> None:
+    """Test round-trip for builtin tool calls with their return values.
+
+    Note: The round-trip reorders parts within ModelResponse because AG-UI's AssistantMessage
+    has separate content and tool_calls fields. TextPart comes first (from content), then
+    BuiltinToolCallPart (from tool_calls), then BuiltinToolReturnPart (from subsequent ToolMessage).
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search for info')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Based on the search...'),
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    tool_call_id='call_123',
+                    args='{"query": "test"}',
+                    provider_name='anthropic',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id='call_123',
+                    content='Search results here',
+                    provider_name='anthropic',
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_builtin_tool_call_without_return() -> None:
+    """Test that BuiltinToolCallPart without a matching BuiltinToolReturnPart still dumps correctly."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search for info')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    tool_call_id='call_orphan',
+                    args='{"query": "test"}',
+                    provider_name='anthropic',
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages)
+
+    assert len(ag_ui_msgs) == 2
+    assistant_msg = ag_ui_msgs[1]
+    assert isinstance(assistant_msg, AssistantMessage)
+    assert assistant_msg.tool_calls is not None
+    assert len(assistant_msg.tool_calls) == 1
+    assert assistant_msg.tool_calls[0].id == 'pyd_ai_builtin|anthropic|call_orphan'
+
+
+def test_dump_load_roundtrip_cache_point() -> None:
+    """Test that CachePoint is filtered out during round-trip (it's metadata only)."""
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['Hello', CachePoint(), 'world']),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+    expected: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Hello', 'world'])]),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(expected, reloaded)
+
+    assert reloaded == expected
+
+
+def test_dump_load_roundtrip_uploaded_file() -> None:
+    """Test that UploadedFile is filtered out during round-trip (opaque provider file_id)."""
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=['Hello', UploadedFile(file_id='file-abc123', provider_name='anthropic'), 'world']
+                ),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+    expected: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Hello', 'world'])]),
+        ModelResponse(parts=[TextPart(content='Hi!')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(expected, reloaded)
+
+    assert reloaded == expected
+
+
+def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
+    """Test round-trip for RetryPromptPart with tool_name (converted to ToolMessage with error)."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args='{}')]),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='my_tool',
+                    tool_call_id='call_1',
+                    content='Invalid args',
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='OK')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    # RetryPromptPart becomes ToolReturnPart on reload (same tool_call_id mapping)
+    assert len(reloaded) == 4
+    assert isinstance(reloaded[2], ModelRequest)
+    retry_part = reloaded[2].parts[0]
+    assert isinstance(retry_part, ToolReturnPart)
+    assert retry_part.tool_name == 'my_tool'
+    assert retry_part.tool_call_id == 'call_1'
+
+
+def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
+    """Test round-trip for RetryPromptPart without tool_name (converted to UserMessage)."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(parts=[TextPart(content='Done')]),
+        ModelRequest(parts=[RetryPromptPart(content='Please try again')]),
+        ModelResponse(parts=[TextPart(content='OK')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    # RetryPromptPart without tool becomes UserPromptPart on reload
+    # Content is formatted by RetryPromptPart.model_response()
+    assert len(reloaded) == 4
+    assert isinstance(reloaded[2], ModelRequest)
+    retry_part = reloaded[2].parts[0]
+    assert isinstance(retry_part, UserPromptPart)
+    assert 'Please try again' in str(retry_part.content)
+
+
+def test_dump_load_roundtrip_file_part_minimal() -> None:
+    """Test round-trip for FilePart without optional attributes (id, provider_name, provider_details)."""
+    file_data = b'minimal file'
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Generate')]),
+        ModelResponse(
+            parts=[
+                FilePart(content=BinaryImage(data=file_data, media_type='image/png')),
+                TextPart(content='Done'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_file_part_only() -> None:
+    """Test round-trip for response with only FilePart (no text, no tool calls)."""
+    file_data = b'only file'
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Generate image only')]),
+        ModelResponse(parts=[FilePart(content=BinaryImage(data=file_data, media_type='image/png'))]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
+    """Test round-trip for response with text interleaved around tool calls.
+
+    When text appears after tool calls, the flush pattern splits them into
+    separate AssistantMessages to preserve ordering on round-trip.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do things')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Before tools'),
+                ToolCallPart(tool_name='search', args='{"q": "test"}', tool_call_id='call_1'),
+                TextPart(content='After tools'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+
+    # Text before tools shares an AssistantMessage with the tool call;
+    # text after tools gets its own AssistantMessage.
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in ag_ui_msgs] == snapshot(
+        [
+            {'role': 'user', 'content': 'Do things'},
+            {
+                'role': 'assistant',
+                'content': 'Before tools',
+                'tool_calls': [
+                    {
+                        'id': 'call_1',
+                        'type': 'function',
+                        'function': {'name': 'search', 'arguments': '{"q": "test"}'},
+                    },
+                ],
+            },
+            {'role': 'assistant', 'content': 'After tools'},
+        ]
+    )
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    # Round-trip splits into two ModelResponses due to the two AssistantMessages
+    assert reloaded == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Do things', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Before tools'),
+                    ToolCallPart(tool_name='search', args='{"q": "test"}', tool_call_id='call_1'),
+                    TextPart(content='After tools'),
+                ],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+async def test_reasoning_events_empty_content_with_metadata() -> None:
+    """Test REASONING_* events for ThinkingPart with no content but with metadata.
+
+    This exercises the path in handle_thinking_end where _reasoning_started is False
+    (no content was streamed) but encrypted metadata is present — e.g. redacted thinking.
+    """
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input, accept=SSE_CONTENT_TYPE)
+
+    part = ThinkingPart(
+        content='',
+        id='think_redacted',
+        signature='sig_redacted',
+    )
+
+    events: list[BaseEvent] = [e async for e in event_stream.handle_thinking_start(part)]
+    async for e in event_stream.handle_thinking_end(part):
+        events.append(e)
+
+    assert [e.model_dump(exclude_none=True) for e in events] == snapshot(
+        [
+            {'type': 'REASONING_START', 'message_id': IsStr()},
+            {
+                'type': 'REASONING_ENCRYPTED_VALUE',
+                'subtype': 'message',
+                'entity_id': IsStr(),
+                'encrypted_value': '{"id": "think_redacted", "signature": "sig_redacted"}',
+            },
+            {'type': 'REASONING_END', 'message_id': IsStr()},
+        ]
+    )
+
+
+@pytest.mark.vcr()
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropic_api_key: str) -> None:
+    """Test that pydantic -> AG-UI -> pydantic round-trip preserves thinking metadata with real Anthropic responses."""
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+    agent: Agent[None, str] = Agent(m, model_settings=settings)
+
+    result = await agent.run('What is 1+1? Reply in one word.')
+    original = result.all_messages()
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='What is 1+1? Reply in one word.', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is asking what 1+1 equals and wants a one-word reply. The answer is 2, which is one word.',
+                        signature='EooCCkYICxgCKkDYW6Ka+Mo73ZE34HVijmFbdV6QH/iRdv+3WuisH3pR8D5aSFASMBsF1F1bZRQFQXuM0+G4H83czthKvHqdqWriEgwB0eJaWoXZWU18NKoaDMH4nN8ZwJ6W9DnYLyIwrdTWmfc5QTqDr8gye3/yrPpV2YPeZnUBoHBLOGl8MUaC6SuGmxcm8rGqf2s+P+ZtKnJPJJzQiTrvPcEkF3ij22w3bXC9yoyZCyJVPcibR2ZZpLYF/UOoZ+BRBs0FCdm/QFXUUe8W1tcQ/ZQgBaW44LTcdzwOSP5hJb25UrPiGWuTytGMxIr7QyG7INpVbmm8JRBIIEzj3gs2zlxdbl17yZ/yZXcYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content='Two'),
+                ],
+                timestamp=IsDatetime(),
+            ),
         ]
     )
 
