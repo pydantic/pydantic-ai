@@ -15,6 +15,7 @@ from .builtin_tools import (
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
+    TextEditorTool,
     UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
     WebSearchTool,
@@ -250,6 +251,7 @@ __all__ = (
     'ImageGenerationTool',
     'MCPServerTool',
     'MemoryTool',
+    'TextEditorTool',
     'UrlContextTool',
     'WebFetchTool',
     'WebSearchTool',
