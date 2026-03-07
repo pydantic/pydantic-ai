@@ -56,6 +56,7 @@ nav:
           - mcp/fastmcp-client.md
           - mcp/server.md
       - Multi-Agent Patterns: multi-agent-applications.md
+      - Realtime Sessions: realtime.md
       - Web Chat UI: web.md
       - Embeddings: embeddings.md
       - Testing: testing.md
@@ -146,6 +147,7 @@ nav:
           - api/format_prompt.md
           - api/mcp.md
           - api/messages.md
+          - api/realtime.md
           - api/models/anthropic.md
           - api/models/base.md
           - api/models/bedrock.md
