@@ -523,7 +523,9 @@ def _normalize_openrouter_response(
     if isinstance(raw_provider, dict) and response_dict.get('choices') is None:
         provider_data = cast(dict[str, Any], raw_provider)
         if isinstance(provider_data.get('choices'), list):
-            nested_provider_name: str = cast(str, provider_data.pop('provider', 'unknown'))
+            # pop returns None when the key exists but its value is None, so
+            # use `or 'unknown'` to normalise both missing-key and None-value.
+            nested_provider_name: str = cast(str, provider_data.pop('provider', None) or 'unknown')
             response_dict.update(provider_data)
             response_dict['provider'] = nested_provider_name
 
