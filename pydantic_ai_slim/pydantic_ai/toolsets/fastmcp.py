@@ -34,9 +34,9 @@ try:
         TextResourceContents,
     )
 
-    from pydantic_ai.mcp import (  # type: ignore[reportPrivateUsage]
+    from pydantic_ai.mcp import (
         TOOL_SCHEMA_VALIDATOR,
-        _include_content_for_assistant,
+        _include_content_for_assistant,  # pyright: ignore[reportPrivateUsage]
     )
 
 except ImportError as _import_error:
@@ -165,19 +165,22 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         # content block is annotated as user-only, the model should not see the
         # JSON-serialised equivalent either.
         filtered = [p for p in call_tool_result.content if _include_content_for_assistant(p)]
-        # If the original content was empty (tool returned nothing), return an empty list rather
-        # than the audience-filtered placeholder.
-        if not filtered and not call_tool_result.content:
-            return []
-        # If audience filtering removed all content blocks, return a placeholder so the
-        # model knows the tool ran but produced no model-visible output.
-        if not filtered:
+        # If audience filtering removed all non-empty content, return a placeholder.
+        # (This check must come before the structured_content check so that a tool
+        # whose entire output is user-only doesn't expose its JSON-serialised equivalent.)
+        if not filtered and call_tool_result.content:
             return 'Tool executed successfully. (No model-visible content in result.)'
 
-        # If we have structured content, return that (audience check already passed above)
+        # Prefer structured content when available — covers both the case where the tool
+        # returned data directly (empty content + structured_content) and the normal case
+        # where FastMCP serialises the return value alongside text content.
         if call_tool_result.structured_content:
             return call_tool_result.structured_content
 
+        # No structured content: map the filtered text/image parts, or return [] for tools
+        # that produced genuinely empty content (no content blocks at all).
+        if not filtered:
+            return []
         return _map_fastmcp_tool_results(parts=filtered)
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
