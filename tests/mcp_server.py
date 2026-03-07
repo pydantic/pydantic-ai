@@ -289,5 +289,21 @@ async def get_user_only_content() -> list[TextContent]:
     ]
 
 
+@mcp.tool()
+async def get_annotated_no_audience_content() -> list[TextContent]:
+    """Return content with Annotations set but audience=None.
+
+    Used to test the _include_content_for_assistant branch where annotations
+    exist but the audience field itself is None (meaning: visible to all).
+    """
+    return [
+        TextContent(
+            type='text',
+            text='Annotations present, audience=None means all audiences.',
+            annotations=Annotations(audience=None),
+        )
+    ]
+
+
 if __name__ == '__main__':
     mcp.run()
