@@ -686,12 +686,10 @@ class TestAudienceFiltering:
         FastMCP recognises list[TextContent] as a content-type return and does not
         serialise it into structured_content, so call_tool should return [].
         """
-        from mcp.types import TextContent as MCPTextContent
-
         fastmcp_server = FastMCP('test_server')
 
         @fastmcp_server.tool()
-        def empty_typed_tool() -> list[MCPTextContent]:
+        def empty_typed_tool() -> list[TextContent]:
             return []
 
         toolset = FastMCPToolset(fastmcp_server)
