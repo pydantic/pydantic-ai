@@ -225,6 +225,7 @@ def _insert_cache_point_before_trailing_documents(
 
     Args:
         content: The content list to modify in place.
+        cache_point: The cache point block to insert.
         raise_if_cannot_insert: If True, raises UserError when cache point cannot be inserted
             (e.g., when the message contains only documents/videos). If False, silently skips.
 
