@@ -1,0 +1,359 @@
+interactions:
+- request:
+    body: grant_type=refresh_token&client_id=scrubbed&client_secret=scrubbed&refresh_token=scrubbed
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '268'
+      content-type:
+      - application/x-www-form-urlencoded
+    method: POST
+    uri: https://oauth2.googleapis.com/token
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, max-age=0, must-revalidate
+      content-length:
+      - '1160'
+      content-type:
+      - application/json; charset=utf-8
+      expires:
+      - Mon, 01 Jan 1990 00:00:00 GMT
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      access_token: scrubbed
+      expires_in: 3599
+      id_token: eyJhbGciOiJSUzI1NiIsImtpZCI6IjI1MDdmNTFhZjJhMTYyNDY3MDc0ODQ2NzRhNDJhZTNjMmI2MjMxOWMiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJhdWQiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJzdWIiOiIxMTgyODA0MjAxMzMxODU0NDg2MTgiLCJlbWFpbCI6ImRzZmFwcHNAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsImF0X2hhc2giOiJEbjNiWUhsbjdqRGl5T01ZOHhSSTRRIiwiaWF0IjoxNzcyNzUxMDU1LCJleHAiOjE3NzI3NTQ2NTV9.axvJpdoGGprmsVRjhX_vmgonaVkc1eXRT5YPhIpjiXX399X8eGGrJYOguwQJ7CCOo48GrfJZwG44Nzk4nti9YFrHIGul2OfFQz13hZPIVMlDkWNNZFoAABOGPu-QEr1hBqHx2UmzKZaI7B8aPSokJSPWJwqMHdpioHvlqgSOmKP1ceuhngCmJ6QztajS5TVH6OIoV0f00aC4DoXlhDnUhctx69C5sfsSySyAnZKmZYgDuSSgg6FQSL5a3twjUmF74odYAzaBKZf94QJ70OFdkDujl_fm1xRU_VdaqXVTi6w2BdIQCBJC4APU8cry0IibkkLvmaaFsojD_ILOndawJA
+      scope: https://www.googleapis.com/auth/sqlservice.login openid https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email
+      token_type: Bearer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '368'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parametersJsonSchema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '4206'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -25.673337151962897
+        content:
+          parts:
+          - functionCall:
+              args:
+                file_name: input_file_0.png
+              name: get_file
+            thoughtSignature: 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
+          role: model
+        finishReason: STOP
+      createTime: '2026-03-05T22:50:56.132748Z'
+      modelVersion: gemini-3-flash-preview
+      responseId: 0AiqaYyNCJ2Qq7UPl7SbqQs
+      usageMetadata:
+        candidatesTokenCount: 17
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 17
+        promptTokenCount: 22
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 22
+        thoughtsTokenCount: 744
+        totalTokenCount: 783
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '4524'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      - parts:
+        - function_call:
+            args:
+              file_name: input_file_0.png
+            id: pyd_ai_b1b635905a0b41f5b955e0d9a727c545
+            name: get_file
+          thought_signature: CvEUAY89a19FMs5gMx13lXWLmO00ZnidkAj_krokjPAExRbICMXtJLgwOmlJDyYk2OiZUa4aFWqL6aUeHxj5II2to6qQ3Na_4rH7C-w94qqtUNggeFXlkFofRfj5sp_fWX87GLV_whig4tkprleKoylBN9NZYhGGSVrwHarDvTUYtYklg6Kx7ySz7u6gyPA2mef5_zSGnqKir_eGO3kmecm4G1A7m6o4vAXS7kFyYLojO_mHQOqKcpy_VCklrdTc0OLIqhGDrHpAKkUaRVZtecmAXlO77-QkLYt2D5auuiYehL0xE1qRUVEDFC01Sxc5XKnfcusmCDWAkTTeXeNf2MonxwoQvHrbhKLwhYWl16VmlZ1lGDF5xFZ0O1c6U_mDE5yv5Dmo3Nk1AHOFBmSEN8o3xfe6WQGjPQs3CAYpgzjj2bkFq5TcXZzVbjM_Y8iu-ptjFlhbA1oIMGFyIjOuUM5TCBO-ACo4kSUtW2Srup_R0p912Pgzcfg5JY-5YBfgHRBwMrqBhyiEW4sJqTrA3HOTEhceLwM3WghlAG0PFf39CMHtAz7bC4P1Tbgw8csy2hv71po-uJGBNHNDMKf-QwAg5RnpHEbwVTbwiZCuHWkaevrbuP4G9C08EVNTYgppfdpHRqPJL98a_XABBKSmNbc_8NXmZxgGv-_YobjxQ2Nen2BSUAoPQ20tE33Q6SsiQSTC4Iz4KBWu41lAebvbPmLhu7OVLOQ7gB9Nm2defbpistpHRQGNg0NdxmBoOuZP1Ve4f96mAMFnl5eVrBVBIvvHAqdCAwFB7U2urgRG5g1NV38laMfn5jd7Otz4L3PouF9Mr4W2UinX7tzeFp1t-cWGEbUPktRYHa5g7K4OlqH9aK8xFkDCbvMDh2oLZI7lEgUfA94aXankhZH_WSyjVTPAtAWpGYjsv5L87rk9fyJWNSIvJEfoXUzmCRLz1w0_U6OBrIKltC1MFnEhDgNIkLQXrA_YVVTiCYqYQrZm1N1KN7SLT2eUQZosoAqaEdjbL5OQMzeJEFs8MsWCLDxIRU-PwcOuSVx9MeuVo1hcW6e7Xo9s15qD3tyJbaTSVIJjl2AOiX-HtuV4iECi614tFY_ug1e60v60xMsjMJnClm_3wkHUUgUq5WuF2XFeK3jk4GnP9zDQ9UcnVPnc6jw-n7a6IHwicEcBadn0jsYzlHpwyZvk-REWYJajl-cU8jEoHjZxE2ddSKYWnxMH8ff_pybOdkTKlP42m9gtuzH10KXterCqd30ZUsViiQmPdqlIT3BRc_1F_QHxPHu1XFArXon9LvZkvbrKGhlCv9QZc_cx1--taR0m0SIsI6z60Ndp3bb5rMYCmgEEzCdUJU59hzyNlyIW8Ztaq-OJUWBYaGpO35wHMEbcmf9ZrDcZd_8BnGTIZTwnTbXv0eZ4rO4voqK0wLmG9QOKPyKztcGOM4KROHy_b4BNp7tIGZXzwA-lEk9pf0tq9-wIEZ8HnIq_1u9WWStvFHHZB2dZqW5ihWBGOEcfMyVz2tv0Gq55faF5MXKK_UpneCJx8juqDaqJlveNRdgxAs--TkWraBtoHs8lOLwEld1NTU4LP-DgnvMYZNd3pQybXNWmG8kDLd5RH5xxXShoWyzX00E6sZcBr_aNFYsBuAOXhAgTTu1GQkG73QQGEUdFZISlRWetevaurqHLeEyAdmzIjNQ-Mkr1phdXeeXOibWWiVLcZxVm1Y7lgg9KULqDYr8NzU-BQoMXpJtBG1vgXXF95fjjNUfh0oP5xPynHQE1THGeubyee-CDIpj2Gc3gXOMfzNFYJY0pwN6IpW4iy-wMEI6tEmltPtaO-ASdfWV5EP1Z1MQBsdByJIBqx_GCrQSHpzCjG_Xqaj3RGB0iMjBrjo9aEYts2OcKcCP-Pu9VTCnoIWnROQooHwjnEF2gVSEQ6VDyMC-kW8FMyI_FAxdKALly928lIexfuk5P_7rS982jRxzkidw5MvSUBMOCX_pO8YawmoWRJRNpeQcwdL568a-nKuzzg-Ypm1Kktswg65dkNPsWNrOZ0neK-AiJu0M0kp5ePLyNwrVSAJ-Mpn2IyQ-9AzYHhmAQd4kO4dW9zc_iKLPd-21Y5XZWTCtOHOWmgmh7p3lNUfYB4gOWmnc882PO1ExQO5urr83xs8LpOMdbaFNSmYlodQbSFbSQQ7jHhajbF7hWfnlpCB75h3Nml11uV2vqDgRH37su2LxmxvgYaq5WQHTt7eENNkLY3z_0GspMdwrttyKp9TOI1HxvpGeBSjoNoR3_2WcLX4Zct8Ou2j7xaakzgzqe1ROLCiHTUFwdlg9EzmqeZkJxaPOTC61sIKMiIvpOKdFLqahjypLX1Jtjb7Nn5zJyhL3ClqEW0_Imq19HEv3F_9juL6Hl5S9gjH0y4s-buR4DIuWM0WXgOt-LMrjZD19Xb3qqCRoK0mRFBJ1n784HG0_CIuALOANzYq9Rk3ugTaPHAbNDzGZKKY44-8UXoFrqmeiBV27WVBaVrH5kopQbbXDH1PK7qcl-KE9ok3INeAa0qTvLAdTT0VKPJhNEMf_N24DVVAU4cu3CvxtOaPK_Peo-qcN1afSxzd0ittUmO8T5AiYNYPPkadHRrj0u6ogfr-BCW4D38IgWKO1LNXDhMOTNUflzBj4h9hlYsP_FfAUBqECDp8lvjY_tbwOx8RLxeNpLoIq7M66O_eCdaop1QRzYLlKenzDITdZBhmzT0PBkdLSjvH4wjj6QkZNFd8m4mbGPWO70lk3mvQ69c4TApqE4q3PXza_Efj5mbNX0n56O9Y8-9lhzrZO-vetPt6uPV_LZticNIm_0znJFmkMAQW22Gzzy3lRoalisFQ3q8P9fzg10dev6W1pMjsgmsZiWk4CKxcuwljkivArD8CvCo69S6cUyQhSC4NidxrRmAtETX0pESCYHcX1sdvBEgjcJgZfs81IX-u6EfJDj1SZrXSl00gO0wfGiSObgPn80GdqsO6qfLJqI-2I2AIOTedC-5IMT4iainMfcDQvg4oMwWu8nbvv87Z_6ZLHUUtqLPwJjGnFbuVV57JtZGC4HzjuDYLK_DuZh_OvuMTjmuG_Kl9unfCtVHIc5_rlEdBvbJRMOom80o-Wq7kISS6AjG1FWPJq1AVSsgm29QxpGyqb70_4-m9SulqjIkElD3fDPAkZRncCzzfkrSBVhYwzo_UtYYxoV4vGHJSRp2iZOVwgSzsaJa3DOtpxMfFsJFl9enGntRy1m_pqQ5TyMGirjtL78RUYDQq3V_5--3cUUSXkwQ7HtN2XA5hpr2As8If2fZ9i-8E_TFFiDY4BeWgvCAIfAb3TZXiyBS3ptArb7ZZE5On9ru8hMsr0r1K-geTqAPyW2yY6gZSaX6OABprS8Tsx30510LFrd36aGW3_zPd4jlNmUkd1jmSXsEnmGs9__PskuMUmKtJ0VI9QsvmqUOH90CAAvo1IDY7tub2TClSTJpJd6Sq6hiNtPnUts_8pQZebBFtzlblH43ojLl5CJbKS_gF9G8S6h0bNgLedrbYn68B7HBgTnsBQjCzO28oIpH3PO
+        role: model
+      - parts:
+        - function_response:
+            id: pyd_ai_b1b635905a0b41f5b955e0d9a727c545
+            name: get_file
+            response:
+              error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "extra_forbidden",
+                    "loc": [
+                      "file_name"
+                    ],
+                    "msg": "Extra inputs are not permitted",
+                    "input": "input_file_0.png"
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parametersJsonSchema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1294'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -9.964593871665642
+        content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_file
+            thoughtSignature: Cv8DAY89a1/txrtvWfuLnNPg+JjlJJpi/UetkCTJ95NHjw2KZ1T3PCw2qf8LT7pjf/xoOX2zi0UBCbCWLryJ5r+f6iWd88EPoDYkvF0D/Ay76X7V/owoirph7ISO5bJRbROEQgGLirPXWKsZNPYdf7+xAISD71vZDOQFGZj8+r3lwcNSnlgMnI4dFZR3pUrilDlUXRotP6BmvGLbenz3H8F5h2E4fNMT89e71e4CD6eSzm4VfEkXP6q9tZBM7BynTNvwHAQe0Ena0yuRQS8dcI2WaA+gGI+P8OdUXW3YHGHzMHOnSyKx2/EHQzd8fx2E2McuJSYh9vMDwlUkeMB60xgGbDhqWF5vXKEisXSyGikg350Mvv8O3QM+uSl/ueF4G0LxWPvHT+X5VkK68hS2yXS9L41cvXChwkMljD+3HX4wUB2rYdwzrVSFua9Ir8aJBVMbgK2p/ak79jT64HikZe70bN2v8+7oPmMdFDBmXPbUy4+N+EgEqZ/Mu5yXLeSCYxde9MFKrj9IQOAlfPfFmoWm1TCiPkGRzFABJOo+6LfYUiZj5Bl0OvpkMBr67y/ILIuZAaeNRAK4KOk/AbPvJhA9R5klpP3Vo2Nyx3/GKVYTFI7mG2RyTaTBwMNGM+X9KY9Mjj06mnKMQ/7cVxR/gYKIfT8kQKWaA196EEfpWUYfwA==
+          role: model
+        finishReason: STOP
+      createTime: '2026-03-05T22:51:02.946114Z'
+      modelVersion: gemini-3-flash-preview
+      responseId: 1giqacLfOZ2O67MPwp740Aw
+      usageMetadata:
+        candidatesTokenCount: 7
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 7
+        promptTokenCount: 118
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 118
+        thoughtsTokenCount: 130
+        totalTokenCount: 255
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '5682'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      - parts:
+        - function_call:
+            args:
+              file_name: input_file_0.png
+            id: pyd_ai_b1b635905a0b41f5b955e0d9a727c545
+            name: get_file
+          thought_signature: CvEUAY89a19FMs5gMx13lXWLmO00ZnidkAj_krokjPAExRbICMXtJLgwOmlJDyYk2OiZUa4aFWqL6aUeHxj5II2to6qQ3Na_4rH7C-w94qqtUNggeFXlkFofRfj5sp_fWX87GLV_whig4tkprleKoylBN9NZYhGGSVrwHarDvTUYtYklg6Kx7ySz7u6gyPA2mef5_zSGnqKir_eGO3kmecm4G1A7m6o4vAXS7kFyYLojO_mHQOqKcpy_VCklrdTc0OLIqhGDrHpAKkUaRVZtecmAXlO77-QkLYt2D5auuiYehL0xE1qRUVEDFC01Sxc5XKnfcusmCDWAkTTeXeNf2MonxwoQvHrbhKLwhYWl16VmlZ1lGDF5xFZ0O1c6U_mDE5yv5Dmo3Nk1AHOFBmSEN8o3xfe6WQGjPQs3CAYpgzjj2bkFq5TcXZzVbjM_Y8iu-ptjFlhbA1oIMGFyIjOuUM5TCBO-ACo4kSUtW2Srup_R0p912Pgzcfg5JY-5YBfgHRBwMrqBhyiEW4sJqTrA3HOTEhceLwM3WghlAG0PFf39CMHtAz7bC4P1Tbgw8csy2hv71po-uJGBNHNDMKf-QwAg5RnpHEbwVTbwiZCuHWkaevrbuP4G9C08EVNTYgppfdpHRqPJL98a_XABBKSmNbc_8NXmZxgGv-_YobjxQ2Nen2BSUAoPQ20tE33Q6SsiQSTC4Iz4KBWu41lAebvbPmLhu7OVLOQ7gB9Nm2defbpistpHRQGNg0NdxmBoOuZP1Ve4f96mAMFnl5eVrBVBIvvHAqdCAwFB7U2urgRG5g1NV38laMfn5jd7Otz4L3PouF9Mr4W2UinX7tzeFp1t-cWGEbUPktRYHa5g7K4OlqH9aK8xFkDCbvMDh2oLZI7lEgUfA94aXankhZH_WSyjVTPAtAWpGYjsv5L87rk9fyJWNSIvJEfoXUzmCRLz1w0_U6OBrIKltC1MFnEhDgNIkLQXrA_YVVTiCYqYQrZm1N1KN7SLT2eUQZosoAqaEdjbL5OQMzeJEFs8MsWCLDxIRU-PwcOuSVx9MeuVo1hcW6e7Xo9s15qD3tyJbaTSVIJjl2AOiX-HtuV4iECi614tFY_ug1e60v60xMsjMJnClm_3wkHUUgUq5WuF2XFeK3jk4GnP9zDQ9UcnVPnc6jw-n7a6IHwicEcBadn0jsYzlHpwyZvk-REWYJajl-cU8jEoHjZxE2ddSKYWnxMH8ff_pybOdkTKlP42m9gtuzH10KXterCqd30ZUsViiQmPdqlIT3BRc_1F_QHxPHu1XFArXon9LvZkvbrKGhlCv9QZc_cx1--taR0m0SIsI6z60Ndp3bb5rMYCmgEEzCdUJU59hzyNlyIW8Ztaq-OJUWBYaGpO35wHMEbcmf9ZrDcZd_8BnGTIZTwnTbXv0eZ4rO4voqK0wLmG9QOKPyKztcGOM4KROHy_b4BNp7tIGZXzwA-lEk9pf0tq9-wIEZ8HnIq_1u9WWStvFHHZB2dZqW5ihWBGOEcfMyVz2tv0Gq55faF5MXKK_UpneCJx8juqDaqJlveNRdgxAs--TkWraBtoHs8lOLwEld1NTU4LP-DgnvMYZNd3pQybXNWmG8kDLd5RH5xxXShoWyzX00E6sZcBr_aNFYsBuAOXhAgTTu1GQkG73QQGEUdFZISlRWetevaurqHLeEyAdmzIjNQ-Mkr1phdXeeXOibWWiVLcZxVm1Y7lgg9KULqDYr8NzU-BQoMXpJtBG1vgXXF95fjjNUfh0oP5xPynHQE1THGeubyee-CDIpj2Gc3gXOMfzNFYJY0pwN6IpW4iy-wMEI6tEmltPtaO-ASdfWV5EP1Z1MQBsdByJIBqx_GCrQSHpzCjG_Xqaj3RGB0iMjBrjo9aEYts2OcKcCP-Pu9VTCnoIWnROQooHwjnEF2gVSEQ6VDyMC-kW8FMyI_FAxdKALly928lIexfuk5P_7rS982jRxzkidw5MvSUBMOCX_pO8YawmoWRJRNpeQcwdL568a-nKuzzg-Ypm1Kktswg65dkNPsWNrOZ0neK-AiJu0M0kp5ePLyNwrVSAJ-Mpn2IyQ-9AzYHhmAQd4kO4dW9zc_iKLPd-21Y5XZWTCtOHOWmgmh7p3lNUfYB4gOWmnc882PO1ExQO5urr83xs8LpOMdbaFNSmYlodQbSFbSQQ7jHhajbF7hWfnlpCB75h3Nml11uV2vqDgRH37su2LxmxvgYaq5WQHTt7eENNkLY3z_0GspMdwrttyKp9TOI1HxvpGeBSjoNoR3_2WcLX4Zct8Ou2j7xaakzgzqe1ROLCiHTUFwdlg9EzmqeZkJxaPOTC61sIKMiIvpOKdFLqahjypLX1Jtjb7Nn5zJyhL3ClqEW0_Imq19HEv3F_9juL6Hl5S9gjH0y4s-buR4DIuWM0WXgOt-LMrjZD19Xb3qqCRoK0mRFBJ1n784HG0_CIuALOANzYq9Rk3ugTaPHAbNDzGZKKY44-8UXoFrqmeiBV27WVBaVrH5kopQbbXDH1PK7qcl-KE9ok3INeAa0qTvLAdTT0VKPJhNEMf_N24DVVAU4cu3CvxtOaPK_Peo-qcN1afSxzd0ittUmO8T5AiYNYPPkadHRrj0u6ogfr-BCW4D38IgWKO1LNXDhMOTNUflzBj4h9hlYsP_FfAUBqECDp8lvjY_tbwOx8RLxeNpLoIq7M66O_eCdaop1QRzYLlKenzDITdZBhmzT0PBkdLSjvH4wjj6QkZNFd8m4mbGPWO70lk3mvQ69c4TApqE4q3PXza_Efj5mbNX0n56O9Y8-9lhzrZO-vetPt6uPV_LZticNIm_0znJFmkMAQW22Gzzy3lRoalisFQ3q8P9fzg10dev6W1pMjsgmsZiWk4CKxcuwljkivArD8CvCo69S6cUyQhSC4NidxrRmAtETX0pESCYHcX1sdvBEgjcJgZfs81IX-u6EfJDj1SZrXSl00gO0wfGiSObgPn80GdqsO6qfLJqI-2I2AIOTedC-5IMT4iainMfcDQvg4oMwWu8nbvv87Z_6ZLHUUtqLPwJjGnFbuVV57JtZGC4HzjuDYLK_DuZh_OvuMTjmuG_Kl9unfCtVHIc5_rlEdBvbJRMOom80o-Wq7kISS6AjG1FWPJq1AVSsgm29QxpGyqb70_4-m9SulqjIkElD3fDPAkZRncCzzfkrSBVhYwzo_UtYYxoV4vGHJSRp2iZOVwgSzsaJa3DOtpxMfFsJFl9enGntRy1m_pqQ5TyMGirjtL78RUYDQq3V_5--3cUUSXkwQ7HtN2XA5hpr2As8If2fZ9i-8E_TFFiDY4BeWgvCAIfAb3TZXiyBS3ptArb7ZZE5On9ru8hMsr0r1K-geTqAPyW2yY6gZSaX6OABprS8Tsx30510LFrd36aGW3_zPd4jlNmUkd1jmSXsEnmGs9__PskuMUmKtJ0VI9QsvmqUOH90CAAvo1IDY7tub2TClSTJpJd6Sq6hiNtPnUts_8pQZebBFtzlblH43ojLl5CJbKS_gF9G8S6h0bNgLedrbYn68B7HBgTnsBQjCzO28oIpH3PO
+        role: model
+      - parts:
+        - function_response:
+            id: pyd_ai_b1b635905a0b41f5b955e0d9a727c545
+            name: get_file
+            response:
+              error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "extra_forbidden",
+                    "loc": [
+                      "file_name"
+                    ],
+                    "msg": "Extra inputs are not permitted",
+                    "input": "input_file_0.png"
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
+        role: user
+      - parts:
+        - function_call:
+            args: {}
+            id: pyd_ai_40a403336a6542bd89029b1a73273557
+            name: get_file
+          thought_signature: Cv8DAY89a1_txrtvWfuLnNPg-JjlJJpi_UetkCTJ95NHjw2KZ1T3PCw2qf8LT7pjf_xoOX2zi0UBCbCWLryJ5r-f6iWd88EPoDYkvF0D_Ay76X7V_owoirph7ISO5bJRbROEQgGLirPXWKsZNPYdf7-xAISD71vZDOQFGZj8-r3lwcNSnlgMnI4dFZR3pUrilDlUXRotP6BmvGLbenz3H8F5h2E4fNMT89e71e4CD6eSzm4VfEkXP6q9tZBM7BynTNvwHAQe0Ena0yuRQS8dcI2WaA-gGI-P8OdUXW3YHGHzMHOnSyKx2_EHQzd8fx2E2McuJSYh9vMDwlUkeMB60xgGbDhqWF5vXKEisXSyGikg350Mvv8O3QM-uSl_ueF4G0LxWPvHT-X5VkK68hS2yXS9L41cvXChwkMljD-3HX4wUB2rYdwzrVSFua9Ir8aJBVMbgK2p_ak79jT64HikZe70bN2v8-7oPmMdFDBmXPbUy4-N-EgEqZ_Mu5yXLeSCYxde9MFKrj9IQOAlfPfFmoWm1TCiPkGRzFABJOo-6LfYUiZj5Bl0OvpkMBr67y_ILIuZAaeNRAK4KOk_AbPvJhA9R5klpP3Vo2Nyx3_GKVYTFI7mG2RyTaTBwMNGM-X9KY9Mjj06mnKMQ_7cVxR_gYKIfT8kQKWaA196EEfpWUYfwA==
+        role: model
+      - parts:
+        - function_response:
+            id: pyd_ai_40a403336a6542bd89029b1a73273557
+            name: get_file
+            response:
+              return_value: File attached
+        role: user
+      - parts:
+        - file_data:
+            file_uri: gs://pydantic-ai-test-files-vertex/test-files/kiwi.jpg
+            mime_type: image/jpeg
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parametersJsonSchema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2441'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.5005524473993768
+        content:
+          parts:
+          - text: |-
+              The image shows a high-resolution, close-up cross-section of a kiwifruit (kiwi) against a plain white background.
+
+              Key features include:
+              *   **Flesh:** The interior is a vibrant, translucent lime green.
+              *   **Core:** In the very center, there is an oval-shaped, creamy white core.
+              *   **Seeds:** Small, black, tear-drop-shaped seeds are arranged in a radiating ring around the central core.
+              *   **Texture:** Fine, darker green lines radiate from the core toward the outer edge of the fruit. The surface looks moist and fresh.
+              *   **Skin:** A thin layer of the fuzzy, brown, textured outer skin is visible around the circular perimeter of the slice.
+            thoughtSignature: CukGAY89a185zbqLDpKu1NHYW27DBHcWfFebhdQlIXmWeXVSfozXxoJYuz3XYHGvJAYHxlIgmXKy4K+rkD1/xWU5Vss43jaT0JHSmKSsvCDVqH7xHNNMiYmfhwxWHEhcO04cVNOYJorXDb5bfN9MGYLYj78yFTj5KHF9DJM+L4wJcsiuf9+ndr8EvA9thyY89cy7mIR6ketJrj4fyyELnkIHrbF2QYzz2IwW6pz3reti5jPO9lNzD8kig17ClCYzW9fbDe5j920guemL5+r9eQ0AKduWzbmxbenI4ihVCDvRhZ0zsk/+ghnN223j86qlFPSbdRsXhJVpqEfngReUjuZE9c/iE8eQSCD2jzRmGYZF/1PBS68n8HyU1xQBz6AKkmxBtOtCCsSCxbLwNp27t1IfNq1ILewoKogzXoHbA0z4C+rb0EEsYCPeRXTjoJNiG6VBUSy4AnuaK9lcPPNjcJ6UA1x0Ep4TdYIgaosqL0b4RnbElQILYvbrFBHGJKlnT+XK4MVbKDrG3vg4uFubTnr3AbF12ChRcRw3fClmZ0kFQqYkhg/WAGcE4iBc2JwhZ7liqSXCruxpWs6qw6weuc8LBXzKaeMEkBMFAM8ltmDMWM+MaWCm2qdnzj0ffBulVAGAlRKA0xgYTvaxO0jU35WCkw2koHu7KxdpMN3o+XjUszEfLg/QG2+4sbqItYF331HbGWwbYpTZi1i75ExOZ0pV0LZQhDNvRUeih7l0K9OVuwZMub4qxniKj4LhE9ZqcSIWR+2KVfkfWF0ejNG1ZJ/3QFfY1FZNOs5cnmapwfGHZaEAQtiB1X26tqTisj03yOGQDPaw8UVdJ+9T0nBz81rxC7JSQIYwyRzKCQyi8uLcD6iiABycezTd1CrCDzHaaVI6PuL6mYwsE/DA1nnrlKXFTfD54YQAazOn40W/k5yMqhyDjK8NLsOQQXMPFibBtMDgl4OvBnvRLTJh9EqUaqbRb9j77GqZRMciu546RXLLZR0RTlnwTGzn4lG9agrchFGlq5NWYn9hqvEl8ukz1ZuZFdZ1wGxtNwosAvpJbQtQpQPZtfjQNqiN9V8kcsvGvGHTNkDdcghuHcTeTVjM8yJ+onRL8cwl7WKMEw7Xcd71+GEUHepdzguK5B2tO1eQZuIGPxGRt3S+jWVF
+          role: model
+        finishReason: STOP
+      createTime: '2026-03-05T22:51:05.240169Z'
+      modelVersion: gemini-3-flash-preview
+      responseId: 2QiqaanUDqDZitUPrdTskQY
+      usageMetadata:
+        candidatesTokenCount: 156
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 156
+        promptTokenCount: 1217
+        promptTokensDetails:
+        - modality: IMAGE
+          tokenCount: 1088
+        - modality: TEXT
+          tokenCount: 129
+        thoughtsTokenCount: 223
+        totalTokenCount: 1596
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+version: 1

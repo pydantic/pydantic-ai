@@ -1,0 +1,353 @@
+interactions:
+- request:
+    body: grant_type=%5B%27refresh_token%27%5D&client_id=%5B%27scrubbed%27%5D&client_secret=%5B%27scrubbed%27%5D&refresh_token=%5B%27scrubbed%27%5D
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '268'
+      content-type:
+      - application/x-www-form-urlencoded
+    method: POST
+    uri: https://oauth2.googleapis.com/token
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, max-age=0, must-revalidate
+      content-length:
+      - '1160'
+      content-type:
+      - application/json; charset=utf-8
+      expires:
+      - Mon, 01 Jan 1990 00:00:00 GMT
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      access_token: scrubbed
+      expires_in: 3599
+      id_token: eyJhbGciOiJSUzI1NiIsImtpZCI6ImM4MTZkMzM3YjgzNjVhMDZhODUxYWQ4MDAxNmMxNzEwOTk0OTI2MDkiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJhdWQiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJzdWIiOiIxMTgyODA0MjAxMzMxODU0NDg2MTgiLCJlbWFpbCI6ImRzZmFwcHNAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsImF0X2hhc2giOiJhSHlkZkZHbmFwem8wa2ZSbFFqd2FnIiwiaWF0IjoxNzcxMzAyNDkxLCJleHAiOjE3NzEzMDYwOTF9.VH0pGfu-X1EUvthEFMaAQtuo0L70sxqKDWfcti4sSz2RTo-D1ujucqcwrZ4AckoDbnViSGQtiYYUNBKHVYbL-WP1mXKYbzlnbHDIxGSR5lw41mLGSWxUtm0GC619ynqvSQuYOIw4_fDpK0dK49PACkMDyZ8J_f2MOteMgW6WAmdsNn5EhW6605y4l2iTX2N5AJ6_diJB-QWHf-v3D5BI9MIoswVKKjxMgtz247BmBV58LKfi6rT4Ud-UKAFa8DArPaCcbAZ1mojWm-cl4QN60KxASA669R_4jUbCmt-JHE7lv4SPq3XBenyuo-1PQoJP4WB_sFVFrr7AKzcIDjNiEQ
+      scope: https://www.googleapis.com/auth/userinfo.email openid https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/sqlservice.login
+      token_type: Bearer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '371'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parametersJsonSchema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '3764'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -25.44883693934416
+        content:
+          parts:
+          - functionCall:
+              args:
+                name: input_file_0.png
+              name: get_file
+            thoughtSignature: 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
+          role: model
+        finishReason: STOP
+      createTime: '2026-02-17T04:28:11.798480Z'
+      modelVersion: gemini-3-flash-preview
+      responseId: W-6TaZDeMNuDitUP7L3fwAo
+      usageMetadata:
+        candidatesTokenCount: 15
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 15
+        promptTokenCount: 22
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 22
+        thoughtsTokenCount: 643
+        totalTokenCount: 680
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '4081'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
+        role: user
+      - parts:
+        - function_call:
+            args:
+              name: input_file_0.png
+            id: pyd_ai_52b99a34949842dd8c0a1e072c89f3b9
+            name: get_file
+          thought_signature: CqkSAY89a1_vb_axlAVZILojBhjzzHPok_no3Gnh3xHHySaeyLFKXtyhsflIb0YGUGSskcQD0kujPO_sUUc1r6ntfCeAXklwvxMJOW6IQD2D7tDKkSZYZorGTC6y6R7olwOqLJfCzOdE841d2IRSMfDMwFSdrZnrAxtseTYL8xI-qLgtToERdY0bPzv7hz90UoyMOz4oEEalTo20bMm-AYDAAhFjdBXFZyd9xDNjJO-_lhUutvzPa1yyk7YTeI6NIYlczfYVb_w46AF10F6ct_HWE8bCEaTGOU3OGCYxi0fG53nZK3NPRU5NzzQiAS6NySAWSiFcc7IuwBFfvXwNB-fwe3MCViRsEmnQ30YJqISXKx1LxWNtl7QEppkW_Y8HmyjVarOIvTXEi0FfnPfvpWtt3wYXkgkMm60KP3T-vb6movi-RrAkFYSWx1CA598BZUmndTJrXUbdfBsXHyYnfqdEHR3dJNfwkqKoL6p4AYTepx8_L_8jqQKU6GLe52ms5f23p2MT21x60UnErfCRp5cRwLMvgjZmB67hnA-rUrVnYgiuD5Y-q3c9S4FcPLQ121Xk4X0vT8s5N4EDgiJB1gqOuj0F2fiTPwt-JYAo1xYaKY8aOKYfQCuJDCzE7WHWhk2jdpZIYOjCGoo2j3SkzpM_MD7UfFzLUDJ-9GXrBjZjDDcUklhBY40J3PnRgHCQIlmKFO_jN_xWX-tVAG_USzMYu6gwJlzDJkgJxsKUfJg-UyXHKe0M7oULzeZCRYtEb3flLNkN_Sb2-vXhDhtpZwgDHws2SaKx47fugUESrD0OdF3hQcj3fSzrQFORvKJ86VLikl4zV-TV5RMJBcYUpH1rwnu_s8JYzEedVHBMF_nWaObjM5C0pwjXScT6CT--VNz9d3Op_ZqPkKBZMqrvYToh9nm1Zpnq0ooKjyBihwWGNy4EdewR-FdeXYToZ6d7pxO3_7CZrolRC-OejZlMWn9Uwnu6LFdjYak3tejqdCT_RN19twCzgtfS51NrBUPO8VVqD11RCZXqcfAgxS2dArxdXuAcagJxcZPn3iKilPAVzSPkAtim1beufzHtHhF5ZfXvUZxujZ_msNRD80JA4GndQnNV-PoxHAM2skrOYtgcWUVj3_85t08R9B37PYSu2oF_3itBffjdDA8xG8wwfBInhN0oQO3IqE2W6_EOAOTl91Rm40DBjeRkkTonHB5xmFJIPnMM4a258J38VeM6-i-7aoSlDXd9gj36A1XqdBemOG4rLVcCwsvLMadsMXAutQ0gnfMXD0WQg3RDrk_zt8YKM6do5C8W6aUXVXkaKl843IwG8fN0Bn_ionnC9aJsZEqeL5-uDmiks9_EQTn6PVHBjI41rrc2L3TKTUCzN6Nu41ppEyxVVykKehmh9tGxO1er6pOL1qOOjwll5OB0OImEfipoxecfHU8n6XFKcBRZeI5uNna2YEZuNNh2QMVa0RZ2k9COwVLtLyGK9rmdpg1RNcjfd0UJ18L4NO1a6Uj921UNDjR6QFtP4go-_zVQ0azsGO7AIVjScSkt-_LpE3m5MLT59aIECTZ5jBF_keaIRJTxM52-dqD-lSEOb4Ne1upjsRSyrtHVvQ36xQDprrB3WNsJjjoXHPLYzf-ZmvCVUdttnjNZloNdxVi_XHeT8MNq4zfvT0UZ28MF6WfkxYu-acGHm_kRBAuKqR5MZrn0_QV1S4fRxCf2UU1AIunAN-5L3NVah78Y6wtueWrhTNOHArSIO1kFrEpTKgC3kF7cpOET0XSecEyTgLRM_bYUH7EHjejboCKsQWT4SApWID2UM2I2ePSwuj6auMVAA775CPUN75vveUQZECLFx9zBO1m8EzP-C3jIY-acSM58AdgdLw-Qb-kFunO729TR0kWkkUfcGLYVwQYnpEM22f9akLXeXzdaJ5FZBKeRYZoPqsiY0pwLFBb9lHpzlPwEdEWyuXdNFSgfnDrKDdO8k8gk3jE0PURKT4tFqSZXImEnZZvYLFuagpxyrK-pFJdDjQfYb2Pjyc75cq_eoBuSnZ0yEN0YhHyfw-c-JvFfgqVQZ3RLZYuFJFH2XinevJFAvcl87VmBZwSH9B35LSzK6RM2WcljdFFuCw-n8JCOrc9nl2M0qRwskvzeJTQZBj5jo9Byu_S6TUBwW-H6uwbZlEQa3CKX-mv7c_9tuMIYtJeOrzWlNN5Xaf9U1HZ65aqgfngIST1PLlY7SXK-djcqrphJneduAWUs3g_OrUUFsQNzViGyzqv8KB7AZiM-crJELjH5BqzAhNrZ78bSJHjeA-7DNoB5EPudY-y11_8b8vOrpV5UzfVX3Sq8vliD30PGg24VygVjTib4pGZXXlFimKuoGZcvv8n-4LyyoBvSl6kFzh-wpIJ_IphAyojZNg-OZdcFfn3W8T9X6-s8LZtjP8zt6mJFbt7R1f7-KpDcAKeJOOhQVf-z8Wy6TssSDC50D0dw-7Im4isI95r6eAbYzatXnpIcWifMIZMMrxmdBMmyNxcXtv4pVzp9_qKMvcppgcLD2vK_LPrGdSgyYCdqpsT0krtYKwzzrfV0imBHX64cf5FDyY34wdA_0O-DVkh5iGCgeFj7ZzKBlXoKB3R5KNJ0-LBcmCBro1OuEP7uIxfKz1T-jDown8pTFgRJ3GD5KwKxiaDbTc6Cv8DiB97OuVh69C17dhQYS1QGKeMt1dhkfVdEzjChxkVzU5PNiMCmARUQIb9uERHBGfEDhOMXRy8nTD9LoDMJJSEC0mMO7n-2iihFXZ9ebb2glhj5ootKm5EzNtwp50UvAY3lK_AMv0T4oV4zfieD0f5q5GRIk5rrM7vS0QLOKrmSkrsuEIF2yFxMaI2oQUBcG-iEB1BNA7hIbEt5RdOnzgnDuoPb01EK5rzCBcU_c1tV1bw3RFXnA_wFgZbh7FMB5nLaVkmeCff9oTnWPWFevbe24lVIamv0XuCGInPZEpdp1WFr7ZMCBfsLOvbHE_fvXvrHBjin2UggdGPYPOYX6qpPANMvWDg8oBa4I8v1satdr4IBF_d5KZw7x8bdP5-WRR7j-6RyIEPp2Ga-G2g9TBLRCn5MrMA7FDBIfkjp6YCEikFPGEfRSTiWc7AoHUKyjnYnkgI=
+        role: model
+      - parts:
+        - function_response:
+            id: pyd_ai_52b99a34949842dd8c0a1e072c89f3b9
+            name: get_file
+            response:
+              error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "extra_forbidden",
+                    "loc": [
+                      "name"
+                    ],
+                    "msg": "Extra inputs are not permitted",
+                    "input": "input_file_0.png"
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parametersJsonSchema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1407'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -12.437306502173913
+        content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_file
+            thoughtSignature: CtUEAY89a1/ZJhaP7G/ndTO1j2hvwaet1ya1yR4gIgTMeC5gwn9FPuTnEwz+4d/YdWXOFPKcFyK2cIdIb9Az3jLVgeT3aqroAWuMmE2+R0jQiedwuJ2JTQuq8aRhSuZLyPDe63OmbZ7+xOvBuqak+6TKMnVzLqXvplOmNlqJH3EE3LSShk0PsYv8fe8WRF5/jbtzql/GfmgD6mtePl1AJKx19JSkS+Bna25geWwFBUW7uamNzYVy0VXBN+ga2Vj0lUGR/hMJhPncj1pt9/UG+ZNajQbPplWlp9Y16xJhJWZougM3SDWt6hjLlntQ8kbNSpERtWvUb3oizC4dcThlVL79kqnXbY+K/F2xxcSelwg7LODXhkrbtO4Oj6QdDlvJ2OY5gv3qR+DqOh50JQCMOCPm/ZRJ6YSle9HwovcKpkMzb3Qn/kbymf511UoBZJkyEVxBjnaaHabGPY1Fd+jbTVdip0VDN+3qULzK+w9c/BqjuCNX0087vv62l570B62Gd3hIMkJ9gqvIh2VaAY8pPo76w6Fps5oEkIX3kqxCxWHNPunj6rk/KeafiBQRO+kQcUbBckuy0v232I++idNerkS7TAEjKNUOlnUJayHoH2DDKpqyA2ruKU+tHdiFJiu7w8D04eMYni7L6TPYQgzXbeyPMnN2iFPSCdtn+rcS5kC9JViuBmF+T6X+upyES30dGB44Dcw/ZzfWw9yzv/3QaXMt++4cGzWCpjzOyJvmPqRHdwnOmo2bH2FN63L7L4jUuZWPLRN7r/yZJ1bN1KZIH2jhQlZqvHAJ
+          role: model
+        finishReason: STOP
+      createTime: '2026-02-17T04:28:16.873783Z'
+      modelVersion: gemini-3-flash-preview
+      responseId: YO6TabeqNYb83PcPvKakwQ4
+      usageMetadata:
+        candidatesTokenCount: 7
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 7
+        promptTokenCount: 114
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 114
+        thoughtsTokenCount: 146
+        totalTokenCount: 267
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '5289'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
+        role: user
+      - parts:
+        - function_call:
+            args:
+              name: input_file_0.png
+            id: pyd_ai_52b99a34949842dd8c0a1e072c89f3b9
+            name: get_file
+          thought_signature: CqkSAY89a1_vb_axlAVZILojBhjzzHPok_no3Gnh3xHHySaeyLFKXtyhsflIb0YGUGSskcQD0kujPO_sUUc1r6ntfCeAXklwvxMJOW6IQD2D7tDKkSZYZorGTC6y6R7olwOqLJfCzOdE841d2IRSMfDMwFSdrZnrAxtseTYL8xI-qLgtToERdY0bPzv7hz90UoyMOz4oEEalTo20bMm-AYDAAhFjdBXFZyd9xDNjJO-_lhUutvzPa1yyk7YTeI6NIYlczfYVb_w46AF10F6ct_HWE8bCEaTGOU3OGCYxi0fG53nZK3NPRU5NzzQiAS6NySAWSiFcc7IuwBFfvXwNB-fwe3MCViRsEmnQ30YJqISXKx1LxWNtl7QEppkW_Y8HmyjVarOIvTXEi0FfnPfvpWtt3wYXkgkMm60KP3T-vb6movi-RrAkFYSWx1CA598BZUmndTJrXUbdfBsXHyYnfqdEHR3dJNfwkqKoL6p4AYTepx8_L_8jqQKU6GLe52ms5f23p2MT21x60UnErfCRp5cRwLMvgjZmB67hnA-rUrVnYgiuD5Y-q3c9S4FcPLQ121Xk4X0vT8s5N4EDgiJB1gqOuj0F2fiTPwt-JYAo1xYaKY8aOKYfQCuJDCzE7WHWhk2jdpZIYOjCGoo2j3SkzpM_MD7UfFzLUDJ-9GXrBjZjDDcUklhBY40J3PnRgHCQIlmKFO_jN_xWX-tVAG_USzMYu6gwJlzDJkgJxsKUfJg-UyXHKe0M7oULzeZCRYtEb3flLNkN_Sb2-vXhDhtpZwgDHws2SaKx47fugUESrD0OdF3hQcj3fSzrQFORvKJ86VLikl4zV-TV5RMJBcYUpH1rwnu_s8JYzEedVHBMF_nWaObjM5C0pwjXScT6CT--VNz9d3Op_ZqPkKBZMqrvYToh9nm1Zpnq0ooKjyBihwWGNy4EdewR-FdeXYToZ6d7pxO3_7CZrolRC-OejZlMWn9Uwnu6LFdjYak3tejqdCT_RN19twCzgtfS51NrBUPO8VVqD11RCZXqcfAgxS2dArxdXuAcagJxcZPn3iKilPAVzSPkAtim1beufzHtHhF5ZfXvUZxujZ_msNRD80JA4GndQnNV-PoxHAM2skrOYtgcWUVj3_85t08R9B37PYSu2oF_3itBffjdDA8xG8wwfBInhN0oQO3IqE2W6_EOAOTl91Rm40DBjeRkkTonHB5xmFJIPnMM4a258J38VeM6-i-7aoSlDXd9gj36A1XqdBemOG4rLVcCwsvLMadsMXAutQ0gnfMXD0WQg3RDrk_zt8YKM6do5C8W6aUXVXkaKl843IwG8fN0Bn_ionnC9aJsZEqeL5-uDmiks9_EQTn6PVHBjI41rrc2L3TKTUCzN6Nu41ppEyxVVykKehmh9tGxO1er6pOL1qOOjwll5OB0OImEfipoxecfHU8n6XFKcBRZeI5uNna2YEZuNNh2QMVa0RZ2k9COwVLtLyGK9rmdpg1RNcjfd0UJ18L4NO1a6Uj921UNDjR6QFtP4go-_zVQ0azsGO7AIVjScSkt-_LpE3m5MLT59aIECTZ5jBF_keaIRJTxM52-dqD-lSEOb4Ne1upjsRSyrtHVvQ36xQDprrB3WNsJjjoXHPLYzf-ZmvCVUdttnjNZloNdxVi_XHeT8MNq4zfvT0UZ28MF6WfkxYu-acGHm_kRBAuKqR5MZrn0_QV1S4fRxCf2UU1AIunAN-5L3NVah78Y6wtueWrhTNOHArSIO1kFrEpTKgC3kF7cpOET0XSecEyTgLRM_bYUH7EHjejboCKsQWT4SApWID2UM2I2ePSwuj6auMVAA775CPUN75vveUQZECLFx9zBO1m8EzP-C3jIY-acSM58AdgdLw-Qb-kFunO729TR0kWkkUfcGLYVwQYnpEM22f9akLXeXzdaJ5FZBKeRYZoPqsiY0pwLFBb9lHpzlPwEdEWyuXdNFSgfnDrKDdO8k8gk3jE0PURKT4tFqSZXImEnZZvYLFuagpxyrK-pFJdDjQfYb2Pjyc75cq_eoBuSnZ0yEN0YhHyfw-c-JvFfgqVQZ3RLZYuFJFH2XinevJFAvcl87VmBZwSH9B35LSzK6RM2WcljdFFuCw-n8JCOrc9nl2M0qRwskvzeJTQZBj5jo9Byu_S6TUBwW-H6uwbZlEQa3CKX-mv7c_9tuMIYtJeOrzWlNN5Xaf9U1HZ65aqgfngIST1PLlY7SXK-djcqrphJneduAWUs3g_OrUUFsQNzViGyzqv8KB7AZiM-crJELjH5BqzAhNrZ78bSJHjeA-7DNoB5EPudY-y11_8b8vOrpV5UzfVX3Sq8vliD30PGg24VygVjTib4pGZXXlFimKuoGZcvv8n-4LyyoBvSl6kFzh-wpIJ_IphAyojZNg-OZdcFfn3W8T9X6-s8LZtjP8zt6mJFbt7R1f7-KpDcAKeJOOhQVf-z8Wy6TssSDC50D0dw-7Im4isI95r6eAbYzatXnpIcWifMIZMMrxmdBMmyNxcXtv4pVzp9_qKMvcppgcLD2vK_LPrGdSgyYCdqpsT0krtYKwzzrfV0imBHX64cf5FDyY34wdA_0O-DVkh5iGCgeFj7ZzKBlXoKB3R5KNJ0-LBcmCBro1OuEP7uIxfKz1T-jDown8pTFgRJ3GD5KwKxiaDbTc6Cv8DiB97OuVh69C17dhQYS1QGKeMt1dhkfVdEzjChxkVzU5PNiMCmARUQIb9uERHBGfEDhOMXRy8nTD9LoDMJJSEC0mMO7n-2iihFXZ9ebb2glhj5ootKm5EzNtwp50UvAY3lK_AMv0T4oV4zfieD0f5q5GRIk5rrM7vS0QLOKrmSkrsuEIF2yFxMaI2oQUBcG-iEB1BNA7hIbEt5RdOnzgnDuoPb01EK5rzCBcU_c1tV1bw3RFXnA_wFgZbh7FMB5nLaVkmeCff9oTnWPWFevbe24lVIamv0XuCGInPZEpdp1WFr7ZMCBfsLOvbHE_fvXvrHBjin2UggdGPYPOYX6qpPANMvWDg8oBa4I8v1satdr4IBF_d5KZw7x8bdP5-WRR7j-6RyIEPp2Ga-G2g9TBLRCn5MrMA7FDBIfkjp6YCEikFPGEfRSTiWc7AoHUKyjnYnkgI=
+        role: model
+      - parts:
+        - function_response:
+            id: pyd_ai_52b99a34949842dd8c0a1e072c89f3b9
+            name: get_file
+            response:
+              error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "extra_forbidden",
+                    "loc": [
+                      "name"
+                    ],
+                    "msg": "Extra inputs are not permitted",
+                    "input": "input_file_0.png"
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
+        role: user
+      - parts:
+        - function_call:
+            args: {}
+            id: pyd_ai_9ff64a08f711413082145e183a8011fd
+            name: get_file
+          thought_signature: CtUEAY89a1_ZJhaP7G_ndTO1j2hvwaet1ya1yR4gIgTMeC5gwn9FPuTnEwz-4d_YdWXOFPKcFyK2cIdIb9Az3jLVgeT3aqroAWuMmE2-R0jQiedwuJ2JTQuq8aRhSuZLyPDe63OmbZ7-xOvBuqak-6TKMnVzLqXvplOmNlqJH3EE3LSShk0PsYv8fe8WRF5_jbtzql_GfmgD6mtePl1AJKx19JSkS-Bna25geWwFBUW7uamNzYVy0VXBN-ga2Vj0lUGR_hMJhPncj1pt9_UG-ZNajQbPplWlp9Y16xJhJWZougM3SDWt6hjLlntQ8kbNSpERtWvUb3oizC4dcThlVL79kqnXbY-K_F2xxcSelwg7LODXhkrbtO4Oj6QdDlvJ2OY5gv3qR-DqOh50JQCMOCPm_ZRJ6YSle9HwovcKpkMzb3Qn_kbymf511UoBZJkyEVxBjnaaHabGPY1Fd-jbTVdip0VDN-3qULzK-w9c_BqjuCNX0087vv62l570B62Gd3hIMkJ9gqvIh2VaAY8pPo76w6Fps5oEkIX3kqxCxWHNPunj6rk_KeafiBQRO-kQcUbBckuy0v232I--idNerkS7TAEjKNUOlnUJayHoH2DDKpqyA2ruKU-tHdiFJiu7w8D04eMYni7L6TPYQgzXbeyPMnN2iFPSCdtn-rcS5kC9JViuBmF-T6X-upyES30dGB44Dcw_ZzfWw9yzv_3QaXMt--4cGzWCpjzOyJvmPqRHdwnOmo2bH2FN63L7L4jUuZWPLRN7r_yZJ1bN1KZIH2jhQlZqvHAJ
+        role: model
+      - parts:
+        - function_response:
+            id: pyd_ai_9ff64a08f711413082145e183a8011fd
+            name: get_file
+            parts:
+            - file_data:
+                file_uri: https://pdfobject.com/pdf/sample.pdf
+                mime_type: application/pdf
+            response: {}
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parametersJsonSchema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2074'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.31727890040091383
+        content:
+          parts:
+          - text: "I have retrieved the document, which is a one-page \"Sample PDF\". \n\n**Description of the document:**\n*
+              \  **Title:** Sample PDF\n*   **Subtitle:** \"This is a simple PDF file. Fun fun fun.\"\n*   **Content:** The
+              body of the document consists of four paragraphs of standard \"Lorem ipsum\" placeholder text.\n*   **Visual
+              Style:** The document is clean and minimalist, featuring a simple black-and-white layout with large, sans-serif
+              fonts for the headings and standard serif or sans-serif text for the body paragraphs."
+            thoughtSignature: CroFAY89a1/3p9EejOMsYvgl1kJ1szV8S6hFnKZTF1uWuTR8MPfQaNNaQ1uanKJCKaNmjFzMfltypdlTq+iO1y/k0UOz4svjptnEcOwqyQfaEx0r4R+eGs/Laa2V81QmB9a15aqfVKEMY+y1Ndg8fnmB5+S1O+0bE7tHUUlJw8VJ0gd2sJu5w5Npki2XRZJcorLZC4bZvWUdJKgZOs3iOWmNzSlUyb17RIK5wgDmGvKf3EkN3WI5Z/HWh2TrvmGIviLQpBPQFYJv+MeurScIwMD+hpBKVofKsfS+rnxEVBJQ3u3+VGI74aM65WuuoJxumqzduqHVfJJBrQvV9isHuZ3Ga2YCYFnqpSERQPP9CuO+lEt7Lg1LR6uUJvS9Ut1Drt5wxSlEL6P44sDw5PrkDcoTXsWEhklnIIaHzX3teeOB4TSXmyRNtXvUOHIZFJSEqweoZylygNC899WfDbEPW2NbUAvIcVaCDIsgdNCoXVUYwPx7thWe5DHlS745qn0jH4Oex0xlmsZTdsxM9SUHqGkRff9kwkyz+EwqjECKGKKZLw+R+0ZF7AssqXmL2i2Tlr4tv6t+AhF896duBZzN4Ed7sP5gdUNqIZY0duotLfpgwRy+MR0gj8X3Q4U/IptZX+HkJTWPoEeydhb7KECsAtaapVxefx4zFIMJgQbA5B00hHm9vE54MBDPsvzmr4hnW90NvmiY13jGqRiQJ/UTV+C01h9WyFNBk1U31yXcFSR7tLZWdDXcG6zVDP4OcEvpHKMUyK9V50M5XMaFe6nivcYHN7UlNuSvd3W9z+DvOTFWAfxmFMxHEaetfHDY0Hx1D5rXC5uB1es40tDUfKYq+93JckG1M8S5oukkGww7/RldIRRWx2nRO6L+uF06T0UuFP9RfuXxgTB/krvlrzFVGMW1KcOHB7lnWp/etjI=
+          role: model
+        finishReason: STOP
+      createTime: '2026-02-17T04:28:19.109596Z'
+      modelVersion: gemini-3-flash-preview
+      responseId: Y-6TaZzYBtuDitUP7L3fwAo
+      usageMetadata:
+        candidatesTokenCount: 120
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 120
+        promptTokenCount: 640
+        promptTokensDetails:
+        - modality: IMAGE
+          tokenCount: 520
+        - modality: TEXT
+          tokenCount: 120
+        thoughtsTokenCount: 149
+        totalTokenCount: 909
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+version: 1
