@@ -6814,6 +6814,34 @@ async def test_retry_message_no_tools():
     assert retry_parts[0].content == 'Please return text.'
 
 
+async def test_thinking_only_response_retry_with_tool_output():
+    """Test that thinking-only responses retry with tool-output guidance when text output is not allowed."""
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools is not None
+
+        if call_count == 1:
+            return ModelResponse(parts=[ThinkingPart(content='thinking...')])
+        else:
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "ok"}')])
+
+    result = await Agent(FunctionModel(model_function), output_type=ToolOutput(Foo)).run('Hello')
+
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart)
+    ]
+    assert len(retry_parts) == 1
+    assert retry_parts[0].content == 'Please include your response in a tool call.'
+    assert result.output == Foo(a=1, b='ok')
+
+
 async def test_thinking_only_response_backward_looking_recovery():
     """Test that thinking-only response after a tool call recovers text from prior model response."""
     call_count = 0
