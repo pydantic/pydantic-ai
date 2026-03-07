@@ -1059,19 +1059,22 @@ def test_openrouter_map_provider_details_null_provider_skips_key() -> None:
     from pydantic_ai.models.openrouter import (
         _map_openrouter_provider_details,  # type: ignore[reportPrivateUsage]
         _OpenRouterChatCompletion,  # type: ignore[reportPrivateUsage]
+        _OpenRouterChoice,  # type: ignore[reportPrivateUsage]
     )
 
-    # Build a minimal _OpenRouterChatCompletion with provider=None
+    # Build a minimal _OpenRouterChatCompletion with provider=None.
+    # model_construct bypasses validation and does NOT coerce nested dicts into
+    # model instances, so choices must be proper _OpenRouterChoice objects.
     resp = _OpenRouterChatCompletion.model_construct(
         id='gen-direct',
         choices=[
-            {
-                'index': 0,
-                'message': {'role': 'assistant', 'content': 'Hi'},
-                'finish_reason': 'stop',
-                'native_finish_reason': None,
-                'logprobs': None,
-            }
+            _OpenRouterChoice.model_construct(
+                index=0,
+                message={'role': 'assistant', 'content': 'Hi'},
+                finish_reason='stop',
+                native_finish_reason=None,
+                logprobs=None,
+            )
         ],
         model='openai/gpt-4.1-mini',
         object='chat.completion',
