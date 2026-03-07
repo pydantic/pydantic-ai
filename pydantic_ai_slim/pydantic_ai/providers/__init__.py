@@ -9,6 +9,7 @@ import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
 from contextlib import AsyncExitStack
+from types import TracebackType
 from typing import Any, Generic, TypeVar
 
 import httpx
@@ -72,7 +73,12 @@ class Provider(ABC, Generic[InterfaceClient]):
             self._entered_count += 1
         return self
 
-    async def __aexit__(self, *args: Any) -> bool | None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
         if self._enter_lock is None:
             return
         async with self._enter_lock:
@@ -87,8 +93,7 @@ class Provider(ABC, Generic[InterfaceClient]):
             try:
                 warnings.warn(
                     f'{self!r} was garbage collected with an open HTTP client. '
-                    'Use the provider (or its model/agent) as an async context manager to ensure proper cleanup. '
-                    'See: https://ai.pydantic.dev/models/#http-client-lifecycle',
+                    'Use the provider (or its model/agent) as an async context manager to ensure proper cleanup.',
                     ResourceWarning,
                     stacklevel=1,
                 )

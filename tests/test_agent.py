@@ -65,7 +65,6 @@ from pydantic_ai.builtin_tools import (
     WebSearchUserLocation,
 )
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
@@ -75,24 +74,20 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDef
 from pydantic_ai.usage import RequestUsage
 
 if TYPE_CHECKING:
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 else:
     try:
-        from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.azure import AzureProvider
         from pydantic_ai.providers.openai import OpenAIProvider
     except ImportError:  # pragma: lax no cover
-        OpenAIChatModel = AzureProvider = OpenAIProvider = None
+        AzureProvider = OpenAIProvider = None
 
     try:
-        from pydantic_ai.models.anthropic import AnthropicModel
         from pydantic_ai.providers.anthropic import AnthropicProvider
     except ImportError:  # pragma: lax no cover
-        AnthropicModel = AnthropicProvider = None
+        AnthropicProvider = None
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
@@ -5902,59 +5897,6 @@ async def test_azure_provider_lifecycle_closes_client():
         http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
         assert not http_client.is_closed
     assert http_client.is_closed
-
-
-@requires_openai
-@requires_anthropic
-async def test_fallback_model_lifecycle_closes_all_clients():
-    """FallbackModel lifecycle propagates to all underlying models' providers.
-
-    When entering/exiting a FallbackModel as an async context manager, all wrapped
-    models' providers should have their HTTP clients managed. Without this, agents
-    using FallbackModel leak HTTP clients.
-
-    Regression test for PR #4421 auto-review feedback.
-    https://github.com/pydantic/pydantic-ai/pull/4421
-    """
-    openai_provider = OpenAIProvider(api_key='test-key-1')
-    anthropic_provider = AnthropicProvider(api_key='test-key-2')
-    model1 = OpenAIChatModel(model_name='gpt-4o', provider=openai_provider)
-    model2 = AnthropicModel(model_name='claude-sonnet-4-5', provider=anthropic_provider)
-    fallback = FallbackModel(model1, model2)
-
-    async with fallback:
-        client1 = openai_provider.client._client  # pyright: ignore[reportPrivateUsage]
-        client2 = anthropic_provider.client._client  # pyright: ignore[reportPrivateUsage]
-        assert not client1.is_closed
-        assert not client2.is_closed
-    assert client1.is_closed
-    assert client2.is_closed
-
-
-@requires_openai
-@requires_anthropic
-async def test_agent_with_fallback_model_lifecycle():
-    """Agent context manager propagates lifecycle through FallbackModel.
-
-    When using `async with agent:` where the agent's model is a FallbackModel,
-    all underlying providers' HTTP clients should be properly closed on exit.
-
-    Regression test for PR #4421 auto-review feedback.
-    https://github.com/pydantic/pydantic-ai/pull/4421
-    """
-    openai_provider = OpenAIProvider(api_key='test-key-1')
-    anthropic_provider = AnthropicProvider(api_key='test-key-2')
-    model1 = OpenAIChatModel(model_name='gpt-4o', provider=openai_provider)
-    model2 = AnthropicModel(model_name='claude-sonnet-4-5', provider=anthropic_provider)
-    agent = Agent(FallbackModel(model1, model2))
-
-    async with agent:
-        client1 = openai_provider.client._client  # pyright: ignore[reportPrivateUsage]
-        client2 = anthropic_provider.client._client  # pyright: ignore[reportPrivateUsage]
-        assert not client1.is_closed
-        assert not client2.is_closed
-    assert client1.is_closed
-    assert client2.is_closed
 
 
 def test_tool_call_with_validation_value_error_serializable():

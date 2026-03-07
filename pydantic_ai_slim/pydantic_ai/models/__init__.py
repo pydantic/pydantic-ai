@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
+from types import TracebackType
 from typing import Any, Generic, Literal, TypeVar, get_args, overload
 
 import httpx
@@ -677,10 +678,15 @@ class Model(ABC):
             await self.provider.__aenter__()
         return self
 
-    async def __aexit__(self, *args: Any) -> bool | None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
         """Exit the model context, closing the provider's HTTP client if it owns one."""
         if self.provider is not None:
-            await self.provider.__aexit__(*args)
+            await self.provider.__aexit__(exc_type, exc_val, exc_tb)
 
     @property
     def settings(self) -> ModelSettings | None:

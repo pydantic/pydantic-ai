@@ -147,15 +147,26 @@ def gateway_provider(
     base_url = (
         base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', os.getenv('PAIG_BASE_URL')) or _infer_base_url(api_key)
     )
-    own_http_client = http_client is None
-    http_client = http_client or create_async_http_client(provider=f'gateway/{upstream_provider}')
-    http_client.event_hooks = {'request': [_request_hook(api_key)]}
 
     if route is None:
         # Use the implied providerId as the default route.
         route = normalize_gateway_provider(upstream_provider)
 
     base_url = _merge_url_path(base_url, route)
+
+    # Bedrock uses the AWS SDK (botocore) rather than httpx, so skip http_client creation.
+    if upstream_provider in ('bedrock', 'converse'):
+        from .bedrock import BedrockProvider
+
+        return BedrockProvider(
+            api_key=api_key,
+            base_url=base_url,
+            region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
+        )
+
+    own_http_client = http_client is None
+    http_client = http_client or create_async_http_client(provider=f'gateway/{upstream_provider}')
+    http_client.event_hooks = {'request': [_request_hook(api_key)]}
 
     def _with_http_client(provider: Provider[Any]) -> Provider[Any]:
         if own_http_client:
@@ -179,14 +190,6 @@ def gateway_provider(
             AnthropicProvider(
                 anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
             )
-        )
-    elif upstream_provider in ('bedrock', 'converse'):
-        from .bedrock import BedrockProvider
-
-        return BedrockProvider(
-            api_key=api_key,
-            base_url=base_url,
-            region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
     elif upstream_provider in ('google-vertex', 'gemini'):
         from .google import GoogleProvider
