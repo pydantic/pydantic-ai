@@ -678,3 +678,27 @@ class TestAudienceFiltering:
             # FastMCP wraps the return value as structured_content; an empty list
             # becomes {'result': []} so the model knows the tool ran successfully.
             assert result == {'result': []}
+
+    @pytest.mark.anyio
+    async def test_call_tool_empty_typed_content_returns_empty_list(self, run_context: RunContext[None]) -> None:
+        """A tool typed as list[TextContent] returning [] gives empty content with no structured_content.
+
+        FastMCP recognises list[TextContent] as a content-type return and does not
+        serialise it into structured_content, so call_tool should return [].
+        """
+        from mcp.types import TextContent as MCPTextContent
+
+        fastmcp_server = FastMCP('test_server')
+
+        @fastmcp_server.tool()
+        def empty_typed_tool() -> list[MCPTextContent]:
+            return []
+
+        toolset = FastMCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool(
+                name='empty_typed_tool', tool_args={}, ctx=run_context, tool=tools['empty_typed_tool']
+            )
+        # content=[], structured_content=None → return []
+        assert result == []

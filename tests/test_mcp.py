@@ -2471,3 +2471,18 @@ async def test_mcp_no_annotation_content_passes_through(mcp_server: MCPServerStd
     async with mcp_server:
         result = await mcp_server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
     assert result == snapshot(32.0)
+
+
+@pytest.mark.anyio
+async def test_mcp_annotations_present_but_no_audience_passes_through(mcp_server: MCPServerStdio) -> None:
+    """Content with Annotations set but audience=None is forwarded to the model.
+
+    Covers the _include_content_for_assistant branch where annotations exist but
+    the audience field itself is None (mcp.py line: 'if audience is None: return True').
+    """
+    async with mcp_server:
+        result = await mcp_server.direct_call_tool('get_annotated_no_audience_content', {})
+    # audience=None means all audiences → content passes through (not filtered as user-only)
+    # result comes back via the structured_content path as a list of dicts
+    assert result != 'Tool executed successfully. (No model-visible content in result.)'
+    assert 'Annotations present' in str(result)
