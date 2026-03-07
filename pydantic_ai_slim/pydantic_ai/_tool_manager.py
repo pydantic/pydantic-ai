@@ -8,14 +8,14 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic, Literal
 
-from opentelemetry.trace import Tracer
+from opentelemetry.trace import StatusCode as _OtelStatusCode, Tracer
 from pydantic import ValidationError
 from typing_extensions import deprecated
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
+from .exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -410,6 +410,8 @@ class ToolManager(Generic[AgentDepsT]):
         with tracer.start_as_current_span(
             instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=span_attributes,
+            record_exception=False,
+            set_status_on_exception=False,
         ) as span:
             try:
                 tool_result = await self._execute_tool_call_impl(validated, usage=usage)
@@ -417,6 +419,30 @@ class ToolManager(Generic[AgentDepsT]):
                 part = e.tool_retry
                 if include_content and span.is_recording():
                     span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
+                span.record_exception(e)
+                span.set_status(_OtelStatusCode.ERROR, str(e))
+                raise
+            except (CallDeferred, ApprovalRequired) as exc:
+                # Always record deferral info as span attributes (queryable regardless of version).
+                # set_attribute is a no-op on non-recording spans, so no is_recording() guard needed.
+                span.set_attribute(instrumentation_names.tool_deferral_name_attr, type(exc).__name__)
+                if exc.metadata is not None:
+                    try:
+                        span.set_attribute(instrumentation_names.tool_deferral_metadata_attr, json.dumps(exc.metadata))
+                    except (TypeError, ValueError):
+                        span.set_attribute(instrumentation_names.tool_deferral_metadata_attr, str(exc.metadata))
+
+                # Gate error-suppression behind version 4+ (new dedicated version for this change).
+                # Versions 1-3 preserve the old behaviour where these exceptions appear as errors.
+                if instrumentation_version >= 4:
+                    span.set_status(_OtelStatusCode.OK)
+                else:
+                    span.record_exception(exc)
+                    span.set_status(_OtelStatusCode.ERROR, str(exc))
+                raise
+            except Exception as exc:
+                span.record_exception(exc)
+                span.set_status(_OtelStatusCode.ERROR, str(exc))
                 raise
 
             if include_content and span.is_recording():

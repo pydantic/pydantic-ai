@@ -11,12 +11,12 @@ from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._utils import get_traceparent
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import DeferredToolRequests, RunContext
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
@@ -3247,3 +3247,174 @@ async def test_run_stream(
                 ]
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Tests for pydantic_ai.tool.deferral span attributes (issue #4530)
+# ---------------------------------------------------------------------------
+
+
+def _deferral_attrs(
+    tool_name: str,
+    version: int,
+    deferral_exc_name: str,
+    deferral_metadata: dict[str, object],
+    error: bool,
+) -> dict[str, object]:
+    """Build expected tool span attributes for a deferral exception."""
+    if version <= 2:
+        args_key = 'tool_arguments'
+        result_key = 'tool_response'
+    else:
+        args_key = 'gen_ai.tool.call.arguments'
+        result_key = 'gen_ai.tool.call.result'
+
+    # InstrumentationSettings defaults to include_content=True, so args are recorded.
+    # The argument value for deferred_tool(x=0) and approval_tool(x=0) is x=0.
+    tool_args: dict[str, object] = {'x': 0}
+
+    attrs: dict[str, object] = {
+        'gen_ai.tool.name': tool_name,
+        'gen_ai.tool.call.id': IsStr(),
+        args_key: tool_args,
+        'logfire.msg': f'running tool: {tool_name}',
+        'logfire.json_schema': {
+            'type': 'object',
+            'properties': {
+                args_key: {'type': 'object'},
+                result_key: {'type': 'object'},
+                'gen_ai.tool.name': {},
+                'gen_ai.tool.call.id': {},
+            },
+        },
+        'logfire.span_type': 'span',
+        'pydantic_ai.tool.deferral.name': deferral_exc_name,
+        'pydantic_ai.tool.deferral.metadata': deferral_metadata,
+    }
+    if error:
+        attrs['logfire.level_num'] = 17
+    return attrs
+
+
+def _exception_event(exc_type: str) -> dict[str, object]:
+    return {
+        'name': 'exception',
+        'timestamp': IsInt(),
+        'attributes': {
+            'exception.type': exc_type,
+            'exception.message': '',
+            'exception.stacktrace': exc_type,
+            'exception.escaped': 'False',
+        },
+    }
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('version', [1, 2, 3, 4])
+def test_call_deferred_span_attributes(capfire: CaptureLogfire, version: int) -> None:
+    """pydantic_ai.tool.deferral.name/.metadata are always set; ERROR status and exception event
+    are present on v1-3 and absent on v4+."""
+    settings = InstrumentationSettings(version=version)
+    my_agent = Agent(model=TestModel(), instrument=settings, output_type=[str, DeferredToolRequests])
+
+    @my_agent.tool_plain
+    def deferred_tool(x: int) -> str:
+        raise CallDeferred(metadata={'x': x, 'reason': 'needs review'})
+
+    result = my_agent.run_sync('call deferred_tool')
+    assert isinstance(result.output, DeferredToolRequests)
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    tool_span = next(
+        (s for s in spans if s.get('attributes', {}).get('gen_ai.tool.name') == 'deferred_tool'),
+        None,
+    )
+    assert tool_span is not None, 'expected a tool span for deferred_tool'
+
+    is_error = version < 4
+    assert tool_span['attributes'] == snapshot(
+        _deferral_attrs(
+            tool_name='deferred_tool',
+            version=version,
+            deferral_exc_name='CallDeferred',
+            deferral_metadata={'x': 0, 'reason': 'needs review'},
+            error=is_error,
+        )
+    )
+
+    if is_error:
+        # v1-3: exception event must be recorded on the span
+        assert tool_span.get('events') == snapshot([_exception_event('pydantic_ai.exceptions.CallDeferred')])
+    else:
+        # v4+: OK status, no exception event
+        assert tool_span.get('events', []) == snapshot([])
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('version', [1, 2, 3, 4])
+def test_approval_required_span_attributes(capfire: CaptureLogfire, version: int) -> None:
+    """ApprovalRequired is treated identically to CallDeferred: deferral attrs always set,
+    ERROR status + exception event on v1-3, OK status and no exception on v4+."""
+    settings = InstrumentationSettings(version=version)
+    my_agent = Agent(model=TestModel(), instrument=settings, output_type=[str, DeferredToolRequests])
+
+    @my_agent.tool_plain
+    def approval_tool(x: int) -> str:
+        raise ApprovalRequired(metadata={'x': x, 'reason': 'sensitive op'})
+
+    result = my_agent.run_sync('call approval_tool')
+    assert isinstance(result.output, DeferredToolRequests)
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    tool_span = next(
+        (s for s in spans if s.get('attributes', {}).get('gen_ai.tool.name') == 'approval_tool'),
+        None,
+    )
+    assert tool_span is not None, 'expected a tool span for approval_tool'
+
+    is_error = version < 4
+    assert tool_span['attributes'] == snapshot(
+        _deferral_attrs(
+            tool_name='approval_tool',
+            version=version,
+            deferral_exc_name='ApprovalRequired',
+            deferral_metadata={'x': 0, 'reason': 'sensitive op'},
+            error=is_error,
+        )
+    )
+
+    if is_error:
+        assert tool_span.get('events') == snapshot([_exception_event('pydantic_ai.exceptions.ApprovalRequired')])
+    else:
+        assert tool_span.get('events', []) == snapshot([])
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_call_deferred_non_serializable_metadata(capfire: CaptureLogfire) -> None:
+    """metadata that can't be JSON-serialized falls back to str() for the span attribute."""
+    settings = InstrumentationSettings(version=4)
+    my_agent = Agent(model=TestModel(), instrument=settings, output_type=[str, DeferredToolRequests])
+
+    class _Unserializable:
+        def __repr__(self) -> str:
+            return 'Unserializable()'
+
+    @my_agent.tool_plain
+    def deferred_tool() -> str:
+        raise CallDeferred(metadata={'obj': _Unserializable()})
+
+    result = my_agent.run_sync('call deferred_tool')
+    assert isinstance(result.output, DeferredToolRequests)
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    tool_span = next(
+        (s for s in spans if 'deferred_tool' in s.get('name', '')),
+        None,
+    )
+    assert tool_span is not None
+    attrs = tool_span.get('attributes', {})
+    assert attrs.get('pydantic_ai.tool.deferral.name') == 'CallDeferred'
+    # metadata fell back to str() since _Unserializable is not JSON-serializable
+    metadata_attr = attrs.get('pydantic_ai.tool.deferral.metadata', '')
+    assert 'Unserializable' in metadata_attr
