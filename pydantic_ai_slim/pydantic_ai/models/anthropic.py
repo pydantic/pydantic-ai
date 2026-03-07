@@ -296,6 +296,11 @@ class AnthropicModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @property
+    def provider(self) -> Provider[AsyncAnthropicClient]:
+        """The provider for this model."""
+        return self._provider
+
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """The set of builtin tool types this model can handle."""

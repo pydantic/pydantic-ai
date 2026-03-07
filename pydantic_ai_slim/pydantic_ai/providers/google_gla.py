@@ -7,7 +7,7 @@ from typing_extensions import deprecated
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider
 
@@ -47,7 +47,10 @@ class GoogleGLAProvider(Provider[httpx.AsyncClient]):
                 'to use the Google GLA provider.'
             )
 
-        self._client = http_client or cached_async_http_client(provider='google-gla')
+        if http_client is None:
+            http_client = create_async_http_client(provider='google-gla')
+            self._own_http_client = http_client
+        self._client = http_client
         self._client.base_url = self.base_url
         # https://cloud.google.com/docs/authentication/api-keys-use#using-with-rest
         self._client.headers['X-Goog-Api-Key'] = api_key

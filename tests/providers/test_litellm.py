@@ -135,17 +135,16 @@ def test_model_profile_with_different_models(mocker: MockerFixture):
     mock_profiles['openai'].assert_called_once_with('unknown-provider/some-model')
 
 
-async def test_cached_http_client_usage(mocker: MockerFixture):
+async def test_create_http_client_usage(mocker: MockerFixture):
     # Create a real AsyncClient for the mock
-    async with httpx.AsyncClient() as mock_cached_client:
-        mock_cached_http_client_func = mocker.patch(
-            'pydantic_ai.providers.litellm.cached_async_http_client', return_value=mock_cached_client
+    async with httpx.AsyncClient() as mock_client:
+        mock_create_func = mocker.patch(
+            'pydantic_ai.providers.litellm.create_async_http_client', return_value=mock_client
         )
 
         provider = LiteLLMProvider(api_key='test-key')
 
-        # Verify cached_async_http_client was called with 'litellm' provider
-        mock_cached_http_client_func.assert_called_once_with(provider='litellm')
+        mock_create_func.assert_called_once_with(provider='litellm')
 
         # Verify the client was created
         assert isinstance(provider.client, AsyncOpenAI)

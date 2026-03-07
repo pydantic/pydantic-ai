@@ -8,7 +8,7 @@ from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
@@ -85,6 +85,7 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
             self._base_url = base_url or 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'
 
             if http_client is None:
-                http_client = cached_async_http_client(provider='alibaba')
+                http_client = create_async_http_client(provider='alibaba')
+                self._own_http_client = http_client
 
             self._client = AsyncOpenAI(base_url=self._base_url, api_key=api_key, http_client=http_client)
