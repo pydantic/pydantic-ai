@@ -636,7 +636,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
                 async def _recover_text_from_previous_response() -> bool:
-                    if text_processor := output_schema.text_processor:  # pragma: no branch
+                    if text_processor := output_schema.text_processor:
                         # In this scenario, if text responses are allowed, we return text from the most recent model
                         # response, if any.
                         for message in reversed(ctx.state.message_history):
