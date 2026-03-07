@@ -14,7 +14,8 @@ import pytest
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+    from pydantic_ai._json_schema import JsonSchema
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -85,3 +86,25 @@ class TestEncryptedReasoningContent:
             profile = openai_model_profile(model)
             assert isinstance(profile, OpenAIModelProfile)
             assert profile.openai_supports_encrypted_reasoning_content is False
+
+
+class TestOpenAIJsonSchemaTransformerBareList:
+    """Regression tests for bare list type (items: {}) strict compatibility."""
+
+    def test_bare_list_items_marks_not_strict_compatible(self):
+        schema: JsonSchema = {'type': 'array', 'items': {}}
+        transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+        transformer.walk()
+        assert transformer.is_strict_compatible is False
+
+    def test_bare_list_items_removed_in_strict_mode(self):
+        schema: JsonSchema = {'type': 'array', 'items': {}}
+        transformer = OpenAIJsonSchemaTransformer(schema, strict=True)
+        result = transformer.walk()
+        assert 'items' not in result
+
+    def test_typed_list_items_stays_strict_compatible(self):
+        schema = {'type': 'array', 'items': {'type': 'string'}}
+        transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+        transformer.walk()
+        assert transformer.is_strict_compatible is True
