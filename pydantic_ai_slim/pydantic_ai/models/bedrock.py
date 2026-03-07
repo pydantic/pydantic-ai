@@ -440,10 +440,6 @@ class BedrockConverseModel(Model[BaseClient]):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         if model_request_parameters.output_mode == 'native':
             assert model_request_parameters.output_object is not None
-            if model_request_parameters.output_object.strict is False:
-                raise UserError(
-                    'Setting `strict=False` on `output_type=NativeOutput(...)` is not allowed for Bedrock models.'
-                )
             model_request_parameters = replace(
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )

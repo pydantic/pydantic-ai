@@ -3983,22 +3983,6 @@ async def test_bedrock_native_output_supported_model(
     )
 
 
-def test_bedrock_native_output_strict_false_raises(
-    allow_model_requests: None,
-    bedrock_provider: BedrockProvider,
-):
-    """NativeOutput(strict=False) → raises UserError."""
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
-
-    agent = Agent(model, output_type=NativeOutput(CityInfo, strict=False))
-
-    with pytest.raises(
-        UserError,
-        match='Setting `strict=False` on `output_type=NativeOutput\\(\\.\\.\\.\\)` is not allowed for Bedrock models.',
-    ):
-        agent.run_sync('Tell me about Paris')
-
-
 def test_bedrock_native_output_unsupported_model_raises(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
