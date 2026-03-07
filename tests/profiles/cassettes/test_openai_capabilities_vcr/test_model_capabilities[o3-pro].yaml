@@ -1,0 +1,108 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '116'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: Say "hi"
+      max_output_tokens: 16
+      model: o3-pro
+      reasoning:
+        effort: none
+      store: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '235'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '204'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      error:
+        code: unsupported_value
+        message: 'Unsupported value: ''none'' is not supported with the ''o3-pro'' model. Supported values are: ''low'', ''medium'',
+          and ''high''.'
+        param: reasoning.effort
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '103'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=ywCgd86CpaZ8x.mYC_ZVJMDLWOSeD6HkMP.JX1CuzcA-1772841071.298081-1.0.1.1-hdePbfzwNVkKAUunRs7nBAWzUauAVxWFYRHEjiopsCziAZh3XC0ImvH.qqPLNSZ0DozzYa9xRbDm6.NsOp4hGtmCJxiyUApRzio4jjlb8Qzr232rpQfPu0X5hrbUZcDx
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: Say "hi"
+      max_output_tokens: 16
+      model: o3-pro
+      store: false
+      temperature: 0.5
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '167'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '51'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      error:
+        code: null
+        message: 'Unsupported parameter: ''temperature'' is not supported with this model.'
+        param: temperature
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+version: 1
