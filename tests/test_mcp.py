@@ -119,8 +119,48 @@ async def test_reentrant_context_manager():
             pass
 
 
+async def test_cross_task_mcp_server():
+    """Test that multiple asyncio tasks can share one MCPServer without cancel scope errors.
+
+    Previously, this would raise:
+        RuntimeError: Attempted to exit cancel scope in a different task than it was entered in
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def task_a():
+        async with server:
+            entered.set()
+            await release.wait()
+
+    async def task_b():
+        await entered.wait()
+        async with server:
+            result = await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
+            assert result == 32.0
+        release.set()
+
+    await asyncio.gather(task_a(), task_b())
+    assert not server.is_running
+
+
+async def test_parallel_agent_runs():
+    """Test that multiple parallel agent.run() calls sharing one MCPServer work."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
+
+    async def run_agent(celsius: int) -> str:
+        result = await agent.run(f'Convert {celsius}C to F')
+        return result.output
+
+    results = await asyncio.gather(run_agent(0), run_agent(100), run_agent(50))
+    assert len(results) == 3
+    assert not server.is_running
+
+
 async def test_context_manager_initialization_error() -> None:
-    """Test if streams are closed if client fails to initialize."""
+    """Test that a failed initialization cleans up and allows re-entry."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     from mcp.client.session import ClientSession
 
@@ -129,8 +169,12 @@ async def test_context_manager_initialization_error() -> None:
             async with server:
                 pass
 
-    assert server._read_stream._closed  # pyright: ignore[reportPrivateUsage]
-    assert server._write_stream._closed  # pyright: ignore[reportPrivateUsage]
+    assert not server.is_running
+
+    # Verify re-entry works after a failed initialization
+    async with server:
+        assert server.is_running
+    assert not server.is_running
 
 
 async def test_aexit_called_more_times_than_aenter():
@@ -146,32 +190,32 @@ async def test_aexit_called_more_times_than_aenter():
         await server.__aexit__(None, None, None)
 
 
-async def test_aexit_concurrent_does_not_corrupt_running_count():
-    """Regression test: concurrent __aexit__ calls must not corrupt _running_count.
+async def test_aexit_concurrent_does_not_corrupt_connections():
+    """Regression test: concurrent __aexit__ calls must not corrupt connection state.
 
-    Injects a yield point before real lock acquisition so both tasks pass the
-    pre-lock guard simultaneously — the exact interleaving the TOCTOU race required.
-
-    Old code (guard outside lock):
-      Task A reads _running_count == 1, passes guard, yields.
-      Task B reads _running_count == 1, passes guard, yields.
-      Task A acquires lock, decrements to 0.
-      Task B acquires lock, decrements to -1.  ← bug: count corrupted, no ValueError
-
-    New code (guard inside lock):
-      Task A acquires lock, reads 1, decrements to 0, releases.
-      Task B acquires lock, reads 0, raises ValueError correctly.  ← fix verified
+    With per-context connections, each context tracks its own connection via ContextVar.
+    Concurrent exits from the same context should still be safe — one succeeds,
+    the other raises ValueError.
     """
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
 
-    # One active entry — the race only matters when both tasks see count > 0.
-    server._running_count = 1  # pyright: ignore[reportPrivateUsage]
+    # Simulate one active connection for this context.
+    from pydantic_ai.mcp import _mcp_conn_ctx, _MCPConnectionState  # pyright: ignore[reportPrivateUsage]
 
-    # Replace the real lock with one that yields before acquiring,
-    # opening the interleaving window the old code left unprotected.
+    conn_id = 0
+    mock_exit_stack = AsyncMock()
+    mock_client = AsyncMock()
+    server._connections[conn_id] = _MCPConnectionState(  # pyright: ignore[reportPrivateUsage]
+        exit_stack=mock_exit_stack,
+        client=mock_client,
+        ref_count=1,
+    )
+    _mcp_conn_ctx.set({id(server): conn_id})
+
+    # Replace the real lock with one that yields before acquiring.
     class InterleavingLock(asyncio.Lock):
         async def acquire(self) -> Literal[True]:
-            await asyncio.sleep(0)  # yield — lets the other task reach the same point
+            await asyncio.sleep(0)
             return await super().acquire()
 
     server._enter_lock = InterleavingLock()  # pyright: ignore[reportPrivateUsage]
@@ -182,11 +226,9 @@ async def test_aexit_concurrent_does_not_corrupt_running_count():
         return_exceptions=True,
     )
 
-    # Exactly one exit must succeed and one must raise ValueError (not silently
-    # corrupt the count). With the old code both would succeed and count == -1.
     errors = [r for r in results if isinstance(r, ValueError)]
     assert len(errors) == 1, f'Expected 1 ValueError, got {len(errors)}: {results}'
-    assert server._running_count == 0  # pyright: ignore[reportPrivateUsage]
+    assert conn_id not in server._connections  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
@@ -1655,7 +1697,7 @@ async def test_mcp_server_raises_mcp_error(
 
     async with agent:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'send_request',
             new=AsyncMock(side_effect=mcp_error),
         ):
@@ -1872,7 +1914,7 @@ async def test_read_resource_error(mcp_server: MCPServerStdio) -> None:
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'read_resource',
             new=AsyncMock(side_effect=mcp_error),
         ):
@@ -1894,7 +1936,7 @@ async def test_read_resource_empty_contents(mcp_server: MCPServerStdio) -> None:
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'read_resource',
             new=AsyncMock(return_value=empty_result),
         ):
@@ -1910,7 +1952,7 @@ async def test_list_resources_error(mcp_server: MCPServerStdio) -> None:
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'list_resources',
             new=AsyncMock(side_effect=mcp_error),
         ):
@@ -1932,7 +1974,7 @@ async def test_list_resource_templates_error(mcp_server: MCPServerStdio) -> None
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'list_resource_templates',
             new=AsyncMock(side_effect=mcp_error),
         ):
