@@ -99,8 +99,8 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     ) -> AbstractToolset[AgentDepsT]:
         return replace(self, toolsets=[toolset.visit_and_replace(visitor) for toolset in self.toolsets])
 
-    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[str] | None:
-        results = await asyncio.gather(*(ts.get_instructions(ctx) for ts in self.toolsets))
+    async def get_description(self, ctx: RunContext[AgentDepsT]) -> list[str] | None:
+        results = await asyncio.gather(*(ts.get_description(ctx) for ts in self.toolsets))
         parts: list[str] = []
         for r in results:
             if r:

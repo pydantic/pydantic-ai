@@ -92,10 +92,10 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
 
         return await self._toolset.get_tools(ctx)
 
-    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | list[str] | None:
+    async def get_description(self, ctx: RunContext[AgentDepsT]) -> str | list[str] | None:
         if self._toolset is None:
             return None
-        return await self._toolset.get_instructions(ctx)
+        return await self._toolset.get_description(ctx)
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

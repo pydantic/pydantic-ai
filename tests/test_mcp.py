@@ -235,7 +235,7 @@ async def test_server_instructions_disabled_by_default(run_context: RunContext[i
     """Test that server instructions are not returned by default."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
-        instructions = await server.get_instructions(run_context)
+        instructions = await server.get_description(run_context)
         assert instructions is None
 
 
@@ -243,7 +243,7 @@ async def test_server_instructions_enabled(run_context: RunContext[int]):
     """Test that server instructions are returned when include_instructions=True."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
     async with server:
-        instructions = await server.get_instructions(run_context)
+        instructions = await server.get_description(run_context)
         assert instructions == 'Be a helpful assistant.'
 
 
@@ -257,7 +257,7 @@ async def test_server_instructions_not_initialized():
     with pytest.raises(
         AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
     ):
-        await server.get_instructions(ctx)
+        await server.get_description(ctx)
 
 
 def build_run_context(deps: int) -> RunContext[int]:

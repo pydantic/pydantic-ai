@@ -487,8 +487,8 @@ class MCPServer(AbstractToolset[Any], ABC):
             )
         return self._instructions
 
-    async def get_instructions(self, ctx: RunContext[Any]) -> str | list[str] | None:
-        """Return instructions to inject into the agent's system prompt.
+    async def get_description(self, ctx: RunContext[Any]) -> str | list[str] | None:
+        """Return the MCP server's instructions as a description of how to use its tools.
 
         If [`include_instructions`][pydantic_ai.mcp.MCPServer.include_instructions] is ``True``, returns
         the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] sent by the MCP server during

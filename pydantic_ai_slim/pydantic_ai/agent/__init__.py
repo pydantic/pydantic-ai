@@ -662,7 +662,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if result:
                     parts.append(result)
 
-            toolset_result = await toolset.get_instructions(run_context)
+            toolset_result = await toolset.get_description(run_context)
             if toolset_result:
                 if isinstance(toolset_result, list):
                     parts.extend(toolset_result)
