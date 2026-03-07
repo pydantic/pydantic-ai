@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.amazon import amazon_model_profile
@@ -31,6 +32,79 @@ except ImportError as _import_error:
     ) from _import_error
 
 
+_STRICT_INCOMPATIBLE_KEYS = (
+    'minimum',
+    'maximum',
+    'exclusiveMinimum',
+    'exclusiveMaximum',
+    'multipleOf',
+)
+
+
+@dataclass(init=False)
+class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
+    """Transforms schemas to the subset supported by Bedrock structured outputs.
+
+    Transformation is applied when:
+    - `NativeOutput` is used as the `output_type` of the Agent
+    - `strict=True` is set on the `Tool`
+
+    The behavior of this transformer differs from the OpenAI one in that it sets `Tool.strict=False` by default when not explicitly set to True.
+
+    When ``strict=True``:
+    - Strips numeric constraints (``minimum``, ``maximum``, ``exclusiveMinimum``, ``exclusiveMaximum``, ``multipleOf``)
+    - Strips ``maxItems`` and ``minItems > 1`` on arrays
+    - Appends stripped constraint info to the ``description`` field as a hint to the model
+
+    The following are preserved — Bedrock accepts them under strict validation:
+    - String constraints: ``minLength``, ``maxLength``, ``pattern``
+    - String ``format`` (all values including ``date-time``, ``date``, ``email``, ``uri``, etc.)
+    - ``enum``, ``const``, ``default``, ``$defs``/``$ref``, ``anyOf``
+    - ``minItems`` of 0 or 1 on arrays
+    """
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        schema.pop('title', None)
+        schema.pop('$schema', None)
+
+        if schema.get('type') == 'object':
+            if self.strict:
+                schema['additionalProperties'] = False
+            elif self.strict is None:
+                if schema.get('additionalProperties', None) not in (None, False):
+                    self.is_strict_compatible = False
+                else:
+                    schema['additionalProperties'] = False
+
+        # Track Bedrock-incompatible constraints
+        incompatible: dict[str, Any] = {}
+        schema_type = schema.get('type')
+
+        if schema_type in ('number', 'integer'):
+            for key in _STRICT_INCOMPATIBLE_KEYS:
+                if key in schema:
+                    incompatible[key] = schema[key]
+        elif schema_type == 'array':
+            if 'maxItems' in schema:
+                incompatible['maxItems'] = schema['maxItems']
+            if 'minItems' in schema and schema['minItems'] > 1:
+                incompatible['minItems'] = schema['minItems']
+
+        if incompatible:
+            if self.strict:
+                notes: list[str] = []
+                for key, value in incompatible.items():
+                    schema.pop(key)
+                    notes.append(f'{key}={value}')
+                notes_str = ', '.join(notes)
+                desc = schema.get('description')
+                schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
+            elif self.strict is None:  # pragma: no branch
+                self.is_strict_compatible = False
+
+        return schema
+
+
 @dataclass(kw_only=True)
 class BedrockModelProfile(ModelProfile):
     """Profile for models used with BedrockModel.
@@ -43,6 +117,31 @@ class BedrockModelProfile(ModelProfile):
     bedrock_send_back_thinking_parts: bool = False
     bedrock_supports_prompt_caching: bool = False
     bedrock_supports_tool_caching: bool = False
+
+
+# Anthropic models that support native structured output on Bedrock.
+# https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
+_BEDROCK_ANTHROPIC_STRUCTURED_OUTPUT_MODELS = (
+    'claude-haiku-4-5',
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-6',
+    'claude-opus-4-5',
+    'claude-opus-4-6',
+)
+
+
+def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an Anthropic model used via Bedrock."""
+    return replace(
+        BedrockModelProfile(
+            bedrock_supports_tool_choice=True,
+            bedrock_send_back_thinking_parts=True,
+            bedrock_supports_prompt_caching=True,
+            bedrock_supports_tool_caching=True,
+            json_schema_transformer=BedrockJsonSchemaTransformer,
+        ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
+        supports_json_schema_output=model_name.startswith(_BEDROCK_ANTHROPIC_STRUCTURED_OUTPUT_MODELS),
+    )
 
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
@@ -110,17 +209,7 @@ class BedrockProvider(Provider[BaseClient]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': lambda model_name: replace(
-                BedrockModelProfile(
-                    bedrock_supports_tool_choice=True,
-                    bedrock_send_back_thinking_parts=True,
-                    bedrock_supports_prompt_caching=True,
-                    bedrock_supports_tool_caching=True,
-                ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
-                # We don't currently support native structured output with Bedrock.
-                # See https://github.com/pydantic/pydantic-ai/issues/4209.
-                supports_json_schema_output=False,
-            ),
+            'anthropic': bedrock_anthropic_model_profile,
             'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
                 _without_builtin_tools(mistral_model_profile(model_name))
             ),
