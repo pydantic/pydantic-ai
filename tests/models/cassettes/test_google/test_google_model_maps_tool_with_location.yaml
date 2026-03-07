@@ -1,0 +1,75 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '232'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Find me a good pizza place near here.
+        role: user
+      generationConfig: {}
+      toolConfig:
+        retrievalConfig:
+          latLng:
+            latitude: 37.7879
+            longitude: -122.4075
+      tools:
+      - googleMaps: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      content-length:
+      - '1654'
+      content-type:
+      - application/json; charset=UTF-8
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |-
+              Based on your location near Union Square in San Francisco, here are some great pizza places nearby:
+
+              1. **Tony's Pizza Napoletana** - Award-winning Neapolitan pizza in North Beach, a short ride away.
+              2. **Pizzeria Delfina** - Excellent thin-crust pizzas with seasonal toppings.
+              3. **Slice House by Tony Gemignani** - Great by-the-slice options close to your area.
+
+              Enjoy your pizza!
+          role: model
+        finishReason: STOP
+        groundingMetadata:
+          groundingChunks:
+          - maps:
+              placeId: ChIJN1t_tDeuEmsRUsoyG83frY4
+              title: Tony's Pizza Napoletana
+              uri: https://maps.google.com/?cid=11111111111111111
+          - maps:
+              placeId: ChIJeRpOeF67j4AR9ydy_PIi01Q
+              title: Pizzeria Delfina
+              uri: https://maps.google.com/?cid=22222222222222222
+          index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: mapstest002xyz
+      usageMetadata:
+        candidatesTokenCount: 87
+        promptTokenCount: 10
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 10
+        thoughtsTokenCount: 38
+        totalTokenCount: 135
+    status:
+      code: 200
+      message: OK
+version: 1
