@@ -1,0 +1,349 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '191'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the meaning of life?
+        role: user
+      model: gpt-5
+      reasoning:
+        effort: low
+        summary: detailed
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4496'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '4350'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1757687263
+      error: null
+      id: resp_68c42ddf9bbc8194aa7b97304dd909cb0202c9ad459e0d23
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABoxC3jL8rEbUKD8lpf1c-Nsg3pHMMS-F3R8gSD70l1CqSDEDbRHb-RON-ky68O9d6U5yRza2QcOL_INFcEqh7UahVonIaJ9O0yHm3axMRB5U3RGOEkQnNoiuIIuJAKhRBwhXaGpYAxkIidtB7V6DjcWfGNC5GAAOPzSPV4exCwR5DFwAUAehzqP20hVkhUNrxFuRNNxqcQc6oDxlb3TG0R-s57XsGfwQmQsYcy-oXX8CtOwYf0Xw-FHM0rNYZeNkCOXKdJwJ1gDLSrVj61tbdyg2LEo5fKfvMDFFq4lZAfptEEQW5YIyKiu_BXK8FeWLh4B0ha5mUqcAkArNwnIUM5ZoAmAa5oBL5i0rzDq_0s6eCn2xcV4O_HSxrumb2oE-U8fbNRrN3TTPBs6pyn91Wy6wF_XPHcydlVCyX7M6pRe_DHMVXNLW8OsmcliFPxR746xu2YrWEgsWLmd_H58sLoKH_eCUumnMFJet9Jz5OAQRhh_k7_zlTkBUEU1Sgj9HOTL3Acl856qr_cYrE_mcUNuN4JpP5Zt1vkz_OXC-LqPDMzunmX2-_qLtXPPfYWrqfru9AkV6x5aXlpdssQuCKk1-lEt2n8nZZ86FdVX9vCz7OmtVsU_mF3rNJ5Zyrz6O281ry45AfrBIUEvqP1uLTs-2QLyC5PLP2P3TF6xTNf4bKWhro0KAnw68DmngraxTAi_f8PjRe8Ss0D1BYJkOADcGZmepUAuA3gKuJfRWGwpT0jlhmwfcAVzZQS38XGJpFKI5xOeZjD0kdTcvOCO4FrYylTBSLy-luYfPjK5Lk7sq_UQZNVG7pE2cXGocty3XxB2a3unIgoj4KHa3Ahhpo13u84bkLxbSDdy9vetYQS_mUqyYV6vxBTzCfOjKQNmN-7CNCiMPs3Kbxf1up3jkC1smu0hW7GuFjGMUvmWFzyTP1y8w7SIRa-5IlbKcUZIx-ls5-fDmwxsIf1QdKAIRj9099XxJZvdtaR73F6FYFPDNA0KJxMo_-wZjXESv0twWNb5YnQXF7eRT867dznqwKEPKzntxg7gwPG9fooRmVplzo_3GLyZ9Te5GxLj2ExgsCxxwiHr1GczhlMARlAzt2aMvMhTaMQMrJ2KB2-3E9cEQtoKr5w5uGkRFqYZyaESX7cQYHyupUx-DchzkTCfUHUJ-0_CNHCCiBdr5XT1Lx-vcdrsoDKiE4FnxlGm_q58IAOoZ3US-a39dh1d_iOeLFUUCa2LhZ81UmHuO1pmFiakRmOiZ8Jd_xyN7SnpFKv2Wm7kG7B_x4BJXUNONw_kdE9eufb1XwHzpNiBPmlJgDknTshAVKj-WXx6N7T8Y4UBWZzX4f7gUt5Kj3PFvl9x-TsN-EprofNRgvrJO7v3cacnByq0a10-eygnS-muykVmFOSL6NVf5ggBw6AJR9FuKcMNdtNlA==
+        id: rs_68c42de022c881948db7ed1cc2529f2e0202c9ad459e0d23
+        summary:
+        - text: |-
+            **Considering perspectives on meaning**
+
+            I need to keep my response succinct since this topic is philosophical and subjective. I'll provide various perspectives, such as biological, philosophical, personal constructs, and religious views. A practical approach might involve creating meaning through relationships, contribution, growth, experiences, and values. I should avoid being overly verbose and consider a short actionable framework focusing on values, strengths, service, wonder, and connection. Also, encouraging the user to share their thoughts would be great!
+          type: summary_text
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            A single, final answer doesn’t exist—it depends on perspective.
+
+            - Biological: survive and reproduce.
+            - Philosophical (existentialist): life has no preset meaning; we create it through choices.
+            - Humanist: meaning comes from relationships, growth, and contributing to others.
+            - Religious/spiritual: meaning is grounded in a relationship with the divine, virtue, or transcendence.
+            - Narrative: we build meaning by crafting a story we’re proud to live.
+
+            A practical way to “make” meaning:
+            1) Clarify values (what matters most to you).
+            2) Use strengths in service of something beyond yourself.
+            3) Invest in relationships and community.
+            4) Keep learning and creating.
+            5) Notice beauty and gratitude.
+            6) Face hardship with purpose.
+
+            If you want, tell me what matters to you, and I’ll help you shape a personal meaning statement or plan.
+          type: output_text
+        id: msg_68c42de31d348194a251b43ad913ef140202c9ad459e0d23
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: low
+        summary: detailed
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 13
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 248
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 261
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2459'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=dR6QIBO3MIYxJlJhT2Z1Enf4hxSQe.yT90YFVOo4a44-1757687267-1.0.1.1-nWx6824Q_Wi6NATur__jq_d6LC1b4eLI1w2Gb3x0dnLFh7XjM9Gmzno6zguSb4oASi6pAaDj2yHyEWVqhctXQQCWkPvlSv40iFVUeaV9VFk;
+        _cfuvid=yYorKmI5owOPwHY3si5KhFHr1dnp_lg_KgDMeAgTiFo-1757687267959-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the meaning of life?
+        role: user
+      - encrypted_content: gAAAAABoxC3jL8rEbUKD8lpf1c-Nsg3pHMMS-F3R8gSD70l1CqSDEDbRHb-RON-ky68O9d6U5yRza2QcOL_INFcEqh7UahVonIaJ9O0yHm3axMRB5U3RGOEkQnNoiuIIuJAKhRBwhXaGpYAxkIidtB7V6DjcWfGNC5GAAOPzSPV4exCwR5DFwAUAehzqP20hVkhUNrxFuRNNxqcQc6oDxlb3TG0R-s57XsGfwQmQsYcy-oXX8CtOwYf0Xw-FHM0rNYZeNkCOXKdJwJ1gDLSrVj61tbdyg2LEo5fKfvMDFFq4lZAfptEEQW5YIyKiu_BXK8FeWLh4B0ha5mUqcAkArNwnIUM5ZoAmAa5oBL5i0rzDq_0s6eCn2xcV4O_HSxrumb2oE-U8fbNRrN3TTPBs6pyn91Wy6wF_XPHcydlVCyX7M6pRe_DHMVXNLW8OsmcliFPxR746xu2YrWEgsWLmd_H58sLoKH_eCUumnMFJet9Jz5OAQRhh_k7_zlTkBUEU1Sgj9HOTL3Acl856qr_cYrE_mcUNuN4JpP5Zt1vkz_OXC-LqPDMzunmX2-_qLtXPPfYWrqfru9AkV6x5aXlpdssQuCKk1-lEt2n8nZZ86FdVX9vCz7OmtVsU_mF3rNJ5Zyrz6O281ry45AfrBIUEvqP1uLTs-2QLyC5PLP2P3TF6xTNf4bKWhro0KAnw68DmngraxTAi_f8PjRe8Ss0D1BYJkOADcGZmepUAuA3gKuJfRWGwpT0jlhmwfcAVzZQS38XGJpFKI5xOeZjD0kdTcvOCO4FrYylTBSLy-luYfPjK5Lk7sq_UQZNVG7pE2cXGocty3XxB2a3unIgoj4KHa3Ahhpo13u84bkLxbSDdy9vetYQS_mUqyYV6vxBTzCfOjKQNmN-7CNCiMPs3Kbxf1up3jkC1smu0hW7GuFjGMUvmWFzyTP1y8w7SIRa-5IlbKcUZIx-ls5-fDmwxsIf1QdKAIRj9099XxJZvdtaR73F6FYFPDNA0KJxMo_-wZjXESv0twWNb5YnQXF7eRT867dznqwKEPKzntxg7gwPG9fooRmVplzo_3GLyZ9Te5GxLj2ExgsCxxwiHr1GczhlMARlAzt2aMvMhTaMQMrJ2KB2-3E9cEQtoKr5w5uGkRFqYZyaESX7cQYHyupUx-DchzkTCfUHUJ-0_CNHCCiBdr5XT1Lx-vcdrsoDKiE4FnxlGm_q58IAOoZ3US-a39dh1d_iOeLFUUCa2LhZ81UmHuO1pmFiakRmOiZ8Jd_xyN7SnpFKv2Wm7kG7B_x4BJXUNONw_kdE9eufb1XwHzpNiBPmlJgDknTshAVKj-WXx6N7T8Y4UBWZzX4f7gUt5Kj3PFvl9x-TsN-EprofNRgvrJO7v3cacnByq0a10-eygnS-muykVmFOSL6NVf5ggBw6AJR9FuKcMNdtNlA==
+        id: rs_68c42de022c881948db7ed1cc2529f2e0202c9ad459e0d23
+        summary:
+        - text: |-
+            **Considering perspectives on meaning**
+
+            I need to keep my response succinct since this topic is philosophical and subjective. I'll provide various perspectives, such as biological, philosophical, personal constructs, and religious views. A practical approach might involve creating meaning through relationships, contribution, growth, experiences, and values. I should avoid being overly verbose and consider a short actionable framework focusing on values, strengths, service, wonder, and connection. Also, encouraging the user to share their thoughts would be great!
+          type: summary_text
+        type: reasoning
+      - content: The meaning of life is 42
+        role: assistant
+      - content: Anything to add?
+        role: user
+      model: gpt-5
+      reasoning:
+        effort: low
+        summary: detailed
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '243'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '40'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      error:
+        code: null
+        message: Item 'rs_68c42de022c881948db7ed1cc2529f2e0202c9ad459e0d23' of type 'reasoning' was provided without its required
+          following item.
+        param: input
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '919'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=dR6QIBO3MIYxJlJhT2Z1Enf4hxSQe.yT90YFVOo4a44-1757687267-1.0.1.1-nWx6824Q_Wi6NATur__jq_d6LC1b4eLI1w2Gb3x0dnLFh7XjM9Gmzno6zguSb4oASi6pAaDj2yHyEWVqhctXQQCWkPvlSv40iFVUeaV9VFk;
+        _cfuvid=yYorKmI5owOPwHY3si5KhFHr1dnp_lg_KgDMeAgTiFo-1757687267959-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the meaning of life?
+        role: user
+      - content: |-
+          <think>
+          **Considering perspectives on meaning**
+
+          I need to keep my response succinct since this topic is philosophical and subjective. I'll provide various perspectives, such as biological, philosophical, personal constructs, and religious views. A practical approach might involve creating meaning through relationships, contribution, growth, experiences, and values. I should avoid being overly verbose and consider a short actionable framework focusing on values, strengths, service, wonder, and connection. Also, encouraging the user to share their thoughts would be great!
+          </think>
+        role: assistant
+      - content: The meaning of life is 42
+        role: assistant
+      - content: Anything to add?
+        role: user
+      model: gpt-5
+      reasoning:
+        effort: low
+        summary: detailed
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4953'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '4967'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1757687268
+      error: null
+      id: resp_68c42de4afcc819f995a1c59fe87c9d5051f82c608a83beb
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABoxC3p_JDft5mZApHvSNXIJchnzlHvHJ_0MvxV372C_8pQ0XmmlsED9ZEZ6x976PF1a0OrmeTFGYN44If8r4GjEDFUmRyF0G7BA4DtGF1AvwHon2TmuHea2UarFMQ19aYM9b-dcFroJbFmvAzu3SyZk3YNqk9Os2xJpJFMblFZvLE-ZxHKQbdPQ36JKa1p-IqX8etYjenv_4HulDla5XoYKwjFgB2yvR1vyXZC0tzXqFRJLyaQBuKsVEqIF0Actxf3yRf9PysbfMxHBKpcIz7IkMcq0MsIXsBoKjpZ7SbpvSEMzeElD477LN6unADbwawXtNneLl6Km0cidynFED1Eytw2PSOJrljysvFNxDlwRYXScrfK6PM0g-TEhx6SMH_jx00v79CrYsDHSQJrRhBt3VVlSVV3unfdfpSJ2Q7gP_o5xwJ-pciWvmcC80R6MEdgjaREp9Sq9o7ewLKwmA3iFyq_w3SNo-fCZx-8Las8zamqD8Z4GvhrKjRVWwYK_r2WrWWUUO-USGcvJLf8TO5jVNQfPgcuQDqmannJ2V4DOszGLc_rtGDpe0h87hlvV0gEwGOdn-QjkyNcKG6X95Jg3qu3o8Uc7URABjUBYApy_SIBE7W92oPwdwyzNhevw4cLbfdmeq5MLYSsGPmYFq-7UeuSctHsdXqyLmBcLRU9QJewsJsxKH4BTIXqHWA9ocGuQWB9AfqT4MBfenxTFvet9UBG7MO3KF6YLaqi13mI6lWDvnwDAqkevAHnfwyMu6vvAXVtYuY0n2e56VgSSzZcvx8V1viBCxVC0hokOzIEC8BWfQnWN4iyBIiGv2YCDorGm3fqqmquQDnLw5O4V2USHWG1Fy1DLm6ycxF5-Rv8fXoaGTKBK0Xl6K5srSD9ICKnh8_-V8SctQhNj55QbJ5e89ne4TGuDkE8gdac4uWBJAqvnCTkwo6K2vElRPV42AHnCHcKhjcq2KMfqPuCzPfr4DZWHHAR1A19TfLgtMrt25EF_dh97Sr9jLv_SZLMLy8BQqMcd1SGgZRj2FR9XwQ8c_0lVR2NatqVEDYzjPYEF47M3OQybmEOdt5-62RK2Gih88dfimtbTMQiPLpfgSWURoK8jCAXYsEoirnrLp5hxfMjxnp1SIf0D8h3bqSDcLdQjBrjzjEr5699INoFJU7HYV2fQ6wOWYM_qjEdhY7JYZf-ins2Ddu4ynHTs3wJuqc3BorTeW3oys1im0fzQL3AN38ezz3_RxVknF5JbQOLYGvXFeosDSZLDzZpKnLUpqLJvJS3hfkCF1UQQle6U87yNQPNeXhmrjhA53khmca2EUYshyW3-28sXbB9ae_FqAczQtFQkPkKYyqROd-qGo2H3g9hWUCOnhgx7RWLL-PimrlZsqKrULjY-gqyN54CxSDDA7vnyfU0SWqrzaibalST8fu6mS-CcjqdKEZfSKT4t_0SlB6RoyLwo7SbjASeIzq82GEqriVxkalcy8BHlBF2SEUIgOx3LnaK_JwWLis_i2d3i9maydqugIMA7N_mxo6UpP1u8WU6YTd8YgzHqe5XnNQtmPbSJSOmIdAm8wqcDDQXaFnTzJqBq2WKEDpFuXnJqcO6T43WXrt-MQbXVQ8gpsYth3pQIZKl4umx4S1THu9RLurhHyS2TOMA3oGsaJrZudUgTruv2sa_QkOl0g19VGhqiC6SYW2mBmZcyWB1rfAasQXkERHRe6fy3BGG9k_e9HzcghzOQLhI-VAi13noMfS-Sw==
+        id: rs_68c42de4f63c819fb31b6019a4eaf67c051f82c608a83beb
+        summary:
+        - text: "**Expanding on life’s meaning**\n\nThe user previously got \"The meaning of life is 42,\" which is a fun
+            reference. Now, I need to provide a thoughtful expansion with various perspectives and a practical framework.
+            I’ll keep things concise and consider bullet points. I want to offer actionable steps around values, relationships,
+            service, personal growth, awe, play, and reflecting on mortality. \n\nI’ll explore different viewpoints: evolutionary,
+            existentialist, religious, humanist, and narrative identity, then invite them to share what resonates with them."
+          type: summary_text
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            Plenty.
+
+            A few quick lenses:
+            - Biological: survive, reproduce, and help your group thrive.
+            - Existentialist: life has no built-in meaning; you create it through choices and commitments.
+            - Spiritual/religious: align with the divine, love others, cultivate virtue, serve.
+            - Humanist: reduce suffering, increase flourishing, deepen knowledge and beauty.
+            - Narrative: craft a story you’re proud to live in.
+
+            A simple way to build meaning:
+            - Clarify values: list 5 you want to embody; make one small daily choice for each.
+            - Relationships: invest in a few people—show up, listen, express care.
+            - Service: do something useful for someone else every week.
+            - Growth: pick a challenge that stretches you; track progress.
+            - Awe and play: schedule regular time for nature, art, or curiosity.
+            - Mortality check: imagine looking back at 80—what would you wish you’d done more of? Do a little of that now.
+
+            If you share your beliefs and what you care about, I can tailor this to you.
+          type: output_text
+        id: msg_68c42de8a410819faf7a9cbebd2b4bc4051f82c608a83beb
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: low
+        summary: detailed
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 142
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 355
+        output_tokens_details:
+          reasoning_tokens: 128
+        total_tokens: 497
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

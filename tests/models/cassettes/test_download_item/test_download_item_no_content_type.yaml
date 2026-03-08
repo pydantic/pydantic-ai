@@ -1,0 +1,63 @@
+interactions:
+  - request:
+      body: ''
+      headers:
+        accept:
+          - '*/*'
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        host:
+          - raw.githubusercontent.com
+      method: GET
+      uri: https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.md
+    response:
+      body:
+        string: |
+          # Getting Help
+
+          If you need help getting started with Pydantic AI or with advanced usage, the following sources may be useful.
+
+          ## :simple-slack: Slack
+
+          Join the `#pydantic-ai` channel in the [Pydantic Slack][slack] to ask questions, get help, and chat about Pydantic AI. There's also channels for Pydantic, Logfire, and FastUI.
+
+          If you're on a [Logfire][logfire] Pro plan, you can also get a dedicated private slack collab channel with us.
+
+          ## :simple-github: GitHub Issues
+
+          The [Pydantic AI GitHub Issues][github-issues] are a great place to ask questions and give us feedback.
+
+          [slack]: https://logfire.pydantic.dev/docs/join-slack/
+          [github-issues]: https://github.com/pydantic/pydantic-ai/issues
+          [logfire]: https://pydantic.dev/logfire
+      headers:
+        accept-ranges:
+          - bytes
+        access-control-allow-origin:
+          - '*'
+        cache-control:
+          - max-age=300
+        connection:
+          - keep-alive
+        content-length:
+          - '737'
+        content-security-policy:
+          - default-src 'none'; style-src 'unsafe-inline'; sandbox
+        cross-origin-resource-policy:
+          - cross-origin
+        etag:
+          - W/"ac68af1e83d8ab533a0b86ab888c49b56225d78e0152e93ec97f3bae1c3fdc2d"
+        expires:
+          - Sun, 01 Jun 2025 23:17:48 GMT
+        source-age:
+          - '0'
+        strict-transport-security:
+          - max-age=31536000
+        vary:
+          - Authorization,Accept-Encoding
+      status:
+        code: 200
+        message: OK
+version: 1

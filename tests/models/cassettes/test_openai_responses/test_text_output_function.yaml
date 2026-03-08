@@ -1,0 +1,228 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '302'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the largest city in the user country?
+        role: user
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: ''
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1399'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '490'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1749516045
+      error: null
+      id: resp_68477f0d9494819ea4f123bba707c9ee0356a60c98816d6a
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - arguments: '{}'
+        call_id: call_aTJhYjzmixZaVGqwl5gn2Ncr
+        id: fc_68477f0dff5c819ea17a1ffbaea621e00356a60c98816d6a
+        name: get_user_country
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        summary: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 36
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 12
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 48
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '538'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=JZXeUMfyA2MKPG61ecku4K0wMqhJgj2ih66RpjtdqZk-1749516046-1.0.1.1-ZF5eievVR.Y5iPpLK_dVCJNl_ANFmiDhY4iZDFbopdvvhXnZvwLMCQVFWg.S.nQ0TvOw0it63SRuHbjo3jcjuD0lnI5oRQBJUOLiQElZ_j4;
+        _cfuvid=K7T3n3fgO8pCRHtSCoIpwTW2UEh0En8ro1rV5aPciGo-1749516046095-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the largest city in the user country?
+        role: user
+      - content: ''
+        role: assistant
+      - arguments: '{}'
+        call_id: call_aTJhYjzmixZaVGqwl5gn2Ncr
+        name: get_user_country
+        type: function_call
+      - call_id: call_aTJhYjzmixZaVGqwl5gn2Ncr
+        output: Mexico
+        type: function_call_output
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: ''
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1485'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '825'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1749516046
+      error: null
+      id: resp_68477f0e2b28819d9c828ef4ee526d6a03434b607c02582d
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          text: The largest city in Mexico is Mexico City.
+          type: output_text
+        id: msg_68477f0ebf54819d88a44fa87aadaff503434b607c02582d
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        summary: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 59
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 11
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 70
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

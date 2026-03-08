@@ -1,0 +1,63 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '87'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in Mexico?
+        role: user
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '753'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=6856
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |-
+              The largest city in Mexico is **Mexico City (Ciudad de México, CDMX)**.
+
+              It's the capital of Mexico and one of the largest metropolitan areas in the world, both by population and land area.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: models/gemini-2.5-pro-preview-05-06
+      responseId: TT9IaNfGN_DmqtsPzKnE4AE
+      usageMetadata:
+        candidatesTokenCount: 44
+        promptTokenCount: 9
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 9
+        thoughtsTokenCount: 545
+        totalTokenCount: 598
+    status:
+      code: 200
+      message: OK
+version: 1

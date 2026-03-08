@@ -1,0 +1,182 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '585'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the largest city in the user country?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: any
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_user_country
+      - description: The final response which ends this conversation
+        input_schema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          title: CityLocation
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '476'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_01X9wcHKKAZD9tBC711xipPa
+        input: {}
+        name: get_user_country
+        type: tool_use
+      id: msg_012TXW181edhmR5JCsQRsBKx
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 445
+        output_tokens: 23
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '847'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the largest city in the user country?
+          type: text
+        role: user
+      - content:
+        - id: toolu_01X9wcHKKAZD9tBC711xipPa
+          input: {}
+          name: get_user_country
+          type: tool_use
+        role: assistant
+      - content:
+        - content: Mexico
+          is_error: false
+          tool_use_id: toolu_01X9wcHKKAZD9tBC711xipPa
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: any
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_user_country
+      - description: The final response which ends this conversation
+        input_schema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          title: CityLocation
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '511'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_01LZABsgreMefH2Go8D5PQbW
+        input:
+          city: Mexico City
+          country: Mexico
+        name: final_result
+        type: tool_use
+      id: msg_01K4Fzcf1bhiyLzHpwLdrefj
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 497
+        output_tokens: 56
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

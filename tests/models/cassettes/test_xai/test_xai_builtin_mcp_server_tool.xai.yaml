@@ -1,0 +1,317 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: You are a helpful assistant.
+        role: ROLE_SYSTEM
+      - content:
+        - text: Can you tell me more about the pydantic/pydantic-ai repo? Keep your
+            answer short
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      tools:
+      - mcp:
+          server_label: deepwiki
+          server_description: DeepWiki MCP server
+          server_url: https://mcp.deepwiki.com/mcp
+          allowed_tool_names:
+          - ask_question
+          extra_headers:
+            custom-header-key: custom-header-value
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      use_encrypted_content: true
+      include:
+      - INCLUDE_OPTION_MCP_CALL_OUTPUT
+    raw: !!binary |
+      CiIKHgocWW91IGFyZSBhIGhlbHBmdWwgYXNzaXN0YW50LhADClYKUgpQQ2FuIHlvdSB0ZWxsIG1l
+      IG1vcmUgYWJvdXQgdGhlIHB5ZGFudGljL3B5ZGFudGljLWFpIHJlcG8/IEtlZXAgeW91ciBhbnN3
+      ZXIgc2hvcnQQARIVZ3Jvay00LWZhc3QtcmVhc29uaW5nigF3OnUKCGRlZXB3aWtpEhNEZWVwV2lr
+      aSBNQ1Agc2VydmVyGhxodHRwczovL21jcC5kZWVwd2lraS5jb20vbWNwIgxhc2tfcXVlc3Rpb24y
+      KAoRY3VzdG9tLWhlYWRlci1rZXkSE2N1c3RvbS1oZWFkZXItdmFsdWWSAQIIAcABAdIBAQY=
+  response_sample:
+    json:
+      id: 74964c17-14b1-7c0a-7932-ead9a7de0059
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_05345625
+            type: TOOL_CALL_TYPE_MCP_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: deepwiki.ask_question
+              arguments: '{"repoName":"pydantic/pydantic-ai","question":"What is this
+                repository about? Provide a short summary."}'
+          encrypted_content: qynidRAxOaQsb+Ua8ZIc6a4NGi7li4jd5tydyFKRweot7PB3gCiCK+H7zOKTxzjx4wfm4WvEHqLitpSmEYdZAbr1hzf3WIRmWH+uKlG4/XwhwDnFeRDjjBOcmAhTR1oDF/Vv7mr73ReEvl6XQHESgBiGxphQIRazfskTGs3iP931RHi8k7hrGbTchOJs5NI/20sNX0VtoeL7AEuXXilr9L1ASCseS9x5jL4y7efI6XMRg9Xo2JRPpxlMv4u/JfxJHqr/ku5WgShUsNkIim0/SC2PrEL9/QxyQBxkUZBFyOU0fP3uPCcAYfXvtg10NPF6GtgzIBE04eNc5NpijSMHVX7nQDqntohSk7lHHJfN2qGMXmkh7y3CZywaWwewm3XzfgbEKy0Y1MvAG+2L1v5QXo6yh9MyuaIQdueijxiiTKkkgL8GilsbEhds/tXX7nc2hPS/ieO/S/1PBkFLSedKqVkM9omu2F1mg7fnGnSfU2iUn1JJd5pgDdBoguoB6o8KpCK91dpk9+J1MlghjFqqUvlVPqEbiYT6DX8mCs0a317cs+CSFOJvaM8VKNwK1WSIvt7P3iUmmbds3tc55Y8
+      - index: 1
+        message:
+          content: 'This repository, `pydantic/pydantic-ai`, is a Python agent framework
+            designed for building production-grade applications with Large Language
+            Models (LLMs) . It emphasizes type safety, structured outputs, dependency
+            injection, and observability, providing a model-agnostic interface for
+            over 20 LLM providers . The framework also includes comprehensive evaluation
+            and testing infrastructure .
+
+
+            ## Core Purpose and Features
+
+
+            The primary purpose of Pydantic AI is to simplify the development of reliable
+            AI applications by offering a robust framework that integrates type-safety
+            and an intuitive developer experience . It aims to provide a unified approach
+            to interacting with various LLM providers and managing complex agent workflows
+            .
+
+
+            Key features include:
+
+            *   **Type-Safe Agents**: Agents are generic `Agent[Deps, Output]` for
+            compile-time validation, leveraging Pydantic for output validation and
+            dependency injection .
+
+            *   **Model-Agnostic Design**: It supports over 15 LLM providers through
+            a unified `Model` interface, allowing for easy switching between different
+            models and providers .
+
+            *   **Structured Outputs**: Automatic Pydantic validation and reflection/self-correction
+            ensure structured and reliable outputs from LLMs .
+
+            *   **Comprehensive Observability**: Integration with OpenTelemetry and
+            native Logfire provides real-time debugging, performance monitoring, and
+            cost tracking .
+
+            *   **Production-Ready Tooling**: This includes an evaluation framework
+            (`pydantic-evals`), durable execution capabilities, and various protocol
+            integrations like MCP, A2A, and AG-UI .
+
+            *   **Graph Execution**: The `pydantic_graph.Graph` module provides a
+            graph-based state machine for orchestrating agent execution, using nodes
+            like `UserPromptNode`, `ModelRequestNode`, and `CallToolsNode` .
+
+
+            ## Framework Architecture
+
+
+            The framework is structured as a UV workspace monorepo, containing several
+            packages .
+
+
+            ### Core Packages
+
+            *   `pydantic-ai-slim`: Contains the core framework components such as
+            `Agent`, `Model`, and tools .
+
+            *   `pydantic-ai`: A meta-package that includes all optional extras .
+
+
+            ### Supporting Packages
+
+            *   `pydantic-graph`: Provides the graph execution engine with `Graph`
+            and `BaseNode` .
+
+            *   `pydantic-evals`: An evaluation framework for datasets and evaluators
+            .
+
+            *   `examples`: Contains example applications .
+
+            *   `clai`: Provides a CLI interface .
+
+
+            ## Agent Execution Flow
+
+
+            The `Agent` class serves as the primary orchestrator . Agent execution
+            is graph-based, utilizing a state machine from `pydantic_graph.Graph`
+            . The execution involves three core node types:
+
+            *   `UserPromptNode`: Processes user input and creates initial `ModelRequest`
+            .
+
+            *   `ModelRequestNode`: Calls `model.request()` or `model.request_stream()`
+            and handles retries .
+
+            *   `CallToolsNode`: Executes tool functions via `RunContext[Deps]` .
+
+
+            The `Agent` provides methods like `run()`, `run_sync()`, and `run_stream()`
+            for different execution scenarios .
+
+
+            ## Notes
+
+            The `CLAUDE.md` file provides guidance for Claude Code when working with
+            the repository, including development commands and an overview of core
+            components and design patterns . The `mkdocs.yml` file defines the structure
+            and content of the project''s documentation, including navigation, plugins,
+            and watch directories for various packages . The `docs/install.md` file
+            details how to install the `pydantic-ai` package and its optional components,
+            including a "slim" installation option for specific model dependencies
+            .
+
+
+            Wiki pages you might want to explore:
+
+            - [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)
+
+
+            View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repository-about_10565715-352a-4a8a-9260-3ed39b0b3226
+
+            '
+          role: ROLE_TOOL
+          tool_calls:
+          - id: call_05345625
+            type: TOOL_CALL_TYPE_MCP_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: deepwiki.ask_question
+              arguments: '{"repoName":"pydantic/pydantic-ai","question":"What is this
+                repository about? Provide a short summary."}'
+      - finish_reason: REASON_STOP
+        index: 2
+        message:
+          content: Pydantic AI (`pydantic/pydantic-ai`) is a Python framework for
+            building production-grade LLM applications. It emphasizes type safety,
+            structured outputs, dependency injection, and observability, with model-agnostic
+            support for 20+ providers. Key features include graph-based agent execution,
+            evaluation tools, and integrations like OpenTelemetry. It's structured
+            as a monorepo with core packages for agents, graphs, and evals.
+          role: ROLE_ASSISTANT
+          encrypted_content: wC3KzkkKI+h4XnEAMmhFmyo5/g5h92L7Fm8/k+8EGw5G43jR0Fyqe9F2dY4sENFmqNSKLE43qLRUBm6YWivVT+5SDNU05wjSl4qasTOJMvdzLg+u/sjancAduWZvmOfXuqXOuq8kUw0LeQ5HG0AA8OL6m+kBpHe0yrs3/E7bUxKC6RmeGG3OMV5bEOwIS8iYERmO3U2IGen3G6EG8E/5RYgJA9vZRSN6p3lkMA/rhT+cxOf0dBh0ZykMj/Xz+Q7dzmkM1kDyzuArtUkxCfEZhklaEiXj6ojEpLzHAk+9NgkZTdsgzyZe1Vz8mSmElCs78m4HBbq1FYCU5/J9kvaXPwugM5JyanLMcIuJAloDpyMX9LA8Wt8QZzYM+IAGvPuTy/+q+FNZq/jrmJatmu6zrx3W1fZKK5DsFcAV7voj6bhhcF5anMOHR8gobunGswr7cxnT56t8VdvIphwnOEyRN+kA5tWqwlsNBtoPnIreb80+KuPAMPHujf1JvvDTcSCmcflSesg6MH6GjeFIvGzm5j8d4u4xIPDzQQH8pzL9R/H6NOiC3wUMMMV5HgpnTCmb3QaoQpfHHe2ZoS99KEp3IP6S2tYxoA2KtBBsTUfCpAel7kH5VVv0TgaLGP1lXCWT1ayTX3WqtvWpzIod
+      created: '2026-01-16T21:40:04.052709369Z'
+      model: grok-4-fast-reasoning
+      system_fingerprint: fp_cfcc85ff86
+      usage:
+        completion_tokens: 140
+        prompt_tokens: 1844
+        total_tokens: 2186
+        prompt_text_tokens: 1844
+        reasoning_tokens: 202
+        cached_prompt_text_tokens: 771
+        server_side_tools_used:
+        - SERVER_SIDE_TOOL_MCP
+      settings:
+        parallel_tool_calls: true
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - mcp:
+            server_label: deepwiki
+            server_description: DeepWiki MCP server
+            server_url: https://mcp.deepwiki.com/mcp
+            allowed_tool_names:
+            - ask_question
+            extra_headers:
+              custom-header-key: custom-header-value
+        use_encrypted_content: true
+        include:
+        - INCLUDE_OPTION_MCP_CALL_OUTPUT
+    raw: !!binary |
+      CiQ3NDk2NGMxNy0xNGIxLTdjMGEtNzkzMi1lYWQ5YTdkZTAwNTkS9wUIBBryBRACGpcBCg1jYWxs
+      XzA1MzQ1NjI1EAYYAVKBAQoVZGVlcHdpa2kuYXNrX3F1ZXN0aW9uEmh7InJlcG9OYW1lIjoicHlk
+      YW50aWMvcHlkYW50aWMtYWkiLCJxdWVzdGlvbiI6IldoYXQgaXMgdGhpcyByZXBvc2l0b3J5IGFi
+      b3V0PyBQcm92aWRlIGEgc2hvcnQgc3VtbWFyeS4ifSrTBHF5bmlkUkF4T2FRc2IrVWE4WkljNmE0
+      TkdpN2xpNGpkNXR5ZHlGS1J3ZW90N1BCM2dDaUNLK0g3ek9LVHh6ang0d2ZtNFd2RUhxTGl0cFNt
+      RVlkWkFicjFoemYzV0lSbVdIK3VLbEc0L1h3aHdEbkZlUkRqakJPY21BaFRSMW9ERi9Wdjdtcjcz
+      UmVFdmw2WFFIRVNnQmlHeHBoUUlSYXpmc2tUR3MzaVA5MzFSSGk4azdockdiVGNoT0pzNU5JLzIw
+      c05YMFZ0b2VMN0FFdVhYaWxyOUwxQVNDc2VTOXg1akw0eTdlZkk2WE1SZzlYbzJKUlBweGxNdjR1
+      L0pmeEpIcXIva3U1V2dTaFVzTmtJaW0wL1NDMlByRUw5L1F4eVFCeGtVWkJGeU9VMGZQM3VQQ2NB
+      WWZYdnRnMTBOUEY2R3RneklCRTA0ZU5jNU5waWpTTUhWWDduUURxbnRvaFNrN2xISEpmTjJxR01Y
+      bWtoN3kzQ1p5d2FXd2V3bTNYemZnYkVLeTBZMU12QUcrMkwxdjVRWG82eWg5TXl1YUlRZHVlaWp4
+      aWlUS2trZ0w4R2lsc2JFaGRzL3RYWDduYzJoUFMvaWVPL1MvMVBCa0ZMU2VkS3FWa005b211MkYx
+      bWc3Zm5HblNmVTJpVW4xSkpkNXBnRGRCb2d1b0I2bzhLcENLOTFkcGs5K0oxTWxnaGpGcXFVdmxW
+      UHFFYmlZVDZEWDhtQ3MwYTMxN2NzK0NTRk9KdmFNOFZLTndLMVdTSXZ0N1AzaVVtbWJkczN0YzU1
+      WTgSnB4QARqXHgr4HFRoaXMgcmVwb3NpdG9yeSwgYHB5ZGFudGljL3B5ZGFudGljLWFpYCwgaXMg
+      YSBQeXRob24gYWdlbnQgZnJhbWV3b3JrIGRlc2lnbmVkIGZvciBidWlsZGluZyBwcm9kdWN0aW9u
+      LWdyYWRlIGFwcGxpY2F0aW9ucyB3aXRoIExhcmdlIExhbmd1YWdlIE1vZGVscyAoTExNcykgLiBJ
+      dCBlbXBoYXNpemVzIHR5cGUgc2FmZXR5LCBzdHJ1Y3R1cmVkIG91dHB1dHMsIGRlcGVuZGVuY3kg
+      aW5qZWN0aW9uLCBhbmQgb2JzZXJ2YWJpbGl0eSwgcHJvdmlkaW5nIGEgbW9kZWwtYWdub3N0aWMg
+      aW50ZXJmYWNlIGZvciBvdmVyIDIwIExMTSBwcm92aWRlcnMgLiBUaGUgZnJhbWV3b3JrIGFsc28g
+      aW5jbHVkZXMgY29tcHJlaGVuc2l2ZSBldmFsdWF0aW9uIGFuZCB0ZXN0aW5nIGluZnJhc3RydWN0
+      dXJlIC4KCiMjIENvcmUgUHVycG9zZSBhbmQgRmVhdHVyZXMKClRoZSBwcmltYXJ5IHB1cnBvc2Ug
+      b2YgUHlkYW50aWMgQUkgaXMgdG8gc2ltcGxpZnkgdGhlIGRldmVsb3BtZW50IG9mIHJlbGlhYmxl
+      IEFJIGFwcGxpY2F0aW9ucyBieSBvZmZlcmluZyBhIHJvYnVzdCBmcmFtZXdvcmsgdGhhdCBpbnRl
+      Z3JhdGVzIHR5cGUtc2FmZXR5IGFuZCBhbiBpbnR1aXRpdmUgZGV2ZWxvcGVyIGV4cGVyaWVuY2Ug
+      LiBJdCBhaW1zIHRvIHByb3ZpZGUgYSB1bmlmaWVkIGFwcHJvYWNoIHRvIGludGVyYWN0aW5nIHdp
+      dGggdmFyaW91cyBMTE0gcHJvdmlkZXJzIGFuZCBtYW5hZ2luZyBjb21wbGV4IGFnZW50IHdvcmtm
+      bG93cyAuCgpLZXkgZmVhdHVyZXMgaW5jbHVkZToKKiAgICoqVHlwZS1TYWZlIEFnZW50cyoqOiBB
+      Z2VudHMgYXJlIGdlbmVyaWMgYEFnZW50W0RlcHMsIE91dHB1dF1gIGZvciBjb21waWxlLXRpbWUg
+      dmFsaWRhdGlvbiwgbGV2ZXJhZ2luZyBQeWRhbnRpYyBmb3Igb3V0cHV0IHZhbGlkYXRpb24gYW5k
+      IGRlcGVuZGVuY3kgaW5qZWN0aW9uIC4KKiAgICoqTW9kZWwtQWdub3N0aWMgRGVzaWduKio6IEl0
+      IHN1cHBvcnRzIG92ZXIgMTUgTExNIHByb3ZpZGVycyB0aHJvdWdoIGEgdW5pZmllZCBgTW9kZWxg
+      IGludGVyZmFjZSwgYWxsb3dpbmcgZm9yIGVhc3kgc3dpdGNoaW5nIGJldHdlZW4gZGlmZmVyZW50
+      IG1vZGVscyBhbmQgcHJvdmlkZXJzIC4KKiAgICoqU3RydWN0dXJlZCBPdXRwdXRzKio6IEF1dG9t
+      YXRpYyBQeWRhbnRpYyB2YWxpZGF0aW9uIGFuZCByZWZsZWN0aW9uL3NlbGYtY29ycmVjdGlvbiBl
+      bnN1cmUgc3RydWN0dXJlZCBhbmQgcmVsaWFibGUgb3V0cHV0cyBmcm9tIExMTXMgLgoqICAgKipD
+      b21wcmVoZW5zaXZlIE9ic2VydmFiaWxpdHkqKjogSW50ZWdyYXRpb24gd2l0aCBPcGVuVGVsZW1l
+      dHJ5IGFuZCBuYXRpdmUgTG9nZmlyZSBwcm92aWRlcyByZWFsLXRpbWUgZGVidWdnaW5nLCBwZXJm
+      b3JtYW5jZSBtb25pdG9yaW5nLCBhbmQgY29zdCB0cmFja2luZyAuCiogICAqKlByb2R1Y3Rpb24t
+      UmVhZHkgVG9vbGluZyoqOiBUaGlzIGluY2x1ZGVzIGFuIGV2YWx1YXRpb24gZnJhbWV3b3JrIChg
+      cHlkYW50aWMtZXZhbHNgKSwgZHVyYWJsZSBleGVjdXRpb24gY2FwYWJpbGl0aWVzLCBhbmQgdmFy
+      aW91cyBwcm90b2NvbCBpbnRlZ3JhdGlvbnMgbGlrZSBNQ1AsIEEyQSwgYW5kIEFHLVVJIC4KKiAg
+      ICoqR3JhcGggRXhlY3V0aW9uKio6IFRoZSBgcHlkYW50aWNfZ3JhcGguR3JhcGhgIG1vZHVsZSBw
+      cm92aWRlcyBhIGdyYXBoLWJhc2VkIHN0YXRlIG1hY2hpbmUgZm9yIG9yY2hlc3RyYXRpbmcgYWdl
+      bnQgZXhlY3V0aW9uLCB1c2luZyBub2RlcyBsaWtlIGBVc2VyUHJvbXB0Tm9kZWAsIGBNb2RlbFJl
+      cXVlc3ROb2RlYCwgYW5kIGBDYWxsVG9vbHNOb2RlYCAuCgojIyBGcmFtZXdvcmsgQXJjaGl0ZWN0
+      dXJlCgpUaGUgZnJhbWV3b3JrIGlzIHN0cnVjdHVyZWQgYXMgYSBVViB3b3Jrc3BhY2UgbW9ub3Jl
+      cG8sIGNvbnRhaW5pbmcgc2V2ZXJhbCBwYWNrYWdlcyAuCgojIyMgQ29yZSBQYWNrYWdlcwoqICAg
+      YHB5ZGFudGljLWFpLXNsaW1gOiBDb250YWlucyB0aGUgY29yZSBmcmFtZXdvcmsgY29tcG9uZW50
+      cyBzdWNoIGFzIGBBZ2VudGAsIGBNb2RlbGAsIGFuZCB0b29scyAuCiogICBgcHlkYW50aWMtYWlg
+      OiBBIG1ldGEtcGFja2FnZSB0aGF0IGluY2x1ZGVzIGFsbCBvcHRpb25hbCBleHRyYXMgLgoKIyMj
+      IFN1cHBvcnRpbmcgUGFja2FnZXMKKiAgIGBweWRhbnRpYy1ncmFwaGA6IFByb3ZpZGVzIHRoZSBn
+      cmFwaCBleGVjdXRpb24gZW5naW5lIHdpdGggYEdyYXBoYCBhbmQgYEJhc2VOb2RlYCAuCiogICBg
+      cHlkYW50aWMtZXZhbHNgOiBBbiBldmFsdWF0aW9uIGZyYW1ld29yayBmb3IgZGF0YXNldHMgYW5k
+      IGV2YWx1YXRvcnMgLgoqICAgYGV4YW1wbGVzYDogQ29udGFpbnMgZXhhbXBsZSBhcHBsaWNhdGlv
+      bnMgLgoqICAgYGNsYWlgOiBQcm92aWRlcyBhIENMSSBpbnRlcmZhY2UgLgoKIyMgQWdlbnQgRXhl
+      Y3V0aW9uIEZsb3cKClRoZSBgQWdlbnRgIGNsYXNzIHNlcnZlcyBhcyB0aGUgcHJpbWFyeSBvcmNo
+      ZXN0cmF0b3IgLiBBZ2VudCBleGVjdXRpb24gaXMgZ3JhcGgtYmFzZWQsIHV0aWxpemluZyBhIHN0
+      YXRlIG1hY2hpbmUgZnJvbSBgcHlkYW50aWNfZ3JhcGguR3JhcGhgIC4gVGhlIGV4ZWN1dGlvbiBp
+      bnZvbHZlcyB0aHJlZSBjb3JlIG5vZGUgdHlwZXM6CiogICBgVXNlclByb21wdE5vZGVgOiBQcm9j
+      ZXNzZXMgdXNlciBpbnB1dCBhbmQgY3JlYXRlcyBpbml0aWFsIGBNb2RlbFJlcXVlc3RgIC4KKiAg
+      IGBNb2RlbFJlcXVlc3ROb2RlYDogQ2FsbHMgYG1vZGVsLnJlcXVlc3QoKWAgb3IgYG1vZGVsLnJl
+      cXVlc3Rfc3RyZWFtKClgIGFuZCBoYW5kbGVzIHJldHJpZXMgLgoqICAgYENhbGxUb29sc05vZGVg
+      OiBFeGVjdXRlcyB0b29sIGZ1bmN0aW9ucyB2aWEgYFJ1bkNvbnRleHRbRGVwc11gIC4KClRoZSBg
+      QWdlbnRgIHByb3ZpZGVzIG1ldGhvZHMgbGlrZSBgcnVuKClgLCBgcnVuX3N5bmMoKWAsIGFuZCBg
+      cnVuX3N0cmVhbSgpYCBmb3IgZGlmZmVyZW50IGV4ZWN1dGlvbiBzY2VuYXJpb3MgLgoKIyMgTm90
+      ZXMKVGhlIGBDTEFVREUubWRgIGZpbGUgcHJvdmlkZXMgZ3VpZGFuY2UgZm9yIENsYXVkZSBDb2Rl
+      IHdoZW4gd29ya2luZyB3aXRoIHRoZSByZXBvc2l0b3J5LCBpbmNsdWRpbmcgZGV2ZWxvcG1lbnQg
+      Y29tbWFuZHMgYW5kIGFuIG92ZXJ2aWV3IG9mIGNvcmUgY29tcG9uZW50cyBhbmQgZGVzaWduIHBh
+      dHRlcm5zIC4gVGhlIGBta2RvY3MueW1sYCBmaWxlIGRlZmluZXMgdGhlIHN0cnVjdHVyZSBhbmQg
+      Y29udGVudCBvZiB0aGUgcHJvamVjdCdzIGRvY3VtZW50YXRpb24sIGluY2x1ZGluZyBuYXZpZ2F0
+      aW9uLCBwbHVnaW5zLCBhbmQgd2F0Y2ggZGlyZWN0b3JpZXMgZm9yIHZhcmlvdXMgcGFja2FnZXMg
+      LiBUaGUgYGRvY3MvaW5zdGFsbC5tZGAgZmlsZSBkZXRhaWxzIGhvdyB0byBpbnN0YWxsIHRoZSBg
+      cHlkYW50aWMtYWlgIHBhY2thZ2UgYW5kIGl0cyBvcHRpb25hbCBjb21wb25lbnRzLCBpbmNsdWRp
+      bmcgYSAic2xpbSIgaW5zdGFsbGF0aW9uIG9wdGlvbiBmb3Igc3BlY2lmaWMgbW9kZWwgZGVwZW5k
+      ZW5jaWVzIC4KCldpa2kgcGFnZXMgeW91IG1pZ2h0IHdhbnQgdG8gZXhwbG9yZToKLSBbT3ZlcnZp
+      ZXcgKHB5ZGFudGljL3B5ZGFudGljLWFpKV0oL3dpa2kvcHlkYW50aWMvcHlkYW50aWMtYWkjMSkK
+      ClZpZXcgdGhpcyBzZWFyY2ggb24gRGVlcFdpa2k6IGh0dHBzOi8vZGVlcHdpa2kuY29tL3NlYXJj
+      aC93aGF0LWlzLXRoaXMtcmVwb3NpdG9yeS1hYm91dF8xMDU2NTcxNS0zNTJhLTRhOGEtOTI2MC0z
+      ZWQzOWIwYjMyMjYKEAUalwEKDWNhbGxfMDUzNDU2MjUQBhgBUoEBChVkZWVwd2lraS5hc2tfcXVl
+      c3Rpb24SaHsicmVwb05hbWUiOiJweWRhbnRpYy9weWRhbnRpYy1haSIsInF1ZXN0aW9uIjoiV2hh
+      dCBpcyB0aGlzIHJlcG9zaXRvcnkgYWJvdXQ/IFByb3ZpZGUgYSBzaG9ydCBzdW1tYXJ5LiJ9EskI
+      CAMQAhrCCAqqA1B5ZGFudGljIEFJIChgcHlkYW50aWMvcHlkYW50aWMtYWlgKSBpcyBhIFB5dGhv
+      biBmcmFtZXdvcmsgZm9yIGJ1aWxkaW5nIHByb2R1Y3Rpb24tZ3JhZGUgTExNIGFwcGxpY2F0aW9u
+      cy4gSXQgZW1waGFzaXplcyB0eXBlIHNhZmV0eSwgc3RydWN0dXJlZCBvdXRwdXRzLCBkZXBlbmRl
+      bmN5IGluamVjdGlvbiwgYW5kIG9ic2VydmFiaWxpdHksIHdpdGggbW9kZWwtYWdub3N0aWMgc3Vw
+      cG9ydCBmb3IgMjArIHByb3ZpZGVycy4gS2V5IGZlYXR1cmVzIGluY2x1ZGUgZ3JhcGgtYmFzZWQg
+      YWdlbnQgZXhlY3V0aW9uLCBldmFsdWF0aW9uIHRvb2xzLCBhbmQgaW50ZWdyYXRpb25zIGxpa2Ug
+      T3BlblRlbGVtZXRyeS4gSXQncyBzdHJ1Y3R1cmVkIGFzIGEgbW9ub3JlcG8gd2l0aCBjb3JlIHBh
+      Y2thZ2VzIGZvciBhZ2VudHMsIGdyYXBocywgYW5kIGV2YWxzLhACKpAFd0MzS3pra0tJK2g0WG5F
+      QU1taEZteW81L2c1aDkyTDdGbTgvays4RUd3NUc0M2pSMEZ5cWU5RjJkWTRzRU5GbXFOU0tMRTQz
+      cUxSVUJtNllXaXZWVCs1U0ROVTA1d2pTbDRxYXNUT0pNdmR6TGcrdS9zamFuY0FkdVdadm1PZlh1
+      cVhPdXE4a1V3MExlUTVIRzBBQThPTDZtK2tCcEhlMHlyczMvRTdiVXhLQzZSbWVHRzNPTVY1YkVP
+      d0lTOGlZRVJtTzNVMklHZW4zRzZFRzhFLzVSWWdKQTl2WlJTTjZwM2xrTUEvcmhUK2N4T2YwZEJo
+      MFp5a01qL1h6K1E3ZHpta00xa0R5enVBcnRVa3hDZkVaaGtsYUVpWGo2b2pFcEx6SEFrKzlOZ2ta
+      VGRzZ3p5WmUxVno4bVNtRWxDczc4bTRIQmJxMUZZQ1U1L0o5a3ZhWFB3dWdNNUp5YW5MTWNJdUpB
+      bG9EcHlNWDlMQThXdDhRWnpZTStJQUd2UHVUeS8rcStGTlpxL2pybUphdG11NnpyeDNXMWZaS0s1
+      RHNGY0FWN3ZvajZiaGhjRjVhbk1PSFI4Z29idW5Hc3dyN2N4blQ1NnQ4VmR2SXBod25PRXlSTitr
+      QTV0V3F3bHNOQnRvUG5JcmViODArS3VQQU1QSHVqZjFKdnZEVGNTQ21jZmxTZXNnNk1INkdqZUZJ
+      dkd6bTVqOGQ0dTR4SVBEelFRSDhwekw5Ui9INk5PaUMzd1VNTU1WNUhncG5UQ21iM1Fhb1FwZkhI
+      ZTJab1M5OUtFcDNJUDZTMnRZeG9BMkt0QkJzVFVmQ3BBZWw3a0g1VlZ2MFRnYUxHUDFsWENXVDFh
+      eVRYM1dxdHZXcHpJb2QqCwi04KrLBhD5j5EZMhVncm9rLTQtZmFzdC1yZWFzb25pbmc6DWZwX2Nm
+      Y2M4NWZmODZKGgiMARC0DhiKESC0DjDKATiDBkoBB1jc8IICWoQBEAE6AggBQnc6dQoIZGVlcHdp
+      a2kSE0RlZXBXaWtpIE1DUCBzZXJ2ZXIaHGh0dHBzOi8vbWNwLmRlZXB3aWtpLmNvbS9tY3AiDGFz
+      a19xdWVzdGlvbjIoChFjdXN0b20taGVhZGVyLWtleRITY3VzdG9tLWhlYWRlci12YWx1ZWgBcgEG

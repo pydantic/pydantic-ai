@@ -1,0 +1,207 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '535'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the temperature in Tokyo?
+        role: user
+      tools:
+        functionDeclarations:
+        - description: ''
+          name: get_temperature
+          parameters_json_schema:
+            $defs:
+              CurrentLocation:
+                additionalProperties: false
+                properties:
+                  city:
+                    type: string
+                  country:
+                    type: string
+                required:
+                - city
+                - country
+                type: object
+            additionalProperties: false
+            properties:
+              location:
+                additionalProperties:
+                  $ref: '#/$defs/CurrentLocation'
+                type: object
+            required:
+            - location
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1351'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1712
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                location:
+                  city: Tokyo
+              name: get_temperature
+            thoughtSignature: CokDAXLI2nx7y1r688uMKE5qfXDwpeSqIF7VYiV69kdLpcaEXwTzpcqRlmp8qXcv0Xh3wPQtv5F+MAe0t1r+bJPXCVMD1R+EGookjtXA+zR9IAB9MTgVPWMEypfCIV8anOOS/BolaY1MJnfdJc33bf5mB+p2QibFDWlduTyxD8DmSHzhY/Wvmd78V2bDNpLYfa8iS3rwnhgsTJ96D7/MiY//9wP3p36Mv0g5LwkYoGWYIPVyxEc8mfKBLUlnipcDfgAF733fZ584YB+hL/3gTDFo5GosAcXveyPLX8QLu5UdmcJFoMwyXfP6YUMiE3CG7a1Kh6zysy3hl2bHKbwlxyNoz7Aedy4Cp8djSna35lVwJ6ppGinRR7s0mEZEwWDo2jkEZ1eP+o2CxhZyR8jBILM1gcDPMoqklrZis5WAw4EhQcbG+Xp1yPJcupT4K8fChXZSHTOgxvHoInoq+Wp+V6n6yjOtemR+Mwu8NOiwdqbUzuTSty8tO1iViA4L/TO76RuQxGIMA61BZ+mb
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: tf5XaaanA_WfqtsPi5uF-Ao
+      usageMetadata:
+        candidatesTokenCount: 19
+        promptTokenCount: 40
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 40
+        thoughtsTokenCount: 84
+        totalTokenCount: 143
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1085'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the temperature in Tokyo?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              location:
+                city: Tokyo
+            name: get_temperature
+          thoughtSignature: skip_thought_signature_validator
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_temperature
+            response:
+              call_error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "model_type",
+                    "loc": [
+                      "location",
+                      "city"
+                    ],
+                    "msg": "Input should be a valid dictionary or instance of CurrentLocation",
+                    "input": "Tokyo"
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
+        role: user
+      tools:
+        functionDeclarations:
+        - description: ''
+          name: get_temperature
+          parameters_json_schema:
+            $defs:
+              CurrentLocation:
+                additionalProperties: false
+                properties:
+                  city:
+                    type: string
+                  country:
+                    type: string
+                required:
+                - city
+                - country
+                type: object
+            additionalProperties: false
+            properties:
+              location:
+                additionalProperties:
+                  $ref: '#/$defs/CurrentLocation'
+                type: object
+            required:
+            - location
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '2500'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=3009
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: I'm sorry, I'm having trouble getting the temperature for Tokyo. Can you please try again?
+            thoughtSignature: CtADAXLI2nxXvfZSaYnRNDWDRyt10lZC+al8WmAuvxaL0hQvW6TUxelXNjrh3LloNAKmpfluEE+h0Y6JDCfiMr2idtNbNWlDOj5wKkThgJ7wN3hF92BDDCQc5V5ImqY4FOLVPMJZJybg1Pl4HuqIFSayLw+9ufxfFXrjDX2LgOEN1R4wo2yLetSMbd4inEi0dWoOnAaLMOaS1RPe1RJ/OFbSeNu6pwiINR1+D2Pmw2ESyyq8d0Fp2LD9YEcdUFqFNb+dcdt2zcuQX3gjEI1qfmNAzrdF0LTYTwMHY7daavMZq4d0S4Q8+ds4OnTKfjJDM0elNkFTawcVzN1zkOZoHWXZLGAKAil2vJdCVzapVKW9ATQAIkCFnUP5lvv7Xv65lJtJAaP5Rz2e9wGasXw9Uu3/QDLO8NQ/cj+UQa5V+1V1knnZL7DIApX55L7xCzA6v6z7nKlwJa0SYuTl47qICS8NEk4DWywUDUVz6f/pbv/l7IY2Q7Vt9CpjjQW31GgrDfBnUh4AJdJxgj+BOn+kuJvhFpSoiUUKxy36nuWk21L0aR7PRg277Dg4C5Xb3+efcy4Tiu9p1YaLPOUcAcdb5urDTbhP1m2cQT3bnS/1Ei64u4kKYgFyyNp8MOrsW1WuJ9P91+KjhNjnvXfz1HTme1xE1CJuiWS0y9CBzLu4wjUF1o0rSa5f9n8lK1x4P0AKX37m72Skvw3dOv6Hem1BAcxf2NsiuVKvrWbt9cVQGLQ0/PfWnfjeCo4FAXLI2nxtDMYVHLW5l3r5uhWf2K2fo3FNbW+9LYhWI4RElxe7w4mIcUwom5eG7ZM5biCEkjKLIRdKrvb/Zpb2ia2nNXwaCMdGX6m5NJQVd9OKju8Ta9EcHMQpwunGrDup8TLJx+CxmemEOSnv7HeO9+pWVSW8qpv3cK1Cg5pV2qXyZ3voO8wZNHIC3xWLus1kuMiLp/C80ohiXYWVOZ4qmTqaXSpT8HC3CqAkNuwbzUNAcoz+YPxS+TTcUIRCgNYIzE5aBlELEYDMpNxWAuGgimrZYUI+F2vy2SFDT8qHrTm5/Psj3BxPWChkU2b4WcMgd+S0pizA1DBehiPrf7P6rFbXTNl17zIC851wr4UDkyrMBwGzMnDNT7tDH2UU0zMeVSSZg44f9jelTxYvZAVrLQnFYt44dTlOQt8013SN5bBJ2iSzGlYXTZ+ABCgH2CsVk0GI+3xxoLAE9OjvoXqJuSPyT6ApptGB5OLqKJYnB+GyR7NPzpAN5SvXKxHiVaBahzHxeCz5BhkIdZcSaoPolzvUkBDgi2qYv/whlnwBZBkcgRsk9oAY54FuHSovWL8cDWuyMRFIYyl60H1A6IPRqUqQXQnsikRtm6XrZEYd4Jsf3lH8vk6xqYDPYCuYb/WF5Q6RfZLYMdDvyzZ3utgm9afuq1A25CuuDXwP84iw906od+dwEm5AHrIdm3kVWfutx6NZnZUWeYjx43k11YMrU4u/fnuCzxjWtJlmwudzP+Uta2rbOL+2AaReUWBRfd5ApZEqUJJKNpWjmlKu/Og2DdytlE5ntWo+RpQLx6OMYt50JmhOtVeMQ+pgOn+npY8lDOLogJ2Dm0tMRXIiu8CFH8v8exr0VSP6s1+6gckcCmkBcsjafAqXfbyaqkjX3tlZROUFDNYQwrZtmfzixM95MsgBWyHRqCW2SFrYPRJ4NqsrRk1k/eePoESut/Qdi/BEK77t1uDpCKOyowmjgtvovsjcujYVyUoCou1mPGr7BTqK/0dp2dzOIPEKJAFyyNp8SW1OYufa4UA4sG0muCM/EaMT/nE0rLU0VYyO0+rhGg==
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: uP5XaY-bGPmnqtsPg9fXgQs
+      usageMetadata:
+        candidatesTokenCount: 22
+        promptTokenCount: 164
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 164
+        thoughtsTokenCount: 289
+        totalTokenCount: 475
+    status:
+      code: 200
+      message: OK
+version: 1

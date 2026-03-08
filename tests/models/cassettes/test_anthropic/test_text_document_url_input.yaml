@@ -1,0 +1,154 @@
+interactions:
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - example-files.online-convert.com
+    method: GET
+    uri: https://example-files.online-convert.com/document/txt/example.txt
+  response:
+    body:
+      string: |-
+        TXT test file
+        Purpose: Provide example of this file type
+        Document file type: TXT
+        Version: 1.0
+        Remark:
+
+        Example content:
+        The names "John Doe" for males, "Jane Doe" or "Jane Roe" for females, or "Jonnie Doe" and "Janie Doe" for children, or just "Doe" non-gender-specifically are used as placeholder names for a party whose true identity is unknown or must be withheld in a legal action, case, or discussion. The names are also used to refer to acorpse or hospital patient whose identity is unknown. This practice is widely used in the United States and Canada, but is rarely used in other English-speaking countries including the United Kingdom itself, from where the use of "John Doe" in a legal context originates. The names Joe Bloggs or John Smith are used in the UK instead, as well as in Australia and New Zealand.
+
+        John Doe is sometimes used to refer to a typical male in other contexts as well, in a similar manner to John Q. Public, known in Great Britain as Joe Public, John Smith or Joe Bloggs. For example, the first name listed on a form is often John Doe, along with a fictional address or other fictional information to provide an example of how to fill in the form. The name is also used frequently in popular culture, for example in the Frank Capra film Meet John Doe. John Doe was also the name of a 2002 American television series.
+
+        Similarly, a child or baby whose identity is unknown may be referred to as Baby Doe. A notorious murder case in Kansas City, Missouri, referred to the baby victim as Precious Doe. Other unidentified female murder victims are Cali Doe and Princess Doe. Additional persons may be called James Doe, Judy Doe, etc. However, to avoid possible confusion, if two anonymous or unknown parties are cited in a specific case or action, the surnames Doe and Roe may be used simultaneously; for example, "John Doe v. Jane Roe". If several anonymous parties are referenced, they may simply be labelled John Doe #1, John Doe #2, etc. (the U.S. Operation Delego cited 21 (numbered) "John Doe"s) or labelled with other variants of Doe / Roe / Poe / etc. Other early alternatives such as John Stiles and Richard Miles are now rarely used, and Mary Major has been used in some American federal cases.
+
+
+
+        File created by https://www.online-convert.com
+        More example files: https://www.online-convert.com/file-type
+        Text of Example content: Wikipedia (https://en.wikipedia.org/wiki/John_Doe)
+        License: Attribution-ShareAlike 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)
+
+        Feel free to use and share the file according to the license above.
+    headers:
+      cache-control:
+      - max-age=604800
+      - public
+      connection:
+      - keep-alive
+      content-length:
+      - '2574'
+      content-type:
+      - text/plain; charset=UTF-8
+      etag:
+      - W/"61efea10-a0e"
+      expires:
+      - Thu, 21 Aug 2025 11:11:48 GMT
+      last-modified:
+      - Tue, 25 Jan 2022 12:16:16 GMT
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2871'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the main content on this document?
+          type: text
+        - source:
+            data: |-
+              TXT test file
+              Purpose: Provide example of this file type
+              Document file type: TXT
+              Version: 1.0
+              Remark:
+
+              Example content:
+              The names "John Doe" for males, "Jane Doe" or "Jane Roe" for females, or "Jonnie Doe" and "Janie Doe" for children, or just "Doe" non-gender-specifically are used as placeholder names for a party whose true identity is unknown or must be withheld in a legal action, case, or discussion. The names are also used to refer to acorpse or hospital patient whose identity is unknown. This practice is widely used in the United States and Canada, but is rarely used in other English-speaking countries including the United Kingdom itself, from where the use of "John Doe" in a legal context originates. The names Joe Bloggs or John Smith are used in the UK instead, as well as in Australia and New Zealand.
+
+              John Doe is sometimes used to refer to a typical male in other contexts as well, in a similar manner to John Q. Public, known in Great Britain as Joe Public, John Smith or Joe Bloggs. For example, the first name listed on a form is often John Doe, along with a fictional address or other fictional information to provide an example of how to fill in the form. The name is also used frequently in popular culture, for example in the Frank Capra film Meet John Doe. John Doe was also the name of a 2002 American television series.
+
+              Similarly, a child or baby whose identity is unknown may be referred to as Baby Doe. A notorious murder case in Kansas City, Missouri, referred to the baby victim as Precious Doe. Other unidentified female murder victims are Cali Doe and Princess Doe. Additional persons may be called James Doe, Judy Doe, etc. However, to avoid possible confusion, if two anonymous or unknown parties are cited in a specific case or action, the surnames Doe and Roe may be used simultaneously; for example, "John Doe v. Jane Roe". If several anonymous parties are referenced, they may simply be labelled John Doe #1, John Doe #2, etc. (the U.S. Operation Delego cited 21 (numbered) "John Doe"s) or labelled with other variants of Doe / Roe / Poe / etc. Other early alternatives such as John Stiles and Richard Miles are now rarely used, and Mary Major has been used in some American federal cases.
+
+
+
+              File created by https://www.online-convert.com
+              More example files: https://www.online-convert.com/file-type
+              Text of Example content: Wikipedia (https://en.wikipedia.org/wiki/John_Doe)
+              License: Attribution-ShareAlike 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)
+
+              Feel free to use and share the file according to the license above.
+            media_type: text/plain
+            type: text
+          type: document
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1153'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          This document is a TXT test file that contains example content about the use of placeholder names like "John Doe," "Jane Doe," and their variants in legal and cultural contexts. The main content is divided into three main paragraphs explaining:
+
+          1. The use of "Doe" names as placeholders for unknown parties in legal actions
+          2. The use of "John Doe" as a reference to a typical male in various contexts
+          3. The use of variations like "Baby Doe" and numbered "John Doe"s in specific cases
+
+          The document also includes metadata about the file itself, including its purpose, type, and version, as well as attribution information indicating that the example content is from Wikipedia and is licensed under Attribution-ShareAlike 4.0.
+        type: text
+      id: msg_0181va21HMXatSVPvFwiTN1k
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 713
+        output_tokens: 166
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,67 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is 2+2?
+        role: user
+      instructions: ''
+      model: gpt-5
+      text:
+        format:
+          type: text
+        verbosity: low
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      content-type:
+      - application/json
+    parsed_body:
+      created_at: 1743075630
+      error: null
+      id: resp_test_verbosity_simple
+      incomplete_details: null
+      instructions: ''
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-5
+      object: response
+      output:
+      - content:
+        - annotations: []
+          text: "4"
+          type: output_text
+        id: msg_test_verbosity_simple
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning: null
+      status: complete
+      status_details: null
+      tool_calls: null
+      total_tokens: 15
+      usage:
+        input_tokens: 10
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 1
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 11
+    status:
+      code: 200
+      message: OK
+version: 1

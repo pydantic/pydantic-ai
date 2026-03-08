@@ -1,0 +1,83 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '138'
+      content-type:
+      - application/json
+      host:
+      - router.huggingface.co
+    method: POST
+    parsed_body:
+      messages:
+      - content: Hello
+        name: null
+        role: user
+        tool_calls: null
+      model: deepseek-ai/DeepSeek-R1
+      stream: false
+      tools: []
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"676-3i++T2qolV0vkBqQTC8yQUklmQA"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '30'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "<think>\nOkay, the user just said \"Hello\". Hmm, such a simple greeting but it's the start of every conversation.
+            \n\nFirst thought: this could be anyone - a first-time user testing the waters, or someone who's used AI assistants
+            before. The tone feels neutral, maybe even cautious. No emojis or exclamation marks, so probably not overly excited.
+            \n\nI should keep my response warm but professional. Since they didn't specify anything, I'll leave multiple options
+            open - casual chat, practical help, or deeper topics. The smiley in my reply makes it friendly without being pushy.
+            \n\nNoting that they didn't use a name - either they don't know they can set one, or prefer anonymity. I'll avoid
+            assuming familiarity. The \"how can I help\" phrasing puts the ball in their court gently. \n\n...Wait, is this
+            one of those test messages to check response time? If so, the simplicity makes sense. Either way, best to treat
+            it as genuine.\n</think>\nHello! \U0001F60A  \nHow can I help you today? Whether you have a question, need advice,
+            want to learn something new, or just feel like chatting--I'm here for it!  \n\nWhat's on your mind? \U0001F4AC"
+          role: assistant
+          tool_calls: []
+        seed: 10583536942961263000
+      created: 1769546587
+      id: oV1moV9-zqrih-9c4b149d4b66d67b
+      model: deepseek-ai/DeepSeek-R1
+      object: chat.completion
+      prompt: []
+      usage:
+        cached_tokens: 0
+        completion_tokens: 258
+        prompt_tokens: 4
+        total_tokens: 262
+    status:
+      code: 200
+      message: OK
+version: 1

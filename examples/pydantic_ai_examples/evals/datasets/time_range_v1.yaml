@@ -1,0 +1,107 @@
+# yaml-language-server: $schema=time_range_v1_schema.json
+cases:
+- name: Single day mention
+  inputs:
+    prompt: I want to see logs from 2021-05-08
+    now: '2023-10-28T09:30:00Z'
+  expected_output:
+    min_timestamp_with_offset: '2021-05-08T00:00:00Z'
+    max_timestamp_with_offset: '2021-05-08T23:59:59Z'
+    explanation: You mentioned a single day (2021-05-08). The entire day is used.
+  evaluators:
+  - IsInstance: TimeRangeBuilderSuccess
+- name: Ambiguous mention
+  inputs:
+    prompt: Check logs from last week or so, around early May
+    now: '2023-10-28T09:30:00Z'
+  expected_output:
+    min_timestamp_with_offset: '2023-10-21T09:30:00Z'
+    max_timestamp_with_offset: '2023-10-28T09:30:00Z'
+    explanation: We interpret the mention of early May as extraneous, focusing on
+      'last week or so' from the current time.
+  evaluators:
+  - IsInstance: TimeRangeBuilderSuccess
+  - LLMJudge: We want to interpret conflicting references by default to the more recent
+      timeframe; confirm the explanation addresses ignoring early May.
+- name: Single datetime mention
+  inputs:
+    prompt: Show me the logs at 2023-10-27 2:00pm
+    now: '2023-10-28T09:30:00Z'
+  expected_output:
+    min_timestamp_with_offset: '2023-10-27T13:50:00Z'
+    max_timestamp_with_offset: '2023-10-27T14:10:00Z'
+    explanation: You only mentioned a single point in time, so a 10-minute window
+      around that time is used.
+  evaluators:
+  - IsInstance: TimeRangeBuilderSuccess
+- name: Relative mention without date
+  inputs:
+    prompt: Check logs from 2 hours ago
+    now: '2023-10-28T09:30:00Z'
+  expected_output:
+    min_timestamp_with_offset: '2023-10-28T07:30:00Z'
+    max_timestamp_with_offset: '2023-10-28T09:30:00Z'
+    explanation: You requested logs starting from 2 hours prior to the current time.
+  evaluators:
+  - IsInstance: TimeRangeBuilderSuccess
+- name: Impossible range
+  inputs:
+    prompt: Check logs from 2025, but make sure they are also from 2020
+    now: '2023-10-28T09:30:00Z'
+  expected_output:
+    error_message: 'Conflicting time instructions: 2025 and 2020 cannot both apply.'
+  evaluators:
+  - IsInstance: TimeRangeBuilderError
+- name: No mention
+  inputs:
+    prompt: Show me some logs
+    now: '2023-10-28T09:30:00Z'
+  expected_output:
+    error_message: No timeframe could be inferred from your request.
+  evaluators:
+  - IsInstance: TimeRangeBuilderError
+- name: Ambiguous elliptical mention
+  inputs:
+    prompt: Check logs from around the start of last quarter
+    now: '2023-07-15T08:00:00Z'
+  expected_output:
+    min_timestamp_with_offset: '2023-04-01T00:00:00Z'
+    max_timestamp_with_offset: '2023-04-05T23:59:59Z'
+    explanation: We interpret 'around the start of last quarter' as the first few
+      days of Q2 2023.
+  evaluators:
+  - IsInstance: TimeRangeBuilderSuccess
+- name: Far future mention
+  inputs:
+    prompt: Check logs from January 3050
+    now: '2023-10-28T09:30:00Z'
+  expected_output:
+    min_timestamp_with_offset: '3050-01-01T00:00:00Z'
+    max_timestamp_with_offset: '3050-01-31T23:59:59Z'
+    explanation: You requested logs from January 3050. The entire month is used.
+  evaluators:
+  - IsInstance: TimeRangeBuilderSuccess
+- name: Confusing relative references
+  inputs:
+    prompt: Check logs from yesterday but also last year
+    now: '2023-10-28T09:30:00Z'
+  expected_output:
+    error_message: 'Conflicting instructions: ''yesterday'' versus ''last year'' could
+      not be reconciled.'
+  evaluators:
+  - IsInstance: TimeRangeBuilderError
+- name: Range from speech
+  inputs:
+    prompt: I want the logs from December 25th to December 26th, so I can see what
+      happened on Christmas day. But also it might be earlier.
+    now: '2023-10-28T09:30:00Z'
+  expected_output:
+    min_timestamp_with_offset: '2023-12-25T00:00:00Z'
+    max_timestamp_with_offset: '2023-12-26T23:59:59Z'
+    explanation: You asked specifically for December 25th to December 26th. The mention
+      of an earlier date is ignored since a range was provided.
+  evaluators:
+  - IsInstance: TimeRangeBuilderSuccess
+evaluators:
+- LLMJudge: Ensure the explanation or error_message fields are truly appropriate for
+    user display, in a second-person or friendly style.

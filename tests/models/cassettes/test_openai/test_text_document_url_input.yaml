@@ -1,0 +1,341 @@
+interactions:
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - www.w3.org
+    method: GET
+    uri: https://www.w3.org/TR/2003/REC-PNG-20031110/iso_8859-1.txt
+  response:
+    body:
+      string: |
+        The following are the graphical (non-control) characters defined by
+        ISO 8859-1 (1987).  Descriptions in words aren't all that helpful,
+        but they're the best we can do in text.  A graphics file illustrating
+        the character set should be available from the same archive as this
+        file.
+
+        Hex Description                 Hex Description
+
+        20  SPACE
+        21  EXCLAMATION MARK            A1  INVERTED EXCLAMATION MARK
+        22  QUOTATION MARK              A2  CENT SIGN
+        23  NUMBER SIGN                 A3  POUND SIGN
+        24  DOLLAR SIGN                 A4  CURRENCY SIGN
+        25  PERCENT SIGN                A5  YEN SIGN
+        26  AMPERSAND                   A6  BROKEN BAR
+        27  APOSTROPHE                  A7  SECTION SIGN
+        28  LEFT PARENTHESIS            A8  DIAERESIS
+        29  RIGHT PARENTHESIS           A9  COPYRIGHT SIGN
+        2A  ASTERISK                    AA  FEMININE ORDINAL INDICATOR
+        2B  PLUS SIGN                   AB  LEFT-POINTING DOUBLE ANGLE QUOTATION MARK
+        2C  COMMA                       AC  NOT SIGN
+        2D  HYPHEN-MINUS                AD  SOFT HYPHEN
+        2E  FULL STOP                   AE  REGISTERED SIGN
+        2F  SOLIDUS                     AF  OVERLINE
+        30  DIGIT ZERO                  B0  DEGREE SIGN
+        31  DIGIT ONE                   B1  PLUS-MINUS SIGN
+        32  DIGIT TWO                   B2  SUPERSCRIPT TWO
+        33  DIGIT THREE                 B3  SUPERSCRIPT THREE
+        34  DIGIT FOUR                  B4  ACUTE ACCENT
+        35  DIGIT FIVE                  B5  MICRO SIGN
+        36  DIGIT SIX                   B6  PILCROW SIGN
+        37  DIGIT SEVEN                 B7  MIDDLE DOT
+        38  DIGIT EIGHT                 B8  CEDILLA
+        39  DIGIT NINE                  B9  SUPERSCRIPT ONE
+        3A  COLON                       BA  MASCULINE ORDINAL INDICATOR
+        3B  SEMICOLON                   BB  RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK
+        3C  LESS-THAN SIGN              BC  VULGAR FRACTION ONE QUARTER
+        3D  EQUALS SIGN                 BD  VULGAR FRACTION ONE HALF
+        3E  GREATER-THAN SIGN           BE  VULGAR FRACTION THREE QUARTERS
+        3F  QUESTION MARK               BF  INVERTED QUESTION MARK
+        40  COMMERCIAL AT               C0  CAPITAL LETTER A WITH GRAVE
+        41  CAPITAL LETTER A            C1  CAPITAL LETTER A WITH ACUTE
+        42  CAPITAL LETTER B            C2  CAPITAL LETTER A WITH CIRCUMFLEX
+        43  CAPITAL LETTER C            C3  CAPITAL LETTER A WITH TILDE
+        44  CAPITAL LETTER D            C4  CAPITAL LETTER A WITH DIAERESIS
+        45  CAPITAL LETTER E            C5  CAPITAL LETTER A WITH RING ABOVE
+        46  CAPITAL LETTER F            C6  CAPITAL LETTER AE
+        47  CAPITAL LETTER G            C7  CAPITAL LETTER C WITH CEDILLA
+        48  CAPITAL LETTER H            C8  CAPITAL LETTER E WITH GRAVE
+        49  CAPITAL LETTER I            C9  CAPITAL LETTER E WITH ACUTE
+        4A  CAPITAL LETTER J            CA  CAPITAL LETTER E WITH CIRCUMFLEX
+        4B  CAPITAL LETTER K            CB  CAPITAL LETTER E WITH DIAERESIS
+        4C  CAPITAL LETTER L            CC  CAPITAL LETTER I WITH GRAVE
+        4D  CAPITAL LETTER M            CD  CAPITAL LETTER I WITH ACUTE
+        4E  CAPITAL LETTER N            CE  CAPITAL LETTER I WITH CIRCUMFLEX
+        4F  CAPITAL LETTER O            CF  CAPITAL LETTER I WITH DIAERESIS
+        50  CAPITAL LETTER P            D0  CAPITAL LETTER ETH (Icelandic)
+        51  CAPITAL LETTER Q            D1  CAPITAL LETTER N WITH TILDE
+        52  CAPITAL LETTER R            D2  CAPITAL LETTER O WITH GRAVE
+        53  CAPITAL LETTER S            D3  CAPITAL LETTER O WITH ACUTE
+        54  CAPITAL LETTER T            D4  CAPITAL LETTER O WITH CIRCUMFLEX
+        55  CAPITAL LETTER U            D5  CAPITAL LETTER O WITH TILDE
+        56  CAPITAL LETTER V            D6  CAPITAL LETTER O WITH DIAERESIS
+        57  CAPITAL LETTER W            D7  MULTIPLICATION SIGN
+        58  CAPITAL LETTER X            D8  CAPITAL LETTER O WITH STROKE
+        59  CAPITAL LETTER Y            D9  CAPITAL LETTER U WITH GRAVE
+        5A  CAPITAL LETTER Z            DA  CAPITAL LETTER U WITH ACUTE
+        5B  LEFT SQUARE BRACKET         DB  CAPITAL LETTER U WITH CIRCUMFLEX
+        5C  REVERSE SOLIDUS             DC  CAPITAL LETTER U WITH DIAERESIS
+        5D  RIGHT SQUARE BRACKET        DD  CAPITAL LETTER Y WITH ACUTE
+        5E  CIRCUMFLEX ACCENT           DE  CAPITAL LETTER THORN (Icelandic)
+        5F  LOW LINE                    DF  SMALL LETTER SHARP S (German)
+        60  GRAVE ACCENT                E0  SMALL LETTER A WITH GRAVE
+        61  SMALL LETTER A              E1  SMALL LETTER A WITH ACUTE
+        62  SMALL LETTER B              E2  SMALL LETTER A WITH CIRCUMFLEX
+        63  SMALL LETTER C              E3  SMALL LETTER A WITH TILDE
+        64  SMALL LETTER D              E4  SMALL LETTER A WITH DIAERESIS
+        65  SMALL LETTER E              E5  SMALL LETTER A WITH RING ABOVE
+        66  SMALL LETTER F              E6  SMALL LETTER AE
+        67  SMALL LETTER G              E7  SMALL LETTER C WITH CEDILLA
+        68  SMALL LETTER H              E8  SMALL LETTER E WITH GRAVE
+        69  SMALL LETTER I              E9  SMALL LETTER E WITH ACUTE
+        6A  SMALL LETTER J              EA  SMALL LETTER E WITH CIRCUMFLEX
+        6B  SMALL LETTER K              EB  SMALL LETTER E WITH DIAERESIS
+        6C  SMALL LETTER L              EC  SMALL LETTER I WITH GRAVE
+        6D  SMALL LETTER M              ED  SMALL LETTER I WITH ACUTE
+        6E  SMALL LETTER N              EE  SMALL LETTER I WITH CIRCUMFLEX
+        6F  SMALL LETTER O              EF  SMALL LETTER I WITH DIAERESIS
+        70  SMALL LETTER P              F0  SMALL LETTER ETH (Icelandic)
+        71  SMALL LETTER Q              F1  SMALL LETTER N WITH TILDE
+        72  SMALL LETTER R              F2  SMALL LETTER O WITH GRAVE
+        73  SMALL LETTER S              F3  SMALL LETTER O WITH ACUTE
+        74  SMALL LETTER T              F4  SMALL LETTER O WITH CIRCUMFLEX
+        75  SMALL LETTER U              F5  SMALL LETTER O WITH TILDE
+        76  SMALL LETTER V              F6  SMALL LETTER O WITH DIAERESIS
+        77  SMALL LETTER W              F7  DIVISION SIGN
+        78  SMALL LETTER X              F8  SMALL LETTER O WITH STROKE
+        79  SMALL LETTER Y              F9  SMALL LETTER U WITH GRAVE
+        7A  SMALL LETTER Z              FA  SMALL LETTER U WITH ACUTE
+        7B  LEFT CURLY BRACKET          FB  SMALL LETTER U WITH CIRCUMFLEX
+        7C  VERTICAL LINE               FC  SMALL LETTER U WITH DIAERESIS
+        7D  RIGHT CURLY BRACKET         FD  SMALL LETTER Y WITH ACUTE
+        7E  TILDE                       FE  SMALL LETTER THORN (Icelandic)
+                                        FF  SMALL LETTER Y WITH DIAERESIS
+    headers:
+      accept-ranges:
+      - bytes
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - max-age=31536000
+      connection:
+      - keep-alive
+      content-length:
+      - '6121'
+      content-security-policy:
+      - frame-ancestors 'self' https://cms.w3.org/ https://cms-dev.w3.org/; upgrade-insecure-requests
+      content-type:
+      - text/plain
+      etag:
+      - '"17e9-3cb82080711c0-gzip"'
+      expires:
+      - Wed, 30 Sep 2026 21:13:58 GMT
+      last-modified:
+      - Fri, 07 Nov 2003 05:51:11 GMT
+      strict-transport-security:
+      - max-age=15552000; includeSubdomains; preload
+      vary:
+      - Accept-Encoding,Origin
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '6500'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - text: What is the main content on this document, in one sentence?
+          type: text
+        - text: |-
+            -----BEGIN FILE id="8c5d09" type="text/plain"-----
+            The following are the graphical (non-control) characters defined by
+            ISO 8859-1 (1987).  Descriptions in words aren't all that helpful,
+            but they're the best we can do in text.  A graphics file illustrating
+            the character set should be available from the same archive as this
+            file.
+
+            Hex Description                 Hex Description
+
+            20  SPACE
+            21  EXCLAMATION MARK            A1  INVERTED EXCLAMATION MARK
+            22  QUOTATION MARK              A2  CENT SIGN
+            23  NUMBER SIGN                 A3  POUND SIGN
+            24  DOLLAR SIGN                 A4  CURRENCY SIGN
+            25  PERCENT SIGN                A5  YEN SIGN
+            26  AMPERSAND                   A6  BROKEN BAR
+            27  APOSTROPHE                  A7  SECTION SIGN
+            28  LEFT PARENTHESIS            A8  DIAERESIS
+            29  RIGHT PARENTHESIS           A9  COPYRIGHT SIGN
+            2A  ASTERISK                    AA  FEMININE ORDINAL INDICATOR
+            2B  PLUS SIGN                   AB  LEFT-POINTING DOUBLE ANGLE QUOTATION MARK
+            2C  COMMA                       AC  NOT SIGN
+            2D  HYPHEN-MINUS                AD  SOFT HYPHEN
+            2E  FULL STOP                   AE  REGISTERED SIGN
+            2F  SOLIDUS                     AF  OVERLINE
+            30  DIGIT ZERO                  B0  DEGREE SIGN
+            31  DIGIT ONE                   B1  PLUS-MINUS SIGN
+            32  DIGIT TWO                   B2  SUPERSCRIPT TWO
+            33  DIGIT THREE                 B3  SUPERSCRIPT THREE
+            34  DIGIT FOUR                  B4  ACUTE ACCENT
+            35  DIGIT FIVE                  B5  MICRO SIGN
+            36  DIGIT SIX                   B6  PILCROW SIGN
+            37  DIGIT SEVEN                 B7  MIDDLE DOT
+            38  DIGIT EIGHT                 B8  CEDILLA
+            39  DIGIT NINE                  B9  SUPERSCRIPT ONE
+            3A  COLON                       BA  MASCULINE ORDINAL INDICATOR
+            3B  SEMICOLON                   BB  RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK
+            3C  LESS-THAN SIGN              BC  VULGAR FRACTION ONE QUARTER
+            3D  EQUALS SIGN                 BD  VULGAR FRACTION ONE HALF
+            3E  GREATER-THAN SIGN           BE  VULGAR FRACTION THREE QUARTERS
+            3F  QUESTION MARK               BF  INVERTED QUESTION MARK
+            40  COMMERCIAL AT               C0  CAPITAL LETTER A WITH GRAVE
+            41  CAPITAL LETTER A            C1  CAPITAL LETTER A WITH ACUTE
+            42  CAPITAL LETTER B            C2  CAPITAL LETTER A WITH CIRCUMFLEX
+            43  CAPITAL LETTER C            C3  CAPITAL LETTER A WITH TILDE
+            44  CAPITAL LETTER D            C4  CAPITAL LETTER A WITH DIAERESIS
+            45  CAPITAL LETTER E            C5  CAPITAL LETTER A WITH RING ABOVE
+            46  CAPITAL LETTER F            C6  CAPITAL LETTER AE
+            47  CAPITAL LETTER G            C7  CAPITAL LETTER C WITH CEDILLA
+            48  CAPITAL LETTER H            C8  CAPITAL LETTER E WITH GRAVE
+            49  CAPITAL LETTER I            C9  CAPITAL LETTER E WITH ACUTE
+            4A  CAPITAL LETTER J            CA  CAPITAL LETTER E WITH CIRCUMFLEX
+            4B  CAPITAL LETTER K            CB  CAPITAL LETTER E WITH DIAERESIS
+            4C  CAPITAL LETTER L            CC  CAPITAL LETTER I WITH GRAVE
+            4D  CAPITAL LETTER M            CD  CAPITAL LETTER I WITH ACUTE
+            4E  CAPITAL LETTER N            CE  CAPITAL LETTER I WITH CIRCUMFLEX
+            4F  CAPITAL LETTER O            CF  CAPITAL LETTER I WITH DIAERESIS
+            50  CAPITAL LETTER P            D0  CAPITAL LETTER ETH (Icelandic)
+            51  CAPITAL LETTER Q            D1  CAPITAL LETTER N WITH TILDE
+            52  CAPITAL LETTER R            D2  CAPITAL LETTER O WITH GRAVE
+            53  CAPITAL LETTER S            D3  CAPITAL LETTER O WITH ACUTE
+            54  CAPITAL LETTER T            D4  CAPITAL LETTER O WITH CIRCUMFLEX
+            55  CAPITAL LETTER U            D5  CAPITAL LETTER O WITH TILDE
+            56  CAPITAL LETTER V            D6  CAPITAL LETTER O WITH DIAERESIS
+            57  CAPITAL LETTER W            D7  MULTIPLICATION SIGN
+            58  CAPITAL LETTER X            D8  CAPITAL LETTER O WITH STROKE
+            59  CAPITAL LETTER Y            D9  CAPITAL LETTER U WITH GRAVE
+            5A  CAPITAL LETTER Z            DA  CAPITAL LETTER U WITH ACUTE
+            5B  LEFT SQUARE BRACKET         DB  CAPITAL LETTER U WITH CIRCUMFLEX
+            5C  REVERSE SOLIDUS             DC  CAPITAL LETTER U WITH DIAERESIS
+            5D  RIGHT SQUARE BRACKET        DD  CAPITAL LETTER Y WITH ACUTE
+            5E  CIRCUMFLEX ACCENT           DE  CAPITAL LETTER THORN (Icelandic)
+            5F  LOW LINE                    DF  SMALL LETTER SHARP S (German)
+            60  GRAVE ACCENT                E0  SMALL LETTER A WITH GRAVE
+            61  SMALL LETTER A              E1  SMALL LETTER A WITH ACUTE
+            62  SMALL LETTER B              E2  SMALL LETTER A WITH CIRCUMFLEX
+            63  SMALL LETTER C              E3  SMALL LETTER A WITH TILDE
+            64  SMALL LETTER D              E4  SMALL LETTER A WITH DIAERESIS
+            65  SMALL LETTER E              E5  SMALL LETTER A WITH RING ABOVE
+            66  SMALL LETTER F              E6  SMALL LETTER AE
+            67  SMALL LETTER G              E7  SMALL LETTER C WITH CEDILLA
+            68  SMALL LETTER H              E8  SMALL LETTER E WITH GRAVE
+            69  SMALL LETTER I              E9  SMALL LETTER E WITH ACUTE
+            6A  SMALL LETTER J              EA  SMALL LETTER E WITH CIRCUMFLEX
+            6B  SMALL LETTER K              EB  SMALL LETTER E WITH DIAERESIS
+            6C  SMALL LETTER L              EC  SMALL LETTER I WITH GRAVE
+            6D  SMALL LETTER M              ED  SMALL LETTER I WITH ACUTE
+            6E  SMALL LETTER N              EE  SMALL LETTER I WITH CIRCUMFLEX
+            6F  SMALL LETTER O              EF  SMALL LETTER I WITH DIAERESIS
+            70  SMALL LETTER P              F0  SMALL LETTER ETH (Icelandic)
+            71  SMALL LETTER Q              F1  SMALL LETTER N WITH TILDE
+            72  SMALL LETTER R              F2  SMALL LETTER O WITH GRAVE
+            73  SMALL LETTER S              F3  SMALL LETTER O WITH ACUTE
+            74  SMALL LETTER T              F4  SMALL LETTER O WITH CIRCUMFLEX
+            75  SMALL LETTER U              F5  SMALL LETTER O WITH TILDE
+            76  SMALL LETTER V              F6  SMALL LETTER O WITH DIAERESIS
+            77  SMALL LETTER W              F7  DIVISION SIGN
+            78  SMALL LETTER X              F8  SMALL LETTER O WITH STROKE
+            79  SMALL LETTER Y              F9  SMALL LETTER U WITH GRAVE
+            7A  SMALL LETTER Z              FA  SMALL LETTER U WITH ACUTE
+            7B  LEFT CURLY BRACKET          FB  SMALL LETTER U WITH CIRCUMFLEX
+            7C  VERTICAL LINE               FC  SMALL LETTER U WITH DIAERESIS
+            7D  RIGHT CURLY BRACKET         FD  SMALL LETTER Y WITH ACUTE
+            7E  TILDE                       FE  SMALL LETTER THORN (Icelandic)
+                                            FF  SMALL LETTER Y WITH DIAERESIS
+
+            -----END FILE id="8c5d09"-----
+          type: text
+        role: user
+      model: gpt-4o
+      stream: false
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '925'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '560'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The document lists the graphical characters defined by ISO 8859-1 (1987) with their hexadecimal codes and
+            descriptions.
+          refusal: null
+          role: assistant
+      created: 1759266839
+      id: chatcmpl-CLbxXvfXFJIZECHXvaJ8g5ejjej1k
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_1827dd0c55
+      usage:
+        completion_tokens: 25
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 1679
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 1704
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,6 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+Always reference the python code in the docs e.g. `ModelSettings` should link to [`ModelSettings`][pydantic_ai.settings.ModelSettings].

@@ -1,0 +1,84 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: "Use the builtin tool `code_execution` to compute:\n  65465 - 6544\
+            \ * 65464 - 6 + 1.02255\nReturn just the numeric result and nothing else."
+        role: ROLE_USER
+      model: grok-4-fast-reasoning
+      max_tokens: 20
+      tools:
+      - code_execution: {}
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+      include:
+      - INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT
+    raw: !!binary |
+      Co8BCooBCocBVXNlIHRoZSBidWlsdGluIHRvb2wgYGNvZGVfZXhlY3V0aW9uYCB0byBjb21wdXRl
+      OgogIDY1NDY1IC0gNjU0NCAqIDY1NDY0IC0gNiArIDEuMDIyNTUKUmV0dXJuIGp1c3QgdGhlIG51
+      bWVyaWMgcmVzdWx0IGFuZCBub3RoaW5nIGVsc2UuEAESFWdyb2stNC1mYXN0LXJlYXNvbmluZzgU
+      igECKgCSAQIIAdIBAQM=
+  response_sample:
+    json:
+      id: 538cb422-e74d-bbe5-1168-0bbadbfa45b3
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_03747959
+            type: TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: code_execution
+              arguments: '{"code":"print(65465 - 6544 * 65464 - 6 + 1.02255)"}'
+      - index: 1
+        message:
+          content: '{"stdout": "-428330955.97745\n", "stderr": "", "output_files":
+            {}, "error": "", "ret": ""}'
+          role: ROLE_TOOL
+          tool_calls:
+          - id: call_03747959
+            type: TOOL_CALL_TYPE_CODE_EXECUTION_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: code_execution
+              arguments: '{"code":"print(65465 - 6544 * 65464 - 6 + 1.02255)"}'
+      - finish_reason: REASON_STOP
+        index: 2
+        message:
+          content: '-428330955.97745'
+          role: ROLE_ASSISTANT
+      created: '2026-01-19T17:51:58.330258391Z'
+      model: grok-4-fast-reasoning
+      system_fingerprint: fp_cfcc85ff86
+      usage:
+        completion_tokens: 52
+        prompt_tokens: 1889
+        total_tokens: 2102
+        prompt_text_tokens: 1889
+        reasoning_tokens: 161
+        cached_prompt_text_tokens: 1347
+        server_side_tools_used:
+        - SERVER_SIDE_TOOL_CODE_EXECUTION
+      settings:
+        max_tokens: 20
+        parallel_tool_calls: true
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - code_execution: {}
+        include:
+        - INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT
+    raw: !!binary |
+      CiQ1MzhjYjQyMi1lNzRkLWJiZTUtMTE2OC0wYmJhZGJmYTQ1YjMSYwgEGl8QAhpbCg1jYWxsXzAz
+      NzQ3OTU5EAQYAVJGCg5jb2RlX2V4ZWN1dGlvbhI0eyJjb2RlIjoicHJpbnQoNjU0NjUgLSA2NTQ0
+      ICogNjU0NjQgLSA2ICsgMS4wMjI1NSkifRLAARABGrsBClp7InN0ZG91dCI6ICItNDI4MzMwOTU1
+      Ljk3NzQ1XG4iLCAic3RkZXJyIjogIiIsICJvdXRwdXRfZmlsZXMiOiB7fSwgImVycm9yIjogIiIs
+      ICJyZXQiOiAiIn0QBRpbCg1jYWxsXzAzNzQ3OTU5EAQYAVJGCg5jb2RlX2V4ZWN1dGlvbhI0eyJj
+      b2RlIjoicHJpbnQoNjU0NjUgLSA2NTQ0ICogNjU0NjQgLSA2ICsgMS4wMjI1NSkifRIaCAMQAhoU
+      ChAtNDI4MzMwOTU1Ljk3NzQ1EAIqDAi+3rnLBhDXr72dATIVZ3Jvay00LWZhc3QtcmVhc29uaW5n
+      Og1mcF9jZmNjODVmZjg2ShkINBDhDhi2ECDhDjChATjDCkoBA1jkg5gZWg8IFBABOgIIAUICKgBy
+      AQM=

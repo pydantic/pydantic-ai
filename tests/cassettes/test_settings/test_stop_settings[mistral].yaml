@@ -1,0 +1,61 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '232'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
+        role: user
+      model: ministral-8b-latest
+      n: 1
+      stop:
+      - Paris
+      stream: false
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '322'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 'The capital of France is '
+          role: assistant
+          tool_calls: null
+      created: 1749229172
+      id: 59bee455a928496eb22bbf8b8b817252
+      model: ministral-8b-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 6
+        prompt_tokens: 28
+        total_tokens: 34
+    status:
+      code: 200
+      message: OK
+version: 1

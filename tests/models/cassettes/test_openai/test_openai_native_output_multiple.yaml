@@ -1,0 +1,293 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1120'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the largest city in the user country?
+        role: user
+      model: gpt-4o
+      response_format:
+        json_schema:
+          description: The final response which ends this conversation
+          name: final_result
+          schema:
+            additionalProperties: false
+            properties:
+              result:
+                anyOf:
+                - additionalProperties: false
+                  description: CityLocation
+                  properties:
+                    data:
+                      properties:
+                        city:
+                          type: string
+                        country:
+                          type: string
+                      required:
+                      - city
+                      - country
+                      type: object
+                    kind:
+                      const: CityLocation
+                  required:
+                  - kind
+                  - data
+                  type: object
+                - additionalProperties: false
+                  description: CountryLanguage
+                  properties:
+                    data:
+                      properties:
+                        country:
+                          type: string
+                        language:
+                          type: string
+                      required:
+                      - country
+                      - language
+                      type: object
+                    kind:
+                      const: CountryLanguage
+                  required:
+                  - kind
+                  - data
+                  type: object
+            required:
+            - result
+            type: object
+        type: json_schema
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_user_country
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1068'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '868'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{}'
+              name: get_user_country
+            id: call_SIttSeiOistt33Htj4oiHOOX
+            type: function
+      created: 1749511286
+      id: chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_9bddfca6e2
+      usage:
+        completion_tokens: 11
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 160
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 171
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1351'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=OFzdr.HrmtC0DNdnfrTQYsK8_PwAVR9GUqjYSCgwtVM-1749511286-1.0.1.1-9_dbth7ET4rzl01UDRTw3fY1nJ20FnMCC0BBmd57gzKF8n5DnNQaI4K1mT.23nn9IUsMyHAZUNn6t1EML3d7GfGJyiLZOxrTWaqacALgzlM;
+        _cfuvid=f32dQYPsRd6Jc7kg.3hHa1QYAyG8f_aMMXUF.bC6gmY-1749511286914-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the largest city in the user country?
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{}'
+            name: get_user_country
+          id: call_SIttSeiOistt33Htj4oiHOOX
+          type: function
+      - content: Mexico
+        role: tool
+        tool_call_id: call_SIttSeiOistt33Htj4oiHOOX
+      model: gpt-4o
+      response_format:
+        json_schema:
+          description: The final response which ends this conversation
+          name: final_result
+          schema:
+            additionalProperties: false
+            properties:
+              result:
+                anyOf:
+                - additionalProperties: false
+                  description: CityLocation
+                  properties:
+                    data:
+                      properties:
+                        city:
+                          type: string
+                        country:
+                          type: string
+                      required:
+                      - city
+                      - country
+                      type: object
+                    kind:
+                      const: CityLocation
+                  required:
+                  - kind
+                  - data
+                  type: object
+                - additionalProperties: false
+                  description: CountryLanguage
+                  properties:
+                    data:
+                      properties:
+                        country:
+                          type: string
+                        language:
+                          type: string
+                      required:
+                      - country
+                      - language
+                      type: object
+                    kind:
+                      const: CountryLanguage
+                  required:
+                  - kind
+                  - data
+                  type: object
+            required:
+            - result
+            type: object
+        type: json_schema
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_user_country
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '903'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '920'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: '{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}'
+          refusal: null
+          role: assistant
+      created: 1749511287
+      id: chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_9bddfca6e2
+      usage:
+        completion_tokens: 25
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 181
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 206
+    status:
+      code: 200
+      message: OK
+version: 1

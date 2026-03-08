@@ -1,0 +1,391 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '318'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      tools:
+        function_declarations:
+        - description: Get the capital of a country.
+          name: get_capital
+          parameters:
+            properties:
+              country:
+                description: The country name.
+                type: string
+            required:
+            - country
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '741'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=407
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: 3.921892493963242e-06
+        content:
+          parts:
+          - functionCall:
+              args:
+                country: France
+              name: get_capital
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash-exp
+      usageMetadata:
+        candidatesTokenCount: 5
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 5
+        promptTokenCount: 23
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 23
+        totalTokenCount: 28
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '519'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              country: France
+            name: get_capital
+        role: model
+      - parts:
+        - functionResponse:
+            name: get_capital
+            response:
+              return_value: Paris
+        role: user
+      tools:
+        function_declarations:
+        - description: Get the capital of a country.
+          name: get_capital
+          parameters:
+            properties:
+              country:
+                description: The country name.
+                type: string
+            required:
+            - country
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '640'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=381
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: 5.035180947743356e-07
+        content:
+          parts:
+          - text: |
+              The capital of France is Paris.
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash-exp
+      usageMetadata:
+        candidatesTokenCount: 8
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 8
+        promptTokenCount: 35
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 35
+        totalTokenCount: 43
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '801'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"country":"France"}'
+            name: get_capital
+          id: pyd_ai_504f8147f83f44f3a5f14d87bfd01bda
+          type: function
+      - content: Paris
+        role: tool
+        tool_call_id: pyd_ai_504f8147f83f44f3a5f14d87bfd01bda
+      - content: |
+          The capital of France is Paris.
+        role: assistant
+      - content: What is the capital of England?
+        role: user
+      model: gpt-4o-mini
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the capital of a country.
+          name: get_capital
+          parameters:
+            additionalProperties: false
+            properties:
+              country:
+                description: The country name.
+                type: string
+            required:
+            - country
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1091'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '784'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"country":"England"}'
+              name: get_capital
+            id: call_SkEQ3ZGSJC8m6AvaIGNuuKdm
+            type: function
+      created: 1742842885
+      id: chatcmpl-BEhL3fZWgTz2Z57jXexYbQPsOBUm3
+      model: gpt-4o-mini-2024-07-18
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_b8bc95a0ac
+      usage:
+        completion_tokens: 16
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 104
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 120
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1050'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=fEZONI5B238kQ6OXHK13zgt8ywFP33X_T.Rj7kOX_.U-1742842886-1.0.1.1-Qx39nivaihVZJFeyQKfx9cVGl_qxdo0BULRdHDhZN7JckuOkQmjCwesvWu7fLNf8qR8oZBKufDsfLmg4lUd3l314ZvU8xxx44rgtJTHVQTM;
+        _cfuvid=6dZO7_a2pjh.BwMhl506o0zCkNlkhADPSV7Hxx2Pqks-1742842886619-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"country":"France"}'
+            name: get_capital
+          id: pyd_ai_504f8147f83f44f3a5f14d87bfd01bda
+          type: function
+      - content: Paris
+        role: tool
+        tool_call_id: pyd_ai_504f8147f83f44f3a5f14d87bfd01bda
+      - content: |
+          The capital of France is Paris.
+        role: assistant
+      - content: What is the capital of England?
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"country":"England"}'
+            name: get_capital
+          id: call_SkEQ3ZGSJC8m6AvaIGNuuKdm
+          type: function
+      - content: London
+        role: tool
+        tool_call_id: call_SkEQ3ZGSJC8m6AvaIGNuuKdm
+      model: gpt-4o-mini
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the capital of a country.
+          name: get_capital
+          parameters:
+            additionalProperties: false
+            properties:
+              country:
+                description: The country name.
+                type: string
+            required:
+            - country
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '841'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '456'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The capital of England is London.
+          refusal: null
+          role: assistant
+      created: 1742842886
+      id: chatcmpl-BEhL4jHN01U9VPVVYzgKrwORTJ0Pw
+      model: gpt-4o-mini-2024-07-18
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_b8bc95a0ac
+      usage:
+        completion_tokens: 9
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 129
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 138
+    status:
+      code: 200
+      message: OK
+version: 1

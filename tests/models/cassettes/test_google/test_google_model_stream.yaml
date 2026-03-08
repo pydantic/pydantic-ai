@@ -1,0 +1,59 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '219'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      generationConfig:
+        temperature: 0.0
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"The\"}],\"role\": \"model\"}}],\"usageMetadata\":
+        {\"promptTokenCount\": 15,\"totalTokenCount\": 15,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        15}]},\"modelVersion\": \"gemini-2.0-flash-exp\",\"responseId\": \"w1peaMz6INOvnvgPgYfPiQY\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \" capital of France\"}],\"role\": \"model\"}}],\"usageMetadata\": {\"promptTokenCount\":
+        15,\"totalTokenCount\": 15,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 15}]},\"modelVersion\":
+        \"gemini-2.0-flash-exp\",\"responseId\": \"w1peaMz6INOvnvgPgYfPiQY\"}\r\n\r\ndata: {\"candidates\": [{\"content\":
+        {\"parts\": [{\"text\": \" is Paris.\\n\"}],\"role\": \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\":
+        13,\"candidatesTokenCount\": 8,\"totalTokenCount\": 21,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        13}],\"candidatesTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 8}]},\"modelVersion\": \"gemini-2.0-flash-exp\",\"responseId\":
+        \"w1peaMz6INOvnvgPgYfPiQY\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=379
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+version: 1

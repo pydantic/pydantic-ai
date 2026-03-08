@@ -1,0 +1,207 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '419'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You are a helpful assistant.
+        role: system
+      - content: What is the temperature in Tokyo?
+        role: user
+      model: gpt-4.1-mini
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_temperature
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1089'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '490'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Tokyo"}'
+              name: get_temperature
+            id: call_bhZkmIKKItNGJ41whHUHB7p9
+            type: function
+      created: 1744810634
+      id: chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq
+      model: gpt-4.1-mini-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_38647f5e19
+      usage:
+        completion_tokens: 15
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 50
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 65
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '665'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=x.H2GlMeh.t_Q.gVlCXrh3.ggn9lKjhmUeG_ToNThLs-1744810635-1.0.1.1-tiHwqGvBw3eEy_y9_q5nx7B.7YCbLb9cXdDj6DklLmtFllOFe708mKwYvGd8fY2y5bO2NOagULipA7MxfwW9P0hlnRSiJZbZBO9tjrUweFc;
+        _cfuvid=VlHcJdsIsxGEt2lddKu_5Am_lfyYndl9JB2Ezy.aygo-1744810635187-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You are a helpful assistant.
+        role: system
+      - content: What is the temperature in Tokyo?
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Tokyo"}'
+            name: get_temperature
+          id: call_bhZkmIKKItNGJ41whHUHB7p9
+          type: function
+      - content: '20.0'
+        role: tool
+        tool_call_id: call_bhZkmIKKItNGJ41whHUHB7p9
+      model: gpt-4.1-mini
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_temperature
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '867'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '949'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The temperature in Tokyo is currently 20.0 degrees Celsius.
+          refusal: null
+          role: assistant
+      created: 1744810635
+      id: chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP
+      model: gpt-4.1-mini-2025-04-14
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_38647f5e19
+      usage:
+        completion_tokens: 15
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 75
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 90
+    status:
+      code: 200
+      message: OK
+version: 1

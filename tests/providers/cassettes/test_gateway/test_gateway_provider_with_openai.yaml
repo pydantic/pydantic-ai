@@ -1,0 +1,76 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '104'
+      content-type:
+      - application/json
+      host:
+      - localhost:8787
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: gpt-5
+      stream: false
+    uri: http://localhost:8787/openai/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      content-length:
+      - '614'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1404'
+      openai-version:
+      - '2020-10-01'
+      pydantic-ai-gateway-price-estimate:
+      - 0.0001USD
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: Paris.
+          refusal: null
+          role: assistant
+      created: 1762865059
+      id: chatcmpl-Cai1LMreVahLgHqSo2JSKTThdFLHV
+      model: gpt-5-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 11
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 13
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        pydantic_ai_gateway:
+          cost_estimate: 0.00012625
+        total_tokens: 24
+    status:
+      code: 200
+      message: OK
+version: 1

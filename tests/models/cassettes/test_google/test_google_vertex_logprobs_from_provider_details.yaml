@@ -1,0 +1,117 @@
+interactions:
+- request:
+    body: assertion=scrubbed&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '809'
+      content-type:
+      - application/x-www-form-urlencoded
+    method: POST
+    uri: https://oauth2.googleapis.com/token
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '72'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      access_token: scrubbed
+      expires_in: 3599
+      token_type: Bearer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '178'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Answer only with "Hello"
+        role: user
+      generationConfig:
+        logprobs: 2
+        responseLogprobs: true
+        responseModalities:
+        - TEXT
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '824'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -6.569555282592773
+        content:
+          parts:
+          - text: Hello
+          role: model
+        finishReason: STOP
+        logprobsResult:
+          chosenCandidates:
+          - logProbability: -6.7947026e-06
+            token: Hello
+            tokenId: 9259
+          topCandidates:
+          - candidates:
+            - logProbability: -6.7947026e-06
+              token: Hello
+              tokenId: 9259
+            - logProbability: -12.196156
+              token: '"'
+              tokenId: 236775
+      createTime: '2026-02-17T11:12:40.135001Z'
+      modelVersion: gemini-2.5-flash
+      responseId: KE2UadmeCLqhmPUP2qf1-QU
+      usageMetadata:
+        candidatesTokenCount: 1
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 1
+        promptTokenCount: 6
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 6
+        thoughtsTokenCount: 17
+        totalTokenCount: 24
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,133 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '95'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      input:
+      - content: What is 2+2?
+        role: user
+      model: openai/gpt-oss-20b
+      stream: true
+    uri: https://openrouter.ai/api/v1/responses
+  response:
+    body:
+      string: |+
+        : OPENROUTER PROCESSING
+
+        data: {"type":"response.created","response":{"object":"response","id":"gen-1764265411-Fu1iEX7h5MRWiL79lb94","created_at":1764265411,"status":"in_progress","error":null,"output_text":"","output":[],"model":"openai/gpt-oss-20b","incomplete_details":null,"max_tool_calls":null,"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"max_output_tokens":null,"temperature":null,"top_p":null,"metadata":{},"background":false,"previous_response_id":null,"service_tier":"auto","truncation":null,"store":false,"instructions":null,"reasoning":null,"safety_identifier":null,"prompt_cache_key":null,"user":null},"sequence_number":0}
+
+        data: {"type":"response.in_progress","response":{"object":"response","id":"gen-1764265411-Fu1iEX7h5MRWiL79lb94","created_at":1764265411,"status":"in_progress","error":null,"output_text":"","output":[],"model":"openai/gpt-oss-20b","incomplete_details":null,"max_tool_calls":null,"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"max_output_tokens":null,"temperature":null,"top_p":null,"metadata":{},"background":false,"previous_response_id":null,"service_tier":"auto","truncation":null,"store":false,"instructions":null,"reasoning":null,"safety_identifier":null,"prompt_cache_key":null,"user":null},"sequence_number":1}
+
+        data: {"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_tmp_2kbe7x16sax","summary":[]},"sequence_number":2}
+
+        data: {"type":"response.content_part.added","item_id":"rs_tmp_2kbe7x16sax","output_index":0,"content_index":0,"part":{"type":"reasoning_text","text":""},"sequence_number":3}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":"The","sequence_number":4}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":" user","sequence_number":5}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":" asks","sequence_number":6}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":":","sequence_number":7}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":" \"","sequence_number":8}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":"What","sequence_number":9}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":" is","sequence_number":10}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":" ","sequence_number":11}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":"2","sequence_number":12}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":"+","sequence_number":13}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":"2","sequence_number":14}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":"?\"","sequence_number":15}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":" They","sequence_number":16}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":" expect","sequence_number":17}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":" a","sequence_number":18}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":" straightforward","sequence_number":19}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":" answer","sequence_number":20}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":":","sequence_number":21}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":" ","sequence_number":22}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":"4","sequence_number":23}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":".","sequence_number":24}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":" Just","sequence_number":25}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":" answer","sequence_number":26}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":" ","sequence_number":27}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":"4","sequence_number":28}
+
+        data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"delta":".","sequence_number":29}
+
+        data: {"type":"response.output_item.added","output_index":1,"item":{"type":"message","status":"in_progress","content":[],"id":"msg_tmp_8cjof4f6zpw","role":"assistant"},"sequence_number":30}
+
+        data: {"type":"response.content_part.added","item_id":"msg_tmp_8cjof4f6zpw","output_index":1,"content_index":0,"part":{"type":"output_text","annotations":[],"text":""},"sequence_number":31}
+
+        data: {"type":"response.output_text.delta","logprobs":[],"output_index":1,"item_id":"msg_tmp_8cjof4f6zpw","content_index":0,"delta":"4","sequence_number":32}
+
+        data: {"type":"response.output_text.done","item_id":"msg_tmp_8cjof4f6zpw","output_index":1,"content_index":0,"text":"4","logprobs":[],"sequence_number":33}
+
+        data: {"type":"response.content_part.done","item_id":"msg_tmp_8cjof4f6zpw","output_index":1,"content_index":0,"part":{"type":"output_text","annotations":[],"text":"4"},"sequence_number":34}
+
+        data: {"type":"response.output_item.done","output_index":1,"item":{"type":"message","status":"completed","content":[{"type":"output_text","text":"4","annotations":[]}],"id":"msg_tmp_8cjof4f6zpw","role":"assistant"},"sequence_number":35}
+
+        data: {"type":"response.reasoning_text.done","output_index":0,"item_id":"rs_tmp_2kbe7x16sax","content_index":0,"text":"The user asks: \"What is 2+2?\" They expect a straightforward answer: 4. Just answer 4.","sequence_number":36}
+
+        data: {"type":"response.content_part.done","item_id":"rs_tmp_2kbe7x16sax","output_index":0,"content_index":0,"part":{"type":"reasoning_text","text":"The user asks: \"What is 2+2?\" They expect a straightforward answer: 4. Just answer 4."},"sequence_number":37}
+
+        data: {"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_tmp_2kbe7x16sax","summary":[],"content":[{"type":"reasoning_text","text":"The user asks: \"What is 2+2?\" They expect a straightforward answer: 4. Just answer 4."}]},"sequence_number":38}
+
+        data: {"type":"response.completed","response":{"object":"response","id":"gen-1764265411-Fu1iEX7h5MRWiL79lb94","created_at":1764265411,"model":"openai/gpt-oss-20b","status":"completed","output":[{"type":"reasoning","id":"rs_tmp_ku4i7pagjwn","summary":[],"content":[{"type":"reasoning_text","text":"The user asks: \"What is 2+2?\" They expect a straightforward answer: 4. Just answer 4."}]},{"type":"message","status":"completed","content":[{"type":"output_text","text":"4","annotations":[]}],"id":"msg_tmp_8cjof4f6zpw","role":"assistant"}],"output_text":"","error":null,"incomplete_details":null,"usage":{"input_tokens":78,"input_tokens_details":{"cached_tokens":0},"output_tokens":37,"output_tokens_details":{"reasoning_tokens":22},"total_tokens":115,"cost":0.0000113,"is_byok":false,"cost_details":{"upstream_inference_cost":null,"upstream_inference_input_cost":0.0000039,"upstream_inference_output_cost":0.0000074}},"max_tool_calls":null,"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"max_output_tokens":null,"temperature":null,"top_p":null,"metadata":{},"background":false,"previous_response_id":null,"service_tier":"auto","truncation":null,"store":false,"instructions":null,"reasoning":null,"safety_identifier":null,"prompt_cache_key":null,"user":null},"sequence_number":39}
+
+        data: [DONE]
+
+    headers:
+      access-control-allow-origin:
+      - '*'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+version: 1
+...

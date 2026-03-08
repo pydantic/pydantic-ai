@@ -1,0 +1,583 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '397'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the weather in San Francisco today?
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - allowed_domains: null
+        blocked_domains: null
+        max_uses: null
+        name: web_search
+        type: web_search_20250305
+        user_location: null
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '23680'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - signature: Et0ECkYIBxgCKkCXTXBKWJ3QYffHphenTDDE5jxo/vbyyvFuY7Gi5PGLYFdjxF0KQ4BGT7bGzB53hSRPgJtjUD975U7TZ4f9IheWEgy4pMKmvEJ0D9XDrxsaDDpjMZqhX/EnpJmjGyIwreKtd2Xj+RpguF1YI50dldiwk6qQNW2rK+xLwmWY5qF75b7WZrmOZ3endXYEQjBMKsQDmsnYnUODvD5Uh/yRIUgOp+6P5JrYjLabtsC3wfuIISLVe5QhC/3Ep7K/x55u97qy/DIhCAOz38x4YId37Pqq8XARrRq5CPwzxBzsMfPwpeV5eRHLQmasZxpOhivd1lMLC7B6D9EdpWefKWE+Ux1cMxpfaQj45cpMn93qLyCLGtNqnZJ2nPT7eoOtavZ9VvN5LsJOIWYEkxK+iq/6XYSJE5JlqBtDt9Y5P1QT/QnhFwfxjD/Cs3+RrGzKp2loEjmeYzNBwEfbY+pyKHJUS3bsxWyyi0d9Gc6Zfj4Xiuf/G0ninvXpSQheXi5gcvqIir6ZhcC40vHwvdVtJipSLkqMoPQcppCTOa2ATFyLKZIlug2OjoWIHrC5xnkCuKLXVMtHTF0mdrW0R/SgecnequYprzPeCc+Niqf4CVk62qtp+H06oWKQvHbP+s7kuAbdnhJjkcETiN8fP7+eLzKjRFAVnT0tixaNFjB6lWbg2ePyQDhqeVn6i/ULCzKyoY/hSIfZXUFwTCSDW42WvITFfPfWBBW+p6R/8peJ/KS2q0wHT2G3N4N7xFaNLOTXE0iPPtWsdqZw4cNQi9IUGKayqZ+/02tJYaEYAQ==
+        thinking: |-
+          The user is asking about the weather in San Francisco today. This is asking for current, real-time information that would require a web search since weather conditions change frequently and I need up-to-date information. According to the guidelines, I should search for current conditions or recent events, and this clearly falls under that category.
+
+          I should search for San Francisco weather today to get the most current information.
+        type: thinking
+      - id: srvtoolu_01EoSNE7k4dUJyGatASCV5qs
+        input:
+          query: San Francisco weather today
+        name: web_search
+        type: server_tool_use
+      - content:
+        - encrypted_content: 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
+          page_age: 6 days ago
+          title: San Francisco, CA Weather Forecast | AccuWeather
+          type: web_search_result
+          url: https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629
+        - encrypted_content: EqsCCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKAkK8WmNK9ZbwFzFBoMWxRm6oe8k1phfSlBIjBJoE6v+zG2oPbr/2ncs9wgLasa9UZJo9NtayQP9CHt95e3OvUNy0rYaPLlVZlra08qrgEcS2Hr4D6giupHznrTfAvU1KiJ7xgl9PV9Of3xOcsd+lk+JiHNIV50bfH04wfHOzvP42B8kCDRhSUcZ2WPlUVOwnevqN+xFAW9GFf/SOE3bl22QEyRaqlLgzJS7/3j+ag1w9zLSdQqHQtCeU0vb+Zmuycnu2FCQD2eotq+z1XPgvxFVHhOma9JqUyrzasRYTuS2rMai4KWKP0j6Kz0BmEZ55BzPDyxHWgBqyoOltsYAw==
+          page_age: 6 days ago
+          title: 10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com
+          type: web_search_result
+          url: https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US
+        - encrypted_content: EpsCCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDOKw6QIQIRBYMq/9HRoMyx8M5cBwWl0g2aYyIjCukZfTs3eJFcXNZvznCgAFdnRB/QRPKMF2Y847CU/sXIw0nRxn5wQsk7DNgazyvgUqngFDs4zsVQZm1AXeGKf9EbXd5v17ViqmZh512pkVpwumucENqo49EK3UY3WOLZdbvGdz6ZzpATPymbeRV2FhBVcJ/tvzkpYk7yP5BX6dKwaUvp582AWGQ3Dk4We/JxoXgyv8xzaYUOdp5lWMg5OhewnroikjSLHmjbsHQ7EFDR/kg7xEuZx8KoTBPg3VxJXgRVwjGNFSsUZIYVM+HYAo8xgD
+          page_age: null
+          title: Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com
+          type: web_search_result
+          url: https://weather.com/weather/today/l/USCA0987:1:US
+        - encrypted_content: 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
+          page_age: null
+          title: San Francisco, CA 10-Day Weather Forecast | Weather Underground
+          type: web_search_result
+          url: https://www.wunderground.com/forecast/us/ca/san-francisco
+        - encrypted_content: ErgBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMx51m8L5H1LDxNVWhoMBoSHFj2MkNnCNxFlIjCdgGwk2wSQqe3Y4uL4Obz0/D4NAU5xrkooudqc46C7w8WySn0VDaktcluwB4kuT3EqPBMXDIzA9q3O4509VDKwKop7S18Ky8RNbl739RZdg6zgCC3SfpnVs6s1fwRU9JYPByrPumh5nuhFV65QyRgD
+          page_age: 1 week ago
+          title: National Weather Service
+          type: web_search_result
+          url: https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196
+        - encrypted_content: EsAECioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKpn4YXFmvNuvbgCiRoMbBI3+2gw2envcVt9IjBP9gnH52WNd/KZ1aqqpAENEYKB6+sioLBcD46YsnVRU5ZprJbKeJqb0bQNXpJK9VkqwwNZ7EpUfgtmH6D/ybM4Mv9zZBsNReUYiXitifboRPIoghEm8Lyn0JxF+KCqALQIIjaj8r6lJZ4Mf/YrUSBmyLDpeL26PlQ3DbezagMktGheHMncW14DLDmS7jjw8VLNHjDIHrlt2GZxbHswvjE1jmMnowJ6UjnnlaGCceDJrFuLg36a/YpQpGQ/UQlTc32vIeDbL1yAPsXX6BL0Y5lDJ2Ox/ZUaT8EJ0M/5O4wDnNcZmR9jG+CXvh3WoGbpKPqsC5nqFIxlFFXn+8cLy3/rHPKGLzra7kJ9zcPuPWLUq8FIbtOT764k3JrXeDvnSr49n0x/cHY+tP6XerlHty0xtX66kNq74Y0hA5/J/cEEi9SZFkR1gHMi0oBV7nXLnPzM++KiiidVg9s4FGiINI7fBFAG1An1NnG8dtYpglyq8Y/I1H9ErahnigU9KMnS2hoW6ioDYAImR8KXXO6ZcHLpuaoeuDVplmgJG4a1tjiWUsn9rMfeNSzsUArfc593nRzaJRIzDWFwUEsEZhZCthaWqSud/HPZxwUSPF9Px0X+WPrp+SDiK89zPxc8Dl5NzafNQLSJfndpETf7ZjVsizVunS6lFfi7GAM=
+          page_age: 1 week ago
+          title: San Francisco Bay Area weather forecast – NBC Bay Area
+          type: web_search_result
+          url: https://www.nbcbayarea.com/weather/
+        - encrypted_content: EocJCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDPjvIUaV/5Nxu3IqYRoM0hfyYUNmZTxfOJ1pIjBzSV6qN+WRyQhOUavU70XdMeU10BSKl1gJ+gqFdm529GDoD1hANCqyRR5zWUsY3akqighECgwv5tdYlZMSL48cxuJyQd7ye3NRzgG9AWL37GHDL9TKiX6tWK62il5n5DngVhASQAbvk7j++7s+bIkv2RvZb64NZ8i4JupcSzeAZ8oEg5E4wWXAhFRiS/Z8uCSQot18SnfodrZeyuogTY/z8axVHIqYlbnztwF9VJY2AlPeXb+kOZjU3mHe4sXeFLpBGWayecvvkde39qdzU31vJeaY1ynCtaCECdfoD1IshA8iQJBZZPCR/+2Vi/qoFj25XsaLS8vUECaK8TOKT6L0fT+/jeOmN/vB41Emd5zZprYzvSW4W2Bhd7UTusXeNsZqzMSOI2bOHb/l/urYAQWamplF26G3rO8v1+KCxyATf0Ks6X171iux2b1ulw/rOj0TbPU//9AyQTaTMLO0CdrtOoId3kJcvmtvw6xLIa+079+fIFZ+KBR1M3sECLyPdp0doDA7qnm8G37GszTkDYIgDTEEU9eKt2YwPUb7ySqA3X4X1oQBI9wU7v7AE3hUzZsU4YxezR++b/HI27V55yAajjqRhGpoDPo58Dnb7UHQgkKlW5bk2sA/d42RDH1XrXN7CRWrVbhRFPmW4DwgVkYf+5Erx9fvImMYIgi8wxnh1OF+GheNwagahxv7xd7ve+qC5a1Bes3xgKv4Gp6iNoC7X+In6hjtiPihxS2iKceY4j3+Of3GJbRgVchgS5rP7Z3LRUG4vOY52TN0yTFjU8uHL2Ku9CLaul4nr4RqH+GFBSefWJo0U7yj/VcvLMTwHOVVe2+TRwxw6VOvxVaA6JuSYFJ4zKQFrzfbdL+z6RgAuVU8ZM4x+DmHRoOVEk0Yx32+u5jTXpWaUd3160vSt8l6drPlOEKzhlzNfsEHVT9RXFGgS+2rsK/ji5rvnhSnbt7jd7LC1idi4tn9TulCmI+NPsOQVCXKsXh7m0HewOBPMloqgrQWkAxjocLZz29YEh+k3dX7vZk/e2M73U2HMIMYcxKJQMxTWvFO2iYxjXqNlzjXU4wuAWaCDk4tJ0GOO33hob1RQfWemOzHGWaCHkNpwrupq4m+RNCi83WJhCwQUpAwhBTnx4VBnVPs3hVz9bSNgLU/pDCFDhgVMP8zl5Jtu+ghQWunaPXxdAAgYEbT2kgl6yJ6VhnlQV/0CvM+duGDpnkfNdc2qFMFbJaF462dAOVgA9cn2svBr5+pHYdc+wYSX7BpxNwjW8w0ULCkT0a9aniuwqg1USoLAsuG/jM+SfZ7KItacayg5hqXU6yqdNA7Hq4ZkbVRj4LgkhK42gb5VEQcjg3u1CHMRWJxHEl8dkTTT5a+2MvXh6gZlcoK0ogqei46G0uVE6nwenLAQsSZ5qx2R40Q+rfh9aba0lof+HsWxXbqVp9gGiltfRgD
+          page_age: null
+          title: San Francisco, CA Current Weather - The Weather Network
+          type: web_search_result
+          url: https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1
+        - encrypted_content: EvYECioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDPAR7KS3gDdFD882nBoMEG5vO6Gioqj5s+0PIjAjhacX1h3OuWGdjvKfH7bq3Sa0+zRKtEAps1gCatSf5j/GgdGNCCWfvjf0OcfUmxsq+QO3g5w9db77ms9ck7WmrwkK1/Ugdnp0sfhjtrDO1OpVEEE7IWnt4HFWny/objidotlQqZn4Cf00fsV3MEpU9kODJCyrqBA3s+U2ckCDSGwI5JjGgdOLPEEWMDzc1iiJNzdb4NeCUSHruS2gL2W87nsGSOdCSdgyX28h0icu+KTR8bbGeGdcztNFXrBHJfEpVx4kX7q7dFgGChrbeo9pRT2uOq5l3CeJTRS2p6wPoyFJvcw+6prC+kluPYr1zXRCwUKx9PiwFKj+Kqf3uVhYi6+7Jn5sxWbu4KhE/jOGK7YokwLb0HQRxnBjFWrIyyei9mr2vanK41NPlwbd2ZvpRg66rSw8Z9CAOngveF0oJoIms4Kj+yfm3jhW2lRqedf8FX76iZuZxiyy3UclzA703lnvoDUG0a2Znczp9fW4Gj/ZeIZHrV/fbxTrAQFmKYOw0MiawvYYETqLPxWgk87NcJipo1nfKGvgfJmcbsCsgZeKIAkMYZYMfC3QwLR6GyMtTi/KJssAfpwa/Oxm53Qoez7f7Cf1z7CBk3D5t6DlzlKzihaMQUCVUTYyQw4BTpGKZVAdSo6HEnrB8kd0hgeMGvRLkgDM+mloR+IwRI86tjCYhJz+dd+6pKHK8Uq/z/PjHzLOZGM2a938tpHFK2NT7/WtYtxejirgIEPjGAM=
+          page_age: 6 days ago
+          title: San Francisco, CA Weather Conditions | Weather Underground
+          type: web_search_result
+          url: https://www.wunderground.com/weather/us/ca/san-francisco
+        - encrypted_content: Eo8HCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDE2lQM5o47Bh8ayuCBoMZBa4zEcXJfw+Ag3rIjChASshqz13B82WrPC3B3AvrGAKDU+UM+gs2qE7RJ08NsqFs6gqudeqEJlJVKfzHioqkgbMaXYeiPn00feQMV/Lgh1y66W5EPVo+xFBhWyA9eorVaQfd6aEGX5yo6qwwe0zvrPy3o3+PwVVPG5DvfOIVCLtgKNzmScUm1kAFPduJv8bZ41KP0l0A58uXU7eSTTomf2FiVg4CVjW0T7xH79nq1k1kt0AUs0+et4DI00d6sKVGkyaTE3yGCaz4pGj9LoruQtSgYUAeLDL50CeYV98utn2JzVwxFq80d4lNzOkh6LGL0LkNV+rjAHojUsqN9gnUhdrMq3WJVEmMwpeeHCeXCtnKwid9XH17niv0fkJ2va5tLalYabRc3kEE7RX0+WSXPQatih97qIvE7BVNxZH14q0ubcXrx7VHXZjCiGFscUlIJFxXfdr/R7Ash4flIRp/E95m/hMZBo0+KesHZuBAxFE9ddPr/IphV1RI8Io7elwf1tyVutO8u3K6ez/viPkEh494wbeOg53AeB7wFzXYsmb/OHqFf5O3Oo4SPpZjlULkI7fg1zodeFiKYCpkgWUgG8r1XyoBw+ZbcIYmcaRVaPg3x3SVPgy/mc2U0yY9M5FzcvIsetAUVk3zZYayZWEurKzIQCRhfusVcnjHJ+9TGbeWY1OguyU1oKsCEXoOTFZso8FKl5r0PUX6cftw+1LQdcm98UwSyuk30NR1cgLwxgqgMVmIqYZygq+d1/w9BCdm9lB/glCSj6Ru/w/kF/MgbqZ1sftttdDy6j5/WFUSoffyKoJBpjO7GEQEwvmsILtostvGmY3KpyRTj0/0VG+uEk+BeLDsVbyTAt4H++ejHoK8klxp0XQd/4TUn3j8tK4iMrgN2YOpzMwWjklGvd8NF2MIcJPaxSKnf6aOKliroO/VHbsUudovo9L4JRz9zZ9OJdUVOu8LFNMCbFJzYhAvP/I9jGK7UKiRcWv4h/tOC0hgI5QtisTEYWOxNkIbxzfzwBxOBE14NLI1I7QuGl44rx4Q4RdzDafqAhRkv5Jvj+TKYEGWnXQmS+TYi8saMyyKtLHJI5Z+WE3/upvGTRVJ7PP3K7/VPRBcmHzIYMU2dVAwSQYAw==
+          page_age: null
+          title: San Francisco, CA Hourly Weather Forecast | Weather Underground
+          type: web_search_result
+          url: https://www.wunderground.com/hourly/us/ca/san-francisco
+        - encrypted_content: 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
+          page_age: 1 week ago
+          title: Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco
+          type: web_search_result
+          url: https://abc7news.com/weather/
+        tool_use_id: srvtoolu_01EoSNE7k4dUJyGatASCV5qs
+        type: web_search_tool_result
+      - text: "Based on the search results, here's the weather information for San Francisco today (September 16, 2025):\n\n**Current
+          Conditions:**\n- "
+        type: text
+      - citations:
+        - cited_text: San Francisco, CA Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast®
+            Monthly Air Quality Health & Activities · News · F...
+          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDNPrwrtV82S39TBtUxoM9OkESVCLqFIhGNWNIjApHhwZq58odSIAc5nQHEhQBfNwFHrpQpbkerxt3aYCRE+4AgDlX+pT8ZzljoUJKlsqE58zTWv5W9dV59ikkUJ6StlyfaMYBA==
+          title: San Francisco, CA Weather Forecast | AccuWeather
+          type: web_search_result_location
+          url: https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629
+        text: 'Temperature: 66°F with clear skies'
+        type: text
+      - text: "\n- "
+        type: text
+      - citations:
+        - cited_text: San Francisco, CA Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast®
+            Monthly Air Quality Health & Activities · News · F...
+          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDI1rQWxpfVxj9JrdJhoMHMrF/xm5CW6KLkbfIjBeUMWBFegc/AgNXWM7fzL3+LhX2Tqt8kJgrbdgEwNARhO5VYMDMP9tC833w5Xmb6UqE0jbo7+GooCq/w5RRvX1KgE0zhkYBA==
+          title: San Francisco, CA Weather Forecast | AccuWeather
+          type: web_search_result_location
+          url: https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629
+        text: 'Wind: W at 3 mph with gusts up to 5 mph'
+        type: text
+      - text: "\n- "
+        type: text
+      - citations:
+        - cited_text: 'The air has reached a high level of pollution and is unhealthy for sensitive groups. '
+          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKBO3m5oU3zDP/M1lBoMBKa8Z3revdebJHWbIjCRSJ1/FdR/uZeWZy5x85sd7yfm0SW+4URT2sN/CN5Qf9fQpe/sppMjAby+dqZg6bcqE3MW5v2cyJybai3gEjOauAM3d+EYBA==
+          title: San Francisco, CA Weather Forecast | AccuWeather
+          type: web_search_result_location
+          url: https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629
+        text: Air quality is poor and unhealthy for sensitive groups
+        type: text
+      - text: "\n\n**Today's Forecast:**\n- "
+        type: text
+      - citations:
+        - cited_text: 'TomorrowTue 09/16 High · 78 °F · 8% Precip. / 0.00 °in Partly cloudy skies. High 78F. '
+          encrypted_index: EpEBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMEHnsQLGWLb7FdzCRoMa7WCRfpvJ28BCN8yIjAXclnerIt70cUarlOsWiFEjbDmU36iMFVEKtYsc69NdaSgmZwGs/goHJHgmoEjpQ8qFZb8U5NbegnKXzYWdQ+V496rsOBjkRgE
+          title: San Francisco, CA Weather Conditions | Weather Underground
+          type: web_search_result_location
+          url: https://www.wunderground.com/weather/us/ca/san-francisco
+        text: 'High: 78°F with partly cloudy skies'
+        type: text
+      - text: "\n- "
+        type: text
+      - citations:
+        - cited_text: Winds W at 10 to 20 mph.
+          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLEc67xHbdy4qfeR/RoM9BGaTSFHONyszvURIjCCgwrv6kbCYL5PMYfS17Bmt3ftzKrhVZo9rzdzjFTnyi8RzShtAL61Zi6mCV+X0XwqE5e5yOh/SmB3xxNzuVuwqzKlyYgYBA==
+          title: San Francisco, CA Weather Conditions | Weather Underground
+          type: web_search_result_location
+          url: https://www.wunderground.com/weather/us/ca/san-francisco
+        text: Winds W at 10 to 20 mph
+        type: text
+      - text: "\n- "
+        type: text
+      - citations:
+        - cited_text: 'TomorrowTue 09/16 High · 78 °F · 8% Precip. '
+          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDOE7SfGqIX9sRB5ErBoMLJgiHrETP3PY6+9tIjBSx9+ZtuCyLXTzqikWSduGv7iRU5q/EtnhNAaM5IWvMq34A5XMxeCLlBhzIrEwkGcqE5pflUMu5Du+vUwg1F8Dw+ILPm4YBA==
+          title: San Francisco, CA Weather Conditions | Weather Underground
+          type: web_search_result_location
+          url: https://www.wunderground.com/weather/us/ca/san-francisco
+        text: 8% chance of precipitation
+        type: text
+      - text: "\n- "
+        type: text
+      - citations:
+        - cited_text: Some clouds in the morning will give way to mainly sunny skies for the afternoon.
+          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCXpOg0iIqnZzS5IyhoMLxGJh5gs25sqXONYIjAPYG5Xp0rjytJih22sUIdxlvoJk/n46zm6bW4xdjOFtgx0Ew/lavCN/f+ZR3s27bwqFDk8+RaU6EkOC679jQMRRCzJawWsGAQ=
+          title: San Francisco, CA Hourly Weather Forecast | Weather Underground
+          type: web_search_result_location
+          url: https://www.wunderground.com/hourly/us/ca/san-francisco
+        text: Some clouds in the morning will give way to mainly sunny skies for the afternoon
+        type: text
+      - text: "\n\n**Tonight:**\n- "
+        type: text
+      - citations:
+        - cited_text: 'Radar · Satellite · WunderMap|Nexrad · TonightMon 09/15 Low · 57 °F · 8% Precip. / 0.00 °in Clear to
+            partly cloudy. Low 57F. '
+          encrypted_index: EpEBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCXHqEwUsSE26Sb2gRoMuO3SVDszvhU5huc/IjCI4LbKsCWba2Lf29G9dmwVOEdChsl/Fnjc1XwuCvUSBSyf8drc88Xc9zaLSiSzIUoqFYoa+znLyYC7wsiPLuMshhZ7CGv4HhgE
+          title: San Francisco, CA Weather Conditions | Weather Underground
+          type: web_search_result_location
+          url: https://www.wunderground.com/weather/us/ca/san-francisco
+        text: 'Low: 57°F with clear to partly cloudy conditions'
+        type: text
+      - text: "\n- "
+        type: text
+      - citations:
+        - cited_text: 'Winds W at 10 to 20 mph. '
+          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDGo4gB0zmLZBHsIkrBoM5bL+sdYKbftyuFMvIjCe2bmPQnUmWiZHZuRPQnVdpmbr/AZd+o9HIXtVeVwLU/fvqLxlk5WTP6GqrKnU1WoqE+4HQ3DNwQ7rFDsZum6duqskmHoYBA==
+          title: San Francisco, CA Weather Conditions | Weather Underground
+          type: web_search_result_location
+          url: https://www.wunderground.com/weather/us/ca/san-francisco
+        text: Winds W at 10 to 20 mph
+        type: text
+      - text: |2-
+
+
+          Overall, it's a pleasant day in San Francisco with mild temperatures and mostly sunny conditions, though the air quality is poor, so sensitive individuals should limit outdoor activities.
+        type: text
+      id: msg_0119wM5YxCLg3hwUWrxEQ9Y8
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 8984
+        output_tokens: 520
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 1
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '19098'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the weather in San Francisco today?
+          type: text
+        role: user
+      - content:
+        - signature: Et0ECkYIBxgCKkCXTXBKWJ3QYffHphenTDDE5jxo/vbyyvFuY7Gi5PGLYFdjxF0KQ4BGT7bGzB53hSRPgJtjUD975U7TZ4f9IheWEgy4pMKmvEJ0D9XDrxsaDDpjMZqhX/EnpJmjGyIwreKtd2Xj+RpguF1YI50dldiwk6qQNW2rK+xLwmWY5qF75b7WZrmOZ3endXYEQjBMKsQDmsnYnUODvD5Uh/yRIUgOp+6P5JrYjLabtsC3wfuIISLVe5QhC/3Ep7K/x55u97qy/DIhCAOz38x4YId37Pqq8XARrRq5CPwzxBzsMfPwpeV5eRHLQmasZxpOhivd1lMLC7B6D9EdpWefKWE+Ux1cMxpfaQj45cpMn93qLyCLGtNqnZJ2nPT7eoOtavZ9VvN5LsJOIWYEkxK+iq/6XYSJE5JlqBtDt9Y5P1QT/QnhFwfxjD/Cs3+RrGzKp2loEjmeYzNBwEfbY+pyKHJUS3bsxWyyi0d9Gc6Zfj4Xiuf/G0ninvXpSQheXi5gcvqIir6ZhcC40vHwvdVtJipSLkqMoPQcppCTOa2ATFyLKZIlug2OjoWIHrC5xnkCuKLXVMtHTF0mdrW0R/SgecnequYprzPeCc+Niqf4CVk62qtp+H06oWKQvHbP+s7kuAbdnhJjkcETiN8fP7+eLzKjRFAVnT0tixaNFjB6lWbg2ePyQDhqeVn6i/ULCzKyoY/hSIfZXUFwTCSDW42WvITFfPfWBBW+p6R/8peJ/KS2q0wHT2G3N4N7xFaNLOTXE0iPPtWsdqZw4cNQi9IUGKayqZ+/02tJYaEYAQ==
+          thinking: |-
+            The user is asking about the weather in San Francisco today. This is asking for current, real-time information that would require a web search since weather conditions change frequently and I need up-to-date information. According to the guidelines, I should search for current conditions or recent events, and this clearly falls under that category.
+
+            I should search for San Francisco weather today to get the most current information.
+          type: thinking
+        - id: srvtoolu_01EoSNE7k4dUJyGatASCV5qs
+          input:
+            query: San Francisco weather today
+          name: web_search
+          type: server_tool_use
+        - content:
+          - encrypted_content: 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
+            page_age: 6 days ago
+            title: San Francisco, CA Weather Forecast | AccuWeather
+            type: web_search_result
+            url: https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629
+          - encrypted_content: EqsCCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKAkK8WmNK9ZbwFzFBoMWxRm6oe8k1phfSlBIjBJoE6v+zG2oPbr/2ncs9wgLasa9UZJo9NtayQP9CHt95e3OvUNy0rYaPLlVZlra08qrgEcS2Hr4D6giupHznrTfAvU1KiJ7xgl9PV9Of3xOcsd+lk+JiHNIV50bfH04wfHOzvP42B8kCDRhSUcZ2WPlUVOwnevqN+xFAW9GFf/SOE3bl22QEyRaqlLgzJS7/3j+ag1w9zLSdQqHQtCeU0vb+Zmuycnu2FCQD2eotq+z1XPgvxFVHhOma9JqUyrzasRYTuS2rMai4KWKP0j6Kz0BmEZ55BzPDyxHWgBqyoOltsYAw==
+            page_age: 6 days ago
+            title: 10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com
+            type: web_search_result
+            url: https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US
+          - encrypted_content: EpsCCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDOKw6QIQIRBYMq/9HRoMyx8M5cBwWl0g2aYyIjCukZfTs3eJFcXNZvznCgAFdnRB/QRPKMF2Y847CU/sXIw0nRxn5wQsk7DNgazyvgUqngFDs4zsVQZm1AXeGKf9EbXd5v17ViqmZh512pkVpwumucENqo49EK3UY3WOLZdbvGdz6ZzpATPymbeRV2FhBVcJ/tvzkpYk7yP5BX6dKwaUvp582AWGQ3Dk4We/JxoXgyv8xzaYUOdp5lWMg5OhewnroikjSLHmjbsHQ7EFDR/kg7xEuZx8KoTBPg3VxJXgRVwjGNFSsUZIYVM+HYAo8xgD
+            page_age: null
+            title: Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com
+            type: web_search_result
+            url: https://weather.com/weather/today/l/USCA0987:1:US
+          - encrypted_content: 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
+            page_age: null
+            title: San Francisco, CA 10-Day Weather Forecast | Weather Underground
+            type: web_search_result
+            url: https://www.wunderground.com/forecast/us/ca/san-francisco
+          - encrypted_content: ErgBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMx51m8L5H1LDxNVWhoMBoSHFj2MkNnCNxFlIjCdgGwk2wSQqe3Y4uL4Obz0/D4NAU5xrkooudqc46C7w8WySn0VDaktcluwB4kuT3EqPBMXDIzA9q3O4509VDKwKop7S18Ky8RNbl739RZdg6zgCC3SfpnVs6s1fwRU9JYPByrPumh5nuhFV65QyRgD
+            page_age: 1 week ago
+            title: National Weather Service
+            type: web_search_result
+            url: https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196
+          - encrypted_content: EsAECioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKpn4YXFmvNuvbgCiRoMbBI3+2gw2envcVt9IjBP9gnH52WNd/KZ1aqqpAENEYKB6+sioLBcD46YsnVRU5ZprJbKeJqb0bQNXpJK9VkqwwNZ7EpUfgtmH6D/ybM4Mv9zZBsNReUYiXitifboRPIoghEm8Lyn0JxF+KCqALQIIjaj8r6lJZ4Mf/YrUSBmyLDpeL26PlQ3DbezagMktGheHMncW14DLDmS7jjw8VLNHjDIHrlt2GZxbHswvjE1jmMnowJ6UjnnlaGCceDJrFuLg36a/YpQpGQ/UQlTc32vIeDbL1yAPsXX6BL0Y5lDJ2Ox/ZUaT8EJ0M/5O4wDnNcZmR9jG+CXvh3WoGbpKPqsC5nqFIxlFFXn+8cLy3/rHPKGLzra7kJ9zcPuPWLUq8FIbtOT764k3JrXeDvnSr49n0x/cHY+tP6XerlHty0xtX66kNq74Y0hA5/J/cEEi9SZFkR1gHMi0oBV7nXLnPzM++KiiidVg9s4FGiINI7fBFAG1An1NnG8dtYpglyq8Y/I1H9ErahnigU9KMnS2hoW6ioDYAImR8KXXO6ZcHLpuaoeuDVplmgJG4a1tjiWUsn9rMfeNSzsUArfc593nRzaJRIzDWFwUEsEZhZCthaWqSud/HPZxwUSPF9Px0X+WPrp+SDiK89zPxc8Dl5NzafNQLSJfndpETf7ZjVsizVunS6lFfi7GAM=
+            page_age: 1 week ago
+            title: San Francisco Bay Area weather forecast – NBC Bay Area
+            type: web_search_result
+            url: https://www.nbcbayarea.com/weather/
+          - encrypted_content: EocJCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDPjvIUaV/5Nxu3IqYRoM0hfyYUNmZTxfOJ1pIjBzSV6qN+WRyQhOUavU70XdMeU10BSKl1gJ+gqFdm529GDoD1hANCqyRR5zWUsY3akqighECgwv5tdYlZMSL48cxuJyQd7ye3NRzgG9AWL37GHDL9TKiX6tWK62il5n5DngVhASQAbvk7j++7s+bIkv2RvZb64NZ8i4JupcSzeAZ8oEg5E4wWXAhFRiS/Z8uCSQot18SnfodrZeyuogTY/z8axVHIqYlbnztwF9VJY2AlPeXb+kOZjU3mHe4sXeFLpBGWayecvvkde39qdzU31vJeaY1ynCtaCECdfoD1IshA8iQJBZZPCR/+2Vi/qoFj25XsaLS8vUECaK8TOKT6L0fT+/jeOmN/vB41Emd5zZprYzvSW4W2Bhd7UTusXeNsZqzMSOI2bOHb/l/urYAQWamplF26G3rO8v1+KCxyATf0Ks6X171iux2b1ulw/rOj0TbPU//9AyQTaTMLO0CdrtOoId3kJcvmtvw6xLIa+079+fIFZ+KBR1M3sECLyPdp0doDA7qnm8G37GszTkDYIgDTEEU9eKt2YwPUb7ySqA3X4X1oQBI9wU7v7AE3hUzZsU4YxezR++b/HI27V55yAajjqRhGpoDPo58Dnb7UHQgkKlW5bk2sA/d42RDH1XrXN7CRWrVbhRFPmW4DwgVkYf+5Erx9fvImMYIgi8wxnh1OF+GheNwagahxv7xd7ve+qC5a1Bes3xgKv4Gp6iNoC7X+In6hjtiPihxS2iKceY4j3+Of3GJbRgVchgS5rP7Z3LRUG4vOY52TN0yTFjU8uHL2Ku9CLaul4nr4RqH+GFBSefWJo0U7yj/VcvLMTwHOVVe2+TRwxw6VOvxVaA6JuSYFJ4zKQFrzfbdL+z6RgAuVU8ZM4x+DmHRoOVEk0Yx32+u5jTXpWaUd3160vSt8l6drPlOEKzhlzNfsEHVT9RXFGgS+2rsK/ji5rvnhSnbt7jd7LC1idi4tn9TulCmI+NPsOQVCXKsXh7m0HewOBPMloqgrQWkAxjocLZz29YEh+k3dX7vZk/e2M73U2HMIMYcxKJQMxTWvFO2iYxjXqNlzjXU4wuAWaCDk4tJ0GOO33hob1RQfWemOzHGWaCHkNpwrupq4m+RNCi83WJhCwQUpAwhBTnx4VBnVPs3hVz9bSNgLU/pDCFDhgVMP8zl5Jtu+ghQWunaPXxdAAgYEbT2kgl6yJ6VhnlQV/0CvM+duGDpnkfNdc2qFMFbJaF462dAOVgA9cn2svBr5+pHYdc+wYSX7BpxNwjW8w0ULCkT0a9aniuwqg1USoLAsuG/jM+SfZ7KItacayg5hqXU6yqdNA7Hq4ZkbVRj4LgkhK42gb5VEQcjg3u1CHMRWJxHEl8dkTTT5a+2MvXh6gZlcoK0ogqei46G0uVE6nwenLAQsSZ5qx2R40Q+rfh9aba0lof+HsWxXbqVp9gGiltfRgD
+            page_age: null
+            title: San Francisco, CA Current Weather - The Weather Network
+            type: web_search_result
+            url: https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1
+          - encrypted_content: EvYECioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDPAR7KS3gDdFD882nBoMEG5vO6Gioqj5s+0PIjAjhacX1h3OuWGdjvKfH7bq3Sa0+zRKtEAps1gCatSf5j/GgdGNCCWfvjf0OcfUmxsq+QO3g5w9db77ms9ck7WmrwkK1/Ugdnp0sfhjtrDO1OpVEEE7IWnt4HFWny/objidotlQqZn4Cf00fsV3MEpU9kODJCyrqBA3s+U2ckCDSGwI5JjGgdOLPEEWMDzc1iiJNzdb4NeCUSHruS2gL2W87nsGSOdCSdgyX28h0icu+KTR8bbGeGdcztNFXrBHJfEpVx4kX7q7dFgGChrbeo9pRT2uOq5l3CeJTRS2p6wPoyFJvcw+6prC+kluPYr1zXRCwUKx9PiwFKj+Kqf3uVhYi6+7Jn5sxWbu4KhE/jOGK7YokwLb0HQRxnBjFWrIyyei9mr2vanK41NPlwbd2ZvpRg66rSw8Z9CAOngveF0oJoIms4Kj+yfm3jhW2lRqedf8FX76iZuZxiyy3UclzA703lnvoDUG0a2Znczp9fW4Gj/ZeIZHrV/fbxTrAQFmKYOw0MiawvYYETqLPxWgk87NcJipo1nfKGvgfJmcbsCsgZeKIAkMYZYMfC3QwLR6GyMtTi/KJssAfpwa/Oxm53Qoez7f7Cf1z7CBk3D5t6DlzlKzihaMQUCVUTYyQw4BTpGKZVAdSo6HEnrB8kd0hgeMGvRLkgDM+mloR+IwRI86tjCYhJz+dd+6pKHK8Uq/z/PjHzLOZGM2a938tpHFK2NT7/WtYtxejirgIEPjGAM=
+            page_age: 6 days ago
+            title: San Francisco, CA Weather Conditions | Weather Underground
+            type: web_search_result
+            url: https://www.wunderground.com/weather/us/ca/san-francisco
+          - encrypted_content: Eo8HCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDE2lQM5o47Bh8ayuCBoMZBa4zEcXJfw+Ag3rIjChASshqz13B82WrPC3B3AvrGAKDU+UM+gs2qE7RJ08NsqFs6gqudeqEJlJVKfzHioqkgbMaXYeiPn00feQMV/Lgh1y66W5EPVo+xFBhWyA9eorVaQfd6aEGX5yo6qwwe0zvrPy3o3+PwVVPG5DvfOIVCLtgKNzmScUm1kAFPduJv8bZ41KP0l0A58uXU7eSTTomf2FiVg4CVjW0T7xH79nq1k1kt0AUs0+et4DI00d6sKVGkyaTE3yGCaz4pGj9LoruQtSgYUAeLDL50CeYV98utn2JzVwxFq80d4lNzOkh6LGL0LkNV+rjAHojUsqN9gnUhdrMq3WJVEmMwpeeHCeXCtnKwid9XH17niv0fkJ2va5tLalYabRc3kEE7RX0+WSXPQatih97qIvE7BVNxZH14q0ubcXrx7VHXZjCiGFscUlIJFxXfdr/R7Ash4flIRp/E95m/hMZBo0+KesHZuBAxFE9ddPr/IphV1RI8Io7elwf1tyVutO8u3K6ez/viPkEh494wbeOg53AeB7wFzXYsmb/OHqFf5O3Oo4SPpZjlULkI7fg1zodeFiKYCpkgWUgG8r1XyoBw+ZbcIYmcaRVaPg3x3SVPgy/mc2U0yY9M5FzcvIsetAUVk3zZYayZWEurKzIQCRhfusVcnjHJ+9TGbeWY1OguyU1oKsCEXoOTFZso8FKl5r0PUX6cftw+1LQdcm98UwSyuk30NR1cgLwxgqgMVmIqYZygq+d1/w9BCdm9lB/glCSj6Ru/w/kF/MgbqZ1sftttdDy6j5/WFUSoffyKoJBpjO7GEQEwvmsILtostvGmY3KpyRTj0/0VG+uEk+BeLDsVbyTAt4H++ejHoK8klxp0XQd/4TUn3j8tK4iMrgN2YOpzMwWjklGvd8NF2MIcJPaxSKnf6aOKliroO/VHbsUudovo9L4JRz9zZ9OJdUVOu8LFNMCbFJzYhAvP/I9jGK7UKiRcWv4h/tOC0hgI5QtisTEYWOxNkIbxzfzwBxOBE14NLI1I7QuGl44rx4Q4RdzDafqAhRkv5Jvj+TKYEGWnXQmS+TYi8saMyyKtLHJI5Z+WE3/upvGTRVJ7PP3K7/VPRBcmHzIYMU2dVAwSQYAw==
+            page_age: null
+            title: San Francisco, CA Hourly Weather Forecast | Weather Underground
+            type: web_search_result
+            url: https://www.wunderground.com/hourly/us/ca/san-francisco
+          - encrypted_content: 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
+            page_age: 1 week ago
+            title: Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco
+            type: web_search_result
+            url: https://abc7news.com/weather/
+          tool_use_id: srvtoolu_01EoSNE7k4dUJyGatASCV5qs
+          type: web_search_tool_result
+        - text: "Based on the search results, here's the weather information for San Francisco today (September 16, 2025):\n\n**Current
+            Conditions:**\n- "
+          type: text
+        - text: 'Temperature: 66°F with clear skies'
+          type: text
+        - text: "\n- "
+          type: text
+        - text: 'Wind: W at 3 mph with gusts up to 5 mph'
+          type: text
+        - text: "\n- "
+          type: text
+        - text: Air quality is poor and unhealthy for sensitive groups
+          type: text
+        - text: "\n\n**Today's Forecast:**\n- "
+          type: text
+        - text: 'High: 78°F with partly cloudy skies'
+          type: text
+        - text: "\n- "
+          type: text
+        - text: Winds W at 10 to 20 mph
+          type: text
+        - text: "\n- "
+          type: text
+        - text: 8% chance of precipitation
+          type: text
+        - text: "\n- "
+          type: text
+        - text: Some clouds in the morning will give way to mainly sunny skies for the afternoon
+          type: text
+        - text: "\n\n**Tonight:**\n- "
+          type: text
+        - text: 'Low: 57°F with clear to partly cloudy conditions'
+          type: text
+        - text: "\n- "
+          type: text
+        - text: Winds W at 10 to 20 mph
+          type: text
+        - text: |2-
+
+
+            Overall, it's a pleasant day in San Francisco with mild temperatures and mostly sunny conditions, though the air quality is poor, so sensitive individuals should limit outdoor activities.
+          type: text
+        role: assistant
+      - content:
+        - text: how about Mexico City?
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - allowed_domains: null
+        blocked_domains: null
+        max_uses: null
+        name: web_search
+        type: web_search_20250305
+        user_location: null
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '25241'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - signature: EqgCCkYIBxgCKkAhyrWtc4MfwZtLCpH/f41h3xS0UBTKetW5LA6ADj/q/8G5GiD+31L8MWU5+8QbLKrdzKIr5RZTEmval6pjPCxwEgygcM1WHSKHKa3PiscaDDtaNmY6L04w/DaCFSIw4mjvUNimq2ShpHNyVrezsnnXaRyyt2Ei4Iik2sCgzARFHGyDNzerHS/aCxzMR8MFKo8BVo7IxMBObxJIn43oG4aHroTyH4tX0IB3HPE1L1O/RZ9HfrmCc/KJwvIc79klaolMdyFvc343GJbssZxF1YJ+8YgGJtrzsKaawjsNelJBqkNWdF/TFwY0G+zGS90yWmHp4hFylIib5OTYz1Dm8O066biiZps8EDkINIoiIfkslPdnP3FWiCl9g6+gSiJd+WwYAQ==
+        thinking: The user is now asking about the weather in Mexico City today. I should search for current weather information
+          for Mexico City.
+        type: thinking
+      - id: srvtoolu_01SnV7n4h3ZQtz14JriSp4xa
+        input:
+          query: Mexico City weather today
+        name: web_search
+        type: server_tool_use
+      - content:
+        - encrypted_content: Ep0CCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKSpZSDsbC0fPFBG3xoM2Cx78uv1J8+l1WlWIjCPL2yv7yaO53W47CXK97kQIPmcbsiEHdqduElmIEXKJUFRTk4GUOP5H7CX60H13KUqoAGlYHFawXYvQjhznURM8uj/PkiWZvMaaY8GYwpS4yGWJHaA2nYTOu1DouzaQDKI7UUSOXVfDt5vg3c7o6ROWI/MAdX76foBAjXlo+BNPcDfpeS8QRrGIMVKICr15Mynyxiw++oxnzkKVT1OJhqTvCO1EiY9RW8rtSimXcCbNC6JUmzMmUH9I3Y9Eys33i8tewEf7jWu8Gowcy5RD8bpq4+XGAM=
+          page_age: 1 month ago
+          title: Weather Forecast and Conditions for Mexico City, Mexico - The Weather Channel | Weather.com
+          type: web_search_result
+          url: https://weather.com/weather/today/l/6121681b2c5df01145b9723d497c595c53ae08104787aa1c26bafdf2fb875c07
+        - encrypted_content: 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
+          page_age: null
+          title: Mexico City, México City, Mexico Weather Forecast | AccuWeather
+          type: web_search_result
+          url: https://www.accuweather.com/en/mx/mexico-city/242560/weather-forecast/242560
+        - encrypted_content: EtUKCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDHbo/DFJscxG3BeTEBoMYxtylMJ7RXxNVTlUIjDmcWDNbQ+UhsKxKzgV7VUqc3jyTedNCWeVGNL9RZ88LVtM6t7pVnokUDckgE+kDy8q2An94Pb4BBon9zJj/XzwEkQIruQj4wGfSZaznTrua6/c0RjrpGpyjoxc3FAIHwPgqTKcdXd+0d4dqbTZOwb+bqWCblLJTpt2VUjiSSZzWmfdwycnCk2DXTxIIJmQKbVPBT0dw2QyBFPpVTCXpiiDn4iutkxlobypNW7FyMn3I0iMQTDiDsPVZHKHcdAf4Caasscwhw9LObUALcxGD28jNwMPXWIxsTeuUbv6mB/pKw+uErOVIndNit36eIw0CKCZAixG3yLDDRtdKLNFNWi93fd8CzyWe0JQsFamjAxKPcNvOsZZRBqyvE3/leCxCAxDfSLI4JaSZC0/bIdgqfJxBsdn5hEOOrEGUWA7/ynPi1fEfAn4BDjEAZd5QDhiz0hn1es0NbuSOo/jZ+COLT9AagJ32IdqLIHGqn5/96u6yML9qkkXj3jYtBKuQyD74nc3RSJNHrW36Rghg2wtwT/PGIKHnQ0VpXvM9LzMo5c1LyEViyrUX1Kp5tf6s6Hrrp4TchMUA512jeB8LCeBYwDgD8M2W2oGTePQhhD1vEFJSbBGgFBxQfxb4GtrSD+P7NxAfzdnVfcY1mQ9hSi7P+aJwbvnLWQE6J+I01ZYUYYtjRMvAEHkAlW0BchJrVTx4TApJVZ77TSS6ACKADxWeg7QLEFch7BfwpDUkQkDOtuE0da9i+Hhg/xP9w6OpWVFfnF1UBq7PU4ReN8cIPZ+NaOItpk8rIjeB6zjrs1D4TWuXLIybh2HHuNNcXrFpf3N1DeII0nwuTzUkf+NojSs/qrnYsOhR1ub/sjYejvHtn1JORoyK3ECsci8/Zc4QCY+58liekB4q4HUHjflatJwdVEH/pOp88qnMbE0PBZUITPtxii+mvjgfIIuO6Q95+RdZp6IwkvpbptqDb/Xd0DB0I2qh1hUcPnpLhkPR/xiaA2lm+lzjjbnIl8HyOABQriARCvFIQ76alYTtcCOtgPqtXwTJHVwjQYrWPE1CW5ivD3od8QTexe0IqilQzEZpXZrlvBLpzQgkc8EBWyGpNjE3UZaEL9YUEVe+3wh9WD8vgm4+ZhYC1Rj6Uj/INQmsk72gLsgQ6AvdMrweTM8lSvmlBw9wx9/7VlI8IAN81W8ZKfhyRrpV7J1YCTgZnu8PWKxC1wL8e/L0Yy8s35rgJIrUfZ3qZaiKQcVfCKDn4+SBuccCDzcdKp54UdfvVXiK7ggNmRa+BR9IQQna2mJ8JR1V7NA83EaMpox8sZnW6lPtkkF+ZJzws8EUj53aF4UnlJceMIGlZXE0bIy67eN/pU9hFMBFqhRsc12za3EfQ6YH1Ivi9FD0GrwrQLTL3N1WpJnn+tgcp2iLvcdjxLaW34KUI9fPgnsWAf8q6x4hOzEXR/eQPdBYBeStHbYFv7RHGGBAH0QO4eAaLili8s6ozI4p1p50x8YaA9cWxooVFj5aJs7E6063Hq6ynS3eXTbt7h4IQrOnFqAsisAjVYfr+mIVs3h3VB7Zas0KAszemWEnxWLJzuFg4djiXyCQ7faLmUL10JyGyVXdBKTUU/92hzHrrP+Yd7FdVfZ1YYG8czUD14eaiDLQzi+A68TRcBT7DpXGL7JUt6urks2kiuKAUdejxv1gHuveM50eWnwnxrBSWXm2IQEihH9PPBAhfQbGAM=
+          page_age: August 12, 2025
+          title: Weather Forecast and Conditions for Cuauhtémoc, Mexico - The Weather Channel | Weather.com
+          type: web_search_result
+          url: https://weather.com/weather/today/l/Cuauht%C3%A9moc+Mexico?canonicalCityId=7164197a006f4e553a538a0b73c06757
+        - encrypted_content: EoEJCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDkX6dQEX4G7zOG/ZhoMtg8o7ZgqOCzLscVkIjBUFqyihXffR/ySyRIxKWdDmwhpwTqY4dvvQwbUGYKVA1GmHq6X/JN+h5apevQiZHIqhAie0HXWpQ27nkUdRf8z9SC76xu3vBgEN+otXE2to9aKX0Tkf9IeP2wVQoAGMFVXW5IzIw86vunP12DIktt9lfr1LOoQwqsSxZciJqRKJY4kUndG6N3jFUf1Afk20ZNBXh8y+58770V9IyDj+oixLcaTERDcpB94G49849igBIWChh/0At81f4nG/Nz3H+dG9RE4/iqIArBTha8J3mzUs+4L2V85cH7D9nJx2GSX4osWq6T8ZP/h5bb7JQvKluI/OEEQz8lx8z3VfkkqzjwyjuxTTYyhpNaKGpsa5NjAaUjNRuFlW+/njLuvipnNr5wIBf6IRE4zurKIbY+9UrahT3Yg4V1dI2fEIK5ucwbjAdE75JtqBnxoFd0arsUbwgqscqmvwe5s+GksuDD3x9Q4yQS6B/4PmmKKERqVjCeDJc60TeGc+EtHyGo1Cd6DOo0sHgWqPvH62TKSBT/FlyH5shLpfog3Mm6gXUSipTnGpRqJldearSKAja9NFG0felNJobu2ckyHjL2rbvq5BjwclJYS+zILFpZya+G8ksBNOccIFbxO0DFNoZqamSyu8fYdHve/q9xtrXREp4+qQdXLs0A6aVfx24Db2eY7H/Dz6wSy9OTTXO8gEFB+uTxxjLQ/WTrSFMYuPvoy73Vnu8BNXAooVBQ7+IVpMQOGx5wP6q6qMkzg4Xf8XPznoqteqTbzWxTs9ioe694pB/LocwV2YwQ0uOG0W0Eyi6ftyxIhkdZjfDL6oC3tpLonW3LmZCmG+cnI9Laozg1pCATFaHDCUsU4+x5QVXv/K3jI2Tt4drMuVoDNiPo/kPytuUhrw/tVnifajdiReV155CMd/7GC3vxMN2djeSmO4iS0iLz8FCygh3BDYrInd1xKBNS6V6ImGpMNF6YXvxMsdbsE36HdtKLUX88/6iwSJ9DEHbZ/Ac0pH6O3vpVujuYikk+rB7p9ZYe89HqyTisngJLgY8dONVgXcwU+Tz30CizH/xMqMgAsVH3b4liISIDnFvkBVKsLYm63n3sMm54gdgDTQTZEKOedCXS7qgP7dEVaqB96Af5OamgoZ+/ktC1pz6QB+6gtxAGdJyqNrB7LIOdADtrC0jfWsQyJVCGgwNoSWFxubjnBOnC1uoQJbCmYCKnnBEXm46GeleFHfMvXs1YZtU7OZD7nrL2cd4hbUH+C+lkqGZ64HyQqUDWRRYAYZMjMrLCjYHj2aa1UoKg7puUW3oxL+X4iAYz4Z2c9YwCNgnwzVNAjd2GmAO4eJSS8dTr8DfY6Y9DTL59uIi7oZBDBhgJS202k1mL/racA8ab8RTxJ+0TsGp/MdPNsYf6uS/CpQE9ecASTLTLciaYB86O2yT98uCvbjsoA4RgD
+          page_age: null
+          title: Mexico City, CMX, MX Current Weather - The Weather Network
+          type: web_search_result
+          url: https://www.theweathernetwork.com/en/city/mx/ciudad-de-mexico/mexico-city/current?_guid_iss_=1
+        - encrypted_content: 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
+          page_age: null
+          title: Mexico City, Mexico 10-Day Weather Forecast | Weather Underground
+          type: web_search_result
+          url: https://www.wunderground.com/forecast/mx/mexico-city
+        - encrypted_content: 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
+          page_age: August 12, 2025
+          title: Mexico City, Mexico Weather Conditions | Weather Underground
+          type: web_search_result
+          url: https://www.wunderground.com/weather/mx/mexico-city
+        - encrypted_content: Et8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCOgNgkDBkgjUIIUFRoMwfkh5HbS3C+TKJunIjDkgFrk19VZ9nHLY/caC1CvDykIRXQanKnRP3KEvT+x9iQZZQZob4JAlEgSsjPvGtwqY4gSA9iLHBtlLzClP4AoH8LPDHKPErPaWbtw7C7ewb9hxdny0qiTXYFZovu9cybCeRMfRgohhyNrFZjikw/BJUJgvkvSXnq0wJD23ciBMK8aHADChkNwTPlxkNPXn6EB1MdVLRgD
+          page_age: June 19, 2025
+          title: Weather for Mexico City, Ciudad de México, Mexico
+          type: web_search_result
+          url: https://www.timeanddate.com/weather/mexico/mexico-city
+        - encrypted_content: EpkJCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDgRgfHSfyjia7pRAxoMFOfnmBy6BWmdy+t7IjAtU2PZQGL0j0ChG4E3ae2MfpqYyrCcaMT0eEdlI5ZoAGOC6wjQhSLGCOIRYmJTWJoqnAhZR5oNfv5djB7YwEU07fW5WO1nz3Zh0ABRXVuFdrMAp3/6pLJLFdhf6Qmu6ROYRb3YR3rl93LW/5wSUDNwlaUiAF8c/YTYMfgzeEtwyQzWZygCr3BjqFjfHckEc4eQ36GAaC2k3T3oz76RYNfNq5dTFr8wZa1vk65KPU4WMKor1ZjtMBIm5vC6PNp8gpAl5prNmFWG2Ogenx4VEDPSrD9BJjZJ2Pkj/GQL/O7Um/p+3EIM+3ddjy2Il5lflTe6vKHP2eqcSk0Rc9FhiAOWfkFQrxXn0NNZ0hkjMdgJfDIelx+YN3lUs8qGvZvXjTRknVERaW2nsOmFewghqKovdgApMJUbH4CFcUqwnbVbT1JH0VI2gXfis+9lotb2+gdje/hLr9ljoBUANenuitT4EdZ+HuCqDTXUThbZbVMErgU7ad6l3RjfU6prh36bA02nbi/+1+sf4lyRBwE88eLYnuub5hym8MeSyUOBLt2cKc+ZrvkZp0bOl+OM2mRMrmemgmY9U6dkBKsJZzoFYWe/Wk66jtGbiT5J/HSQhP4cL0GoGLd2jisevlQmnl7PgjURUptCGncMwIAM3oYIruni+Y+0YJmBYmexXwREV60B2/kF3EWChvjBeWtQKOpgR9ulj2sSOwtx5XGlg0j1cPDrge3Z6U+8DEMhmlhGXKH2Olrew52cmVLQLCFkrsztNTC6En+DhKMTI6F7Bgp9cv2RfjRAPNVgH7cZFqBfMTlg/K9c+gss3KSG15eZLaH2cxfzgjz9W0zjaKuN+MSGIwbMD0P7yIgA3oS48RbpBWDBmH8hU4Tm5JS4Bu/XPsrZMJYFnfzYQZg5wdNw25xGXn03PIBJzUQ8Kzk76eyFdw3s5hxc9VMFVhfHtoD6DhtJs6RX1h3B52ut5SmYACFSlnq/wqotNs5zuyPql5fsUjO1RYK/we/CmkDaKErKgkrdM1xkoje/ZcIuN3nIw8MWv5YlbtOQJChQY7fB2rCyoo+noqmaj2zDoLw9zOtxhzdI3Hkluf2oFbGYrefBBDUSsz1MRPJIefte5GZfBTsYXBCGYJW98splMuzLHYKS4LWTV4tE0SosVy991k746iuNeWXoqyV1NmjTW0222kndy3N0m5m+y3/yyK0mBIFIFWbdUB7yH9mUjHhDTcevSIBnvGR3KkxHC++pDldxv1LY9bJsJNcE2lggQ5C2cAeRy2rqC2si0GCXFnYzcClXLpwEhwSPVpfCg62gYC2DZXHNrgfSbtU7oTE/IWehRtgL2ApIOt8VhHwSpZd8n/4cITgswFrJf1+6k7KaS9GkRIFIoIDMMqr4TbZALJOKdQ1z1Kj+/hD2DgFArCKd1+VFTsCcqGT1htRETecbR5BXg9LwozdZBtTRE2S0YQGYGZRRRjvgaRgD
+          page_age: null
+          title: 10-Day Weather Forecast for Mexico City, Mexico - The Weather Channel | weather.com
+          type: web_search_result
+          url: https://weather.com/weather/tenday/l/6121681b2c5df01145b9723d497c595c53ae08104787aa1c26bafdf2fb875c07
+        - encrypted_content: EsgBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDIiTXqPQBm6L/aAzrRoMNmDk8Z50qZsO/wHYIjCy7xFKkTYKSdOfw3vi/PHt8PFd3VZ4hrpJCTEN1LMpIKaxhf/uDEz78qMDAo4n6GYqTEBRV0PAseg2nCBVx4FivcTz07D0u1BTlgmxyw7R0MSD+5m3XBb+wrPLCuaLMEpMNGjgR36dvMLZoBozgzxlxhJFbTQEpYeFX/wlQFYYAw==
+          page_age: null
+          title: Yr - Mexico City - Hourly weather forecast
+          type: web_search_result
+          url: https://www.yr.no/en/forecast/hourly-table/2-3530597/Mexico/Mexico%20City/Mexico%20City?i=0
+        - encrypted_content: EqsJCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFxOqiXE5G0nKhxvuBoMfRsDTLyB/raVJfnsIjDCAecnk+Khguav957NHJE2GQTS2ujCHarXrSfPhu8cqFbIPnOMAyS2uu0TgDfVMVoqrgjvS5kk1k3ByJXBkjeg/vKhbZ6frnTiSSdlLY5K6bUAVMb+cKmpcHq0LEsbirDSFF9kmc7/lAYC1n6WlGhFIzg7HQHjS34meuFhkoB/gGtMFT+DKSvG2V4Zj0LsBb39QD2YM8oQWF+wcgHXF4+vWZPXwnIW81ov2ZDZFAkNJz3zmQkjDXTGwut2dEL2ymdXDF+eKSU4KUKA/iD9eonivQFWyPJiOL+Rj9Hsi4z780A3fNQG9yzxpSG49rHSIUrOgBviZ6p2P0550yf2lOaaMYuIdKaZl/cAHsa+h++Rz8y+PgRfOPdNWTir80rkJVOg8Cbk7orbvLqQWvn0GBRv6DNuR4hfByn8gvCoi6mz9I60LkgCeE+vUQZgyOAe9kBl4a8Pn2g0isWJgB+ysbvCE1lOsoOabx05qd3e2MEpL/NHtFJdKBTUR8k4/zL3Clg97IGsZGIM+powtsKpX0NnRSLBaI8OeZyHNqKsuVyRdJk5d7t/EsIKReDdYe9GAnZm4jU4ZtjAHFD+DGj6U6jhB0Ih9tiqPg15yt9qBbplPSoMPXy3HLFHYBJDMBnFN0OrHouij4hITSftAJOSG0EOL6/DD/dVv+2qm7/QUKuEjou4boHCmfnFkKdppCKuGVPyhcq2xoLVPqej/syFPbHMwncL19/dOmgUrAz4xhG0tFkDSMX/vPY/6J2WCg9C4trPSgqenVRs9uhKcjbk991lgiJFAku2NSzD+Cpy/Tm22R/cf7L5EGe/7z2TdVcyHP5XOfEfvcwmmy7Z9RspSaka+ZUQ3tZDwJ9SVL3z6p9/8h2d8x6h08Nr06KkIaDSYTIPJ+uTQ9PcmwFhuJG1udeNMbSGf3Z48Z7nyq14O+q/8/mft1ja48yBzdQ9TYvdK2u9A51XScrbtMzNm3L4Y+XdCAKA3QL+I/7No/6tHWoOrQR0i83MVvKznT66NCmna7mUcR8joHjZzvo3ZVpk1ycyTULOD4r7199Kdn1Meao4TxD3Z8JLveZvREyVX5qCh4qMia6Te24Pi4mHi7OpU/FRHZ6lo3u1FnW1DppKZTrbYZmBfV4wRCzBRpzIvL71ywmEac3hnw9uJYeOM6UOXu6BHNDZ9mps1EY/aGr0/jUZm9UP/mf494755/D3RjIZbmkSWl4JtCkuChqHhBK6sElLGBH83C3Ys5AgFbw+nE8e8E3xF9JS19xTOlTZk7tFJ/UIqDt157QmBHvHOGRROoq0QirnE5qZO5Ym1aAVyotuEdbr9p3HsIyh5uDRlP+JKLykoGwc7B9pC7Qu7+jbrYfRqkC7Kbgh32ib3O+MUM8VRVc0udwIayX9bJEX1NLnqWwz9nJLyE4KmJ03A8T8i0Tt1voDWZqfaPSuXaEe5EEZjRV/1Zg+iNszUFt47olKY6LuvM03pwcJZY8ol3FO9njBtxgD
+          page_age: null
+          title: 10-Day Weather Forecast for Cuauhtémoc, Mexico - The Weather Channel | weather.com
+          type: web_search_result
+          url: https://weather.com/weather/tenday/l/Cuauht%C3%A9moc+Mexico?canonicalCityId=7164197a006f4e553a538a0b73c06757
+        tool_use_id: srvtoolu_01SnV7n4h3ZQtz14JriSp4xa
+        type: web_search_tool_result
+      - text: "Based on the search results, here's the weather information for Mexico City today (September 16, 2025):\n\n**Current
+          Conditions:**\n- "
+        type: text
+      - citations:
+        - cited_text: Mexico City, México City Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast®
+            Monthly Air Quality Health & Activities · N...
+          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAOzK/sV6nMomFW2kRoM2cZqq0m0dYUhtJoKIjCRoWEa2lCJ9f6+ryX0trWqYsZ6rPS/y95nqKKwPL29Y3kIBYIpLxqwHyVOEZk1tqEqFIdVvN8sCIb2eBLv9bD+uASv84RIGAQ=
+          title: Mexico City, México City, Mexico Weather Forecast | AccuWeather
+          type: web_search_result_location
+          url: https://www.accuweather.com/en/mx/mexico-city/242560/weather-forecast/242560
+        text: 'Temperature: 59°F (15°C) with clouds and sun'
+        type: text
+      - text: "\n- "
+        type: text
+      - citations:
+        - cited_text: Mexico City, México City Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast®
+            Monthly Air Quality Health & Activities · N...
+          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDBwX9yHgJizGz+POZBoM92BMeHad7MAD4MwrIjABD1bm8ylowz91g3mUfcz6MYTpvwSopPi9m5ScR23vIJPnjRSdAUvZJ5rSRq3xbhMqFK/lV236LtEbTNOm/AI6IEfGR837GAQ=
+          title: Mexico City, México City, Mexico Weather Forecast | AccuWeather
+          type: web_search_result_location
+          url: https://www.accuweather.com/en/mx/mexico-city/242560/weather-forecast/242560
+        text: 'Wind: NNE at 6 mph with gusts up to 6 mph'
+        type: text
+      - text: "\n- "
+        type: text
+      - citations:
+        - cited_text: The air has reached a high level of pollution and is unhealthy for sensitive groups. Reduce time spent
+            outside if you are feeling symptoms such as dif...
+          encrypted_index: EpIBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKRmKtS16X3NrfJ2QxoMUXKCzdBLTUVevFWxIjCfmrUGroDcg5sEEQ+dokyvxWjsYUx9q8t2PjAoYgJHj3J4QIhsr07e9R7aw8vyeDEqFhNpLn2HEep2d7AEtxBQUHpOUWA0znYYBA==
+          title: Mexico City, México City, Mexico Weather Forecast | AccuWeather
+          type: web_search_result_location
+          url: https://www.accuweather.com/en/mx/mexico-city/242560/weather-forecast/242560
+        text: Air quality is poor and unhealthy for sensitive groups
+        type: text
+      - text: "\n\n**Today's Forecast:**\n- "
+        type: text
+      - citations:
+        - cited_text: Mexico City, México City Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast®
+            Monthly Air Quality Health & Activities · N...
+          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCLnLxDJlNvAxnREgRoMXCDRJkOVPw+a9Ao8IjDL4ajzIFIvCksE+thOjKlvk3/bKLZ4xvli5rZ+SMzAedT5axFxgeAZdi6hESeYOSwqFBaW1SxkYu3Al9bG7pfeh+yPfkxKGAQ=
+          title: Mexico City, México City, Mexico Weather Forecast | AccuWeather
+          type: web_search_result_location
+          url: https://www.accuweather.com/en/mx/mexico-city/242560/weather-forecast/242560
+        text: 'High: 72°F (22°C) - mostly cloudy with a touch of rain this afternoon'
+        type: text
+      - text: "\n- "
+        type: text
+      - citations:
+        - cited_text: 'High 73F. Winds NNE at 10 to 15 mph. Chance of rain 70%. '
+          encrypted_index: EpIBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDHSZ3uH4UirBmEnFABoM2eVVOYVeni424YvSIjB+qwFBjLzC2vjBViOlGx/nY7hfYV2MmH4npc7NEcj9c+GYjpv8Sq37dct3xXn5xQkqFqRBDsCci3pA3bYtDzeWJPXkGfStN7gYBA==
+          title: 10-Day Weather Forecast for Mexico City, Mexico - The Weather Channel | weather.com
+          type: web_search_result_location
+          url: https://weather.com/weather/tenday/l/6121681b2c5df01145b9723d497c595c53ae08104787aa1c26bafdf2fb875c07
+        text: High 73F with partly cloudy conditions early followed by scattered thunderstorms. Winds NNE at 10 to 15 mph,
+          70% chance of rain
+        type: text
+      - text: "\n- "
+        type: text
+      - citations:
+        - cited_text: 'TomorrowTue 09/16 High · 75 °F · 71% Precip. / 0.11 °in Scattered thunderstorms developing during the
+            afternoon. '
+          encrypted_index: EpQBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDKf1qnGy8I0eR8ESsBoM4aCgn1wCp8bYcaIiIjAIU5E2GBPS6tbnFzEvPUc8GKEzHQpu1LDJTmRClIalH6TgGQl1kX9Al5KeLW3rp84qGDzo/SAht1QADq0c8i3j1EYhbIIHs48DchgE
+          title: Mexico City, Mexico Weather Conditions | Weather Underground
+          type: web_search_result_location
+          url: https://www.wunderground.com/weather/mx/mexico-city
+        - cited_text: 'Winds NNE at 10 to 15 mph. Chance of rain 70%. '
+          encrypted_index: EpQBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAVUj8aNUG2A8w99+BoMywDl5V+elFPoeYQ0IjBcnmKXAiKBffdxM4tAD4Dc1VZBn3RY35CDywsdaQcH+otKGMdHAZxQ8bOOCu5IUV0qGEqLDqR9Mj84lqvDbdSMyWwHxoM0fpTYERgE
+          title: Mexico City, Mexico Weather Conditions | Weather Underground
+          type: web_search_result_location
+          url: https://www.wunderground.com/weather/mx/mexico-city
+        text: Scattered thunderstorms developing during the afternoon. High near 75F with winds NNE at 10 to 15 mph and 70%
+          chance of rain
+        type: text
+      - text: "\n\n**Tonight:**\n- "
+        type: text
+      - citations:
+        - cited_text: Mexico City, México City Weather Today WinterCast Local {stormName} Tracker Hourly Daily Radar MinuteCast®
+            Monthly Air Quality Health & Activities · N...
+          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFdGuXvbuEQvMD5x1RoMa3bhIXG3ScZpYg12IjCg2r64JNEa8Pdye/LW8zSZhQIxCAatSa4pnbUTVEPhtP5s2XNqUOgvtN9jwoJiFcwqFFfVb7qKSu5o+XuprTlYyQQzbJsZGAQ=
+          title: Mexico City, México City, Mexico Weather Forecast | AccuWeather
+          type: web_search_result_location
+          url: https://www.accuweather.com/en/mx/mexico-city/242560/weather-forecast/242560
+        text: 'Low: 58°F with cloudy conditions and a couple of showers'
+        type: text
+      - text: "\n- "
+        type: text
+      - citations:
+        - cited_text: Heads-up · Gabrielle Likely, Plus Second Area To Watch · Humidity58% UV IndexExtreme · Sunrise6:24 am
+            · Sunset6:37 pm · 57° · 24% NNW 11 mph · Cloudy....
+          encrypted_index: EpIBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAc8ulmazXGe892FkRoMa5fdGk7fmU3xSOLUIjDtOelcSTGskW6wL7uU2ptERJVnZK7Q1VVC6Yl/M2k2FFVU0DjruHMaIC+AI2PYs0AqFqqaZ/5Wiwcb2VSxrzpaLEF+yiCO3aIYBA==
+          title: 10-Day Weather Forecast for Mexico City, Mexico - The Weather Channel | weather.com
+          type: web_search_result_location
+          url: https://weather.com/weather/tenday/l/6121681b2c5df01145b9723d497c595c53ae08104787aa1c26bafdf2fb875c07
+        text: Cloudy overnight with low 57F and winds NNW at 10 to 15 mph
+        type: text
+      - text: |2-
+
+
+          Mexico City is experiencing typical rainy season weather with moderate temperatures, high humidity, and afternoon thunderstorms expected. Like San Francisco, the air quality is poor, so those with respiratory sensitivities should take precautions.
+        type: text
+      id: msg_01Vatv9GeGaeqVHfSGhkU7mo
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 19859
+        output_tokens: 544
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 1
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

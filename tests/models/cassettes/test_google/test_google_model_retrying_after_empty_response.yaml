@@ -1,0 +1,64 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '113'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Hi
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1741'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=3388
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: Hello! How can I help you today?
+            thoughtSignature: EsoGCscGAdHtim8BiA2RWeAHXSQEMSCeBE4jhIcM99v859RQDSHCX1K7LxY06PvS4pSR1J42CiVVp1hsBUopJLr1x6oeCstpD2omVqXISGeXW2wGgsURowAKit59TWtRYHOKPBEbR7oJMAn8BBYM8TDm0+04kixt6WIYQ1ac3S1Jt04FYxS7tDYkHf4YsUMoiuBRS7QrlVaWWQbVwZD6gLItoefQ3C8AAzj4Sg5usA5gnbVfp138O0SjlNzwcEMAqGHVJWATrcWMqa4uoDnkLXgfJ+kMF6uq/IvPClkWyC7dw+b7e38xhE5vyywi4DvwdgeD3vuoMRRnC+iBCATC0IrKeGWnWqVgMht4HNwTJm5DvSMRKqOAyGuKeqRk5a5G2/3Fg+kT/AWQyLQWntMiB/1W+Uk+ngH4pIubPr3gnMuhq+Dd5fDw0+gGV4CKDm8D3btFXGp8+jYyh5aziE086Q0S1jq3A6wnEXOj8S70A0w3DwZyB7LpXjF1EmBZ8Uc3AvAXI1syWrcC6CyfqKQetPrYrbkt9kwfJPqWUxrXS3iA/8ctG6salu9UKjv3wXmYmXEzU4YXTAAjsQp/h6yu1rknC3+WkH7pVjVWgiO9+AF7hAQdhqgyXqT+KU91XAiBXk3jO4hMYNYVBZA/7xhVskHZoCUvt+0NbzRpV8KZF2+RqeTKTKp4MRq74SkW0I42NMhdk2o//dbsTxB2MH+zJTA6QcZ3u9+Zgt7gY7uYDYAbs8SlFN7OrWZqM0B0Y8HYhhbRjKX6sONzwkJOtduFdDldm3+ATBkqxkt9T2OBJy8vFwbD+ihdG3znDxybycpieCayNWNDbAXeqHIsPxYhx4ZCyiU+7HYCqeXAp6NyXjeiM1qZ4eKMEWulJ+hbJQeoVZUb0WXI23lC7QhlcsI55Rm9Y4W95dse+ab0hJwXMO93N8IYEbk9195pMCs5SGRgjmaVe6sqrTsZ/6jxV+eX/GAfUzrkSnbkW5LANNVVl7VELZiZuSt4L4Duwadh9w8SJALR83zw0QvuygE62t6NZeBpBua8T+4w02HhWj0p6Y+6g06nie3+mvBF7dvWx3MRHYMh8HZiO3N7CAEWVvZWkckKuq/kF46TCEOrZg4=
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-pro-preview
+      responseId: OZEgaaznKo3nqtsP8tDXmQs
+      usageMetadata:
+        candidatesTokenCount: 9
+        promptTokenCount: 2
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 2
+        thoughtsTokenCount: 213
+        totalTokenCount: 224
+    status:
+      code: 200
+      message: OK
+version: 1

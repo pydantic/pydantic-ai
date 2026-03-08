@@ -1,0 +1,174 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '408'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: How far is Madrid from Lisbon?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city_a:
+              type: string
+            city_b:
+              type: string
+          required:
+          - city_a
+          - city_b
+          type: object
+        name: calculate_distance
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '513'
+      content-type:
+      - application/json
+      retry-after:
+      - '43'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_01Sf98HFxwykzZEhZBc3EKAt
+        input:
+          city_a: Madrid
+          city_b: Lisbon
+        name: calculate_distance
+        type: tool_use
+      id: msg_01DNqTmhJ3jnMeQssMABXEZz
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 583
+        output_tokens: 76
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '739'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: How far is Madrid from Lisbon?
+          type: text
+        role: user
+      - content:
+        - id: toolu_01Sf98HFxwykzZEhZBc3EKAt
+          input:
+            city_a: Madrid
+            city_b: Lisbon
+          name: calculate_distance
+          type: tool_use
+        role: assistant
+      - content:
+        - content: 'Distance from Madrid to Lisbon: 504 km'
+          is_error: false
+          tool_use_id: toolu_01Sf98HFxwykzZEhZBc3EKAt
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city_a:
+              type: string
+            city_b:
+              type: string
+          required:
+          - city_a
+          - city_b
+          type: object
+        name: calculate_distance
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '490'
+      content-type:
+      - application/json
+      retry-after:
+      - '41'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: The distance from Madrid to Lisbon is **504 kilometers** (approximately 313 miles).
+        type: text
+      id: msg_016qiJscR8iJZDDAY5wK7Dt5
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 684
+        output_tokens: 24
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

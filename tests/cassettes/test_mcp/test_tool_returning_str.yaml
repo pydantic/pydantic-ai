@@ -1,0 +1,327 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1771'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the weather in Mexico City?
+        role: user
+      model: gpt-4o
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
+            \       Temperature in Fahrenheit\n    "
+          name: celsius_to_fahrenheit
+          parameters:
+            properties:
+              celsius:
+                type: number
+            required:
+            - celsius
+            type: object
+        type: function
+      - function:
+          description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
+            forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+          name: get_weather_forecast
+          parameters:
+            properties:
+              location:
+                type: string
+            required:
+            - location
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_dict
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_error
+          parameters:
+            properties:
+              value:
+                type: boolean
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_none
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_multiple_items
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+          name: get_log_level
+          parameters:
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1100'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '879'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"location":"Mexico City"}'
+              name: get_weather_forecast
+            id: call_m9goNwaHBbU926w47V7RtWPt
+            type: function
+      created: 1745958323
+      id: chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_f5bdcc3276
+      usage:
+        completion_tokens: 18
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 194
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 212
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2087'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=oQrE99G0FvCYsEl.yfxpcPSrQPVTV7xLj.H0J16R0Dk-1745958324-1.0.1.1-v9A1h369ezUbwkYf3w30dddw6zPPZhPRT_mtFg_qxdMznvdhfum1O3Q1jTHzsh3Cb7Lba2.E9JcfYABq8xlMUI_Kxw8XpZEbbDMq4BTdXfI;
+        _cfuvid=v6AEt1fkTS6Q2.1ZckhUoeXaLyymB5T7JZ0xfzWeTdk-1745958324503-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the weather in Mexico City?
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"location":"Mexico City"}'
+            name: get_weather_forecast
+          id: call_m9goNwaHBbU926w47V7RtWPt
+          type: function
+      - content: The weather in Mexico City is sunny and 26 degrees Celsius.
+        role: tool
+        tool_call_id: call_m9goNwaHBbU926w47V7RtWPt
+      model: gpt-4o
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
+            \       Temperature in Fahrenheit\n    "
+          name: celsius_to_fahrenheit
+          parameters:
+            properties:
+              celsius:
+                type: number
+            required:
+            - celsius
+            type: object
+        type: function
+      - function:
+          description: "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
+            forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+          name: get_weather_forecast
+          parameters:
+            properties:
+              location:
+                type: string
+            required:
+            - location
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image_resource
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_image
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_dict
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_error
+          parameters:
+            properties:
+              value:
+                type: boolean
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_none
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: ''
+          name: get_multiple_items
+          parameters:
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+          name: get_log_level
+          parameters:
+            properties: {}
+            type: object
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '891'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1018'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The weather in Mexico City is currently sunny with a temperature of 26 degrees Celsius.
+          refusal: null
+          role: assistant
+      created: 1745958324
+      id: chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_f5bdcc3276
+      usage:
+        completion_tokens: 19
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 234
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 253
+    status:
+      code: 200
+      message: OK
+version: 1

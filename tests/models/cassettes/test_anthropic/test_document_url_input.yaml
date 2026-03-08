@@ -1,0 +1,69 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '267'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the main content on this document?
+          type: text
+        - source:
+            type: url
+            url: https://pdfobject.com/pdf/sample.pdf
+          type: document
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '907'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: This document appears to be a sample PDF file that mainly contains Lorem ipsum text, which is placeholder text
+          commonly used in design and publishing. The document starts with "Sample PDF" as its title, followed by the line
+          "This is a simple PDF file. Fun fun fun." The rest of the content consists of several paragraphs of Lorem ipsum
+          text, which is Latin-looking but essentially meaningless text used to demonstrate the visual form of a document
+          without the distraction of meaningful content.
+        type: text
+      id: msg_014baYh9nwS6x3wiEtCQHkU7
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 2682
+        output_tokens: 101
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

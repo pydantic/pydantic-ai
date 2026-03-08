@@ -1,0 +1,56 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '149'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You are a helpful assistant.
+        role: developer
+      - content: Hello
+        role: user
+      model: o1-mini
+      n: 1
+      stream: false
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '224'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '36'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      error:
+        code: unsupported_value
+        message: 'Unsupported value: ''messages[0].role'' does not support ''developer'' with this model.'
+        param: messages[0].role
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+version: 1

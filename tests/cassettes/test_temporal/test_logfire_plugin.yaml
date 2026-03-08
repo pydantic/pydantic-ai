@@ -1,0 +1,31 @@
+interactions:
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+    method: GET
+    uri: https://logfire-us.pydantic.dev/v1/info
+  response:
+    headers:
+      access-control-expose-headers:
+      - traceresponse
+      connection:
+      - keep-alive
+      content-length:
+      - '87'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      project_name: pydantic-ai
+      project_url: https://logfire-us.pydantic.dev/pydantic/pydantic-ai
+    status:
+      code: 200
+      message: OK
+version: 1

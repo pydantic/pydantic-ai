@@ -1,0 +1,444 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1143'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the largest city in the user country?
+        role: user
+      model: gpt-4o
+      stream: false
+      text:
+        format:
+          name: final_result
+          schema:
+            additionalProperties: false
+            properties:
+              result:
+                anyOf:
+                - additionalProperties: false
+                  description: CityLocation
+                  properties:
+                    data:
+                      additionalProperties: false
+                      properties:
+                        city:
+                          type: string
+                        country:
+                          type: string
+                      required:
+                      - city
+                      - country
+                      type: object
+                    kind:
+                      const: CityLocation
+                      type: string
+                  required:
+                  - kind
+                  - data
+                  type: object
+                - additionalProperties: false
+                  description: CountryLanguage
+                  properties:
+                    data:
+                      additionalProperties: false
+                      properties:
+                        country:
+                          type: string
+                        language:
+                          type: string
+                      required:
+                      - country
+                      - language
+                      type: object
+                    kind:
+                      const: CountryLanguage
+                      type: string
+                  required:
+                  - kind
+                  - data
+                  type: object
+            required:
+            - result
+            type: object
+          strict: true
+          type: json_schema
+      tool_choice: auto
+      tools:
+      - description: ''
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3657'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '562'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1749516048
+      error: null
+      id: resp_68477f10f2d081a39b3438f413b3bafc0dd57d732903c563
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - arguments: '{}'
+        call_id: call_UaLahjOtaM2tTyYZLxTCbOaP
+        id: fc_68477f1168a081a3981e847cd94275080dd57d732903c563
+        name: get_user_country
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        summary: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          description: null
+          name: final_result
+          schema:
+            additionalProperties: false
+            properties:
+              result:
+                anyOf:
+                - additionalProperties: false
+                  description: CityLocation
+                  properties:
+                    data:
+                      additionalProperties: false
+                      properties:
+                        city:
+                          type: string
+                        country:
+                          type: string
+                      required:
+                      - city
+                      - country
+                      type: object
+                    kind:
+                      const: CityLocation
+                      type: string
+                  required:
+                  - kind
+                  - data
+                  type: object
+                - additionalProperties: false
+                  description: CountryLanguage
+                  properties:
+                    data:
+                      additionalProperties: false
+                      properties:
+                        country:
+                          type: string
+                        language:
+                          type: string
+                      required:
+                      - country
+                      - language
+                      type: object
+                    kind:
+                      const: CountryLanguage
+                      type: string
+                  required:
+                  - kind
+                  - data
+                  type: object
+            required:
+            - result
+            type: object
+          strict: true
+          type: json_schema
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 153
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 12
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 165
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1379'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=3Nl1ERbtfVAI.dGjzCYYN1u71YD5eEoLU0iCrvPPPL0-1749516049-1.0.1.1-LnI7tJwKr.C_wA15Shsl8pcGd32zrRqqv_9u4S84nXtNCopx1iBIKYDsyMg3u1Z3lJ_1Cd1YVM8uKAMjiKmgoqS8GFQ3Z_vV_Mahvqbi4KA;
+        _cfuvid=oc_k9l86fnMo2ml.0aop6a3eVJEvjxB0lnxWK0_kJq8-1749516049524-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the largest city in the user country?
+        role: user
+      - content: ''
+        role: assistant
+      - arguments: '{}'
+        call_id: call_UaLahjOtaM2tTyYZLxTCbOaP
+        name: get_user_country
+        type: function_call
+      - call_id: call_UaLahjOtaM2tTyYZLxTCbOaP
+        output: Mexico
+        type: function_call_output
+      model: gpt-4o
+      stream: false
+      text:
+        format:
+          name: final_result
+          schema:
+            additionalProperties: false
+            properties:
+              result:
+                anyOf:
+                - additionalProperties: false
+                  description: CityLocation
+                  properties:
+                    data:
+                      additionalProperties: false
+                      properties:
+                        city:
+                          type: string
+                        country:
+                          type: string
+                      required:
+                      - city
+                      - country
+                      type: object
+                    kind:
+                      const: CityLocation
+                      type: string
+                  required:
+                  - kind
+                  - data
+                  type: object
+                - additionalProperties: false
+                  description: CountryLanguage
+                  properties:
+                    data:
+                      additionalProperties: false
+                      properties:
+                        country:
+                          type: string
+                        language:
+                          type: string
+                      required:
+                      - country
+                      - language
+                      type: object
+                    kind:
+                      const: CountryLanguage
+                      type: string
+                  required:
+                  - kind
+                  - data
+                  type: object
+            required:
+            - result
+            type: object
+          strict: true
+          type: json_schema
+      tool_choice: auto
+      tools:
+      - description: ''
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3800'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1042'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1749516049
+      error: null
+      id: resp_68477f119830819da162aa6e10552035061ad97e2eef7871
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          text: '{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}'
+          type: output_text
+        id: msg_68477f1235b8819d898adc64709c7ebf061ad97e2eef7871
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        summary: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          description: null
+          name: final_result
+          schema:
+            additionalProperties: false
+            properties:
+              result:
+                anyOf:
+                - additionalProperties: false
+                  description: CityLocation
+                  properties:
+                    data:
+                      additionalProperties: false
+                      properties:
+                        city:
+                          type: string
+                        country:
+                          type: string
+                      required:
+                      - city
+                      - country
+                      type: object
+                    kind:
+                      const: CityLocation
+                      type: string
+                  required:
+                  - kind
+                  - data
+                  type: object
+                - additionalProperties: false
+                  description: CountryLanguage
+                  properties:
+                    data:
+                      additionalProperties: false
+                      properties:
+                        country:
+                          type: string
+                        language:
+                          type: string
+                      required:
+                      - country
+                      - language
+                      type: object
+                    kind:
+                      const: CountryLanguage
+                      type: string
+                  required:
+                  - kind
+                  - data
+                  type: object
+            required:
+            - result
+            type: object
+          strict: true
+          type: json_schema
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_user_country
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 176
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 26
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 202
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

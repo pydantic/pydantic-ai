@@ -1,0 +1,429 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '347'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What are the latest news in the Netherlands?
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - allowed_domains: null
+        blocked_domains: null
+        max_uses: null
+        name: web_search
+        type: web_search_20250305
+        user_location: null
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '37614'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: srvtoolu_01Dxy4ugoHrbUnKWyPQA5Jmm
+        input:
+          query: Netherlands news today
+        name: web_search
+        type: server_tool_use
+      - content:
+        - encrypted_content: EvIBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAOqwqPjfeNTedZnphoMxYKKTsAgebW9ekcdIjAPOoKRpnNszmV4ldkuHwdSnD0bczx4eDDrF4xgGXHxwapyC1oqNgjlFqbvxf3ot7Eqdj5FMxvFjhbuSUeCI/kz+/Ki0q55tDlv33v2zmPX9b8Dgy3LpmJmlDoxGocj5MgumJpp+Kk25xTki5khXZWLwy4V+wcCfkpXbE3hiR68IsibTZn359RYux6jYRyhcaxuKLqpvwYxvgTNtchJCjBO3U9NGw+38EwYAw==
+          page_age: 1 day ago
+          title: DutchNews.nl brings daily news from The Netherlands in English
+          type: web_search_result
+          url: https://www.dutchnews.nl/
+        - encrypted_content: EuIICioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMSkUyyVonUy5nVoAhoMaLw5JltwQDTWM10wIjDyvis8XeCQmtPfODQ0z9yOfN5s/K9mMNXZafl7zS3hgaNOZ6C+mQDh0aeCAU+9+tMq5QeIR/zKcrA0gVa66830at8x50JAlOyoZuLzdRViFYEOpO6WUUTYHiyeOfy85fWnQlbNDyb4o5opqzLTz8xnpkaJCQdm+0a5+deO+s9ZoYkWruChlbYE/Tb3mnZwNnnCDOO36uVfPlNxnW8zTcn4zOws5P2vVR7BF/52lxbA937yFOwpZm+pa/cslygQyXbhOiItTKVsGIpB5hqtQ+B59ZtVzJCq0FxjZ8UmXCWSHLxqBHC58tWu3UIS7+UX0fgA566ykRAoVWjzYUD28AHYRo8m+I3YYK2/fvVxYmKjSO5SXXEe5VLliNzM92vvT/yJSY5uF2NTTTbeGShX/CwYg+nnIIFTCcyvdMhjvX0BC7w19hp44igN9/DrzVDu2TEXJHZ9a1VLvkLh64WcB4A+QcNlc/UWS5L7fePj0e6JF2Be4WeYoAQMYZdu/e0TnkDtiB/AmeEWpcB7/cNvOkC1WSaw308HjYhuIVA2/dol+8iRuPzrz1BkoAcOPCtqnIiJbJ9mo0QcLWcWt87JwdjS8D6b6xL7GEOq5lsW6+UYZTOTIB4DeQ9RkdSazFtD9S7cMZOwftJNmq/2ZLYoCpgWR0rSFbX98Bt2NuGSb1eezpnjH5xj/Ki5XuvX/vLZnAo+EN2Tz32Pt0JHsYiMqQxW4eLKlzuEyIt6pUlR0AbNZa81Ig8HrDow2XMc8USIEM7MglZrRmxTXd0wPK1q2fQt+y81JTl0pdZRD98JCb7ByJ0DTIjRxdCmtXtx8J88KXCIOzY8VAC9sySOmFYPMrD5SlpdVFw8cmfvtdorgS/Im6rprx14T/Els+WDU53VxPLlU1jOk17VT+pLaaVWCwfZH56VNwaLX45iao/iKIYzXE4K/GFO1Sr6e1GEySagqWsIpY7UItxa+g+yA5J37U+5Awspr9EDMzpCyToSeUYaLCgxXSsYED3Py9DGxEQFHgX1gonr4PacUdrZpJ4Px55qTmr8Qjmw/S9yiImvEondwP43CJLyjkqR4/8RMSfdFWXEjqMRN1HxFZw3MyqBNh31E+uN89jk8yvzGX9AzDY7zzj7gthZ0xD9E+VxvcnZJcWdN7DjiDHkDzHfdDwB0ZO+/8+TyQ5SDUmyK9qcJiIJMqajKiVZ8k36K8/SRkQ+oCg0f3zSN6yO7+ygszpIbFmvvHx8g2SghT/LaRCiMau53Yhtd61isOc5JeOWku8cxk2IzIoOhJfBP43q0YY53dss96o7p+ZjsvPtE9W5IsF7kAN2gynxX0cr6RcJXCJuQd70w4CmaISAPhbtmfpY6VIy1+eLoaSOHVXV2qv3mMrpnJZn1zrPn3JOGAM=
+          page_age: 3 days ago
+          title: NL Times | Netherlands news in English
+          type: web_search_result
+          url: https://nltimes.nl/
+        - encrypted_content: EosJCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDluMRLfvQkgvdOx4xoMV06n+njiqjM9qnBqIjCToTVnWpHlAO470aS4AVLpcANGxICP/TDI/CoazDq0bmzyd/cMtmBEUdZLwXn/llMqjggiTYG9Hy8G0bmsl3TU75wVt8fSwZ06PueJOPA056vO/8sL2w0ZzRIOlRlWEqy1xmor/rc62USao3jXe33ci/7V46PyMZzg7dW1l0epTEzD6nxHH1Uu8gSWtkvnlA7TeFzFzxnGW0uKK4SnsUdZHYIsmRKp6YCUD51Ln6+7TzMnH9RgO7vndQOrUPS2VF/X0eSeHZ6YorOZsxsB88CaBa6KEARzbuv9Ml+4JqXmu18+j8vklVj38sNqLVLIP/IX1wjqTSra93bOPQQzBOtqnqK4iemR7sYyZiJaGMMf2ddouuWW/cYimkaaIIIkxMEsh/ywXQBciagnfCSvh9vwQI9hPAbxruqeLk17FOl2y2khtXeECgHVMYsrs6LRMGagIth42ycidSw4Mvov7+eAfkvZEcm0vv2f74Vp6Vm5wh+0mK5iVhrKDk1jcFQgLlA/SdebanSY/2iw767+r+y/yCf9AVx1A4L4rQa3bcNu41irD2t/EDLG6Ew3lRZtm+gqqP5zLjCAa0FTlAOp8FJlq3ZtPJtEdQBE3/B7D+TtI7hKdROm2w4pRfh6wQ36jyKjtdko0Cbf4+Wyh7Ct2BVTcb/znLjHwghzHAJ/cigWoGFi0eobmv3Rl/old2qoZWLcBpO9AQSWAo1xEBLE+V1eMPNSUz5PPOaVI3/iwdzFa8YtkpnTnjHL6FzqRcTd5/m5lTsJmyaNpVhe/wezsdUdlmCLj+VrhbNxdyewOab3AbcQBd0gs9dUsAVhI6/VHNlf7AUD0+f5pwVvGMu4oHF9ykRP2Kdy/ZOFK1g2YEXqO8Baoo3DBSKdjcU0cGwnCXOcTZb5xBnrI6s4Q0A88k+w0beiWgL5h/T+S0+q6N40G9ylDWptpH3k4ZCwEI41vm6uxdwKJie0/c6O2ENYnaPPgU4NN/QPuu1f3UzS1QnZHWVAm1tMphRTo5BrebgIP7rHXeOHkdu5fbvP6tc4xGW5D+MAD/wUn11+r20ZuFCRSFTPC81DomML/4eGw6UrGxhLv16t2oEt8w773igMPPZNOnd7AX0CXQUNKBBwB1tDTFtpGKLOLwonxu/GXft4lcku/MM10Kdv+okyoqk0Wu9my4vXMNcsEKccUgAeIeH325qxBQ5XvO1XdMnoBNJ9GSkDhBSZZ+5Aw2H/T/vmNtO5HZ1gXfoCFA0Nm7DlXLJDQeZhOlbaZD3evHaaFakesqfKHcCbGBQwkZbun4SHdZ384VstBoQDXoh9sDbTOJLj1g0kn/drYQFglFu2EO96lkVhZnq7PnLf0+llnPsEwmI/ankas7en/t+rB1iubf6HKvfLV4H/yb53vwwIpaJeV9d+5khYnbla9Q7c3p5SnbXQBZ2c5gftu2itNtk1s5Mk3PYYAw==
+          page_age: 1 month ago
+          title: Netherlands | Netherlands | Today's latest from Al Jazeera
+          type: web_search_result
+          url: https://www.aljazeera.com/where/netherlands/
+        - encrypted_content: EvkGCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDFk9X/YESen9kV9I8RoMBrFINGkBany3KtQVIjC9qaR0mr/VF7QHZ6JlDh8twx/2CNeadJHHfjSNIs7r931aX1LE/OoW8yoII1ugV5Iq/AX6jUMWpxxh5BxlVhm9U0cZ3hlsazACMwzBRAUUjSi9dOxLK1I259ALhqOJa8jQUr7VfXnEbKM86I50S1It0Tw4x2wi2rvnw/s3BUcMXIh2KJC82B2MblmI9APmbyT4jQxdyBHOZxF8IuR8AZ5iFicE35OpSUZJKGiT8EzpITFX2C0ujZ5Ts+H9z9Jx02f6r34lCU+0k8yPysbtpQriKne8WG5Pk+2sXxRhLZb+5D2AWZaRODBfN9NM92vjKbZayyRTqsTOVPzLI6olSj8vstU86dosVJfdORSZiz3cp4wWfpJjEceDPiKsmadtCYBwKoxuWBPeaBSKILSFLbAZIfFUzBTD6LyVnYCwFAxQLntHqBhNB2Ogwt8I7Pp/E+C5YwFcLim9gUtZ3XVOMh8p/xldUm7gNBMRtIfll1wE42gb0L63YMbY1k24ZVa172cWh+5kqkfM0D6nJMqvecaxk7wWLlOXk7uXBJyWOIwc+JIQ4EWRsLDPhxZ439N/442RC/r/K39+5jJSONZAdsoFJQi+f0lqrGwGL5vpB8eSztrhv3FPU8HUDlmP3Da3lscUeaSTsi4vDg5H/wf7/hRTjFXnPCPmDrKOdGJEyZ/Nb/Ap/ijnOuAEHI7aSD1J7GIpiUwX1nCrfOSbL6e4/AOC3ryVSUTcnWXSjMT7YOL3/u3mFXDRE+KqSOJmq9E4UpTzPG5sdMdDD0NOUOVX1N/tplx8pvHTLNO/koDam1vDVvJNx+vOleMtja8eRyiEbQUJOTQ+qU0gmsKHXoAuYxVPsQib7ALhNOWDQt3it4GOCzP4+B8ymzH/nrp/D/zLE2T8RZkw3tH8DKbsuNPHaJ39UhVTB4WYObZsI0+svf4vJ6wqXYZ4XeFZ4uJ8qruMVPSuF26DjlD/mr7ya4YWAdtlBAhgdwRZ9mh+lVWOua+LDQDm9Sh8NbrOYcEolSRnZPTSaBV4lIsF+jZMyb54NMnYehtWZh8+oE7gGoRAviLvOWSyzg20XrxptvdnMbApMhgD
+          page_age: July 18, 2025
+          title: Latest | Government.nl
+          type: web_search_result
+          url: https://www.government.nl/latest
+        - encrypted_content: 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
+          page_age: June 25, 2025
+          title: Find all the latest news about netherlands | euronews
+          type: web_search_result
+          url: https://www.euronews.com/news/europe/netherlands
+        - encrypted_content: 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
+          page_age: null
+          title: Expat Info News in the Netherlands | IamExpat
+          type: web_search_result
+          url: https://www.iamexpat.nl/dutch-news-articles?section=expat+info&type=news
+        - encrypted_content: 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
+          page_age: null
+          title: News for expats in the Netherlands | IamExpat
+          type: web_search_result
+          url: https://www.iamexpat.nl/dutch-news-articles?type=news
+        - encrypted_content: EsQCCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLQO6tIpUnda2YseTBoMvTQ9mSIH3zH0mCRzIjBbjD2e+dVmUQFHPO/P+g4wcaRV1Zh10vw5IdBHg0dQA6dE5sTvAyCB23HfmMmiPsgqxwGsu0J2re8WTquhC1e8994X6KtshBBzJGQNGcfN+vmrD0MrnVLhG822+vCT+ZNj3qLMBgOe7bWcFhKpY4vUp7f0F94Iitq5Nd4rYvzroZJQZ145sInM2Sk8G41pGlWzoLM0W86KPKpMgXmvyl2qaiqdnV4FlUQwcn8ruC32JqDO4hDtpOZAR0nQrSnUq2H1fvFh/uWuHtXNIj6aSHMB12O/HgVkKvZcofr4/gPINPPexe2xDMD+m8pf75+KZ4Vc4GpRRsIVcuP7GAM=
+          page_age: 1 month ago
+          title: Politics Archives - DutchNews.nl
+          type: web_search_result
+          url: https://www.dutchnews.nl/category/politics/
+        - encrypted_content: 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
+          page_age: null
+          title: Netherlands news - Today’s latest updates - CBS News
+          type: web_search_result
+          url: https://www.cbsnews.com/tag/netherlands/
+        - encrypted_content: Ep0WCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDNToWjcdXzVM9FpXNhoMUEwGtd4rUyWjWz0HIjCYFgpjFE8Ea+QJ9s5230Wcr+gsAPVtWUHWr2Q0KIgHLG3XfgTIebeJfMDOykg/NRMqoBWW9ihGJV/KhPzcATLyZxBs0G3gf5LVbAezPFG7BIpniGXv6DmM1V0fKzvTEXtRhu3lgQkulaJ6KS+vSLRnRDOxfJDoGM9Dlcy9LvLufvsWnqmO9npQ3IuSjf3rbArcUu7gLXDbzO5+eLOxaiZbBF2LCM3zr5l0w+VjMhJqS4R71qJmhc3avKEYKgTAtdPO3XNZ8OWLQw0AE3wvlioOnidubSW1Gmd9p3bqTmQKVxh9NmmgyeCgzTI7SM0NFuZqcbqM9gSQ3pd1GSNFapR/6iHToo9DRJyFalRHwvLZa2LCyvigmmrWiBLnnssr9OIPwyhJ2dVypJZ5yCB3LNryY8IfXjxV8j8VUT0cZBwot3r2zrPH4c0PHDeNn0giTML9KYHts4e1iFUf4QeW0uu5rqbrJHvGqJGqKQiXqc2dEfwNDhRdcqFEGEq6jU9Oq91R6CxQyGfiIWWpQE51oP3P7UzZFC/CRtMidw+WJ6xbXQCj500QCLVWXRUSPtcHr+98CscBk1TL17XbURudV3kJNZj/+kecdeJdvwYjOBa49wQ+Q1/3S4y1KCIBJtMJZi6S3nwaevAE0wW88sd0ghzrIDC8JTPl06bTZc2kO/+5MWRlO6kh+JJFEr6/JtdVDaKctol6n/F7KcmI+0uHBe1Rncg/oE5g4VQ16iUonmwZ3T+4dWwII/ofTAmE5FqPlPc+HK6UDPx4Kn7hBbe+xbh8F6va+KxIa/tl3HSrlBMh2ceWFltQQdoOgJ8d+SRcEA7XhTGYkwwYnRLyKqGv3IZQDdBaT4v/Lydu5ZXHRRhSZ5uL+V3H04AJvTaPx55GbknUZE0cxM2ypWPUg2Pm0eEa0fVU+C5pLBdlLsiiz95DwCnTvu7mrpXyT5gFNL3lqcQltVGvwgqxW5GJcNZ9yyZFTLhKq+JCJv2W4FnIXfmuo4rFg41xv1btMt8NW3+I2TXjF6AobkqVywK/5zXN/zi1tGABugvbd4EKUUCUfa5GTTWV/CtaWZdPc8S/GFVux1S/BV1wfG8OKrUWPPmiM9KF5imCyMwdxWp4WUN+sL5DtGUhZ8Gh5oIHAYzLdJ1Sa27y383UAR5z5tnIZKdPWH3HHzhcPxyUEKVhTn+EmMxVZBSmDQEoZi1CR1u7Qd437SUYRh6R7rEsZ0U6Yu9dKFK635x8yMQDViYReIHLSmlCDtS8Zs6SvOGuVa0yIM3p0R96fv3+VJLZMiwq3kpc45ciC3ot1hSk5iP5XrNuXIFLGPwBDs3zY40GuQfGnIW4XO9y3W8ik82JoTcjcWJRBdy44ghsl7pYdfBkYpbcnPqjIfBWnA9Rvf5wOhb8E4Ye9SLTPwDRJfP2PCBxcVRepNmDUrl2dYDyDS/MFDXWC/kaHx1OnNwI8x4rwt/A/2LG1gw8ilR8uGuWhekbmj/TATvXbFY9brVNJqCKKao6I9OP5lJRvi5Ts9ZaCXWRUSEqs08jpQHHMDUqsm/pR+lfShK21rqSeS+jmlH9+NdCsvpF3Q2+AzNAdHY+pEKyuUR7++A29BemJCY/OQ3LYKS1CjNwkFtbnPXnKKSIQKucVe5Ed27IWVpjN+Rur38uIuxmtM/edXFfaBTGgszJudmQWnKxqdSlJ5DdKRUDAbtjQ84jSA6KLJMdYDWbLE1vk4IdPo2LUoZ0K9Xk29lno571/Gb5EKRaCBDppvHXihW2DYeAdifWjnkvdCBK3FwlHcZ4mZaGlDGRKqRUvheSiBJ7UAjXxXGTs/Py8Apj3vfh5lBrSDr284P8JJm0GTvE/xL4SO8njws/C4FXeaWH1xyfzYdLLaCsyp3sRBzpGJawsOWTGFCye/o9OEakbZb1eQnlsXW+cw6m6qv1uI/pZQpP7Xk3nftSKKYK/EiXn+blgLBmfqHfIjmVHrXmZWkshBSNGNaqQGhuWtU57VLt4yBbClaUf188yqZ9sVTHUAN4Z7bqjrU0k7rZ6wj3PHTVtYijHpy8R1Ha4l/VCROafrqbyv70HZ/YD1FIaRx0qvPadRy0kHCcgczlNbN8QEHY3KG0wA2imhE6YfQMYyxcxkTXfgJUOK3wecnTlzbROfPGmSeBtTLT8TCmQIHVR1DOVkzJtjJhzcZ+l7xXgexMCK/kzXsfAnFgG711zUOIo5q/a0MKgnpZIqISS+ZXBit0agB9jmS+TYU5pz4ZjqqxtqEmrQTrIhyuBqqZGhbW+d9Qq5dsPWFrb49xKtnQy9oJMtUklpj7zws9w06WK/o1SR9u6N/vy+1ACouYHLqNWcKqPcLX+H+qZPKBUHBmfQxinxVeIAy2v6RAX1+pURTL8JPX5LwOC/Rlev9NA358bR2qEOhGdsrHnU41mGq1Ma11hcnzLPhYeAG7cOd0hJFrg+NCVFweVMTWgreUpCBcxN4fvZSJ1ggcRciH7fWL23sso53ddsXTCZaG35ICFvas+IEGiVgjGcZolY4bxWRszP2m5cxfgDcSasU05R5sNaptELOuJSopCllcQB12c8rknNTkCkYbyeEEyuw8pCN8i8/RXLoXjpTsyyExBnUbB8Hvr+iFpbe3sc5zGoM60x7lbeAfe5neQ244SmrOpaQBe9ethf8hOtCzNXOfUK6g+mp20k/Yoa9dvt8HoMABt73baoXY3f1CApDSpnwujvBz4YDmG31VLiIOv6a5lBunVTD4p/xGFaGgEUO4EYsyJ+qXBFYVG9j5Q8FZZNiQlqk0Rf2EJkW+znRUXzqKSj2jQ/y8zI8EPEw6bXAxqwAUaS4lNDKs9OAt9yYDif52mWWiOyzJ7YOVN1wgmWdcOy3pRLmEptL930mj/Ais3ke9WT1sIYBafwOExbZpqvVU/9G7Bx31VElNZ8LbkD9SF+at1UIGZO+Q86g61pW5asloBqkiWVAE0xLsQjgfoIeMD9cfvqMsIgp1Y+mtmi2Hejn51Wm+tZtCasvlC6t7eXzwVYRW4YzXNF9Lw+e12ESbYHzGpVkKRLxYglhp6NsFP5AGJrnOZp8w8PiZzFJorErJPI1XIrNPvPdo+2g7uouFsam1qTukv0p9eopAc4wpGliI0plK+djs9ahwZt27UfPF4y5eGv7mVXkVWTVL+Bj/9RolOuACjnQRuYlH1yKXZZ+i0PnToYnsW8wtBobb3DbC+Yc6BrgbD3Y0XZO7g3VqphX6J5Q9N4N2ejeOXqF5ahQNx7FxbEAerUCq8zG+sErxbp+p8c/vmeJWVEhiLNNdW4pUTeE8gUH3Y0QXyMplQ+Cvzb/62M3f/zHYC4VAvtUiwgnwOxm4RpW1RSxMXsNsy8z2NqkyE44G/hpkExusx/cyGGLkSqmVG7/c3HrUG0804i1J1t953/Rl7aVN6xQObmb8b3Gc/OChsu3y2/6WRjuhLG0bieAFGj0t7blv3ikrT1GZp4r748htJeVD3+BJXFmQEZLqvo00DYF7hOY3WT9BhBt1eu390Gi2E1+qAa2oMRETnHLUKLL51zh65aRcrD2vGN/tNHsqqbQX+mnpb/6lS2O/b8LvP4Lhs963Q+oDewI4Gq1gYp7BBOtWLSl24Qva4xFxVSudbo7tmtD0a3HmK9Z/41ZKklIsj7kI9xJCm4LY/uC5Pvdw2shROCuURKSJpeSQ8WsUDpOpDhgD
+          page_age: 1 week ago
+          title: Netherlands News | Latest Holland News - NewsNow
+          type: web_search_result
+          url: https://www.newsnow.com/us/World/Europe/Western+Europe/Netherlands
+        tool_use_id: srvtoolu_01Dxy4ugoHrbUnKWyPQA5Jmm
+        type: web_search_tool_result
+      - text: |
+          Based on the latest news from the Netherlands, here are some key recent developments:
+
+          ## Weather and Public Safety
+        type: text
+      - citations:
+        - cited_text: Windy and wet days ahead for Netherlands; Code yellow strong winds warning along coast · 15 September
+            2025 - 08:31 · Image · 1-1-2 · Sailing charter c...
+          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAwqgNNOaRr1sbnCChoM802iz8dfWBX4aUvBIjDx26XOVmdj3CKatm7G09VpZ9NMNtoFKM0W7Hk3u7LoNsrsf4rw9sOKf1YRJm2gWQcqE+Vlf11KLKJ+Upj3p5u2iLEClVUYBA==
+          title: NL Times | Netherlands news in English
+          type: web_search_result_location
+          url: https://nltimes.nl/
+        text: The Netherlands is experiencing windy and wet weather, with a code yellow strong winds warning issued for the
+          coast
+        type: text
+      - text: '. '
+        type: text
+      - citations:
+        - cited_text: Windy and wet days ahead for Netherlands; Code yellow strong winds warning along coast · 15 September
+            2025 - 08:31 · Image · 1-1-2 · Sailing charter c...
+          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDOqnY4t2MRd2dnlsVRoMmnFk0Wqg8/8YGQXaIjBrr/GVRoONxoeZQTM0FueY1JNjKC7SzAov5eIZCHXlU9jQxRYGP7S4iyPaKooR6acqE4aha0FsbzD+Xgnj4kbk1SD+HB0YBA==
+          title: NL Times | Netherlands news in English
+          type: web_search_result_location
+          url: https://nltimes.nl/
+        text: A sailing charter crashed into a freighter off the Harlingen coast, injuring five school children
+        type: text
+      - text: |
+          .
+
+          ## Political and Economic News
+        type: text
+      - citations:
+        - cited_text: Windy and wet days ahead for Netherlands; Code yellow strong winds warning along coast · 15 September
+            2025 - 08:31 · Image · 1-1-2 · Sailing charter c...
+          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDBX4V5nZHDLJ9PzeSRoMo126SLawOY/383dUIjCJL5hj8KWOXsX/Z4cr4OQF3XO/XW35moKTsCmHY4XTIE2TlXhYrEVKzOE8vsSw/xEqE5YIvOmthCtaWzjAiJk8gKKVlRAYBA==
+          title: NL Times | Netherlands news in English
+          type: web_search_result_location
+          url: https://nltimes.nl/
+        text: Budget Day in the Netherlands is approaching, with MPs expected to face windy weather conditions during the
+          event
+        type: text
+      - text: '. '
+        type: text
+      - citations:
+        - cited_text: Windy and wet days ahead for Netherlands; Code yellow strong winds warning along coast · 15 September
+            2025 - 08:31 · Image · 1-1-2 · Sailing charter c...
+          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDP3Ekna3d8aY5O5gZxoMpzSHJPHSZH/KKwhdIjCydXMzDx2Ss3zQksvEi7Nuh2ECSEIPDRB8FHh0EkEyDtTkJu0BrZZSwpm9mEvjvEsqEwojL9tz89nM5W8GW7sOfb/kI0wYBA==
+          title: NL Times | Netherlands news in English
+          type: web_search_result_location
+          url: https://nltimes.nl/
+        text: There are concerns about political gridlock and costs driving Dutch firms to relocate abroad, according to entrepreneurs
+        type: text
+      - text: |+
+          .
+
+        type: text
+      - citations:
+        - cited_text: Windy and wet days ahead for Netherlands; Code yellow strong winds warning along coast · 15 September
+            2025 - 08:31 · Image · 1-1-2 · Sailing charter c...
+          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCHSKcjhpsySpKCHDBoMOpzI/Wynstp1fnDVIjBqGHBNariopYpiH3JqCd7Q6bYxJFVquV+n29rVBFumCnxAJ3J0OTKdA6r42v2NfJAqE9IpXoIO4EHXamx5D+QZgAlujlIYBA==
+          title: NL Times | Netherlands news in English
+          type: web_search_result_location
+          url: https://nltimes.nl/
+        text: Voters have little confidence in politics and don't expect improvement
+        type: text
+      - text: |
+          , reflecting ongoing political challenges in the country.
+
+          ## Energy and Infrastructure
+        type: text
+      - citations:
+        - cited_text: Windy and wet days ahead for Netherlands; Code yellow strong winds warning along coast · 15 September
+            2025 - 08:31 · Image · 1-1-2 · Sailing charter c...
+          encrypted_index: Eo8BCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDJtqpDVkrDniP5EcRBoMqcMLuPj0zsL12kJRIjAaggJ4GDMBhqe1lVCV8j5XDSbu4FKIgXeI6l/CJ8P8CahphMsa4/0FEk5GbvhKiBkqExNNf/FS7xUA3y5NXXYSI6bZUuQYBA==
+          title: NL Times | Netherlands news in English
+          type: web_search_result_location
+          url: https://nltimes.nl/
+        text: Dutch electricity production rose 7% in the first half of 2025
+        type: text
+      - text: |
+          , showing positive growth in the energy sector.
+
+          ## Transportation and Travel
+        type: text
+      - citations:
+        - cited_text: Create a free IamExpat account to bookmark content for later, apply for jobs & properties, create email
+            alerts, and more!Create your account · The Net...
+          encrypted_index: EpIBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDLa/O8c6PjQMbY8EbxoML0ABpYBM+L/nj8BpIjB3BYxXk+QM6kPfJXaeptU/zhD4MJFo5FgETBBeGWOiMeLBHSDnqvxG5p3q8F7RQPYqFkQHsbJyLyWhfeOASVCcDU6hPbCZh44YBA==
+          title: Expat Info News in the Netherlands | IamExpat
+          type: web_search_result_location
+          url: https://www.iamexpat.nl/dutch-news-articles?section=expat+info&type=news
+        text: KLM has cancelled more than 100 flights due to a ground staff strike
+        type: text
+      - text: '. On a more positive note, '
+        type: text
+      - citations:
+        - cited_text: Create a free IamExpat account to bookmark content for later, apply for jobs & properties, create email
+            alerts, and more!Create your account · The Net...
+          encrypted_index: EpIBCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDXhsEkh7LzptlEgfxoMKOcsZvITQ8tXVaEoIjDrUKV3ReRNvnOZTOsYpWGbApA92v+RpymNbWklOBNDbcqiVaznkKgs02yZZpQ36C0qFiQEqoRbDG4kvjZwDIljUpqr4CLD4NMYBA==
+          title: Expat Info News in the Netherlands | IamExpat
+          type: web_search_result_location
+          url: https://www.iamexpat.nl/dutch-news-articles?section=expat+info&type=news
+        text: a skatepark has opened over the roof of an Amsterdam highway tunnel
+        type: text
+      - text: |
+          .
+
+          ## Recent Policy Changes
+        type: text
+      - citations:
+        - cited_text: Code Yellow issued as the Netherlands braces for thunderstorms on Wednesday · Dutch health insurers
+            to help GPs open new practices as shortage continu...
+          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDGBPOjRqUOVSYB86gxoMcFtld1jr4wNxvFlAIjDhXugkhH4D6TXYLXIlQbY4ayBXHGiKFX5n9zfte8nLFUMlycLb7k8+P0yj+wDx8pEqFF4JgErap9jbxcpRiJFnO0EO6ymJGAQ=
+          title: Expat Info News in the Netherlands | IamExpat
+          type: web_search_result_location
+          url: https://www.iamexpat.nl/dutch-news-articles?section=expat+info&type=news
+        text: The Netherlands is introducing a helmet requirement for e-bike riders under 18
+        type: text
+      - text: '. '
+        type: text
+      - citations:
+        - cited_text: Code Yellow issued as the Netherlands braces for thunderstorms on Wednesday · Dutch health insurers
+            to help GPs open new practices as shortage continu...
+          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDceXOdTOIO4u4DZZRoMCHwTkvYLPvJUC3zzIjDcjUsjXIMKtgIZZV1lps3+ZtpmNTHAoZjJ6DPn0JoaTXu0WZQRAesv3DYHhjAYyTkqFNhjNQqrT20czC6Iwy97A0SPQOt3GAQ=
+          title: Expat Info News in the Netherlands | IamExpat
+          type: web_search_result_location
+          url: https://www.iamexpat.nl/dutch-news-articles?section=expat+info&type=news
+        text: NS (Dutch Railways) has begun alerting passengers about emptier trains with push notifications
+        type: text
+      - text: |
+          .
+
+          ## International Relations
+        type: text
+      - citations:
+        - cited_text: Final round of talks on compensation mechanism for Ukraine reportedly begins in The Hague Ukrainska
+            Pravda 20h ... Netherlands declares far-right Isra...
+          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDHI5eIXLhRRBAAMKCBoMuxJY0HcHE5T+Ut9AIjCuZfQUrKGsKN7VLy1kFqWItO1kzKCCdHLDSiwe/KtN4USY9n4T+nOsvbtJnwKYiwsqFH1d6oQnIOD6UioFOyv4pQz2HT2/GAQ=
+          title: Netherlands News | Latest Holland News - NewsNow
+          type: web_search_result_location
+          url: https://www.newsnow.com/us/World/Europe/Western+Europe/Netherlands
+        text: The Netherlands has declared far-right Israeli ministers persona non grata
+        type: text
+      - text: ', and '
+        type: text
+      - citations:
+        - cited_text: 'Netherlands condemns Israeli strike on Doha, urges respect for state sovereignty The Peninsula 7h ...
+            Strong mag. '
+          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDGgMCVkxh5oIv9WUlxoMrRQBwOkq1ffzVZx2IjBCB2nT7J4UlRO2ne9OQiVOPo5pJK6zHWEDyDDHHW0Oi/wRCRY4umK6cKGhFZcx8yoqFJO7WkH+eAhNTkNXcdKn/c1p1LMdGAQ=
+          title: Netherlands News | Latest Holland News - NewsNow
+          type: web_search_result_location
+          url: https://www.newsnow.com/us/World/Europe/Western+Europe/Netherlands
+        text: the country has condemned an Israeli strike on Doha, urging respect for state sovereignty
+        type: text
+      - text: |
+          .
+
+          ## Business and Innovation
+        type: text
+      - citations:
+        - cited_text: Final round of talks on compensation mechanism for Ukraine reportedly begins in The Hague Ukrainska
+            Pravda 20h ... Netherlands declares far-right Isra...
+          encrypted_index: EpABCioIBxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDK31ibPz7qj4LvGVERoM2jfy/yji/4uh3oh7IjDefivmev/jhIe8oGqc97ynymHG4Rt2o8rgdh7DLOKt8yNfz3V7Tki6WwWlUtuGK8oqFEzFk6MsBPEGwx3Yio8JARHl6QRdGAQ=
+          title: Netherlands News | Latest Holland News - NewsNow
+          type: web_search_result_location
+          url: https://www.newsnow.com/us/World/Europe/Western+Europe/Netherlands
+        text: Several Dutch companies are making headlines, including Amsterdam-based Naq raising €6M for healthcare compliance
+          and LeydenJar raising €23M for battery technology
+        type: text
+      - text: |-
+          .
+
+          These developments reflect the Netherlands' ongoing challenges with weather, political confidence, and international relations, while also showing growth in energy production and continued innovation in business and infrastructure.
+        type: text
+      id: msg_01Hge8MF8vgC9ym5hwfroics
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 10809
+        output_tokens: 644
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 1
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2522'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What are the latest news in the Netherlands?
+        role: user
+      - parts:
+        - text: |
+            Based on the latest news from the Netherlands, here are some key recent developments:
+
+            ## Weather and Public Safety
+        - text: The Netherlands is experiencing windy and wet weather, with a code yellow strong winds warning issued for
+            the coast
+        - text: '. '
+        - text: A sailing charter crashed into a freighter off the Harlingen coast, injuring five school children
+        - text: |
+            .
+
+            ## Political and Economic News
+        - text: Budget Day in the Netherlands is approaching, with MPs expected to face windy weather conditions during the
+            event
+        - text: '. '
+        - text: There are concerns about political gridlock and costs driving Dutch firms to relocate abroad, according to
+            entrepreneurs
+        - text: |+
+            .
+
+        - text: Voters have little confidence in politics and don't expect improvement
+        - text: |
+            , reflecting ongoing political challenges in the country.
+
+            ## Energy and Infrastructure
+        - text: Dutch electricity production rose 7% in the first half of 2025
+        - text: |
+            , showing positive growth in the energy sector.
+
+            ## Transportation and Travel
+        - text: KLM has cancelled more than 100 flights due to a ground staff strike
+        - text: '. On a more positive note, '
+        - text: a skatepark has opened over the roof of an Amsterdam highway tunnel
+        - text: |
+            .
+
+            ## Recent Policy Changes
+        - text: The Netherlands is introducing a helmet requirement for e-bike riders under 18
+        - text: '. '
+        - text: NS (Dutch Railways) has begun alerting passengers about emptier trains with push notifications
+        - text: |
+            .
+
+            ## International Relations
+        - text: The Netherlands has declared far-right Israeli ministers persona non grata
+        - text: ', and '
+        - text: the country has condemned an Israeli strike on Doha, urging respect for state sovereignty
+        - text: |
+            .
+
+            ## Business and Innovation
+        - text: Several Dutch companies are making headlines, including Amsterdam-based Naq raising €6M for healthcare compliance
+            and LeydenJar raising €23M for battery technology
+        - text: |-
+            .
+
+            These developments reflect the Netherlands' ongoing challenges with weather, political confidence, and international relations, while also showing growth in energy production and continued innovation in business and infrastructure.
+        role: model
+      - parts:
+        - text: What day is tomorrow?
+        role: user
+      generationConfig: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '811'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=862
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.2537533132041373
+        content:
+          parts:
+          - text: |
+              To give you an accurate answer, I need a little more information. What is today's date?
+
+              Once I know today's date, I can easily tell you what tomorrow will be.
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: ndnJaNP6FqLjqtsPh97wwQs
+      usageMetadata:
+        candidatesTokenCount: 41
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 41
+        promptTokenCount: 376
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 376
+        totalTokenCount: 417
+    status:
+      code: 200
+      message: OK
+version: 1

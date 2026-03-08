@@ -1,0 +1,108 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '139'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - text: The quick brown fox jumps over the lazydog.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+    uri: https://api.anthropic.com/v1/messages/count_tokens?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '19'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      input_tokens: 19
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '172'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: The quick brown fox jumps over the lazydog.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '729'
+      content-type:
+      - application/json
+      retry-after:
+      - '19'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          I noticed a small typo in that famous pangram! It should be:
+
+          "The quick brown fox jumps over the **lazy dog**."
+
+          (There should be a space between "lazy" and "dog")
+
+          This sentence is often used for testing typewriters, fonts, and keyboards because it contains every letter of the English alphabet at least once.
+        type: text
+      id: msg_01QHpSAhCiB6L5pL23LjdRAy
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 19
+        output_tokens: 77
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

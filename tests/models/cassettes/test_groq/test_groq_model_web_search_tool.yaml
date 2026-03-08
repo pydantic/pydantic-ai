@@ -1,0 +1,314 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '131'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the weather in San Francisco today?
+        role: user
+      model: compound-beta
+      n: 1
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '22205'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "The weather in San Francisco today, September 17, 2025, is partly cloudy with a temperature of 17°C (62.6°F)
+            and a wind speed of 7.8 mph (12.6 kph) from the west. The humidity is 94%, and there is a 0% chance of precipitation.
+            The UV index is 6.8, and the feels-like temperature is also 17°C (62.6°F). \n\nAdditionally, the forecast for
+            the day indicates that it will be a comfortable day with a high of 75°F (24°C) and a low of 59°F (15°C). There
+            is a slight chance of rain and thunderstorms in the Bay Area due to the remnants of Tropical Storm Mario, but
+            it is not expected to significantly impact San Francisco.\n\nIt's worth noting that the weather in San Francisco
+            can be quite variable, and the temperature can drop significantly at night, so it's a good idea to dress in layers.
+            Overall, it should be a pleasant day in San Francisco, with plenty of sunshine and mild temperatures."
+          executed_tools:
+          - arguments: '{"query": "What is the weather in San Francisco today?"}'
+            index: 0
+            output: "Title: Weather in San Francisco\nURL: https://www.weatherapi.com/\nContent: {'location': {'name': 'San
+              Francisco', 'region': 'California', 'country': 'United States of America', 'lat': 37.775, 'lon': -122.4183,
+              'tz_id': 'America/Los_Angeles', 'localtime_epoch': 1758143975, 'localtime': '2025-09-17 14:19'}, 'current':
+              {'last_updated_epoch': 1758143700, 'last_updated': '2025-09-17 14:15', 'temp_c': 17.0, 'temp_f': 62.6, 'is_day':
+              1, 'condition': {'text': 'Partly cloudy', 'icon': '//cdn.weatherapi.com/weather/64x64/day/116.png', 'code':
+              1003}, 'wind_mph': 7.8, 'wind_kph': 12.6, 'wind_degree': 264, 'wind_dir': 'W', 'pressure_mb': 1015.0, 'pressure_in':
+              29.96, 'precip_mm': 0.0, 'precip_in': 0.0, 'humidity': 94, 'cloud': 50, 'feelslike_c': 17.0, 'feelslike_f':
+              62.6, 'windchill_c': 17.7, 'windchill_f': 63.9, 'heatindex_c': 17.7, 'heatindex_f': 63.9, 'dewpoint_c': 15.3,
+              'dewpoint_f': 59.6, 'vis_km': 13.0, 'vis_miles': 8.0, 'uv': 6.8, 'gust_mph': 14.4, 'gust_kph': 23.1}}\nScore:
+              0.9842\n\nTitle: Wednesday, September 17, 2025. San Francisco, CA - Weather ...\nURL: https://weathershogun.com/weather/usa/ca/san-francisco/480/september/2025-09-17\nContent:
+              San Francisco, California Weather: Wednesday, September 17, 2025. Day 75°. Night 59°. Precipitation 0 %. Wind
+              8 mph. UV Index (0 - 11+) 11\nScore: 0.9597\n\nTitle: Find cheap flights from Milan (MXP) to San Francisco (SFO)\nURL:
+              https://www.aa.com/en-it/flights-from-milan-to-san-francisco\nContent: Weather in San Francisco. Weather Unit:
+              Weather unit option Celsius Selected ... 17/09/2025. ​. Thursday. overcast clouds. 18°C. 18/09/2025. ​. Friday.
+              few\nScore: 0.9083\n\nTitle: San Francisco weather in September 2025 | Weather25.com\nURL: https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September\nContent:
+              The temperatures in San Francisco in September are comfortable with low of 57°F and and high up to 77°F. There
+              is little to no rain in San Francisco during\nScore: 0.8854\n\nTitle: Bay Area basks in unseasonable heat with
+              thunderstorms and ...\nURL: https://www.cbsnews.com/sanfrancisco/news/bay-area-hot-weather-thunderstorms-fire-danger-dry-lightning/\nContent:
+              Carlos E. Castañeda. September 17, 2025 / 11:20 AM PDT / CBS San Francisco. Wednesday morning First Alert weather
+              forecast with Jessica Burch - 9/17/25\nScore: 0.8625\n\nTitle: Area Forecast Discussion - National Weather Service\nURL:
+              https://forecast.weather.gov/product.php?site=mtr&issuedby=MTR&product=AFD\nContent: 067 FXUS66 KMTR 171648
+              AFDMTR Area Forecast Discussion National Weather Service San Francisco CA 948 AM PDT Wed Sep 17 2025 ...New
+              UPDATE, FIRE WEATHER.\nScore: 0.8163\n\nTitle: Weather in San Francisco in September 2025\nURL: https://world-weather.info/forecast/usa/san_francisco/september-2025/\nContent:
+              Detailed ⚡ San Francisco Weather Forecast for September 2025 – day/night \U0001F321️ temperatures, precipitations
+              – World-Weather.info.\nScore: 0.7421\n\nTitle: The Fantasy Forecast: September skies with Maye weather\nURL:
+              https://dailycampus.com/2025/09/17/the-fantasy-forecast-september-skies-with-maye-weather/\nContent: ... Wednesday,
+              September 17, 2025 ... The Arizona Cardinals quarterback will face the San Francisco 49ers this Sunday in a
+              battle for the West.\nScore: 0.7171\n\nTitle: 60-Day Extended Weather Forecast for San Francisco, San ...\nURL:
+              https://www.almanac.com/weather/longrange/CA/San%20Francisco%2C%20San%20Francisco%20County\nContent: Almanac
+              Logo Wednesday, September 17, 2025 · Almanac.com. Weather · Long-Range; California. Toggle navigation. Gardening.
+              All Gardening · Planting Calendar\nScore: 0.6857\n\nTitle: San Francisco weather in September 2025 | California\nURL:
+              https://www.weather2travel.com/california/san-francisco/september/\nContent: Daytime temperatures usually reach
+              22°C in San Francisco in September, falling to 13°C at night. How sunny is it in San Francisco in September?
+              There are\nScore: 0.6799\n\nTitle: Weather Forecast for San Francisco for Wednesday 17 September\nURL: https://www.metcheck.com/WEATHER/dayforecast.asp?location=San%20Francisco&locationID=1628582&lat=-25.23078&lon=-57.57218&dateFor=17/09/2025\nContent:
+              Time, Weather, Temp, Feels, RainRisk, Amount, Cloud, Dir, Speed, Gust, RH, UV. 0:00, 23 °c, 25 °c, 0%, 0.0mm,
+              0%, 6mph, 24mph, 73%, 0.\nScore: 0.6581\n\nTitle: Weather in San Francisco, California for September 2025\nURL:
+              https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september\nContent:
+              In general, the average temperature in San Francisco at the beginning of September is 70 °F. As the month progressed,
+              temperatures tended to moderately fall,\nScore: 0.6533\n\nTitle: San Francisco September 2025 Historical Weather
+              Data (California ...\nURL: https://weatherspark.com/h/m/557/2025/9/Historical-Weather-in-September-2025-in-San-Francisco-California-United-States\nContent:
+              This report shows the past weather for San Francisco, providing a weather history for September 2025. It features
+              all historical weather data series we have\nScore: 0.5855\n\nTitle: Weather Forecast for Batey San Francisco
+              for Wednesday 17 ...\nURL: https://www.metcheck.com/WEATHER/dayforecast.asp?location=Batey%20San%20Francisco&locationID=511664&lat=18.62123&lon=-68.63688&dateFor=17/09/2025\nContent:
+              Time, Weather, Temp, Feels, RainRisk, Amount, Cloud, Dir, Speed, Gust, RH, UV. 0:00, 25 °c, 27 °c, 88%, 0.1mm,
+              0%, 4mph, 19mph, 91%, 0.\nScore: 0.3891\n\nTitle: Wednesday morning First Alert weather forecast with Jessica
+              Burch\nURL: https://www.youtube.com/watch?v=fzAVNg32R2M\nContent: Wednesday morning First Alert weather forecast
+              with Jessica Burch - 9/17/25. 742 views · 2 hours ago ...more. KPIX | CBS NEWS BAY AREA. 452K.\nScore: 0.2947\n\nTitle:
+              Monthly Weather Forecast for San Francisco, CA\nURL: https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87\nContent:
+              Considerable cloudiness. Low 56F. Winds WSW at 10 to 15 mph. Record Low52°.\nScore: 0.2857\n\nTitle: Rain and
+              thunderstorms coming to Bay Area - SFGATE\nURL: https://www.sfgate.com/bayarea/article/thunder-rain-tropical-storm-mario-21053020.php\nContent:
+              San Francisco could be hit with rain and lightning thanks to the remnants of Tropical Storm Mario.\nScore: 0.2418\n\n"
+            search_results:
+              results:
+              - content: '{''location'': {''name'': ''San Francisco'', ''region'': ''California'', ''country'': ''United States
+                  of America'', ''lat'': 37.775, ''lon'': -122.4183, ''tz_id'': ''America/Los_Angeles'', ''localtime_epoch'':
+                  1758143975, ''localtime'': ''2025-09-17 14:19''}, ''current'': {''last_updated_epoch'': 1758143700, ''last_updated'':
+                  ''2025-09-17 14:15'', ''temp_c'': 17.0, ''temp_f'': 62.6, ''is_day'': 1, ''condition'': {''text'': ''Partly
+                  cloudy'', ''icon'': ''//cdn.weatherapi.com/weather/64x64/day/116.png'', ''code'': 1003}, ''wind_mph'': 7.8,
+                  ''wind_kph'': 12.6, ''wind_degree'': 264, ''wind_dir'': ''W'', ''pressure_mb'': 1015.0, ''pressure_in'':
+                  29.96, ''precip_mm'': 0.0, ''precip_in'': 0.0, ''humidity'': 94, ''cloud'': 50, ''feelslike_c'': 17.0, ''feelslike_f'':
+                  62.6, ''windchill_c'': 17.7, ''windchill_f'': 63.9, ''heatindex_c'': 17.7, ''heatindex_f'': 63.9, ''dewpoint_c'':
+                  15.3, ''dewpoint_f'': 59.6, ''vis_km'': 13.0, ''vis_miles'': 8.0, ''uv'': 6.8, ''gust_mph'': 14.4, ''gust_kph'':
+                  23.1}}'
+                score: 0.9842367
+                title: Weather in San Francisco
+                url: https://www.weatherapi.com/
+              - content: 'San Francisco, California Weather: Wednesday, September 17, 2025. Day 75°. Night 59°. Precipitation
+                  0 %. Wind 8 mph. UV Index (0 - 11+) 11'
+                score: 0.95967525
+                title: Wednesday, September 17, 2025. San Francisco, CA - Weather ...
+                url: https://weathershogun.com/weather/usa/ca/san-francisco/480/september/2025-09-17
+              - content: 'Weather in San Francisco. Weather Unit: Weather unit option Celsius Selected ... 17/09/2025. ​.
+                  Thursday. overcast clouds. 18°C. 18/09/2025. ​. Friday. few'
+                score: 0.90830135
+                title: Find cheap flights from Milan (MXP) to San Francisco (SFO)
+                url: https://www.aa.com/en-it/flights-from-milan-to-san-francisco
+              - content: The temperatures in San Francisco in September are comfortable with low of 57°F and and high up to
+                  77°F. There is little to no rain in San Francisco during
+                score: 0.885404
+                title: San Francisco weather in September 2025 | Weather25.com
+                url: https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September
+              - content: Carlos E. Castañeda. September 17, 2025 / 11:20 AM PDT / CBS San Francisco. Wednesday morning First
+                  Alert weather forecast with Jessica Burch - 9/17/25
+                score: 0.8624794
+                title: Bay Area basks in unseasonable heat with thunderstorms and ...
+                url: https://www.cbsnews.com/sanfrancisco/news/bay-area-hot-weather-thunderstorms-fire-danger-dry-lightning/
+              - content: 067 FXUS66 KMTR 171648 AFDMTR Area Forecast Discussion National Weather Service San Francisco CA
+                  948 AM PDT Wed Sep 17 2025 ...New UPDATE, FIRE WEATHER.
+                score: 0.81630427
+                title: Area Forecast Discussion - National Weather Service
+                url: https://forecast.weather.gov/product.php?site=mtr&issuedby=MTR&product=AFD
+              - content: "Detailed ⚡ San Francisco Weather Forecast for September 2025 – day/night \U0001F321️ temperatures,
+                  precipitations – World-Weather.info."
+                score: 0.7420672
+                title: Weather in San Francisco in September 2025
+                url: https://world-weather.info/forecast/usa/san_francisco/september-2025/
+              - content: '... Wednesday, September 17, 2025 ... The Arizona Cardinals quarterback will face the San Francisco
+                  49ers this Sunday in a battle for the West.'
+                score: 0.7171114
+                title: 'The Fantasy Forecast: September skies with Maye weather'
+                url: https://dailycampus.com/2025/09/17/the-fantasy-forecast-september-skies-with-maye-weather/
+              - content: Almanac Logo Wednesday, September 17, 2025 · Almanac.com. Weather · Long-Range; California. Toggle
+                  navigation. Gardening. All Gardening · Planting Calendar
+                score: 0.68571854
+                title: 60-Day Extended Weather Forecast for San Francisco, San ...
+                url: https://www.almanac.com/weather/longrange/CA/San%20Francisco%2C%20San%20Francisco%20County
+              - content: Daytime temperatures usually reach 22°C in San Francisco in September, falling to 13°C at night.
+                  How sunny is it in San Francisco in September? There are
+                score: 0.67988104
+                title: San Francisco weather in September 2025 | California
+                url: https://www.weather2travel.com/california/san-francisco/september/
+              - content: Time, Weather, Temp, Feels, RainRisk, Amount, Cloud, Dir, Speed, Gust, RH, UV. 0:00, 23 °c, 25 °c,
+                  0%, 0.0mm, 0%, 6mph, 24mph, 73%, 0.
+                score: 0.6580885
+                title: Weather Forecast for San Francisco for Wednesday 17 September
+                url: https://www.metcheck.com/WEATHER/dayforecast.asp?location=San%20Francisco&locationID=1628582&lat=-25.23078&lon=-57.57218&dateFor=17/09/2025
+              - content: In general, the average temperature in San Francisco at the beginning of September is 70 °F. As the
+                  month progressed, temperatures tended to moderately fall,
+                score: 0.6533265
+                title: Weather in San Francisco, California for September 2025
+                url: https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september
+              - content: This report shows the past weather for San Francisco, providing a weather history for September 2025.
+                  It features all historical weather data series we have
+                score: 0.5855047
+                title: San Francisco September 2025 Historical Weather Data (California ...
+                url: https://weatherspark.com/h/m/557/2025/9/Historical-Weather-in-September-2025-in-San-Francisco-California-United-States
+              - content: Time, Weather, Temp, Feels, RainRisk, Amount, Cloud, Dir, Speed, Gust, RH, UV. 0:00, 25 °c, 27 °c,
+                  88%, 0.1mm, 0%, 4mph, 19mph, 91%, 0.
+                score: 0.38908273
+                title: Weather Forecast for Batey San Francisco for Wednesday 17 ...
+                url: https://www.metcheck.com/WEATHER/dayforecast.asp?location=Batey%20San%20Francisco&locationID=511664&lat=18.62123&lon=-68.63688&dateFor=17/09/2025
+              - content: Wednesday morning First Alert weather forecast with Jessica Burch - 9/17/25. 742 views · 2 hours
+                  ago ...more. KPIX | CBS NEWS BAY AREA. 452K.
+                score: 0.29469728
+                title: Wednesday morning First Alert weather forecast with Jessica Burch
+                url: https://www.youtube.com/watch?v=fzAVNg32R2M
+              - content: Considerable cloudiness. Low 56F. Winds WSW at 10 to 15 mph. Record Low52°.
+                score: 0.28572106
+                title: Monthly Weather Forecast for San Francisco, CA
+                url: https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87
+              - content: San Francisco could be hit with rain and lightning thanks to the remnants of Tropical Storm Mario.
+                score: 0.24180745
+                title: Rain and thunderstorms coming to Bay Area - SFGATE
+                url: https://www.sfgate.com/bayarea/article/thunder-rain-tropical-storm-mario-21053020.php
+            type: search
+          reasoning: "\nTo find the current weather in San Francisco, I will use the search tool to look up this information.\n\n<tool>\nsearch(What
+            is the weather in San Francisco today?)\n</tool>\n<output>Title: Weather in San Francisco\nURL: https://www.weatherapi.com/\nContent:
+            {'location': {'name': 'San Francisco', 'region': 'California', 'country': 'United States of America', 'lat': 37.775,
+            'lon': -122.4183, 'tz_id': 'America/Los_Angeles', 'localtime_epoch': 1758143975, 'localtime': '2025-09-17 14:19'},
+            'current': {'last_updated_epoch': 1758143700, 'last_updated': '2025-09-17 14:15', 'temp_c': 17.0, 'temp_f': 62.6,
+            'is_day': 1, 'condition': {'text': 'Partly cloudy', 'icon': '//cdn.weatherapi.com/weather/64x64/day/116.png',
+            'code': 1003}, 'wind_mph': 7.8, 'wind_kph': 12.6, 'wind_degree': 264, 'wind_dir': 'W', 'pressure_mb': 1015.0,
+            'pressure_in': 29.96, 'precip_mm': 0.0, 'precip_in': 0.0, 'humidity': 94, 'cloud': 50, 'feelslike_c': 17.0, 'feelslike_f':
+            62.6, 'windchill_c': 17.7, 'windchill_f': 63.9, 'heatindex_c': 17.7, 'heatindex_f': 63.9, 'dewpoint_c': 15.3,
+            'dewpoint_f': 59.6, 'vis_km': 13.0, 'vis_miles': 8.0, 'uv': 6.8, 'gust_mph': 14.4, 'gust_kph': 23.1}}\nScore:
+            0.9842\n\nTitle: Wednesday, September 17, 2025. San Francisco, CA - Weather ...\nURL: https://weathershogun.com/weather/usa/ca/san-francisco/480/september/2025-09-17\nContent:
+            San Francisco, California Weather: Wednesday, September 17, 2025. Day 75°. Night 59°. Precipitation 0 %. Wind
+            8 mph. UV Index (0 - 11+) 11\nScore: 0.9597\n\nTitle: Find cheap flights from Milan (MXP) to San Francisco (SFO)\nURL:
+            https://www.aa.com/en-it/flights-from-milan-to-san-francisco\nContent: Weather in San Francisco. Weather Unit:
+            Weather unit option Celsius Selected ... 17/09/2025. ​. Thursday. overcast clouds. 18°C. 18/09/2025. ​. Friday.
+            few\nScore: 0.9083\n\nTitle: San Francisco weather in September 2025 | Weather25.com\nURL: https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September\nContent:
+            The temperatures in San Francisco in September are comfortable with low of 57°F and and high up to 77°F. There
+            is little to no rain in San Francisco during\nScore: 0.8854\n\nTitle: Bay Area basks in unseasonable heat with
+            thunderstorms and ...\nURL: https://www.cbsnews.com/sanfrancisco/news/bay-area-hot-weather-thunderstorms-fire-danger-dry-lightning/\nContent:
+            Carlos E. Castañeda. September 17, 2025 / 11:20 AM PDT / CBS San Francisco. Wednesday morning First Alert weather
+            forecast with Jessica Burch - 9/17/25\nScore: 0.8625\n\nTitle: Area Forecast Discussion - National Weather Service\nURL:
+            https://forecast.weather.gov/product.php?site=mtr&issuedby=MTR&product=AFD\nContent: 067 FXUS66 KMTR 171648 AFDMTR
+            Area Forecast Discussion National Weather Service San Francisco CA 948 AM PDT Wed Sep 17 2025 ...New UPDATE, FIRE
+            WEATHER.\nScore: 0.8163\n\nTitle: Weather in San Francisco in September 2025\nURL: https://world-weather.info/forecast/usa/san_francisco/september-2025/\nContent:
+            Detailed ⚡ San Francisco Weather Forecast for September 2025 – day/night \U0001F321️ temperatures, precipitations
+            – World-Weather.info.\nScore: 0.7421\n\nTitle: The Fantasy Forecast: September skies with Maye weather\nURL: https://dailycampus.com/2025/09/17/the-fantasy-forecast-september-skies-with-maye-weather/\nContent:
+            ... Wednesday, September 17, 2025 ... The Arizona Cardinals quarterback will face the San Francisco 49ers this
+            Sunday in a battle for the West.\nScore: 0.7171\n\nTitle: 60-Day Extended Weather Forecast for San Francisco,
+            San ...\nURL: https://www.almanac.com/weather/longrange/CA/San%20Francisco%2C%20San%20Francisco%20County\nContent:
+            Almanac Logo Wednesday, September 17, 2025 · Almanac.com. Weather · Long-Range; California. Toggle navigation.
+            Gardening. All Gardening · Planting Calendar\nScore: 0.6857\n\nTitle: San Francisco weather in September 2025
+            | California\nURL: https://www.weather2travel.com/california/san-francisco/september/\nContent: Daytime temperatures
+            usually reach 22°C in San Francisco in September, falling to 13°C at night. How sunny is it in San Francisco in
+            September? There are\nScore: 0.6799\n\nTitle: Weather Forecast for San Francisco for Wednesday 17 September\nURL:
+            https://www.metcheck.com/WEATHER/dayforecast.asp?location=San%20Francisco&locationID=1628582&lat=-25.23078&lon=-57.57218&dateFor=17/09/2025\nContent:
+            Time, Weather, Temp, Feels, RainRisk, Amount, Cloud, Dir, Speed, Gust, RH, UV. 0:00, 23 °c, 25 °c, 0%, 0.0mm,
+            0%, 6mph, 24mph, 73%, 0.\nScore: 0.6581\n\nTitle: Weather in San Francisco, California for September 2025\nURL:
+            https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september\nContent:
+            In general, the average temperature in San Francisco at the beginning of September is 70 °F. As the month progressed,
+            temperatures tended to moderately fall,\nScore: 0.6533\n\nTitle: San Francisco September 2025 Historical Weather
+            Data (California ...\nURL: https://weatherspark.com/h/m/557/2025/9/Historical-Weather-in-September-2025-in-San-Francisco-California-United-States\nContent:
+            This report shows the past weather for San Francisco, providing a weather history for September 2025. It features
+            all historical weather data series we have\nScore: 0.5855\n\nTitle: Weather Forecast for Batey San Francisco for
+            Wednesday 17 ...\nURL: https://www.metcheck.com/WEATHER/dayforecast.asp?location=Batey%20San%20Francisco&locationID=511664&lat=18.62123&lon=-68.63688&dateFor=17/09/2025\nContent:
+            Time, Weather, Temp, Feels, RainRisk, Amount, Cloud, Dir, Speed, Gust, RH, UV. 0:00, 25 °c, 27 °c, 88%, 0.1mm,
+            0%, 4mph, 19mph, 91%, 0.\nScore: 0.3891\n\nTitle: Wednesday morning First Alert weather forecast with Jessica
+            Burch\nURL: https://www.youtube.com/watch?v=fzAVNg32R2M\nContent: Wednesday morning First Alert weather forecast
+            with Jessica Burch - 9/17/25. 742 views · 2 hours ago ...more. KPIX | CBS NEWS BAY AREA. 452K.\nScore: 0.2947\n\nTitle:
+            Monthly Weather Forecast for San Francisco, CA\nURL: https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87\nContent:
+            Considerable cloudiness. Low 56F. Winds WSW at 10 to 15 mph. Record Low52°.\nScore: 0.2857\n\nTitle: Rain and
+            thunderstorms coming to Bay Area - SFGATE\nURL: https://www.sfgate.com/bayarea/article/thunder-rain-tropical-storm-mario-21053020.php\nContent:
+            San Francisco could be hit with rain and lightning thanks to the remnants of Tropical Storm Mario.\nScore: 0.2418\n\n</output>\n\n\nBased
+            on the search results, the current weather in San Francisco is partly cloudy with a temperature of 17°C (62.6°F).
+            \n\nThe weather in San Francisco today is partly cloudy with a high of 17°C (62.6°F)."
+          role: assistant
+      created: 1758143653
+      id: stub
+      model: groq/compound
+      object: chat.completion
+      service_tier: on_demand
+      usage:
+        completion_time: 1.047857
+        completion_tokens: 387
+        prompt_time: 0.323124
+        prompt_tokens: 5296
+        queue_time: 0.22001
+        total_time: 1.370978
+        total_tokens: 5683
+      usage_breakdown:
+        models:
+        - model: llama-3.3-70b-versatile
+          usage:
+            completion_time: 0.008405714
+            completion_tokens: 4
+            prompt_time: 0.044897735
+            prompt_tokens: 138
+            queue_time: 0.058984649
+            total_time: 0.053303449
+            total_tokens: 142
+        - model: meta-llama/llama-4-scout-17b-16e-instruct
+          usage:
+            completion_time: 0.290415658
+            completion_tokens: 106
+            prompt_time: 0.014458645
+            prompt_tokens: 495
+            queue_time: 0.079786511
+            total_time: 0.304874303
+            total_tokens: 601
+        - model: meta-llama/llama-4-scout-17b-16e-instruct
+          usage:
+            completion_time: 0.12481859
+            completion_tokens: 55
+            prompt_time: 0.072430557
+            prompt_tokens: 2378
+            queue_time: 0.057718134
+            total_time: 0.197249147
+            total_tokens: 2433
+        - model: llama-3.3-70b-versatile
+          usage:
+            completion_time: 0.624216255
+            completion_tokens: 222
+            prompt_time: 0.19133571
+            prompt_tokens: 2285
+            queue_time: 0.023520178
+            total_time: 0.815551965
+            total_tokens: 2507
+      x_groq:
+        id: stub
+    status:
+      code: 200
+      message: OK
+version: 1

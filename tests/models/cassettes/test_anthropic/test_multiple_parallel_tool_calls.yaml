@@ -1,0 +1,222 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '778'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Alice, Bob, Charlie and Daisy are a family. Who is the youngest?
+          type: text
+        role: user
+      model: claude-haiku-4-5
+      stream: false
+      system: "\n    Use the `retrieve_entity_info` tool to get information about a specific person.\n    If you need to use
+        `retrieve_entity_info` to get information about multiple people, try\n    to call them in parallel as much as possible.\n
+        \   Think step by step and then provide a single most probable concise answer.\n    "
+      tool_choice:
+        type: auto
+      tools:
+      - description: Get the knowledge about the given entity.
+        input_schema:
+          additionalProperties: false
+          properties:
+            name:
+              type: string
+          required:
+          - name
+          type: object
+        name: retrieve_entity_info
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1015'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll help you find out who is the youngest by retrieving information about each family member. I'll retrieve
+          their entity information to compare their ages.
+        type: text
+      - id: toolu_0167cfEnoQaPviGdVXA95zcu
+        input:
+          name: Alice
+        name: retrieve_entity_info
+        type: tool_use
+      - id: toolu_01EEe2V5HD1Ac4rKiUR4HD2T
+        input:
+          name: Bob
+        name: retrieve_entity_info
+        type: tool_use
+      - id: toolu_01XFyAjstT3966qvRynZyVPo
+        input:
+          name: Charlie
+        name: retrieve_entity_info
+        type: tool_use
+      - id: toolu_013mnQZbgtK2oe3Mo3XKJsx3
+        input:
+          name: Daisy
+        name: retrieve_entity_info
+        type: tool_use
+      id: msg_011S3wxtqL5CVescWqS3zeg2
+      model: claude-haiku-4-5-20251001
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 423
+        output_tokens: 202
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1988'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Alice, Bob, Charlie and Daisy are a family. Who is the youngest?
+          type: text
+        role: user
+      - content:
+        - text: I'll help you find out who is the youngest by retrieving information about each family member. I'll retrieve
+            their entity information to compare their ages.
+          type: text
+        - id: toolu_0167cfEnoQaPviGdVXA95zcu
+          input:
+            name: Alice
+          name: retrieve_entity_info
+          type: tool_use
+        - id: toolu_01EEe2V5HD1Ac4rKiUR4HD2T
+          input:
+            name: Bob
+          name: retrieve_entity_info
+          type: tool_use
+        - id: toolu_01XFyAjstT3966qvRynZyVPo
+          input:
+            name: Charlie
+          name: retrieve_entity_info
+          type: tool_use
+        - id: toolu_013mnQZbgtK2oe3Mo3XKJsx3
+          input:
+            name: Daisy
+          name: retrieve_entity_info
+          type: tool_use
+        role: assistant
+      - content:
+        - content: alice is bob's wife
+          is_error: false
+          tool_use_id: toolu_0167cfEnoQaPviGdVXA95zcu
+          type: tool_result
+        - content: bob is alice's husband
+          is_error: false
+          tool_use_id: toolu_01EEe2V5HD1Ac4rKiUR4HD2T
+          type: tool_result
+        - content: charlie is alice's son
+          is_error: false
+          tool_use_id: toolu_01XFyAjstT3966qvRynZyVPo
+          type: tool_result
+        - content: daisy is bob's daughter and charlie's younger sister
+          is_error: false
+          tool_use_id: toolu_013mnQZbgtK2oe3Mo3XKJsx3
+          type: tool_result
+        role: user
+      model: claude-haiku-4-5
+      stream: false
+      system: "\n    Use the `retrieve_entity_info` tool to get information about a specific person.\n    If you need to use
+        `retrieve_entity_info` to get information about multiple people, try\n    to call them in parallel as much as possible.\n
+        \   Think step by step and then provide a single most probable concise answer.\n    "
+      tool_choice:
+        type: auto
+      tools:
+      - description: Get the knowledge about the given entity.
+        input_schema:
+          additionalProperties: false
+          properties:
+            name:
+              type: string
+          required:
+          - name
+          type: object
+        name: retrieve_entity_info
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '751'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          Based on the retrieved information, we can see the family relationships:
+          - Alice and Bob are married
+          - Charlie is their son
+          - Daisy is their daughter and Charlie's younger sister
+
+          Therefore, Daisy is the youngest in the family. She is described as Charlie's younger sister, which indicates she is the youngest among the four family members.
+        type: text
+      id: msg_01JVqZPgDwmnyb2kKC3MwCVf
+      model: claude-haiku-4-5-20251001
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 771
+        output_tokens: 77
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

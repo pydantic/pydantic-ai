@@ -1,0 +1,100 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '102'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the capital of France?
+        role: user
+      model: gpt-4o
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1385'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1304'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1757604033
+      error: null
+      id: resp_68c2e8c147ac819491bcd667055eadbc02e845978fbbb592
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: The capital of France is Paris.
+          type: output_text
+        id: msg_68c2e8c26114819489dae5b59fceb7bf02e845978fbbb592
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 14
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 8
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 22
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

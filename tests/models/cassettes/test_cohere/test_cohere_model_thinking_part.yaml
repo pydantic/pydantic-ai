@@ -1,0 +1,301 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '192'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: How do I cross the street?
+        role: user
+      model: o3-mini
+      reasoning:
+        effort: high
+        summary: detailed
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '5958'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '27304'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1757110037
+      error: null
+      id: resp_68bb5f153efc81a2b3958ddb1f257ff30886f4f20524f3b9
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: o3-mini-2025-01-31
+      object: response
+      output:
+      - encrypted_content: gAAAAABou18w-tnw3PeRaIu1LZDyAtTvtsQv1IozIXwqBtTJfITgSk81Gjt11pOYwaNHQ_n9SGf5GoHvOl1Tl44pyO4bwFqyZMook1aE4lCklYVJfdInLFJbNTyu_yf8kO422Mx85-t3F9jJRfQ-SozQyVIqX7TAgK43-ltc8muzsl5hL66fWRLrKsRKex7ROd5a1EkxppflSp42KUaHzlc2Klhy9X-FxbFnB3jaB-mMbwNHblwORj79p1zwExmUBN-mtehe0UYyTlnnNRO6AwblUIhL9YV2TFBeymAQKaI9xcja2lkTNQ0NU_H3U21mGNufMyCA2LzDhspNb1S1a08rm5tfOIX676k0ZyxeTxTQ1mJZbx9YqVjWC0_x69Xw3_jOqX2E9Ipt3NJ0WWK3UkDsg8AL5-NLnsgyEk6OnxtcUpu3nknVPkk=
+        id: rs_68bb5f22b28c81a281be815a6b7c28ac0886f4f20524f3b9
+        summary:
+        - text: |-
+            **Exploring street crossing safety**
+
+            I'll provide a widely recommended list for crossing streets: First, "Stop at the curb," then "Look both ways," followed by "Listen for traffic," and finally, "Think if it's safe to cross." Additionally, I can mention waiting for a gap in traffic if there’s no signal, looking left and right twice at intersections, and avoiding distractions like mobile phones or headphones. It seems clear that asking "How do I cross the street?" is a safe and practical question.
+          type: summary_text
+        - text: "**Providing street crossing safety tips**\n\nIt's likely the user is asking about crossing the street safely,
+            so I'm going to compile clear steps along with a disclaimer that I'm not a safety professional. Here are some
+            general guidelines: \n\n1. Use designated crosswalks or intersections with pedestrian signals whenever possible.
+            \n2. Approach the curb and look for oncoming traffic, avoiding distractions like texting. \n3. Wait for the walk
+            signal if there is one. \n4. Look left, then right, and left again before crossing. \n5. If there are no crosswalks,
+            stop and look both ways before proceeding. \n6. Stay aware of turning vehicles and ensure you’re at a safe distance
+            from the road once across. \n\nAlways prioritize safety and seek advice if unsure about local conditions."
+          type: summary_text
+        - text: |-
+            **Giving street crossing instructions**
+
+            I want to remind the user that I'm not a safety professional, so it's essential to follow local traffic rules. I'll present straightforward instructions to ensure clarity, including an additional note to avoid texting or using a mobile phone while crossing. It’s important to double-check the steps and instructions for accuracy. Overall, I’m focused on providing careful instructions to help everyone cross the street safely.
+          type: summary_text
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            I'm happy to help with some general safety guidelines. However, please note that I'm not a certified traffic safety expert and local laws or conditions can vary. Always follow the rules of your specific area. Here are some general steps for crossing the street safely:
+
+            1. Find a safe place to cross. When possible, use a designated crosswalk or intersection that has pedestrian signals or a marked crossing zone.
+
+            2. Stop at the curb. Before stepping off the curb, pause and eliminate distractions (like your phone or music) so you can fully focus on traffic.
+
+            3. Check for traffic. Look in all directions:
+             • First, look to the left (since traffic typically comes from that direction in many countries).
+             • Then look to the right.
+             • Look to the left again before stepping off.
+            Make sure no vehicles, bicycles, or other moving obstacles are approaching.
+
+            4. Observe any pedestrian signals. If there are traffic lights or a pedestrian walk signal, wait for the “Walk” sign (or green signal) before crossing. Even then, double-check that vehicles are stopping.
+
+            5. Make eye contact. If possible, try to make eye contact with drivers to confirm that they’ve seen you and are yielding if you're in a crosswalk.
+
+            6. Cross at a steady pace. Once you are sure it’s safe, cross briskly and don’t run. Continue scanning for traffic as you cross.
+
+            7. Remain alert. Even while crossing, be aware of your surroundings; sometimes, vehicles may turn into the street or a distracted driver might not be expecting pedestrians.
+
+            8. If there’s no crosswalk or signal, find the spot with good visibility in both directions and cross only when you’re completely sure no vehicles are coming.
+
+            Remember, these are general recommendations. Always prioritize your safety by adapting your actions to the specific conditions of your surroundings, and consider local guidelines or traffic rules. Stay safe!
+          type: output_text
+        id: msg_68bb5f2f841c81a2ac10a89324b670e70886f4f20524f3b9
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: high
+        summary: detailed
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 13
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 2241
+        output_tokens_details:
+          reasoning_tokens: 1856
+        total_tokens: 2254
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '4035'
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: How do I cross the street?
+        role: user
+      - content:
+        - thinking: "**Exploring street crossing safety**\n\nI'll provide a widely recommended list for crossing streets:
+            First, \"Stop at the curb,\" then \"Look both ways,\" followed by \"Listen for traffic,\" and finally, \"Think
+            if it's safe to cross.\" Additionally, I can mention waiting for a gap in traffic if there’s no signal, looking
+            left and right twice at intersections, and avoiding distractions like mobile phones or headphones. It seems clear
+            that asking \"How do I cross the street?\" is a safe and practical question.\n\n**Providing street crossing safety
+            tips**\n\nIt's likely the user is asking about crossing the street safely, so I'm going to compile clear steps
+            along with a disclaimer that I'm not a safety professional. Here are some general guidelines: \n\n1. Use designated
+            crosswalks or intersections with pedestrian signals whenever possible. \n2. Approach the curb and look for oncoming
+            traffic, avoiding distractions like texting. \n3. Wait for the walk signal if there is one. \n4. Look left, then
+            right, and left again before crossing. \n5. If there are no crosswalks, stop and look both ways before proceeding.
+            \n6. Stay aware of turning vehicles and ensure you’re at a safe distance from the road once across. \n\nAlways
+            prioritize safety and seek advice if unsure about local conditions.\n\n**Giving street crossing instructions**\n\nI
+            want to remind the user that I'm not a safety professional, so it's essential to follow local traffic rules. I'll
+            present straightforward instructions to ensure clarity, including an additional note to avoid texting or using
+            a mobile phone while crossing. It’s important to double-check the steps and instructions for accuracy. Overall,
+            I’m focused on providing careful instructions to help everyone cross the street safely."
+          type: thinking
+        - text: |-
+            I'm happy to help with some general safety guidelines. However, please note that I'm not a certified traffic safety expert and local laws or conditions can vary. Always follow the rules of your specific area. Here are some general steps for crossing the street safely:
+
+            1. Find a safe place to cross. When possible, use a designated crosswalk or intersection that has pedestrian signals or a marked crossing zone.
+
+            2. Stop at the curb. Before stepping off the curb, pause and eliminate distractions (like your phone or music) so you can fully focus on traffic.
+
+            3. Check for traffic. Look in all directions:
+             • First, look to the left (since traffic typically comes from that direction in many countries).
+             • Then look to the right.
+             • Look to the left again before stepping off.
+            Make sure no vehicles, bicycles, or other moving obstacles are approaching.
+
+            4. Observe any pedestrian signals. If there are traffic lights or a pedestrian walk signal, wait for the “Walk” sign (or green signal) before crossing. Even then, double-check that vehicles are stopping.
+
+            5. Make eye contact. If possible, try to make eye contact with drivers to confirm that they’ve seen you and are yielding if you're in a crosswalk.
+
+            6. Cross at a steady pace. Once you are sure it’s safe, cross briskly and don’t run. Continue scanning for traffic as you cross.
+
+            7. Remain alert. Even while crossing, be aware of your surroundings; sometimes, vehicles may turn into the street or a distracted driver might not be expecting pedestrians.
+
+            8. If there’s no crosswalk or signal, find the spot with good visibility in both directions and cross only when you’re completely sure no vehicles are coming.
+
+            Remember, these are general recommendations. Always prioritize your safety by adapting your actions to the specific conditions of your surroundings, and consider local guidelines or traffic rules. Stay safe!
+          type: text
+        role: assistant
+      - content: Considering the way to cross the street, analogously, how do I cross the river?
+        role: user
+      model: command-a-reasoning-08-2025
+      stream: false
+    uri: https://api.cohere.com/v2/chat
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      num_chars:
+      - '10505'
+      num_tokens:
+      - '1092'
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      finish_reason: COMPLETE
+      id: a7a1995c-1980-4683-8382-e8dda3598388
+      message:
+        content:
+        - thinking: |-
+            Okay, the user is asking how to cross a river, using the analogy of crossing the street. Let me start by recalling the key points from the previous response about crossing the street. The main steps were finding a safe place, checking for dangers, using designated paths, staying alert, and following signals.
+
+            Now, applying that analogy to crossing a river. First, "finding a safe place" would translate to choosing a safe crossing point. In street terms, that's a crosswalk; for a river, it might be a bridge, ford, or a spot with shallow water. Next, "checking for dangers" on the street involves looking for traffic. For a river, the dangers could be strong currents, deep water, or obstacles like rocks.
+
+            Using "designated paths" for streets would be like using bridges or established ferries for rivers. Staying alert while crossing a street means watching for cars; in a river, it's monitoring the water conditions and any changes in current or depth. Following signals when crossing a street could analogize to checking weather conditions or water levels before attempting a river crossing, as heavy rain might make the river more dangerous.
+
+            I should also consider the user's possible intent. They might be looking for practical advice on river crossing, perhaps for hiking or survival situations. It's important to emphasize safety and preparation. Maybe include steps like assessing the river's speed and depth, using tools like a walking stick, crossing at an angle if necessary, and avoiding crossing during floods or high water levels.
+
+            I need to structure the response similarly to the street crossing advice, making the analogy clear. Start with choosing a safe point, assessing risks, using established methods (like bridges), staying alert to changes, and preparing for emergencies. Also, add a strong disclaimer about the dangers of river crossing and the importance of local knowledge or professional guidance.
+
+            Wait, should I mention specific techniques like forming a human chain or using a rope for groups? That might be useful. Also, noting the importance of not crossing alone and informing someone of your plans. Emphasizing that rivers can be unpredictable and dangerous, even if they look calm. Including tips on footwear and clothing could be helpful too.
+
+            I need to ensure the advice is practical but also stresses caution. Maybe outline steps similar to the street crossing: 1. Choose a safe crossing point, 2. Assess the river's conditions, 3. Use bridges or ferries when available, 4. Check for hazards, 5. Cross with caution, 6. Be prepared for emergencies. Each step should mirror the street crossing steps but adapted to river-specific dangers.
+
+            Also, consider the environment. Is the river in a wilderness area, a rural setting, or an urban area? The advice might vary slightly, but general principles apply. The key is to make the analogy clear while providing actionable and safe advice for river crossing.
+          type: thinking
+        - text: "Crossing a river safely requires careful planning and awareness of natural hazards, much like crossing a
+            street involves navigating traffic risks. Here's an analogy-based guide, emphasizing safety and preparedness:\n\n###
+            1. **Choose a Safe Crossing Point (Like a Crosswalk)**\n   - **Bridge or Ferry First:** Just as you’d use a crosswalk,
+            prioritize established infrastructure like bridges, ferries, or designated river crossings. These are the \"safest
+            routes.\"\n   - **Assess Natural Fords:** If no bridge exists, look for shallow areas (fords) with slow-moving
+            water, smooth rocks, or gravel beds. Avoid spots with strong currents, deep pools, or obstacles like fallen trees.\n\n###
+            2. **Assess Hazards (Like Checking for Traffic)**\n   - **Current Speed:** Test the flow by tossing a leaf or
+            stick into the water. If it moves faster than a walking pace, avoid crossing.\n   - **Depth and Visibility:**
+            Ensure water is clear and knee-deep or shallower. Murky or fast-rising water (e.g., after rain) is dangerous.\n
+            \  - **Obstacles:** Watch for hidden rocks, submerged logs, or uneven terrain that could cause falls.\n\n### 3.
+            **Prepare Your Approach (Like Waiting for the Walk Signal)**\n   - **Timing Matters:** Cross during low water
+            levels (e.g., midday in mountainous areas where snowmelt peaks later). Avoid crossing during or after heavy rain,
+            as rivers swell rapidly.\n   - **Group Strategy:** If crossing with others, link arms or use a rope for stability,
+            akin to crossing a street as a group.\n\n### 4. **Cross with Caution (Like Staying Alert to Traffic)**\n   - **Angle
+            Upstream:** Walk at a slight angle *into* the current (not directly across) to reduce the force of the water pushing
+            you downstream.\n   - **Use a Stick:** Carry a sturdy walking stick for balance and to probe depth ahead, similar
+            to how you’d stay visible to drivers.\n   - **Slow and Steady:** Move deliberately, testing each step. Avoid rushing,
+            as slippery rocks or sudden drops are common hazards.\n\n### 5. **Emergency Readiness (Like Watching for Turning
+            Vehicles)**\n   - **Turn Back if Unsafe:** If conditions worsen mid-crossing (e.g., rising water or fatigue),
+            retreat immediately. Never hesitate to abort.\n   - **Hypothermia Risk:** Cold water can numb muscles quickly.
+            Wear quick-dry clothing and avoid cotton. If swept away, float on your back with feet pointed downstream.\n\n###
+            6. **Avoid Common Mistakes**\n   - **Never Cross Alone:** Always have a buddy or inform someone of your route,
+            just as you’d avoid isolated streets at night.\n   - **Respect Wildlife:** Be mindful of animals (e.g., snakes,
+            otters) that may inhabit riverbanks.\n\n### Critical Disclaimer:\nRivers are dynamic and unpredictable. What seems
+            safe one day may become hazardous the next. **Always prioritize alternatives like bridges or waiting for safer
+            conditions.** If in doubt, consult local guides or park rangers—just as you’d follow traffic laws. Your safety
+            is paramount. \U0001F30A⚠️"
+          type: text
+        role: assistant
+      usage:
+        billed_units:
+          input_tokens: 431
+          output_tokens: 661
+        tokens:
+          input_tokens: 2190
+          output_tokens: 1257
+    status:
+      code: 200
+      message: OK
+version: 1

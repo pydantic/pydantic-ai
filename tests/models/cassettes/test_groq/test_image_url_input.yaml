@@ -1,0 +1,78 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '304'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - text: What is the name of this fruit?
+          type: text
+        - image_url:
+            url: https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg
+          type: image_url
+        role: user
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      n: 1
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1104'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin, Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: The fruit depicted in the image is a potato. Although commonly mistaken as a vegetable, potatoes are technically
+            fruits because they are the edible, ripened ovary of a flower, containing seeds. However, in culinary and everyday
+            contexts, potatoes are often referred to as a vegetable due to their savory flavor and uses in dishes. The botanical
+            classification of a potato as a fruit comes from its origin as the tuberous part of the Solanum tuberosum plant,
+            which produces flowers and subsequently the potato as a fruit that grows underground.
+          role: assistant
+      created: 1744984065
+      id: chatcmpl-030f80f9-906c-4af2-891f-821c3e50cf6b
+      model: meta-llama/llama-4-scout-17b-16e-instruct
+      object: chat.completion
+      system_fingerprint: fp_37da608fc1
+      usage:
+        completion_time: 0.231505751
+        completion_tokens: 107
+        prompt_time: 0.024721406
+        prompt_tokens: 749
+        queue_time: 0.452863345
+        total_time: 0.256227157
+        total_tokens: 856
+      usage_breakdown:
+        models: null
+      x_groq:
+        id: req_01js4jfgzpfhnv3p1yrbwt4z0v
+    status:
+      code: 200
+      message: OK
+version: 1

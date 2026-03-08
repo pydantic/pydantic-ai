@@ -1,0 +1,58 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '45'
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    method: POST
+    parsed_body:
+      model: embed-v4.0
+      text: Hello, world!
+    uri: https://api.cohere.com/v1/tokenize
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-length:
+      - '109'
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin,Accept-Encoding
+    parsed_body:
+      meta:
+        api_version:
+          version: '1'
+      token_strings:
+      - Hello
+      - ','
+      - ' world'
+      - '!'
+      tokens:
+      - 9707
+      - 11
+      - 1879
+      - 0
+    status:
+      code: 200
+      message: OK
+version: 1

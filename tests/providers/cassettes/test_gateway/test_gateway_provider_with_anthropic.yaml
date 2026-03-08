@@ -1,0 +1,65 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '159'
+      content-type:
+      - application/json
+      host:
+      - localhost:8787
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the capital of France?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+    uri: http://localhost:8787/anthropic/v1/messages?beta=true
+  response:
+    headers:
+      content-length:
+      - '500'
+      content-type:
+      - application/json
+      pydantic-ai-gateway-price-estimate:
+      - 0.0002USD
+      retry-after:
+      - '34'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: The capital of France is Paris.
+        type: text
+      id: msg_015jjU4Q5dqhSc9vyfCdoujx
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 14
+        output_tokens: 10
+        pydantic_ai_gateway:
+          cost_estimate: 0.00019199999999999998
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

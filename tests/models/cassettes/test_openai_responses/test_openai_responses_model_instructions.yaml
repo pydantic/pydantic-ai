@@ -1,0 +1,91 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '148'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the capital of France?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1211'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '596'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1744043517
+      error: null
+      id: resp_67f3fdfd9fa08191a3d5825db81b8df6003bc73febb56d77
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          text: The capital of France is Paris.
+          type: output_text
+        id: msg_67f3fdfe15b881918d7b865e6a5f4fb1003bc73febb56d77
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        generate_summary: null
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools: []
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 24
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 8
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 32
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

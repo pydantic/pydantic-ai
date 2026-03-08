@@ -1,0 +1,279 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '224'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: How do I cross the street?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      thinking:
+        budget_tokens: 1024
+        type: enabled
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '2174'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - signature: Eq8CCkYICxgCKkDdadQOXMzNBqjrNVAKWsgUfg49NpPg026zBGxIIGwEHVCq0JTW/P9fKHjZdjgO8Dyx03YDw6hN0w1HucifXFggEgzoVS5Gogi9nvJSOA8aDDYuCAX4nGGkeHQLayIw+MWbf/TYU4AqT1X89p4S7fe7LOO+B8o24yCHQ8cFK9QK9p5WMj2Y4oBFBfC9uL8ZKpYBDjoKceyqFJA56ewVH73lNY5szTvm52+CVXMZJCb8x0B1bf9LIOsFUoJD6F4gZBdKfMqJgFCcKFR6iZh09pwa0E8lHvEnUeF1A0AJ6z0j8gQd5NxgipxWrF9908qJbMSkVDdg1dT/3Rr0nbGguAYTYdoV4MrVxyk29dSkkjyAAZBMI3p+HOwiaT6GmYq4qVE3kWnSoiEJGAE=
+        thinking: This is a straightforward question about pedestrian safety. I should provide clear, practical advice about
+          crossing the street safely.
+        type: thinking
+      - text: |-
+          Here's how to cross the street safely:
+
+          ## Basic Steps
+
+          1. **Find a safe crossing point**
+             - Use crosswalks, intersections, or pedestrian signals when available
+             - Avoid crossing between parked cars or on curves
+
+          2. **Stop at the curb/edge**
+             - Don't step into the street yet
+
+          3. **Look all directions**
+             - Look left, then right, then left again
+             - Keep looking while you cross
+
+          4. **Listen for traffic**
+             - Remove headphones or lower volume
+             - Listen for engines, horns, or sirens
+
+          5. **Wait for a safe gap**
+             - Make sure cars have stopped or are far enough away
+             - Make eye contact with drivers if possible
+
+          6. **Cross steadily**
+             - Walk, don't run (unless necessary)
+             - Stay alert and keep watching for cars
+             - Stay in the crosswalk if there is one
+
+          ## At Traffic Signals
+          - Press the pedestrian button if there is one
+          - Wait for the "WALK" signal
+          - Still look both ways even with a walk signal
+          - Don't start crossing on a flashing "DON'T WALK"
+
+          **Key point**: Always assume drivers may not see you, so stay alert and make safe choices.
+        type: text
+      id: msg_01TGA8SWcHTTn5674cmicbnJ
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 43
+        output_tokens: 321
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2131'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: How do I cross the street?
+          type: text
+        role: user
+      - content:
+        - signature: Eq8CCkYICxgCKkDdadQOXMzNBqjrNVAKWsgUfg49NpPg026zBGxIIGwEHVCq0JTW/P9fKHjZdjgO8Dyx03YDw6hN0w1HucifXFggEgzoVS5Gogi9nvJSOA8aDDYuCAX4nGGkeHQLayIw+MWbf/TYU4AqT1X89p4S7fe7LOO+B8o24yCHQ8cFK9QK9p5WMj2Y4oBFBfC9uL8ZKpYBDjoKceyqFJA56ewVH73lNY5szTvm52+CVXMZJCb8x0B1bf9LIOsFUoJD6F4gZBdKfMqJgFCcKFR6iZh09pwa0E8lHvEnUeF1A0AJ6z0j8gQd5NxgipxWrF9908qJbMSkVDdg1dT/3Rr0nbGguAYTYdoV4MrVxyk29dSkkjyAAZBMI3p+HOwiaT6GmYq4qVE3kWnSoiEJGAE=
+          thinking: This is a straightforward question about pedestrian safety. I should provide clear, practical advice about
+            crossing the street safely.
+          type: thinking
+        - text: |-
+            Here's how to cross the street safely:
+
+            ## Basic Steps
+
+            1. **Find a safe crossing point**
+               - Use crosswalks, intersections, or pedestrian signals when available
+               - Avoid crossing between parked cars or on curves
+
+            2. **Stop at the curb/edge**
+               - Don't step into the street yet
+
+            3. **Look all directions**
+               - Look left, then right, then left again
+               - Keep looking while you cross
+
+            4. **Listen for traffic**
+               - Remove headphones or lower volume
+               - Listen for engines, horns, or sirens
+
+            5. **Wait for a safe gap**
+               - Make sure cars have stopped or are far enough away
+               - Make eye contact with drivers if possible
+
+            6. **Cross steadily**
+               - Walk, don't run (unless necessary)
+               - Stay alert and keep watching for cars
+               - Stay in the crosswalk if there is one
+
+            ## At Traffic Signals
+            - Press the pedestrian button if there is one
+            - Wait for the "WALK" signal
+            - Still look both ways even with a walk signal
+            - Don't start crossing on a flashing "DON'T WALK"
+
+            **Key point**: Always assume drivers may not see you, so stay alert and make safe choices.
+          type: text
+        role: assistant
+      - content:
+        - text: Considering the way to cross the street, analogously, how do I cross the river?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      thinking:
+        budget_tokens: 1024
+        type: enabled
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '4093'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - signature: EvgHCkYICxgCKkBWep44ZkS8HkPkKt2q7OJir9S1aK8TFXpFjWz4yEEVk+2r0FCXIRwuIJBfrLI+kTWKzAFtjxpM+G+S8Btnle6sEgwSq3W1+WbBYHYolVYaDCbom89zf38EbOe8jCIwKz0NLPNu1XU3I3nREDwVSSBCe/u2C+Ryon6gXHWSWlM7r6M2jMVUNynufqiO9m+jKt8GDH5qCKJRfydyyKcS1muFqazBmHs8L3sUsHzj7s2XkvP+2yA789klS3DrrYj4H1kYbRWpmGlTxkpPAuXUr8u1U02sNS0zqh5HiIEu2LZesOj5l1jw68VXcVBPsYEdkSvarScNKzmDBOiw0vTV9EkoxZ/p/ZvoP4PUYSzFc1oJRPaLDCn7KW/aAsZBbsS55YDwHBXvjrDFFtcd2V04JuavcKi0EwomwCy95e0NAaOrA9aAFizZoG30V9KSiz0XUQ3+8ByxKILXk1qvtaV2HJgYahAuRcOpEoty4+Dqx96KsA4ifPaU0+MRwoVUwGUm+mK75ViBIAQdRFblkHbPHYHpK+P9SjdIb00h6PUH59pPyNFQOMJyav7c6dy2efTmiTdzejLHXjUzVvG2LaDnq7cFM2MpqvxlIxDULVG+N13xOTStjLJ9Siwq/zMPKTZYhbYYYC6INlMxwmvM0xz3ofsZbUVOAHv2Ti9jixmB38wyKaFiS7GkQvaK9r9AYl7b632bnsjexiHMe+HMAwfOiA9d2bfhGYCwnt59uNCPgXRihLqaeemq84tiHjSpXrYAieAHtiwEhh0Zz5/ztFgn9pDko5ZmfUvXW9kcZ/8nthmDJSD0z933gw5gITW5u+4S4ozqkGtQ4lGgHNzXLpAEs1A6lsqh2jC2iAskj4Mc/oihJbmAFT0UQ0uopcExyImY6maqKub7xYUseRiNjd1Y7hq7eLDlrMiOR8DDoUoTEIz1imI+KetpLXJoSorecGkYivZajx9ZY+L/R4VcA6olgJsjSpztEvlNextE8sAcAnwBK5l8+yBxWBflFf96wOcvbxE3xtEfR5+ISy6+A6kcxPkpj/31B0VM9y3EqMcDqKmMCF6r7MpwRzXxkHofWCG49N4SQKDJrRJSMldy/qGvd5TIVDghEK+8AoVhWZXqXl6y9z5NG72fOlXLdh3me1jtqMSBX3q0gxmljqzqii/r4F6Qmmmwl2szfryxwgUWAAPS6yDEWbDyUhQSmc24Q+uHrXhKIPKuDQljCsI2by2pyC8UV4RsEfvNLk0zs5CPR3+1kewb8TVB6S+IpmJHJnBZImkI2vt2IUgvnJb/5D+aezG2mA8O+4qjsnHsbT8Njk92tOI1wxOFSAO19SOEa+DD2bsYAQ==
+        thinking: |-
+          This is an interesting analogy question. The person is asking me to apply the safety principles and general approach from crossing a street to crossing a river. Let me think about the parallel elements:
+
+          Street crossing principles:
+          - Find safe crossing point
+          - Assess conditions
+          - Look for hazards
+          - Use designated crossings when available
+          - Wait for safe conditions
+          - Cross carefully while staying alert
+
+          River crossing would involve similar safety thinking:
+          - Find safe crossing point (bridge, ford, ferry, shallow area)
+          - Assess conditions (water depth, current, weather)
+          - Look for hazards (rocks, debris, cold water, strong current)
+          - Use established crossings when available
+          - Wait for safe conditions (water levels, weather)
+          - Cross carefully while staying alert
+
+          I should provide practical advice for different methods of crossing a river.
+        type: thinking
+      - text: |-
+          # How to Cross a River (Using the Street-Crossing Analogy)
+
+          ## Find a Safe Crossing Point
+          **Like using crosswalks**, look for:
+          - **Bridges** (the safest "crosswalk")
+          - **Ferries or boats** (designated crossing)
+          - **Fords** - marked shallow crossing points
+          - **Stepping stones** in shallow areas
+
+          ## Stop and Assess Conditions
+          **Like stopping at the curb**, evaluate:
+          - Water depth and current speed
+          - Weather conditions
+          - Water temperature
+          - Your swimming ability and fitness
+          - Distance to the other side
+
+          ## Look for Hazards
+          **Like looking both ways for cars**, check for:
+          - Strong currents or rapids
+          - Hidden rocks or drop-offs
+          - Debris in the water
+          - Slippery banks
+          - Cold water (hypothermia risk)
+
+          ## Wait for Safe Conditions
+          **Like waiting for traffic to clear**:
+          - Don't cross during floods or after heavy rain
+          - Avoid crossing in bad weather
+          - Consider water levels (seasonal changes)
+
+          ## Cross Carefully
+          **Like walking across steadily**:
+          - Use bridges when available (safest option)
+          - If wading: use a stick for balance, face upstream, shuffle sideways
+          - Never cross alone if conditions are uncertain
+          - Wear a life jacket if available
+
+          **Key point**: Just as you wouldn't jaywalk across a highway, **don't attempt to cross dangerous rivers**. When in doubt, find a bridge or don't cross.
+        type: text
+      id: msg_016Vg1RgKdfLjsCLybGjd8Xo
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 354
+        output_tokens: 525
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,65 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '169'
+      content-type:
+      - application/json
+      extra-header-key:
+      - Extra-Header-Value
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: hello
+          type: text
+        role: user
+      metadata:
+        user_id: '123'
+      model: claude-haiku-4-5
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '477'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: Hi there! How are you doing today? Is there anything I can help you with?
+        type: text
+      id: msg_01PDYHzNnqSLAXuK8NNtC5MA
+      model: claude-haiku-4-5-20251001
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 8
+        output_tokens: 21
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

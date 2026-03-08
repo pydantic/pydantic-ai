@@ -1,0 +1,70 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '385'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What animal is this?
+          type: text
+        - source:
+            type: url
+            url: https://lh3.googleusercontent.com/proxy/YngsuS8jQJysXxeucAgVBcSgIdwZlSQ-HvsNxGjHS0SrUKXI161bNKh6SOcMsNUGsnxoOrS3AYX--MT4T3S3SoCgSD1xKrtBwwItcgexaX_7W-qHo-VupmYgjjzWO-BuORLp9-pj8Kjr
+          type: image
+        role: user
+      model: claude-haiku-4-5
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '998'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: This is a Great Horned Owl (Bubo virginianus), a large and powerful owl species native to the Americas. The
+          image shows the owl perched on a log or branch, surrounded by soft yellow and green vegetation. The owl has distinctive
+          ear tufts (the "horns"), large yellow eyes, and a mottled gray-brown plumage that provides excellent camouflage
+          in woodland and grassland environments. Great Horned Owls are known for their impressive size, sharp talons, and
+          nocturnal hunting habits. They are formidable predators that can hunt animals as large as skunks, rabbits, and even
+          other birds of prey.
+        type: text
+      id: msg_01GaiWFEWdsvc73B9fnAQ3sS
+      model: claude-haiku-4-5-20251001
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 335
+        output_tokens: 147
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

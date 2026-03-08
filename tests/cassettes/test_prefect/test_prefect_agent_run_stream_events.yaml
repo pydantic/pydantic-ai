@@ -1,0 +1,78 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '144'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of Mexico?
+        role: user
+      model: gpt-4o
+      stream: true
+      stream_options:
+        include_usage: true
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    body:
+      string: |+
+        data: {"id":"chatcmpl-COrTbn1vT5ddb2i6ZlOOM8Q6pOvBa","object":"chat.completion.chunk","created":1760041471,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"GmahJEMIl7nQy4"}
+
+        data: {"id":"chatcmpl-COrTbn1vT5ddb2i6ZlOOM8Q6pOvBa","object":"chat.completion.chunk","created":1760041471,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"content":"The"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"pIfys15QtbIy6"}
+
+        data: {"id":"chatcmpl-COrTbn1vT5ddb2i6ZlOOM8Q6pOvBa","object":"chat.completion.chunk","created":1760041471,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"content":" capital"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"vUl7M9hs"}
+
+        data: {"id":"chatcmpl-COrTbn1vT5ddb2i6ZlOOM8Q6pOvBa","object":"chat.completion.chunk","created":1760041471,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"content":" of"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"4esBSFkNdPBkg"}
+
+        data: {"id":"chatcmpl-COrTbn1vT5ddb2i6ZlOOM8Q6pOvBa","object":"chat.completion.chunk","created":1760041471,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"content":" Mexico"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"WswOcLSG4"}
+
+        data: {"id":"chatcmpl-COrTbn1vT5ddb2i6ZlOOM8Q6pOvBa","object":"chat.completion.chunk","created":1760041471,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"content":" is"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"wrbY70akMp6ru"}
+
+        data: {"id":"chatcmpl-COrTbn1vT5ddb2i6ZlOOM8Q6pOvBa","object":"chat.completion.chunk","created":1760041471,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"content":" Mexico"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"17213oGdV"}
+
+        data: {"id":"chatcmpl-COrTbn1vT5ddb2i6ZlOOM8Q6pOvBa","object":"chat.completion.chunk","created":1760041471,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"content":" City"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"XEAeN8ajbAt"}
+
+        data: {"id":"chatcmpl-COrTbn1vT5ddb2i6ZlOOM8Q6pOvBa","object":"chat.completion.chunk","created":1760041471,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{"content":"."},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"CBIatQSGHvp1Ckv"}
+
+        data: {"id":"chatcmpl-COrTbn1vT5ddb2i6ZlOOM8Q6pOvBa","object":"chat.completion.chunk","created":1760041471,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}],"usage":null,"obfuscation":"yu1bsKEkrP"}
+
+        data: {"id":"chatcmpl-COrTbn1vT5ddb2i6ZlOOM8Q6pOvBa","object":"chat.completion.chunk","created":1760041471,"model":"gpt-4o-2024-08-06","service_tier":"default","system_fingerprint":"fp_cbf1785567","choices":[],"usage":{"prompt_tokens":14,"completion_tokens":8,"total_tokens":22,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":""}
+
+        data: [DONE]
+
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      openai-organization:
+      - user-xgcwoiiqpw3hpu7oxktn2g9g
+      openai-processing-ms:
+      - '275'
+      openai-project:
+      - proj_nKlzMl1B51a3SCL1Rndf7JTx
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

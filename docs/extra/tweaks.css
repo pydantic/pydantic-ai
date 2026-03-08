@@ -1,0 +1,81 @@
+/* Revert hue value to that of pre mkdocs-material v9.4.0 */
+[data-md-color-scheme="slate"] {
+  --md-hue: 230;
+  --md-default-bg-color: hsla(230, 15%, 21%, 1);
+}
+
+.hide {
+  display: none;
+}
+
+.text-center {
+  text-align: center;
+}
+
+img.index-header {
+  width: 70%;
+  max-width: 500px;
+}
+
+.pydantic-pink {
+  color: #FF007F;
+}
+
+.team-blue {
+  color: #0072CE;
+}
+
+.secure-green {
+  color: #00A86B;
+}
+
+.shapes-orange {
+  color: #FF7F32;
+}
+
+.puzzle-purple {
+  color: #652D90;
+}
+
+.wheel-gray {
+  color: #6E6E6E;
+}
+
+.vertical-middle {
+  vertical-align: middle;
+}
+
+.text-emphasis {
+  font-size: 1rem;
+  font-weight: 300;
+  font-style: italic;
+}
+
+.filename a:hover {
+  text-decoration: underline;
+}
+
+#version-notice {
+  margin-bottom: 10px;
+}
+
+.mermaid {
+  text-align: center;
+}
+
+.md-search__input::-webkit-search-decoration,
+.md-search__input::-webkit-search-cancel-button,
+.md-search__input::-webkit-search-results-button,
+.md-search__input::-webkit-search-results-decoration {
+  -webkit-appearance:none;
+}
+
+.md-search-result__article {
+  padding-bottom: .55em;
+}
+
+.ais-SearchBox-form {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+}

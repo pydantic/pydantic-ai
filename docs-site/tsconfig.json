@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "es2021",
+    "module": "es2022",
+    "lib": ["es2021"],
+    "moduleResolution": "Bundler",
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true,
+    "skipLibCheck": true,
+
+    "types": ["@cloudflare/workers-types", "./worker-configuration.d.ts"]
+  },
+  "include": ["src"]
+}

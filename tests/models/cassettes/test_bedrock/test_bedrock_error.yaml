@@ -1,0 +1,31 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "hello"}]}], "system": [], "inferenceConfig": {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZWIzNTA0MWYtOTNhZi00YTFmLTk3YjEtMzE0MTFiNjA4ZjU5
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '101'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.does-not-exist-model-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '55'
+      content-type:
+      - application/json
+    parsed_body:
+      message: The provided model identifier is invalid.
+    status:
+      code: 400
+      message: Bad Request
+version: 1

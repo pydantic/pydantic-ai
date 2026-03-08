@@ -1,0 +1,345 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '1882'
+        content-type:
+          - application/json
+        host:
+          - api.openai.com
+      method: POST
+      parsed_body:
+        messages:
+          - content: Get me the product name
+            role: user
+        model: gpt-4o
+        n: 1
+        stream: false
+        tool_choice: auto
+        tools:
+          - function:
+              description:
+                "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
+                \       Temperature in Fahrenheit\n    "
+              name: celsius_to_fahrenheit
+              parameters:
+                properties:
+                  celsius:
+                    type: number
+                required:
+                  - celsius
+                type: object
+            type: function
+          - function:
+              description:
+                "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
+                forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+              name: get_weather_forecast
+              parameters:
+                properties:
+                  location:
+                    type: string
+                required:
+                  - location
+                type: object
+            type: function
+          - function:
+              description: ''
+              name: get_image_resource
+              parameters:
+                properties: {}
+                type: object
+            type: function
+          - function:
+              description: ''
+              name: get_product_name
+              parameters:
+                properties: {}
+                type: object
+            type: function
+          - function:
+              description: ''
+              name: get_image
+              parameters:
+                properties: {}
+                type: object
+            type: function
+          - function:
+              description: ''
+              name: get_dict
+              parameters:
+                properties: {}
+                type: object
+            type: function
+          - function:
+              description: ''
+              name: get_error
+              parameters:
+                properties:
+                  value:
+                    type: boolean
+                type: object
+            type: function
+          - function:
+              description: ''
+              name: get_none
+              parameters:
+                properties: {}
+                type: object
+            type: function
+          - function:
+              description: ''
+              name: get_multiple_items
+              parameters:
+                properties: {}
+                type: object
+            type: function
+          - function:
+              description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+              name: get_log_level
+              parameters:
+                properties: {}
+                type: object
+            type: function
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      headers:
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        connection:
+          - keep-alive
+        content-length:
+          - '1068'
+        content-type:
+          - application/json
+        openai-organization:
+          - pydantic-28gund
+        openai-processing-ms:
+          - '3650'
+        openai-version:
+          - '2020-10-01'
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+      parsed_body:
+        choices:
+          - finish_reason: tool_calls
+            index: 0
+            logprobs: null
+            message:
+              annotations: []
+              content: null
+              refusal: null
+              role: assistant
+              tool_calls:
+                - function:
+                    arguments: '{}'
+                    name: get_product_name
+                  id: call_LaiWltzI39sdquflqeuF0EyE
+                  type: function
+        created: 1745961790
+        id: chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo
+        model: gpt-4o-2024-08-06
+        object: chat.completion
+        service_tier: default
+        system_fingerprint: fp_f5bdcc3276
+        usage:
+          completion_tokens: 12
+          completion_tokens_details:
+            accepted_prediction_tokens: 0
+            audio_tokens: 0
+            reasoning_tokens: 0
+            rejected_prediction_tokens: 0
+          prompt_tokens: 200
+          prompt_tokens_details:
+            audio_tokens: 0
+            cached_tokens: 0
+          total_tokens: 212
+      status:
+        code: 200
+        message: OK
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '2117'
+        content-type:
+          - application/json
+        cookie:
+          - __cf_bm=LCwj6B2rTuTfMe.JFAULcM1w5d9_bQkgyyDVrYXlFWQ-1745961790-1.0.1.1-rLSFIG9L0nbQaHsDaUAe231glaNUGZIodlFyJvNpkdF95kQD8prfC.uNV9.d2ymwvSDsmdB57U6u9ShNfBes9Ev8kn6eYDTHyGzxCeAhZ_o;
+            _cfuvid=eK9nRUfAL4vFjm9wuH.RIQX41iZHZ8h1LCjqR.nSQzA-1745961790721-0.0.1.1-604800000
+        host:
+          - api.openai.com
+      method: POST
+      parsed_body:
+        messages:
+          - content: Get me the product name
+            role: user
+          - role: assistant
+            tool_calls:
+              - function:
+                  arguments: '{}'
+                  name: get_product_name
+                id: call_LaiWltzI39sdquflqeuF0EyE
+                type: function
+          - content: Pydantic AI
+            role: tool
+            tool_call_id: call_LaiWltzI39sdquflqeuF0EyE
+        model: gpt-4o
+        n: 1
+        stream: false
+        tool_choice: auto
+        tools:
+          - function:
+              description:
+                "Convert Celsius to Fahrenheit.\n\n    Args:\n        celsius: Temperature in Celsius\n\n    Returns:\n
+                \       Temperature in Fahrenheit\n    "
+              name: celsius_to_fahrenheit
+              parameters:
+                properties:
+                  celsius:
+                    type: number
+                required:
+                  - celsius
+                type: object
+            type: function
+          - function:
+              description:
+                "Get the weather forecast for a location.\n\n    Args:\n        location: The location to get the weather
+                forecast for.\n\n    Returns:\n        The weather forecast for the location.\n    "
+              name: get_weather_forecast
+              parameters:
+                properties:
+                  location:
+                    type: string
+                required:
+                  - location
+                type: object
+            type: function
+          - function:
+              description: ''
+              name: get_image_resource
+              parameters:
+                properties: {}
+                type: object
+            type: function
+          - function:
+              description: ''
+              name: get_product_name
+              parameters:
+                properties: {}
+                type: object
+            type: function
+          - function:
+              description: ''
+              name: get_image
+              parameters:
+                properties: {}
+                type: object
+            type: function
+          - function:
+              description: ''
+              name: get_dict
+              parameters:
+                properties: {}
+                type: object
+            type: function
+          - function:
+              description: ''
+              name: get_error
+              parameters:
+                properties:
+                  value:
+                    type: boolean
+                type: object
+            type: function
+          - function:
+              description: ''
+              name: get_none
+              parameters:
+                properties: {}
+                type: object
+            type: function
+          - function:
+              description: ''
+              name: get_multiple_items
+              parameters:
+                properties: {}
+                type: object
+            type: function
+          - function:
+              description: "Get the current log level.\n\n    Returns:\n        The current log level.\n    "
+              name: get_log_level
+              parameters:
+                properties: {}
+                type: object
+            type: function
+      uri: https://api.openai.com/v1/chat/completions
+    response:
+      headers:
+        access-control-expose-headers:
+          - X-Request-ID
+        alt-svc:
+          - h3=":443"; ma=86400
+        connection:
+          - keep-alive
+        content-length:
+          - '839'
+        content-type:
+          - application/json
+        openai-organization:
+          - pydantic-28gund
+        openai-processing-ms:
+          - '631'
+        openai-version:
+          - '2020-10-01'
+        strict-transport-security:
+          - max-age=31536000; includeSubDomains; preload
+        transfer-encoding:
+          - chunked
+      parsed_body:
+        choices:
+          - finish_reason: stop
+            index: 0
+            logprobs: null
+            message:
+              annotations: []
+              content: The product name is "Pydantic AI".
+              refusal: null
+              role: assistant
+        created: 1745961791
+        id: chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR
+        model: gpt-4o-2024-08-06
+        object: chat.completion
+        service_tier: default
+        system_fingerprint: fp_f5bdcc3276
+        usage:
+          completion_tokens: 12
+          completion_tokens_details:
+            accepted_prediction_tokens: 0
+            audio_tokens: 0
+            reasoning_tokens: 0
+            rejected_prediction_tokens: 0
+          prompt_tokens: 224
+          prompt_tokens_details:
+            audio_tokens: 0
+            cached_tokens: 0
+          total_tokens: 236
+      status:
+        code: 200
+        message: OK
+version: 1

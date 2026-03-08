@@ -1,0 +1,167 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '710'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: |-
+            Always respond with a JSON object that's compatible with this schema:
+
+            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+            Don't include any text or Markdown fencing before or after.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_user_country
+          parameters:
+            properties: {}
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '639'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=4253
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_user_country
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: models/gemini-2.5-pro
+      responseId: Q1teaJ7SLqejkdUPp_2_qQY
+      usageMetadata:
+        candidatesTokenCount: 12
+        promptTokenCount: 123
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 123
+        thoughtsTokenCount: 132
+        totalTokenCount: 267
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1019'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_091a167f1bfb4ed0ac689961ea5c264a
+            name: get_user_country
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_091a167f1bfb4ed0ac689961ea5c264a
+            name: get_user_country
+            response:
+              return_value: Mexico
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: |-
+            Always respond with a JSON object that's compatible with this schema:
+
+            {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+            Don't include any text or Markdown fencing before or after.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_user_country
+          parameters:
+            properties: {}
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-05-06:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '603'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=3536
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: '{"city": "Mexico City", "country": "Mexico"}'
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: models/gemini-2.5-pro
+      responseId: R1teaJezFJzqkdUPtrjmqQY
+      usageMetadata:
+        candidatesTokenCount: 13
+        promptTokenCount: 154
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 154
+        thoughtsTokenCount: 153
+        totalTokenCount: 320
+    status:
+      code: 200
+      message: OK
+version: 1
