@@ -653,6 +653,7 @@ class CachePoint:
 
     - Anthropic
     - Amazon Bedrock (Converse API)
+    - OpenRouter (for Anthropic and Gemini models)
     """
 
     kind: Literal['cache-point'] = 'cache-point'

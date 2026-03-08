@@ -979,7 +979,9 @@ async def test_openrouter_cache_point() -> None:
 
 
 async def test_openrouter_cache_point_at_start() -> None:
-    """Test that CachePoint at the start of content (no preceding block) is silently ignored."""
+    """Test that CachePoint at the start of content raises UserError."""
+    from pydantic_ai.exceptions import UserError
+
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('anthropic/claude-haiku-4.5', provider=provider)
 
@@ -996,13 +998,8 @@ async def test_openrouter_cache_point_at_start() -> None:
         )
     ]
 
-    mapped_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
-    content = mapped_messages[0].get('content')
-    assert content is not None
-    assert isinstance(content, list)
-
-    assert len(content) == 1
-    assert content[0] == {'type': 'text', 'text': 'This is the question.'}
+    with pytest.raises(UserError, match='CachePoint cannot be the first content in a user message'):
+        await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_openrouter_cache_point_string_content() -> None:

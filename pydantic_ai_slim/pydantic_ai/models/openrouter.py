@@ -8,7 +8,7 @@ from pydantic import BaseModel, Discriminator
 from typing_extensions import TypedDict, assert_never, override
 
 from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
-from ..exceptions import ModelHTTPError
+from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
     CachePoint,
@@ -688,10 +688,14 @@ class OpenRouterModel(OpenAIChatModel):
             content = []
             for item in part.content:
                 if isinstance(item, CachePoint):
-                    if content:
-                        # OpenRouter extends OpenAI's content part format with cache_control,
-                        # which isn't in the OpenAI SDK types. At runtime, the SDK accepts it.
-                        cast(dict[str, Any], content[-1])['cache_control'] = {'type': 'ephemeral'}
+                    if not content:
+                        raise UserError(
+                            'CachePoint cannot be the first content in a user message - '
+                            'there must be previous content to attach the CachePoint to.'
+                        )
+                    # OpenRouter extends OpenAI's content part format with cache_control,
+                    # which isn't in the OpenAI SDK types. At runtime, the SDK accepts it.
+                    cast(dict[str, Any], content[-1])['cache_control'] = {'type': 'ephemeral'}
                 else:
                     mapped_item = await self._map_content_item(item)
                     if mapped_item is not None:
