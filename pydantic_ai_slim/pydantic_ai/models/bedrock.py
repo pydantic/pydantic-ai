@@ -1166,9 +1166,10 @@ class BedrockStreamedResponse(StreamedResponse):
                             yield event
                     if 'toolUse' in delta:
                         tool_use = delta['toolUse']
+                        tool_name = tool_use.get('name')
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=index,
-                            tool_name=self._restore_tool_name(tool_use.get('name', '')),
+                            tool_name=self._restore_tool_name(tool_name) if tool_name is not None else None,
                             args=tool_use.get('input'),
                             tool_call_id=tool_ids[index],
                         )
