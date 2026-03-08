@@ -132,11 +132,65 @@ The Responses API has built-in tools that you can use instead of building your o
 - [Code interpreter](https://platform.openai.com/docs/guides/tools-code-interpreter): allow models to write and run Python code in a sandboxed environment before generating a response.
 - [Image generation](https://platform.openai.com/docs/guides/tools-image-generation): allow models to generate images based on a text prompt.
 - [File search](https://platform.openai.com/docs/guides/tools-file-search): allow models to search your files for relevant information before generating a response.
+- Hosted shell: allow models to run shell commands in an OpenAI-managed container before generating a response.
 - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use): allow models to use a computer to perform tasks on your behalf.
 
 Web search, Code interpreter, Image generation, and File search are natively supported through the [Built-in tools](../builtin-tools.md) feature.
 
-Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_builtin_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. It doesn't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this built-in tool.
+Hosted shell and computer use can be enabled by passing OpenAI builtin tool params in [`OpenAIResponsesModelSettings.openai_builtin_tools`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_builtin_tools].
+
+#### Hosted shell
+
+OpenAI's hosted shell tool is separate from [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]. `CodeExecutionTool` uses OpenAI's code interpreter integration, while the hosted shell tool lets the model run shell commands directly in an OpenAI-managed container.
+
+When you include a `shell` tool in [`OpenAIResponsesModelSettings.openai_builtin_tools`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_builtin_tools], Pydantic AI maps hosted shell calls into [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] and [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts, including streaming responses and replayed message history.
+
+If the shell tool omits `environment`, Pydantic AI defaults it to `{'type': 'container_auto'}`. You can also mount previously uploaded OpenAI files into that hosted container with [`OpenAIResponsesModelSettings.openai_shell_uploaded_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_uploaded_files].
+
+```python {title="hosted_shell_tool.py" test="skip"}
+import asyncio
+
+from pydantic_ai import Agent, UploadedFile
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+from pydantic_ai.providers.openai import OpenAIProvider
+
+
+async def main():
+    provider = OpenAIProvider()
+    model = OpenAIResponsesModel('gpt-5.2', provider=provider)
+
+    # Upload a file using the provider's client (OpenAI client)
+    with open('report.csv', 'rb') as f:
+        uploaded_file = await provider.client.files.create(file=f, purpose='user_data')
+
+    agent = Agent(model=model)
+    result = await agent.run(
+        'Inspect the mounted CSV in the hosted shell and tell me how many data rows it contains.',
+        model_settings=OpenAIResponsesModelSettings(
+            openai_builtin_tools=[{'type': 'shell'}],
+            openai_shell_uploaded_files=[
+                UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
+            ],
+        ),
+    )
+    print(result.output)
+    #> The CSV has 42 data rows.
+
+
+asyncio.run(main())
+```
+
+!!! note
+
+    [`OpenAIResponsesModelSettings.openai_shell_uploaded_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_uploaded_files] only mounts files into the hosted shell environment. It does not add those files to the user prompt. If you also want the model to inspect the file as input outside the shell, include the same [`UploadedFile`][pydantic_ai.messages.UploadedFile] in the prompt.
+
+!!! note
+
+    Mounted files must be [`UploadedFile`][pydantic_ai.messages.UploadedFile] instances with `provider_name='openai'`. They require exactly one `shell` tool and only work with the hosted `container_auto` environment, not `local` or `container_reference`.
+
+#### Computer use
+
+Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in [`OpenAIResponsesModelSettings.openai_builtin_tools`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_builtin_tools]. It doesn't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this built-in tool.
 
 ```python {title="computer_use_tool.py" test="skip"}
 from openai.types.responses import ComputerToolParam
