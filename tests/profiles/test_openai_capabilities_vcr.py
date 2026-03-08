@@ -291,29 +291,21 @@ async def test_model_capabilities(case: CapabilityCase, openai_client: AsyncOpen
         f'got {profile.openai_supports_reasoning_effort_none}'
     )
 
-
-def test_gpt_5_2_temperature_allowed_by_default():
-    """GPT-5.2 allows temperature by default (reasoning_effort defaults to 'none')."""
-    profile = openai_model_profile('gpt-5.2')
-    assert isinstance(profile, OpenAIModelProfile)
-    settings = OpenAIChatModelSettings(temperature=0.5)
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter('always')
-        _drop_sampling_params_for_reasoning(profile, settings)
-        sampling_warnings = [x for x in w if 'Sampling parameters' in str(x.message)]
-        assert len(sampling_warnings) == 0
-
-    assert settings.get('temperature') == 0.5
-
-
-def test_gpt_5_2_temperature_warns_when_reasoning_enabled():
-    """GPT-5.2 warns and filters temperature when reasoning_effort is set."""
-    profile = openai_model_profile('gpt-5.2')
-    assert isinstance(profile, OpenAIModelProfile)
-    settings = OpenAIChatModelSettings(temperature=0.5, openai_reasoning_effort='medium')
-
-    with pytest.warns(UserWarning, match='Sampling parameters.*temperature.*not supported when reasoning is enabled'):
-        _drop_sampling_params_for_reasoning(profile, settings)
-
-    assert 'temperature' not in settings
+    # Verify _drop_sampling_params_for_reasoning agrees with API ground truth.
+    # Before this branch, we only had unit tests for the warning logic — now we
+    # cross-check that our internal function handles each model the same way the
+    # API actually does (e.g. dropping temperature only for models that reject it).
+    settings: OpenAIChatModelSettings = {'temperature': 0.5}
+    if temperature_result.status == 'error':
+        # API rejects temperature → our function should drop it (with warning)
+        with pytest.warns(UserWarning, match='Sampling parameters'):
+            _drop_sampling_params_for_reasoning(profile, settings)
+        assert 'temperature' not in settings
+    else:
+        # API accepts temperature → our function should keep it (no warning)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            _drop_sampling_params_for_reasoning(profile, settings)
+            sampling_warnings = [x for x in w if 'Sampling parameters' in str(x.message)]
+            assert len(sampling_warnings) == 0
+        assert settings.get('temperature') == 0.5
