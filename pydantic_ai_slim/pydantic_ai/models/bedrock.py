@@ -538,7 +538,9 @@ class BedrockConverseModel(Model):
                     else:
                         items.append(
                             ToolCallPart(
-                                tool_name=self._restore_tool_name(tool_use['name'], sanitized_tool_name_to_original_name),
+                                tool_name=self._restore_tool_name(
+                                    tool_use['name'], sanitized_tool_name_to_original_name
+                                ),
                                 args=tool_use['input'],
                                 tool_call_id=tool_use['toolUseId'],
                             ),
