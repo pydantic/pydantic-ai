@@ -29,6 +29,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.direct import model_request, model_request_stream
+from pydantic_ai.messages import CachePoint
 from pydantic_ai.models import ModelRequestParameters
 
 from .._inline_snapshot import snapshot
@@ -947,3 +948,76 @@ async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrout
     assert 'plugins' in extra_body
     assert extra_body['plugins'] == [{'id': 'web'}]
     assert extra_body['web_search_options'] == {'search_context_size': 'medium'}
+
+
+async def test_openrouter_cache_point() -> None:
+    """Test that CachePoint attaches cache_control to the preceding content block."""
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('anthropic/claude-haiku-4.5', provider=provider)
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'This is cached context.',
+                        CachePoint(),
+                        'This is the question.',
+                    ]
+                )
+            ]
+        )
+    ]
+
+    mapped_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    content = mapped_messages[0].get('content')
+    assert content is not None
+    assert isinstance(content, list)
+
+    assert content[0] == {'type': 'text', 'text': 'This is cached context.', 'cache_control': {'type': 'ephemeral'}}
+    assert content[1] == {'type': 'text', 'text': 'This is the question.'}
+
+
+async def test_openrouter_cache_point_at_start() -> None:
+    """Test that CachePoint at the start of content (no preceding block) is silently ignored."""
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('anthropic/claude-haiku-4.5', provider=provider)
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        CachePoint(),
+                        'This is the question.',
+                    ]
+                )
+            ]
+        )
+    ]
+
+    mapped_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    content = mapped_messages[0].get('content')
+    assert content is not None
+    assert isinstance(content, list)
+
+    assert len(content) == 1
+    assert content[0] == {'type': 'text', 'text': 'This is the question.'}
+
+
+async def test_openrouter_cache_point_string_content() -> None:
+    """Test that plain string content is unaffected by CachePoint support."""
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('anthropic/claude-haiku-4.5', provider=provider)
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content='Just a plain string.')
+            ]
+        )
+    ]
+
+    mapped_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    content = mapped_messages[0].get('content')
+    assert content == 'Just a plain string.'

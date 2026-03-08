@@ -9,7 +9,15 @@ from typing_extensions import TypedDict, assert_never, override
 
 from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelHTTPError
-from ..messages import BinaryContent, FinishReason, ModelResponseStreamEvent, ThinkingPart, VideoUrl
+from ..messages import (
+    BinaryContent,
+    CachePoint,
+    FinishReason,
+    ModelResponseStreamEvent,
+    ThinkingPart,
+    UserPromptPart,
+    VideoUrl,
+)
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
@@ -664,6 +672,31 @@ class OpenRouterModel(OpenAIChatModel):
             ChatCompletionContentPartParam,
             _ChatCompletionContentPartVideoUrlParam(video_url=video_url, type='video_url'),
         )
+
+    @override
+    async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
+        """Map a user prompt part, handling CachePoint for OpenRouter prompt caching.
+
+        OpenRouter supports explicit prompt caching via `cache_control` breakpoints
+        for Anthropic and Gemini models. When a `CachePoint` is encountered, `cache_control`
+        is attached to the preceding content block.
+        """
+        content: str | list[ChatCompletionContentPartParam]
+        if isinstance(part.content, str):
+            content = part.content
+        else:
+            content = []
+            for item in part.content:
+                if isinstance(item, CachePoint):
+                    if content:
+                        # OpenRouter extends OpenAI's content part format with cache_control,
+                        # which isn't in the OpenAI SDK types. At runtime, the SDK accepts it.
+                        cast(dict[str, Any], content[-1])['cache_control'] = {'type': 'ephemeral'}
+                else:
+                    mapped_item = await self._map_content_item(item)
+                    if mapped_item is not None:
+                        content.append(mapped_item)
+        return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
     @override
     def _map_finish_reason(  # type: ignore[reportIncompatibleMethodOverride]
