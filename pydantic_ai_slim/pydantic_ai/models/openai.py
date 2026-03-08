@@ -671,7 +671,7 @@ class OpenAIChatModel(Model):
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk] | ModelResponse:
-        tools = self._get_tools(model_request_parameters)
+        tools = self._get_tools(model_request_parameters, model_settings=model_settings)
         web_search_options = self._get_web_search_options(model_request_parameters)
 
         profile = OpenAIModelProfile.from_profile(self.profile)
@@ -682,7 +682,7 @@ class OpenAIChatModel(Model):
         else:
             tool_choice = 'auto'
 
-        openai_messages = await self._map_messages(messages, model_request_parameters)
+        openai_messages = await self._map_messages(messages, model_request_parameters, model_settings=model_settings)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -922,7 +922,9 @@ class OpenAIChatModel(Model):
             options['continuous_usage_stats'] = True
         return cast(chat.ChatCompletionStreamOptionsParam, options)
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
+    def _get_tools(
+        self, model_request_parameters: ModelRequestParameters, *, model_settings: ModelSettings | None = None
+    ) -> list[chat.ChatCompletionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
@@ -1082,7 +1084,11 @@ class OpenAIChatModel(Model):
         return _CHAT_FINISH_REASON_MAP.get(key)
 
     async def _map_messages(
-        self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
+        self,
+        messages: Sequence[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        *,
+        model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
