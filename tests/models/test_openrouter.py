@@ -1010,13 +1010,7 @@ async def test_openrouter_cache_point_string_content() -> None:
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('anthropic/claude-haiku-4.5', provider=provider)
 
-    messages = [
-        ModelRequest(
-            parts=[
-                UserPromptPart(content='Just a plain string.')
-            ]
-        )
-    ]
+    messages = [ModelRequest(parts=[UserPromptPart(content='Just a plain string.')])]
 
     mapped_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
     content = mapped_messages[0].get('content')
