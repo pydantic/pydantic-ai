@@ -217,12 +217,14 @@ It is recommended to use compaction together with [Referencing earlier responses
 
 ```python
 from pydantic_ai import Agent, HistoryProcessorContext, ModelMessage, ModelRequest
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 
 async def context_aware_processor(ctx: HistoryProcessorContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
     if len(messages) > 4:
         assert isinstance(ctx.model, OpenAIResponsesModel)
+        assert isinstance(ctx.model_request_parameters, ModelRequestParameters)
         compacted_messages = await ctx.model.compact_messages(
             messages[:-1],
             model_settings=ctx.model_settings,
