@@ -1811,6 +1811,7 @@ def test_bedrock_map_tool_call_replaces_empty_tool_name(bedrock_provider: Bedroc
         ToolCallPart(tool_name='', args={'q': 'x'}, tool_call_id='tooluse_123')
     )
 
+    assert 'toolUse' in tool_use
     assert tool_use['toolUse']['name'] == '_'
 
 
