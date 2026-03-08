@@ -60,9 +60,9 @@ class InstrumentationNames:
                 tool_deferral_metadata_attr='pydantic_ai.tool.deferral.metadata',
             )
         else:
-            # Version 3 and 4+ share the same span/attribute names.
-            # The only difference between v3 and v4 is behavioral (gated in _tool_manager.py):
-            # v4 suppresses ERROR status for CallDeferred/ApprovalRequired.
+            # Version 3, 4, and 5 share the same span/attribute names.
+            # The only difference is behavioral (gated in _tool_manager.py):
+            # v5+ suppresses ERROR status for CallDeferred/ApprovalRequired.
             return cls(
                 agent_run_span_name='invoke_agent',
                 agent_name_attr='gen_ai.agent.name',
