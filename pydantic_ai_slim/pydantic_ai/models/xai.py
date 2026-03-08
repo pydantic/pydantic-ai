@@ -185,9 +185,12 @@ class XaiModel(Model):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile(model_name))
+
+    @property
+    def client(self) -> 'AsyncClient':
+        return self._provider.client
 
     @property
     def model_name(self) -> str:

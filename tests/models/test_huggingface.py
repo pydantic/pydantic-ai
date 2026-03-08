@@ -119,6 +119,23 @@ class MockHuggingFace:
         return response
 
 
+def test_huggingface_client_property_reflects_provider_changes():
+    class _SwappableHuggingFaceProvider(HuggingFaceProvider):
+        @HuggingFaceProvider.client.setter
+        def client(self, client: AsyncInferenceClient) -> None:
+            self._client = client
+
+    client_a = cast(AsyncInferenceClient, MockHuggingFace())
+    provider = _SwappableHuggingFaceProvider(provider_name='nebius', api_key='test-key', hf_client=client_a)
+    model = HuggingFaceModel('Qwen/Qwen2.5-72B-Instruct', provider=provider)
+
+    assert model.client is client_a
+
+    client_b = cast(AsyncInferenceClient, MockHuggingFace())
+    provider.client = client_b
+    assert model.client is client_b
+
+
 def get_mock_chat_completion_kwargs(hf_client: AsyncInferenceClient) -> list[dict[str, Any]]:
     if isinstance(hf_client, MockHuggingFace):
         return hf_client.chat_completion_kwargs

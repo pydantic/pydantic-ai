@@ -93,6 +93,23 @@ class MockAsyncClientV2:
         return response
 
 
+def test_cohere_client_property_reflects_provider_changes():
+    class _SwappableCohereProvider(CohereProvider):
+        @CohereProvider.client.setter
+        def client(self, client: AsyncClientV2) -> None:
+            self._client = client
+
+    client_a = MockAsyncClientV2.create_mock(completion_message(AssistantMessageResponse(content=[])))
+    provider = _SwappableCohereProvider(cohere_client=client_a)
+    model = CohereModel('command-r7b-12-2024', provider=provider)
+
+    assert model.client is client_a
+
+    client_b = MockAsyncClientV2.create_mock(completion_message(AssistantMessageResponse(content=[])))
+    provider.client = client_b
+    assert model.client is client_b
+
+
 def completion_message(message: AssistantMessageResponse, *, usage: cohere.Usage | None = None) -> ChatResponse:
     return ChatResponse(
         id='123',
