@@ -81,7 +81,7 @@ HistoryProcessor = (
 )
 """A function that processes a list of model messages and returns a list of model messages.
 
-Can optionally accept a `RunContext` as a parameter.
+Can optionally accept a `HistoryProcessorContext` as a parameter.
 """
 
 
