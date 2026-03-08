@@ -1,0 +1,63 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France? Give me the city name, country,
+      and population."}]}], "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure":
+      {"jsonSchema": {"name": "CityInfo", "schema": "{\"additionalProperties\": false, \"properties\": {\"city\": {\"type\":
+      \"string\"}, \"country\": {\"type\": \"string\"}, \"population\": {\"type\": \"integer\"}}, \"required\": [\"city\",
+      \"country\", \"population\"], \"type\": \"object\"}", "description": "Information about a city."}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NWIzMzc2NjItMGJkMC00OTQ2LTg5N2UtODFjMDc5NDc2ZTY5
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '580'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/minimax.minimax-m2/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1320'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3705
+      output:
+        message:
+          content:
+          - reasoningContent:
+              reasoningText:
+                text: "I need to provide specifics about France's capital city, which is Paris. I'll focus on the city name,
+                  country, and population. The estimated population for Paris is approximately 2.1 million according to INSEE,
+                  while the urban area is around 12 million. The user wants these details in a clear format, so I'll ensure
+                  to list: \n\n- City: Paris \n- Country: France \n- Population (2023 estimate): about 2,102,650 \n\nThis
+                  keeps it concise yet informative.\n\nI need to provide the population as \"2,102,650,\" which represents
+                  the official population since 2021. To clarify, I'll say it's \"Paris proper (commune) population,\" which
+                  is the most commonly cited figure. Although 2,102,650 includes recent numbers, I'll keep it straightforward
+                  so I don't overcrowd the information. The answer will contain just these elements without further distractions.
+                  I might consider mentioning the time of the estimate, but it's not necessary. Let's finalize the details!\n"
+          - text: |-
+              {
+               "city": "Paris",
+               "country": "France",
+               "population": 2102650
+              }
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 40
+        outputTokens: 231
+        serverToolUsage: {}
+        totalTokens: 271
+    status:
+      code: 200
+      message: OK
+version: 1

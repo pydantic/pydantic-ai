@@ -9,8 +9,10 @@ from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
 
@@ -77,6 +79,8 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     cohere_model_profile_mock = mocker.patch(f'{ns}.cohere_model_profile', wraps=cohere_model_profile)
     deepseek_model_profile_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
     amazon_model_profile_mock = mocker.patch(f'{ns}.amazon_model_profile', wraps=amazon_model_profile)
+    qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
+    google_model_profile_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-3-5-sonnet-20240620-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-3-5-sonnet-20240620')
@@ -114,6 +118,16 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
     assert isinstance(mistral_profile, BedrockModelProfile)
     assert mistral_profile.bedrock_tool_result_format == 'json'
+    assert mistral_profile.json_schema_transformer is BedrockJsonSchemaTransformer
+    assert mistral_profile.supports_json_schema_output is False
+    assert mistral_profile.supported_builtin_tools == frozenset()
+
+    mistral_profile = provider.model_profile('mistral.mistral-large-3-675b-instruct')
+    mistral_model_profile_mock.assert_called_with('mistral-large-3-675b-instruct')
+    assert isinstance(mistral_profile, BedrockModelProfile)
+    assert mistral_profile.bedrock_tool_result_format == 'json'
+    assert mistral_profile.json_schema_transformer is BedrockJsonSchemaTransformer
+    assert mistral_profile.supports_json_schema_output is True
     assert mistral_profile.supported_builtin_tools == frozenset()
 
     meta_profile = provider.model_profile('meta.llama3-8b-instruct-v1:0')
@@ -132,6 +146,40 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert deepseek_profile is not None
     assert deepseek_profile.ignore_streamed_leading_whitespace is True
     assert deepseek_profile.supported_builtin_tools == frozenset()
+
+    qwen_profile = provider.model_profile('qwen.qwen3-32b-v1:0')
+    qwen_model_profile_mock.assert_called_with('qwen3-32b')
+    assert isinstance(qwen_profile, BedrockModelProfile)
+    assert qwen_profile.json_schema_transformer is BedrockJsonSchemaTransformer
+    assert qwen_profile.supports_json_schema_output is True
+    assert qwen_profile.supported_builtin_tools == frozenset()
+
+    google_profile = provider.model_profile('google.gemma-3-27b-it')
+    google_model_profile_mock.assert_called_with('gemma-3-27b-it')
+    assert isinstance(google_profile, BedrockModelProfile)
+    assert google_profile.json_schema_transformer is BedrockJsonSchemaTransformer
+    assert google_profile.supports_json_schema_output is True
+    assert google_profile.supported_builtin_tools == frozenset()
+
+    # gemma-3-4b-it is NOT in the structured output supported list
+    google_profile = provider.model_profile('google.gemma-3-4b-it')
+    google_model_profile_mock.assert_called_with('gemma-3-4b-it')
+    assert isinstance(google_profile, BedrockModelProfile)
+    assert google_profile.json_schema_transformer is BedrockJsonSchemaTransformer
+    assert google_profile.supports_json_schema_output is False
+    assert google_profile.supported_builtin_tools == frozenset()
+
+    minimax_profile = provider.model_profile('minimax.minimax-m2')
+    assert isinstance(minimax_profile, BedrockModelProfile)
+    assert minimax_profile.json_schema_transformer is BedrockJsonSchemaTransformer
+    assert minimax_profile.supports_json_schema_output is True
+    assert minimax_profile.supported_builtin_tools == frozenset()
+
+    nvidia_profile = provider.model_profile('nvidia.nemotron-nano-12b-v2')
+    assert isinstance(nvidia_profile, BedrockModelProfile)
+    assert nvidia_profile.json_schema_transformer is BedrockJsonSchemaTransformer
+    assert nvidia_profile.supports_json_schema_output is True
+    assert nvidia_profile.supported_builtin_tools == frozenset()
 
     amazon_profile = provider.model_profile('us.amazon.nova-pro-v1:0')
     amazon_model_profile_mock.assert_called_with('nova-pro')
@@ -206,14 +254,30 @@ def test_latest_bedrock_model_names_geo_prefixes_are_supported():
 
     missing_prefixes: set[str] = set()
 
+    # Known provider prefixes that are not geo prefixes (e.g. 'minimax.minimax-m2.1' has 3 parts
+    # but 'minimax' is a provider, not a geo prefix)
+    known_providers = {
+        'anthropic',
+        'mistral',
+        'cohere',
+        'amazon',
+        'meta',
+        'deepseek',
+        'qwen',
+        'google',
+        'minimax',
+        'nvidia',
+    }
+
     for model_name in model_names:
         # Model names with geo prefixes have 3+ dot-separated parts:
         # - No prefix: "anthropic.claude-xxx" (2 parts)
         # - With prefix: "us.anthropic.claude-xxx" (3 parts)
+        # - Provider with dot in model name: "minimax.minimax-m2.1" (3 parts, not a geo prefix)
         parts = model_name.split('.')
         if len(parts) >= 3:
             geo_prefix = parts[0]
-            if geo_prefix not in BEDROCK_GEO_PREFIXES:  # pragma: no cover
+            if geo_prefix not in BEDROCK_GEO_PREFIXES and geo_prefix not in known_providers:  # pragma: no cover
                 missing_prefixes.add(geo_prefix)
 
     if missing_prefixes:  # pragma: no cover

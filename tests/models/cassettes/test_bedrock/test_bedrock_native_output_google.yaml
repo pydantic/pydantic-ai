@@ -1,0 +1,47 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France? Give me the city name, country,
+      and population."}]}], "system": [], "inferenceConfig": {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure":
+      {"jsonSchema": {"name": "CityInfo", "schema": "{\"additionalProperties\": false, \"properties\": {\"city\": {\"type\":
+      \"string\"}, \"country\": {\"type\": \"string\"}, \"population\": {\"type\": \"integer\"}}, \"required\": [\"city\",
+      \"country\", \"population\"], \"type\": \"object\"}", "description": "Information about a city."}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MzdjMWJkOWMtMTE2NS00N2E3LTk4MDItNDYwYTZiNzBmZDEx
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '580'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/google.gemma-3-27b-it/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '307'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1840
+      output:
+        message:
+          content:
+          - text: "{\n  \"city\": \"Paris\",\n  \"country\": \"France\",\n  \"population\": 2141000 \n}"
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 27
+        outputTokens: 34
+        serverToolUsage: {}
+        totalTokens: 61
+    status:
+      code: 200
+      message: OK
+version: 1
