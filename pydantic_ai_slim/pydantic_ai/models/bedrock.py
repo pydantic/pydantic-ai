@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import re
 import typing
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -951,10 +952,15 @@ class BedrockConverseModel(Model):
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
 
+    _BEDROCK_TOOL_NAME_RE: typing.ClassVar[re.Pattern[str]] = re.compile(r'[^a-zA-Z0-9_-]')
+
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
+        # Sanitize tool name to match Bedrock's [a-zA-Z0-9_-]+ constraint.
+        # Models can hallucinate names with dots/spaces that would crash subsequent API calls.
+        tool_name = BedrockConverseModel._BEDROCK_TOOL_NAME_RE.sub('_', t.tool_name)
         return {
-            'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
+            'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': tool_name, 'input': t.args_as_dict()}
         }
 
     @staticmethod
