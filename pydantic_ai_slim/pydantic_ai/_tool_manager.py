@@ -8,14 +8,14 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic, Literal
 
-from opentelemetry.trace import Tracer
+from opentelemetry.trace import Span, StatusCode, Tracer
 from pydantic import ValidationError
 from typing_extensions import deprecated
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
+from .exceptions import CallDeferred, ApprovalRequired, ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -410,13 +410,25 @@ class ToolManager(Generic[AgentDepsT]):
         with tracer.start_as_current_span(
             instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=span_attributes,
+            record_exception=False,
+            set_status_on_exception=False,
         ) as span:
             try:
                 tool_result = await self._execute_tool_call_impl(validated, usage=usage)
+            except (CallDeferred, ApprovalRequired) as e:
+                # These are control-flow signals, not errors; record them as informational
+                # span attributes rather than error events so they don't show up as red
+                # spans in Logfire / other OTel backends.
+                if span.is_recording():
+                    span.set_attribute('pydantic_ai.tool.deferred', type(e).__name__)
+                raise
             except ToolRetryError as e:
                 part = e.tool_retry
                 if include_content and span.is_recording():
                     span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
+                if span.is_recording():
+                    span.record_exception(e)
+                    span.set_status(StatusCode.ERROR, str(e))
                 raise
 
             if include_content and span.is_recording():
