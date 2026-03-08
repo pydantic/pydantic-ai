@@ -194,6 +194,8 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
         BedrockModelProfile().update(_without_builtin_tools(google_model_profile(model_name))),
         json_schema_transformer=BedrockJsonSchemaTransformer,
         supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+        # Bedrock Converse API doesn't support JSON object mode
+        supports_json_object_output=False,
     )
 
 
