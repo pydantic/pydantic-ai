@@ -638,6 +638,11 @@ class OpenRouterModel(OpenAIChatModel):
         """Whether the downstream provider supports TTL in ``cache_control``."""
         return self._downstream_provider == 'anthropic'
 
+    @property
+    def _supports_tool_cache(self) -> bool:
+        """Whether the downstream provider supports ``cache_control`` on tool definitions."""
+        return self._downstream_provider == 'anthropic'
+
     def _build_cache_control(self, ttl: Literal['5m', '1h'] = '5m') -> dict[str, str]:
         """Build a ``cache_control`` dict for the downstream provider.
 
@@ -707,7 +712,7 @@ class OpenRouterModel(OpenAIChatModel):
             tools
             and model_settings
             and (cache_tool_defs := model_settings.get('openrouter_cache_tool_definitions'))
-            and self._downstream_provider == 'anthropic'
+            and self._supports_tool_cache
         ):
             ttl: Literal['5m', '1h'] = '5m' if cache_tool_defs is True else cache_tool_defs
             last_tool = cast(dict[str, Any], tools[-1])

@@ -588,11 +588,8 @@ async def test_openrouter_cache_instructions_e2e(
     request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     system_msg = next(m for m in request_body['messages'] if m['role'] in ('system', 'developer'))
     content = system_msg['content']
-    if isinstance(content, list):
-        assert 'cache_control' in content[-1]
-    else:
-        # If it was converted from string to list, the whole thing should have cache_control
-        assert isinstance(content, list)
+    assert isinstance(content, list)
+    assert 'cache_control' in content[-1]
 
 
 async def test_openrouter_cache_messages_e2e(
@@ -617,8 +614,8 @@ async def test_openrouter_cache_messages_e2e(
     request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     last_msg = request_body['messages'][-1]
     content = last_msg['content']
-    if isinstance(content, list):
-        assert 'cache_control' in content[-1]
+    assert isinstance(content, list)
+    assert 'cache_control' in content[-1]
 
 
 async def test_openrouter_cache_tool_definitions_e2e(
@@ -806,7 +803,7 @@ async def test_openrouter_cache_all_settings_real_api(allow_model_requests: None
     @agent.tool_plain
     def calculator(expression: str) -> str:  # pragma: no cover
         """Evaluate a math expression."""
-        return str(eval(expression))
+        return 'result'
 
     result1 = await agent.run('What is 123 * 456?')
     usage1 = result1.usage()
