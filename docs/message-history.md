@@ -430,6 +430,23 @@ agent = Agent('openai:gpt-5.2', history_processors=[context_aware_processor])
 
 This allows for more sophisticated message processing based on the current state of the agent run.
 
+#### Track usage
+
+History processors can optionally track usage by additionally returning RunUsage or RequestUsage:
+
+```python {title="context_aware_processor.py"}
+from pydantic_ai import Agent, ModelMessage, RequestUsage
+
+
+def processor_with_usage(
+    messages: list[ModelMessage],
+) -> tuple[list[ModelMessage], RequestUsage]:
+
+    return messages, RequestUsage(input_tokens=10, output_tokens=5)
+
+agent = Agent('openai:gpt-5.2', history_processors=[processor_with_usage])
+```
+
 #### Summarize Old Messages
 
 Use an LLM to summarize older messages to preserve context while reducing tokens.

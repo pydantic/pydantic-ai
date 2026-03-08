@@ -216,12 +216,19 @@ You can use this with a `history_processor`. The last message should always be M
 It is recommended to use compaction together with [Referencing earlier responses](#referencing-earlier-responses) so compaction has access to full conversation state, including reasoning items.
 
 ```python
-from pydantic_ai import Agent, HistoryProcessorContext, ModelMessage, ModelRequest
+from pydantic_ai import (
+    Agent,
+    HistoryProcessorContext,
+    ModelMessage,
+    ModelRequest,
+    RequestUsage,
+    RunUsage,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 
-async def context_aware_processor(ctx: HistoryProcessorContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+async def context_aware_processor(ctx: HistoryProcessorContext[None], messages: list[ModelMessage]) -> tuple[list[ModelMessage], RequestUsage | RunUsage | None]:
     if len(messages) > 4:
         assert isinstance(ctx.model, OpenAIResponsesModel)
         assert isinstance(ctx.model_request_parameters, ModelRequestParameters)
@@ -231,9 +238,9 @@ async def context_aware_processor(ctx: HistoryProcessorContext[None], messages: 
             model_request_parameters=ctx.model_request_parameters
         )
         assert isinstance(messages[-1], ModelRequest)
-        return [compacted_messages, messages[-1]]
+        return [compacted_messages, messages[-1]], compacted_messages.usage
 
-    return messages
+    return messages, None
 
 # Create agent with history processor
 model_settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')

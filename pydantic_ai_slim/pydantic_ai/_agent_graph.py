@@ -65,13 +65,16 @@ EndStrategy = Literal['early', 'exhaustive']
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
-_HistoryProcessorSync = Callable[[list[_messages.ModelMessage]], list[_messages.ModelMessage]]
-_HistoryProcessorAsync = Callable[[list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]]
+_HistoryProcessorResult = (
+    list[_messages.ModelMessage] | tuple[list[_messages.ModelMessage], _usage.RequestUsage | _usage.RunUsage | None]
+)
+_HistoryProcessorSync = Callable[[list[_messages.ModelMessage]], _HistoryProcessorResult]
+_HistoryProcessorAsync = Callable[[list[_messages.ModelMessage]], Awaitable[_HistoryProcessorResult]]
 _HistoryProcessorSyncWithCtx = Callable[
-    [HistoryProcessorContext[DepsT], list[_messages.ModelMessage]], list[_messages.ModelMessage]
+    [HistoryProcessorContext[DepsT], list[_messages.ModelMessage]], _HistoryProcessorResult
 ]
 _HistoryProcessorAsyncWithCtx = Callable[
-    [HistoryProcessorContext[DepsT], list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]
+    [HistoryProcessorContext[DepsT], list[_messages.ModelMessage]], Awaitable[_HistoryProcessorResult]
 ]
 HistoryProcessor = (
     _HistoryProcessorSync
@@ -80,6 +83,11 @@ HistoryProcessor = (
     | _HistoryProcessorAsyncWithCtx[DepsT]
 )
 """A function that processes a list of model messages and returns a list of model messages.
+
+Can return:
+- `list[ModelMessage]` — updated message history
+- `tuple[list[ModelMessage], RunUsage]` — updated history plus usage to accumulate
+- `tuple[list[ModelMessage], None]` — updated history with no usage
 
 Can optionally accept a `HistoryProcessorContext` as a parameter.
 """
@@ -529,9 +537,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         )
 
         original_history = ctx.state.message_history[:]
-        message_history = await _process_message_history(
+        message_history, processor_usage = await _process_message_history(
             original_history, ctx.deps.history_processors, history_processor_context
         )
+        # Add usage from history processors to the total usage
+        ctx.state.usage.incr(processor_usage)
+
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = message_history
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
@@ -1398,23 +1409,33 @@ async def _process_message_history(
     messages: list[_messages.ModelMessage],
     processors: Sequence[HistoryProcessor[DepsT]],
     history_processor_context: HistoryProcessorContext[DepsT],
-) -> list[_messages.ModelMessage]:
+) -> tuple[list[_messages.ModelMessage], _usage.RunUsage]:
     """Process message history through a sequence of processors."""
+    total_processor_usage = _usage.RunUsage()
+
     for processor in processors:
         takes_ctx = is_takes_history_processor_ctx(processor)
 
         if is_async_callable(processor):
             if takes_ctx:
-                messages = await processor(history_processor_context, messages)
+                raw_result = await processor(history_processor_context, messages)
             else:
-                messages = await processor(messages)
+                raw_result = await processor(messages)
         else:
             if takes_ctx:
                 sync_processor_with_ctx = cast(_HistoryProcessorSyncWithCtx[DepsT], processor)
-                messages = await run_in_executor(sync_processor_with_ctx, history_processor_context, messages)
+                raw_result = await run_in_executor(sync_processor_with_ctx, history_processor_context, messages)
             else:
                 sync_processor = cast(_HistoryProcessorSync, processor)
-                messages = await run_in_executor(sync_processor, messages)
+                raw_result = await run_in_executor(sync_processor, messages)
+
+        if isinstance(raw_result, tuple):
+            messages, processor_usage = raw_result
+            if processor_usage:
+                total_processor_usage.incr(processor_usage)
+
+        else:
+            messages = raw_result
 
     if len(messages) == 0:
         raise exceptions.UserError('Processed history cannot be empty.')
@@ -1426,7 +1447,7 @@ async def _process_message_history(
     if messages[-1].timestamp is None:
         messages[-1].timestamp = now_utc()
 
-    return messages
+    return messages, total_processor_usage
 
 
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:

@@ -363,6 +363,78 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
     )
 
 
+async def test_openai_responses_compact_messages_with_usage(allow_model_requests: None, openai_api_key: str):
+    async def context_aware_processor(
+        ctx: HistoryProcessorContext[None], messages: list[ModelMessage]
+    ) -> tuple[list[ModelMessage], RequestUsage | None]:
+        if len(messages) > 4:
+            assert isinstance(ctx.model, OpenAIResponsesModel)
+            assert isinstance(ctx.model_request_parameters, ModelRequestParameters)
+            compacted_messages = await ctx.model.compact_messages(
+                messages[:-1], model_settings=ctx.model_settings, model_request_parameters=ctx.model_request_parameters
+            )
+            return [compacted_messages, messages[-1]], compacted_messages.usage
+
+        return messages, None
+
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model, instructions='You are a helpful math assistant.', history_processors=[context_aware_processor]
+    )
+
+    result = await agent.run("In this conversation, you are tasked ONLY with summing. Let's start: 3, 3?")
+    result = await agent.run('and: 4, 4?', message_history=result.all_messages())
+    result = await agent.run('and: 5, 5?', message_history=result.all_messages())
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    CompactionPart(
+                        id='cmp_05586368b708ee4a0169adcf4d9b68819d84e6c63c83471bcf',
+                        provider_name='openai',
+                        provider_details={
+                            'id': 'cmp_05586368b708ee4a0169adcf4d9b68819d84e6c63c83471bcf',
+                            'encrypted_content': 'gAAAAABprc9P3mX0SN0w7XVnznKfLJ9GSLgscQDwAd6xoLu0QkJb_mjFcjyZwly4fYctVIO1ZzQMI8XGac5vZmqI97qUNy0mloC5_gsvcNoNiWiz8qAwGxazC47s7r46VmfHxq0u8-CsFWQzL7gWWbzAN4fAavyDFZw-3FPnMbgNmOW_XY4ipllYbizgR0ey9AQmrdmneloLAuA8OA5HCSG364YqW_6IQsIHU-rnnQonetEEtzKXT3zH8Dw1sDNTgp1daEYhRw_oMtxhW12lqVjDZvbIWd1DpDlsDQ5OpShqAPBZPoiurerM74a9qJO_hsahW_e9kALg7gfSceBKr7FVuuPnmakQIEv26TwL_iA8cpkjyLtf7Cl9nG0HhQRcszqzcZnY1izPVQi640GpofuX3DZH33q9cBCaDXoxiVTasEN9B7mtjfjxGDrDR-WUVTSc_oA1L3yLcGMmfC1F0IUR7_RHUZY-IXbiUQhS4pErWRaWBvzRtVkbSbiFXO2L18zlVwCUP4EKa0ULgcjgAP18zWvc3QY0Q46LccR9PO_kdUs0aLDCU-60KfFmDvzvNPc_Ju2RsG8grYrjF8B09Eg_BKcQhTNXMfjv1gmVFtXIj3mw_kI74pvBuP2UmTCNgDuOz-uQc7FqNnEv5l3X1-7kGW3WXYQxHZ46NBrhFObLyxGWsbXRyxAVxTRIXLkj-y1ntvSo9u7iobGBkOMMKLnxQ26lqwCUc2Nha-S3HjjmUfB4kIOaPFkp548dYpEkFxyNHpBK2MTWQnFBzc2arCnDS4EBDQqDBqehmFZh1OlZbMytf3D_8z3NrRngTCR0i5GeWKnpbu02D4pnq068Bzn4j0H9T1TLcHDUBTXK81J0nssvTzYx3vKk8QWOhY6s-YyGkeCouJ1pbq3_ica42WUv_jh0ywQVF8k-Ignk0d4v_jQvS6ZtJ1NAjc9b-R3dSlKvNNdBy0Py8GjJL7swnZvbRdb1oIdVtXvt79xa18hsuGMG-M3KH_Anavsa_nAoqvMd--davasC6xzU6X6ug4r4zuQHEoleyAaaStHIuPuKJCWXrkD9P-B0CKB951hs1wHwnpv4Sog4eD3x3OMWeE4PxWdn8-OXjqOFhfMtHJBT_L0lKan6egjrPhl7Z3cq3kBeL1zfhr5hM_hnm4Hj4kCEMpmaa3lMdh54M7MtQNgX7ENJ90gBm4w0I6uirmuOFXlWOtpaFgRo87ShoZ_Zt6cqFNgYNzJB0KhqJdJrHMaWoo6kG6t8wG3xKZfrdgF9D_7CfBvzB49CaiJrIjG9YSuNa8XEc36KmxxxBqzvqUleBw8pI9JuKA-y92lvTys-eNhUtw1KzkBkPdnar-mSB1No6y-4dCYc2DU15KpSRWOoibnrqxNXD5xfNEBxa6f4lDfW3iwkhxpWtLBZiJ8gN46uWFCouCB1dGvZO7x8WaH1tkFeplEWukIwNr0F3htoflL0v57Jy7L6Fc_N-igKMRl26U6H_m35Ul0jaET_JHs9RTRFD_P_LEmAB7FhxKx1oglE121qnjArFPRFiMSIsJQoJTDCguWieiNegm-h41SLNBEFlmiLm7sJauCv6mIr_mOCrie10J7K3hFanOx-NFgq5FtNZV5plB875JDGu3yF47ny5xEdN8YG4BZtICGFxNbV0DjZD3Dcnk8b-zqlDE2NZBO3wsTBhN-lCGxokaIiZmSALg9n6Z2bxSvW8J45ZwHzsn8ewAUxiqtvckoZgTIZziMvKyniIkmmaaeryEewCOxiCdnt0-4QjHdFE9JyZCkP6SkkvKWqt0G_14HnFZH-dP17I9t1NrNzC1KxyVCSgs6ZTrlmYFAY3ceyGPnb76uAwOc8i6IeF_PCnKLQ_O-dWxEPFtILljAgoldt5cP_51OJ-G-uYydIMkY6xWVG7jpmTxAfoo9-7WCPA17SJBU6L4KwSOtZpu6WLKIYrHdDP37nfr0JWGo6h0G7H2-tClhIxZwRH4qStWWBMdZDhN_BREUbWDrz6InYgiJATKZ_2gcl4QpAaZTUc96ZG9Q2RlnmFN0aqIGTTTRTHz__fnXHwtzCctCp40nyxzavlbU6hnYHPSRycnSyDxFAU2RvrNxCVo6xZDdHtii9ME2U4bV0OOh6q1OENzLI4zxK0c_ScocfBeMoYjX6slW5gEcFic8ypfcbP7VtmDgUp_V2cTQ5N5AzX-JDGRJidUNrz-FgcByi5MhXCgHZlJ52BXskre35WN8sW2K1BKG5UX03xOZj0oFjqw26xr_Adqt8kUxy04z71GYoWZyIUY2AhDvuXYVctKtLsf8bgSdd6gPWQKMj37x0bF-eph0lZ96QiaosgIpPnrS9ube1D7-cUUC4dFXQtwL8431cmUp4MfEWVrLVUmAqjK7LIJBrlNfx6eaLay4PXAwmaBpEpCcugPU1MDCllZiq-HWMgrJCliY6_l1ifZqV4q_4kY6Z2E-gHFuzDX9wU0xrN_4=',
+                            'type': 'compaction',
+                            'created_by': None,
+                        },
+                    )
+                ],
+                usage=RequestUsage(input_tokens=154, output_tokens=163, details={'reasoning_tokens': 0}),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_response_id='resp_05586368b708ee4a0169adcf4d1ca4819d96324b5285e33003',
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='and: 5, 5?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful math assistant.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The sum of 5 and 5 is 10.',
+                        id='msg_05586368b708ee4a0069adcf502728819da10c276f642b29ad',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=269, output_tokens=13, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_05586368b708ee4a0069adcf4fad40819d9df3ef1b6467a754',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_openai_responses_compact_messages_with_previous_response_id(
     allow_model_requests: None, openai_api_key: str
 ):
