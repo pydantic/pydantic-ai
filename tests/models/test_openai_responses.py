@@ -113,6 +113,23 @@ def test_openai_responses_model(env: TestEnv):
     assert model.client.api_key == 'test'
 
 
+def test_openai_responses_client_property_reflects_provider_changes():
+    class _SwappableOpenAIProvider(OpenAIProvider):
+        @OpenAIProvider.client.setter
+        def client(self, client: AsyncOpenAI) -> None:
+            self._client = client
+
+    client_a = cast(AsyncOpenAI, MockOpenAIResponses())
+    provider = _SwappableOpenAIProvider(openai_client=client_a)
+    model = OpenAIResponsesModel('gpt-4o', provider=provider)
+
+    assert model.client is client_a
+
+    client_b = cast(AsyncOpenAI, MockOpenAIResponses())
+    provider.client = client_b
+    assert model.client is client_b
+
+
 async def test_openai_responses_model_simple_response(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)

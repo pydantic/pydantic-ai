@@ -137,6 +137,23 @@ def google_provider(gemini_api_key: str) -> GoogleProvider:
     return GoogleProvider(api_key=gemini_api_key)
 
 
+def test_google_client_property_reflects_provider_changes(gemini_api_key: str):
+    class _SwappableGoogleProvider(GoogleProvider):
+        @GoogleProvider.client.setter
+        def client(self, client: Any) -> None:
+            self._client = client
+
+    provider = _SwappableGoogleProvider(api_key=gemini_api_key)
+    model = GoogleModel('gemini-2.5-flash', provider=provider)
+
+    client_a = provider.client
+    assert model.client is client_a
+
+    client_b = GoogleProvider(api_key='test-key').client
+    provider.client = client_b
+    assert model.client is client_b
+
+
 async def test_google_model(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     assert model.base_url == 'https://generativelanguage.googleapis.com/'

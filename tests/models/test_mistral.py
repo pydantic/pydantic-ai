@@ -138,6 +138,23 @@ class MockMistralAI:
         return response
 
 
+def test_mistral_client_property_reflects_provider_changes():
+    class _SwappableMistralProvider(MistralProvider):
+        @MistralProvider.client.setter
+        def client(self, client: Mistral) -> None:
+            self._client = client
+
+    client_a = cast(Mistral, MockMistralAI())
+    provider = _SwappableMistralProvider(mistral_client=client_a)
+    model = MistralModel('mistral-large', provider=provider)
+
+    assert model.client is client_a
+
+    client_b = cast(Mistral, MockMistralAI())
+    provider.client = client_b
+    assert model.client is client_b
+
+
 def completion_message(
     message: MistralAssistantMessage, *, usage: MistralUsageInfo | None = None, with_created: bool = True
 ) -> MistralChatCompletionResponse:
