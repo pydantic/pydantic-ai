@@ -97,8 +97,8 @@ class GroqProvider(Provider[AsyncGroq]):
             'openai/': openai_model_profile,
         }
 
+        model_name_lower = model_name.lower()
         for prefix, profile_func in prefix_to_profile.items():
-            model_name_lower = model_name.lower()
             if model_name_lower.startswith(prefix):
                 # Strip provider prefix (e.g., 'openai/gpt-oss-120b' -> 'gpt-oss-120b')
                 if '/' in model_name_lower:
