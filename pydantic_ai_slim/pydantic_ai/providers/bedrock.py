@@ -14,8 +14,10 @@ from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -119,19 +121,15 @@ class BedrockModelProfile(ModelProfile):
     bedrock_supports_tool_caching: bool = False
 
 
-# Anthropic models that support native structured output on Bedrock.
-# https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-_BEDROCK_ANTHROPIC_STRUCTURED_OUTPUT_MODELS = (
-    'claude-haiku-4-5',
-    'claude-sonnet-4-5',
-    'claude-sonnet-4-6',
-    'claude-opus-4-5',
-    'claude-opus-4-6',
-)
-
-
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
+    models_that_support_json_schema_output = (
+        'claude-haiku-4-5',
+        'claude-sonnet-4-5',
+        'claude-sonnet-4-6',
+        'claude-opus-4-5',
+        'claude-opus-4-6',
+    )
     return replace(
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,
@@ -140,7 +138,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_tool_caching=True,
             json_schema_transformer=BedrockJsonSchemaTransformer,
         ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
-        supports_json_schema_output=model_name.startswith(_BEDROCK_ANTHROPIC_STRUCTURED_OUTPUT_MODELS),
+        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
     )
 
 
@@ -165,6 +163,60 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     if 'r1' in model_name:
         return BedrockModelProfile(bedrock_send_back_thinking_parts=True).update(profile)
     return profile  # pragma: no cover
+
+
+def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Mistral model used via Bedrock."""
+    models_that_support_json_schema_output = ('magistral-small', 'ministral-3', 'mistral-large-3', 'voxtral')
+    return replace(
+        BedrockModelProfile(
+            bedrock_tool_result_format='json',
+        ).update(_without_builtin_tools(mistral_model_profile(model_name))),
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+    )
+
+
+def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Qwen model used via Bedrock."""
+    models_that_support_json_schema_output = ('qwen3',)
+    return replace(
+        BedrockModelProfile().update(_without_builtin_tools(qwen_model_profile(model_name))),
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+    )
+
+
+def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Google model used via Bedrock."""
+    models_that_support_json_schema_output = ('gemma-3-12b-it', 'gemma-3-27b-it')
+    return replace(
+        BedrockModelProfile().update(_without_builtin_tools(google_model_profile(model_name))),
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+    )
+
+
+def bedrock_minimax_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a MiniMax model used via Bedrock."""
+    models_that_support_json_schema_output = ('minimax-m2',)
+    return replace(
+        BedrockModelProfile(),
+        supported_builtin_tools=frozenset(),
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+    )
+
+
+def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an NVIDIA model used via Bedrock."""
+    models_that_support_json_schema_output = ('nemotron-nano',)
+    return replace(
+        BedrockModelProfile(),
+        supported_builtin_tools=frozenset(),
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+        supports_json_schema_output=model_name.startswith(models_that_support_json_schema_output),
+    )
 
 
 # Known geo prefixes for cross-region inference profile IDs
@@ -210,13 +262,15 @@ class BedrockProvider(Provider[BaseClient]):
     def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
             'anthropic': bedrock_anthropic_model_profile,
-            'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
-                _without_builtin_tools(mistral_model_profile(model_name))
-            ),
+            'mistral': bedrock_mistral_model_profile,
             'cohere': lambda model_name: _without_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
             'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
             'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
+            'qwen': bedrock_qwen_model_profile,
+            'google': bedrock_google_model_profile,
+            'minimax': bedrock_minimax_model_profile,
+            'nvidia': bedrock_nvidia_model_profile,
         }
 
         # Split the model name into parts

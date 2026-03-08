@@ -3518,6 +3518,249 @@ def test_bedrock_native_output_unsupported_model_raises(
         agent.run_sync('Tell me about Berlin')
 
 
+async def test_bedrock_native_output_qwen(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Qwen3 via Bedrock: NativeOutput → outputConfig with json_schema."""
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    result = await agent.run('What is the capital of France? Give me the city name, country, and population.')
+
+    assert isinstance(result.output, CityInfo)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of France? Give me the city name, country, and population.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+{  \n\
+  "city": "Paris",  \n\
+  "country": "France",  \n\
+  "population": 2148000  \n\
+}\
+"""
+                    )
+                ],
+                usage=RequestUsage(input_tokens=30, output_tokens=33),
+                model_name='qwen.qwen3-32b-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_native_output_google(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Google Gemma 3 via Bedrock: NativeOutput → outputConfig with json_schema."""
+    model = BedrockConverseModel('google.gemma-3-27b-it', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    result = await agent.run('What is the capital of France? Give me the city name, country, and population.')
+
+    assert isinstance(result.output, CityInfo)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of France? Give me the city name, country, and population.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+{
+  "city": "Paris",
+  "country": "France",
+  "population": 2141000 \n\
+}\
+"""
+                    )
+                ],
+                usage=RequestUsage(input_tokens=27, output_tokens=34),
+                model_name='google.gemma-3-27b-it',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_native_output_minimax(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """MiniMax M2 via Bedrock: NativeOutput → outputConfig with json_schema."""
+    model = BedrockConverseModel('minimax.minimax-m2', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    result = await agent.run('What is the capital of France? Give me the city name, country, and population.')
+
+    assert isinstance(result.output, CityInfo)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of France? Give me the city name, country, and population.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+I need to provide specifics about France's capital city, which is Paris. I'll focus on the city name, country, and population. The estimated population for Paris is approximately 2.1 million according to INSEE, while the urban area is around 12 million. The user wants these details in a clear format, so I'll ensure to list: \n\
+
+- City: Paris \n\
+- Country: France \n\
+- Population (2023 estimate): about 2,102,650 \n\
+
+This keeps it concise yet informative.
+
+I need to provide the population as "2,102,650," which represents the official population since 2021. To clarify, I'll say it's "Paris proper (commune) population," which is the most commonly cited figure. Although 2,102,650 includes recent numbers, I'll keep it straightforward so I don't overcrowd the information. The answer will contain just these elements without further distractions. I might consider mentioning the time of the estimate, but it's not necessary. Let's finalize the details!
+"""
+                    ),
+                    TextPart(
+                        content="""\
+{
+ "city": "Paris",
+ "country": "France",
+ "population": 2102650
+}\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=40, output_tokens=231),
+                model_name='minimax.minimax-m2',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_native_output_mistral(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """Mistral Large 3 via Bedrock: NativeOutput → outputConfig with json_schema."""
+    model = BedrockConverseModel('mistral.mistral-large-3-675b-instruct', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    result = await agent.run('What is the capital of France? Give me the city name, country, and population.')
+
+    assert isinstance(result.output, CityInfo)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of France? Give me the city name, country, and population.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{ "city": "Paris", "country": "France", "population": 2102650 }')],
+                usage=RequestUsage(input_tokens=21, output_tokens=26),
+                model_name='mistral.mistral-large-3-675b-instruct',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_native_output_nvidia(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    """NVIDIA Nemotron Nano via Bedrock: NativeOutput → outputConfig with json_schema."""
+    model = BedrockConverseModel('nvidia.nemotron-nano-12b-v2', provider=bedrock_provider)
+    agent = Agent(model, output_type=NativeOutput(CityInfo))
+
+    result = await agent.run('What is the capital of France? Give me the city name, country, and population.')
+
+    assert isinstance(result.output, CityInfo)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of France? Give me the city name, country, and population.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+{
+  "city": "Paris",
+  "country": "France",
+  "population": 2148000
+}\
+"""
+                    )
+                ],
+                usage=RequestUsage(input_tokens=33, output_tokens=30),
+                model_name='nvidia.nemotron-nano-12b-v2',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 def test_bedrock_strict_tool_definition_supported_model(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
