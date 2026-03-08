@@ -404,17 +404,17 @@ long_conversation_history: list[ModelMessage] = []  # Your long conversation his
 !!! warning "Be careful when slicing the message history"
     When slicing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269).
 
-#### `RunContext` parameter
+#### `HistoryProcessorContext` parameter
 
-History processors can optionally accept a [`RunContext`][pydantic_ai.tools.RunContext] parameter to access
+History processors can optionally accept a [`HistoryProcessorContext`][pydantic_ai.tools.HistoryProcessorContext] parameter to access
 additional information about the current run, such as dependencies, model information, and usage statistics:
 
 ```python {title="context_aware_processor.py"}
-from pydantic_ai import Agent, ModelMessage, RunContext
+from pydantic_ai import Agent, HistoryProcessorContext, ModelMessage
 
 
 def context_aware_processor(
-    ctx: RunContext[None],
+    ctx: HistoryProcessorContext[None],
     messages: list[ModelMessage],
 ) -> list[ModelMessage]:
     # Access current usage
