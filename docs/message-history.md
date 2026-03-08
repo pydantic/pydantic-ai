@@ -447,6 +447,8 @@ def processor_with_usage(
 agent = Agent('openai:gpt-5.2', history_processors=[processor_with_usage])
 ```
 
+This allows for usage tracking to include the processing done in the history processor.
+
 #### Summarize Old Messages
 
 Use an LLM to summarize older messages to preserve context while reducing tokens.
