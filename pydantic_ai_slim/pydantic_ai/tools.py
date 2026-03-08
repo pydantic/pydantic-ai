@@ -4,9 +4,9 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
-from pydantic import Discriminator, Tag, TypeAdapter
+from pydantic import Discriminator, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
-from pydantic_core import SchemaValidator, core_schema
+from pydantic_core import SchemaValidator, core_schema, to_jsonable_python
 from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
@@ -198,7 +198,7 @@ class ToolDenied:
     kind: Literal['tool-denied'] = 'tool-denied'
 
 
-def process_examples(
+def _process_examples(
     examples: list[Any],
     single_arg_name: str | None = None,
     outer_typed_dict_key: str | None = None,
@@ -208,10 +208,7 @@ def process_examples(
         examples = [ex[single_arg_name] if isinstance(ex, dict) and single_arg_name in ex else ex for ex in examples]
 
     # Serialize examples to JSON-compatible dicts
-    examples = [
-        TypeAdapter(Any).dump_python(ex, mode='json')  # pyright: ignore[reportUnknownMemberType]
-        for ex in examples
-    ]
+    examples = [to_jsonable_python(ex) for ex in examples]
 
     if outer_typed_dict_key:
         examples = [{outer_typed_dict_key: ex} for ex in examples]
@@ -479,7 +476,7 @@ class Tool(Generic[ToolAgentDepsT]):
     def tool_def(self):
         examples = self.examples
         if examples:
-            examples = process_examples(examples, single_arg_name=self.function_schema.single_arg_name)
+            examples = _process_examples(examples, single_arg_name=self.function_schema.single_arg_name)
 
         return ToolDefinition(
             name=self.name,

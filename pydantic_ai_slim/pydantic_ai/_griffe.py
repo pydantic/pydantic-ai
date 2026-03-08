@@ -71,7 +71,8 @@ def doc_descriptions(
         examples_content: list[str] = []
         for source, output in examples.value:
             if isinstance(source, DocstringSectionKind):
-                examples_content.append(output)
+                if output is not None:
+                    examples_content.append(str(output))
             elif output:
                 examples_content.append(f'{source}\n{output}')
             else:

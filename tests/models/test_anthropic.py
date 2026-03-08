@@ -8438,4 +8438,4 @@ async def test_anthropic_tool_examples(allow_model_requests: None, anthropic_api
         return x + 1
 
     result = await agent.run('Call the add_one tool with 5')
-    assert '6' in str(result.output)
+    assert result.output == snapshot('The result of calling `add_one` with 5 is **6**.')

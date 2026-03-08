@@ -32,7 +32,12 @@ from .output import (
     ToolOutput,
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
-from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition, process_examples
+from .tools import (
+    GenerateToolJsonSchema,
+    ObjectJsonSchema,
+    ToolDefinition,
+    _process_examples,  # pyright: ignore[reportPrivateUsage]
+)
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
@@ -918,7 +923,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             )
 
             if examples:
-                examples = process_examples(
+                examples = _process_examples(
                     examples,
                     single_arg_name=processor.single_arg_name,
                     outer_typed_dict_key=processor.outer_typed_dict_key,
