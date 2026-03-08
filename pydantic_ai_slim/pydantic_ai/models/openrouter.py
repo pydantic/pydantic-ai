@@ -662,7 +662,7 @@ class OpenRouterModel(OpenAIChatModel):
 
         if not params:
             raise UserError(
-                'CachePoint cannot be the first content in a user message — there must be previous content to attach the CachePoint to. '
+                'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to. '
                 'To cache system instructions or tool definitions, use the `openrouter_cache_instructions` or `openrouter_cache_tool_definitions` settings instead.'
             )
 
@@ -734,7 +734,7 @@ class OpenRouterModel(OpenAIChatModel):
                 last_msg['content'] = [  # type: ignore[typeddict-unknown-key]
                     {'type': 'text', 'text': content, 'cache_control': self._build_cache_control(ttl)}
                 ]
-            elif isinstance(content, list):
+            elif isinstance(content, list) and content:
                 last_part = cast(dict[str, Any], content[-1])
                 last_part['cache_control'] = self._build_cache_control(ttl)
 
@@ -752,7 +752,7 @@ class OpenRouterModel(OpenAIChatModel):
                         msg['content'] = [  # type: ignore[typeddict-unknown-key]
                             {'type': 'text', 'text': content, 'cache_control': self._build_cache_control(ttl)}
                         ]
-                    elif isinstance(content, list):
+                    elif isinstance(content, list) and content:
                         last_part = cast(dict[str, Any], content[-1])
                         last_part['cache_control'] = self._build_cache_control(ttl)
                     break
