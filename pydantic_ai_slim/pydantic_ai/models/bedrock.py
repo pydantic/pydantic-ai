@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import re
 import typing
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -953,8 +954,13 @@ class BedrockConverseModel(Model):
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
+        # Bedrock requires tool names to match [a-zA-Z0-9_-]+.  When the model
+        # hallucinates a name with dots, spaces, or other invalid characters the
+        # Converse API rejects the *entire* subsequent request, making the agent
+        # run unrecoverable.  Sanitize by replacing invalid characters with '_'.
+        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', t.tool_name)
         return {
-            'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
+            'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': safe_name, 'input': t.args_as_dict()}
         }
 
     @staticmethod
