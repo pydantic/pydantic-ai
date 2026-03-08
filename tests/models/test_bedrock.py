@@ -1830,9 +1830,12 @@ def test_bedrock_restore_tool_name_after_sanitization(bedrock_provider: BedrockP
     tool = ToolDefinition(name='search.evidence invalid', parameters_json_schema={'type': 'object'})
     mrp = ModelRequestParameters(function_tools=[tool])
 
-    model._get_tools(mrp)  # pyright: ignore[reportPrivateUsage]
+    sanitized_tool_name_to_original_name = model._build_sanitized_tool_name_map(mrp)  # pyright: ignore[reportPrivateUsage]
 
-    assert model._restore_tool_name('search_evidence_invalid') == 'search.evidence invalid'  # pyright: ignore[reportPrivateUsage]
+    assert (
+        model._restore_tool_name('search_evidence_invalid', sanitized_tool_name_to_original_name)  # pyright: ignore[reportPrivateUsage]
+        == 'search.evidence invalid'
+    )
 
 
 def test_bedrock_tool_name_sanitization_collision_raises_user_error(bedrock_provider: BedrockProvider):

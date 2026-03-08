@@ -374,7 +374,6 @@ class BedrockConverseModel(Model):
             provider = infer_provider('gateway/bedrock' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
-        self._sanitized_tool_name_to_original_name: dict[str, str] = {}
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
@@ -397,22 +396,22 @@ class BedrockConverseModel(Model):
         """The set of builtin tool types this model can handle."""
         return frozenset({CodeExecutionTool})
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
-        self._sanitized_tool_name_to_original_name = {}
-        tools: list[ToolTypeDef] = []
-
+    def _build_sanitized_tool_name_map(self, model_request_parameters: ModelRequestParameters) -> dict[str, str]:
+        sanitized_tool_name_to_original_name: dict[str, str] = {}
         for tool_def in model_request_parameters.tool_defs.values():
             sanitized_name = _sanitize_bedrock_tool_name(tool_def.name)
-            existing_name = self._sanitized_tool_name_to_original_name.get(sanitized_name)
+            existing_name = sanitized_tool_name_to_original_name.get(sanitized_name)
             if existing_name is not None and existing_name != tool_def.name:
                 raise UserError(
                     f'Bedrock tool-name sanitization collision: {tool_def.name!r} and {existing_name!r} both map to {sanitized_name!r}. '
                     'Rename one of the tools to produce distinct Bedrock-compatible names.'
                 )
-            self._sanitized_tool_name_to_original_name[sanitized_name] = tool_def.name
-            tools.append(self._map_tool_definition(tool_def))
+            sanitized_tool_name_to_original_name[sanitized_name] = tool_def.name
+        return sanitized_tool_name_to_original_name
 
-        return tools
+    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
+        self._build_sanitized_tool_name_map(model_request_parameters)
+        return [self._map_tool_definition(tool_def) for tool_def in model_request_parameters.tool_defs.values()]
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
@@ -437,8 +436,9 @@ class BedrockConverseModel(Model):
             model_request_parameters,
         )
         settings = cast(BedrockModelSettings, model_settings or {})
+        sanitized_tool_name_to_original_name = self._build_sanitized_tool_name_map(model_request_parameters)
         response = await self._messages_create(messages, False, settings, model_request_parameters)
-        model_response = await self._process_response(response)
+        model_response = await self._process_response(response, sanitized_tool_name_to_original_name)
         return model_response
 
     async def count_tokens(
@@ -485,6 +485,7 @@ class BedrockConverseModel(Model):
             model_request_parameters,
         )
         settings = cast(BedrockModelSettings, model_settings or {})
+        sanitized_tool_name_to_original_name = self._build_sanitized_tool_name_map(model_request_parameters)
         response = await self._messages_create(messages, True, settings, model_request_parameters)
         yield BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
@@ -493,10 +494,12 @@ class BedrockConverseModel(Model):
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
-            _sanitized_tool_name_to_original_name=self._sanitized_tool_name_to_original_name,
+            _sanitized_tool_name_to_original_name=sanitized_tool_name_to_original_name,
         )
 
-    async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
+    async def _process_response(
+        self, response: ConverseResponseTypeDef, sanitized_tool_name_to_original_name: dict[str, str]
+    ) -> ModelResponse:
         items: list[ModelResponsePart] = []
         if message := response['output'].get('message'):  # pragma: no branch
             for item in message['content']:
@@ -535,7 +538,7 @@ class BedrockConverseModel(Model):
                     else:
                         items.append(
                             ToolCallPart(
-                                tool_name=self._restore_tool_name(tool_use['name']),
+                                tool_name=self._restore_tool_name(tool_use['name'], sanitized_tool_name_to_original_name),
                                 args=tool_use['input'],
                                 tool_call_id=tool_use['toolUseId'],
                             ),
@@ -988,8 +991,9 @@ class BedrockConverseModel(Model):
             }
         }
 
-    def _restore_tool_name(self, tool_name: str) -> str:
-        return self._sanitized_tool_name_to_original_name.get(tool_name, tool_name)
+    @staticmethod
+    def _restore_tool_name(tool_name: str, sanitized_tool_name_to_original_name: dict[str, str]) -> str:
+        return sanitized_tool_name_to_original_name.get(tool_name, tool_name)
 
     @staticmethod
     def _limit_cache_points(
