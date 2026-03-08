@@ -418,6 +418,33 @@ class TestCohere:
         )
 
 
+@pytest.mark.skipif(not cohere_imports_successful(), reason='Cohere not installed')
+async def test_cohere_embedding_types_must_include_float() -> None:
+    """cohere_embedding_types without 'float' should raise a clear UserError before any API call.
+
+    This test lives outside TestCohere (which carries @pytest.mark.vcr) because it uses
+    mock objects and never makes any real HTTP requests.  Placing it inside a VCR-decorated
+    class would cause pytest-recording to attempt cassette lookup unnecessarily.
+    """
+    from unittest.mock import AsyncMock
+
+    from pydantic_ai.exceptions import UserError
+
+    # Use a mock client so no real API call is made — the UserError is raised
+    # before any network I/O in the validation block added by this PR.
+    mock_client = AsyncMock()
+    from pydantic_ai.providers.cohere import CohereProvider as _CP
+
+    provider = _CP(cohere_client=mock_client)
+    model = CohereEmbeddingModel('embed-v4.0', provider=provider)
+    embedder = Embedder(model)
+    bad_settings: CohereEmbeddingSettings = {'cohere_embedding_types': ['int8']}
+    with pytest.raises(UserError, match="'float' must be included in cohere_embedding_types"):
+        await embedder.embed_query('Hello', settings=bad_settings)
+    # Verify the mock was never called — validation fires before the SDK call.
+    mock_client.embed.assert_not_called()
+
+
 @pytest.mark.skipif(not voyageai_imports_successful(), reason='VoyageAI not installed')
 @pytest.mark.vcr
 class TestVoyageAI:

@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -78,6 +78,27 @@ class CohereEmbeddingSettings(EmbeddingSettings, total=False):
     - `'START'`: Truncate the start of the input text.
 
     Note: This setting overrides the standard `truncate` boolean setting when specified.
+    """
+
+    cohere_embedding_types: list[str]
+    """The embedding types to request from the Cohere API.
+
+    Cohere's SDK may raise a ``TypeError`` when this parameter is omitted
+    because it attempts to deserialise all available embedding type fields,
+    even those that are ``None``.  Providing an explicit list avoids that
+    path in the SDK and makes the API call unambiguous about which
+    representation you need.
+
+    Defaults to ``["float"]``, which returns standard 32-bit float vectors
+    (matching the ``response.embeddings.float_`` field that
+    :class:`CohereEmbeddingModel` reads).  Other valid values are
+    ``"int8"``, ``"uint8"``, ``"binary"``, ``"ubinary"``, and ``"base64"``
+    – see the `Cohere Embed documentation
+    <https://docs.cohere.com/reference/embed>`_ for details.
+
+    Example – request both float and int8 vectors (advanced usage)::
+
+        settings = CohereEmbeddingSettings(cohere_embedding_types=["float", "int8"])
     """
 
 
@@ -169,6 +190,14 @@ class CohereEmbeddingModel(EmbeddingModel):
         else:
             truncate = 'NONE'
 
+        embedding_types: list[str] = settings.get('cohere_embedding_types', ['float'])
+        if 'float' not in embedding_types:
+            raise UserError(
+                f"'float' must be included in cohere_embedding_types because "
+                f'CohereEmbeddingModel only reads float embeddings from the response. '
+                f"Got: {embedding_types!r}. Add 'float' to the list or remove the override."
+            )
+
         try:
             response = await self._client.embed(
                 model=self.model_name,
@@ -178,6 +207,13 @@ class CohereEmbeddingModel(EmbeddingModel):
                 max_tokens=settings.get('cohere_max_tokens'),
                 truncate=truncate,
                 request_options=request_options,
+                # Explicitly request float embeddings.  Omitting embedding_types causes the
+                # Cohere SDK to attempt to deserialise all embedding-type fields in the response,
+                # which triggers a TypeError in cohere.core.unchecked_base_model when the value
+                # is a list.  Passing ["float"] avoids that code path and matches the
+                # response.embeddings.float_ field we read below.  Users who need a different
+                # representation can override this via the cohere_embedding_types setting.
+                embedding_types=embedding_types,
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
