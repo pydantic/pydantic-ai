@@ -374,6 +374,7 @@ class BedrockConverseModel(Model):
             provider = infer_provider('gateway/bedrock' if provider == 'gateway' else provider)
         self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
+        self._sanitized_tool_name_to_original_name: dict[str, str] = {}
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
@@ -397,11 +398,28 @@ class BedrockConverseModel(Model):
         return frozenset({CodeExecutionTool})
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+        self._sanitized_tool_name_to_original_name = {}
+        tools: list[ToolTypeDef] = []
+
+        for tool_def in model_request_parameters.tool_defs.values():
+            sanitized_name = _sanitize_bedrock_tool_name(tool_def.name)
+            existing_name = self._sanitized_tool_name_to_original_name.get(sanitized_name)
+            if existing_name is not None and existing_name != tool_def.name:
+                raise UserError(
+                    f'Bedrock tool-name sanitization collision: {tool_def.name!r} and {existing_name!r} both map to {sanitized_name!r}. '
+                    'Rename one of the tools to produce distinct Bedrock-compatible names.'
+                )
+            self._sanitized_tool_name_to_original_name[sanitized_name] = tool_def.name
+            tools.append(self._map_tool_definition(tool_def))
+
+        return tools
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
-        tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
+        tool_spec: ToolSpecificationTypeDef = {
+            'name': _sanitize_bedrock_tool_name(f.name),
+            'inputSchema': {'json': f.parameters_json_schema},
+        }
 
         if f.description:  # pragma: no branch
             tool_spec['description'] = f.description
@@ -475,6 +493,7 @@ class BedrockConverseModel(Model):
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
+            _sanitized_tool_name_to_original_name=self._sanitized_tool_name_to_original_name,
         )
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
@@ -516,7 +535,7 @@ class BedrockConverseModel(Model):
                     else:
                         items.append(
                             ToolCallPart(
-                                tool_name=tool_use['name'],
+                                tool_name=self._restore_tool_name(tool_use['name']),
                                 args=tool_use['input'],
                                 tool_call_id=tool_use['toolUseId'],
                             ),
@@ -969,6 +988,9 @@ class BedrockConverseModel(Model):
             }
         }
 
+    def _restore_tool_name(self, tool_name: str) -> str:
+        return self._sanitized_tool_name_to_original_name.get(tool_name, tool_name)
+
     @staticmethod
     def _limit_cache_points(
         system_prompt: list[SystemContentBlockTypeDef],
@@ -1044,8 +1066,12 @@ class BedrockStreamedResponse(StreamedResponse):
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _provider_name: str
     _provider_url: str
+    _sanitized_tool_name_to_original_name: dict[str, str] = field(default_factory=lambda: cast(dict[str, str], {}))
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
+
+    def _restore_tool_name(self, tool_name: str) -> str:
+        return self._sanitized_tool_name_to_original_name.get(tool_name, tool_name)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
@@ -1081,7 +1107,7 @@ class BedrockStreamedResponse(StreamedResponse):
                         tool_use_start = start['toolUse']
                         tool_id = tool_use_start['toolUseId']
                         tool_ids[index] = tool_id
-                        tool_name = tool_use_start['name']
+                        tool_name = self._restore_tool_name(tool_use_start['name'])
                         if tool_use_start.get('type') == 'server_tool_use':
                             if tool_name == 'nova_code_interpreter':  # pragma: no branch
                                 part = BuiltinToolCallPart(
@@ -1142,7 +1168,7 @@ class BedrockStreamedResponse(StreamedResponse):
                         tool_use = delta['toolUse']
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=index,
-                            tool_name=tool_use.get('name'),
+                            tool_name=self._restore_tool_name(tool_use.get('name', '')),
                             args=tool_use.get('input'),
                             tool_call_id=tool_ids[index],
                         )
