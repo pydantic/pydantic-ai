@@ -214,7 +214,7 @@ class LLMJudge(Evaluator[object, object, object]):
     async def evaluate(
         self,
         ctx: EvaluatorContext[object, object, object],
-    ) -> EvaluatorOutput:
+    ) -> dict[str, EvaluationScalar | EvaluationReason]:
         if self.include_input:
             if self.include_expected_output:
                 from .llm_as_a_judge import judge_input_output_expected

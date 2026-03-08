@@ -498,3 +498,7 @@ async def test_span_query_evaluator(capfire: CaptureLogfire):
     # Test non-matching attributes
     evaluator = HasMatchingSpan(query=SpanQuery(name_equals='child1', has_attributes={'wrong': 'value'}))
     assert evaluator.evaluate(ctx) is False
+
+
+def test_llmjudge_evaluate_return_type_hint() -> None:
+    assert "dict[str, EvaluationScalar | EvaluationReason]" in str(LLMJudge.evaluate.__annotations__["return"])
