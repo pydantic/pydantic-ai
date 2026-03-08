@@ -6814,6 +6814,44 @@ async def test_retry_message_no_tools():
     assert retry_parts[0].content == 'Please return text.'
 
 
+async def test_thinking_only_after_tool_call_recovers_previous_text() -> None:
+    """Test that thinking-only responses after tool calls recover previous text instead of retrying."""
+
+    call_count = 0
+
+    async def save_progress() -> str:
+        return 'saved'
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            return ModelResponse(
+                parts=[
+                    ThinkingPart(content='Analyzing...'),
+                    TextPart(content='Final answer'),
+                    ToolCallPart(tool_name='save_progress', args='{}', tool_call_id='call_1'),
+                ]
+            )
+        return ModelResponse(parts=[ThinkingPart(content='Done thinking')])
+
+    agent = Agent(FunctionModel(model_function), tools=[save_progress], output_type=str)
+
+    result = await agent.run('Hello')
+
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart)
+    ]
+
+    assert result.output == 'Final answer'
+    assert retry_parts == []
+
+
 async def test_hitl_tool_approval():
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
