@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic, Literal
 
-from opentelemetry.trace import StatusCode as _OtelStatusCode, Tracer
+from opentelemetry.trace import StatusCode, Tracer
 from pydantic import ValidationError
 from typing_extensions import deprecated
 
@@ -420,7 +420,7 @@ class ToolManager(Generic[AgentDepsT]):
                 if include_content and span.is_recording():
                     span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
                 span.record_exception(e)
-                span.set_status(_OtelStatusCode.ERROR, str(e))
+                span.set_status(StatusCode.ERROR, str(e))
                 raise
             except (CallDeferred, ApprovalRequired) as exc:
                 # Always record deferral info as span attributes (queryable regardless of version).
@@ -432,17 +432,17 @@ class ToolManager(Generic[AgentDepsT]):
                     except (TypeError, ValueError):
                         span.set_attribute(instrumentation_names.tool_deferral_metadata_attr, str(exc.metadata))
 
-                # Gate error-suppression behind version 4+ (new dedicated version for this change).
-                # Versions 1-3 preserve the old behaviour where these exceptions appear as errors.
-                if instrumentation_version >= 4:
-                    span.set_status(_OtelStatusCode.OK)
+                # Gate error-suppression behind version 5+ (new dedicated version for this change).
+                # Versions 1-4 preserve the old behaviour where these exceptions appear as errors.
+                if instrumentation_version >= 5:
+                    span.set_status(StatusCode.OK)
                 else:
                     span.record_exception(exc)
-                    span.set_status(_OtelStatusCode.ERROR, str(exc))
+                    span.set_status(StatusCode.ERROR, str(exc))
                 raise
             except Exception as exc:
                 span.record_exception(exc)
-                span.set_status(_OtelStatusCode.ERROR, str(exc))
+                span.set_status(StatusCode.ERROR, str(exc))
                 raise
 
             if include_content and span.is_recording():

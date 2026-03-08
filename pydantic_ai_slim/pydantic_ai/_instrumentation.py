@@ -13,7 +13,8 @@ Versions:
 - 1: Original span/attribute names (e.g. 'agent run', 'tool_arguments').
 - 2: Same names as v1 but with additional attributes.
 - 3: GenAI semantic convention names (e.g. 'invoke_agent', 'gen_ai.tool.call.arguments').
-- 4: Like v3 but CallDeferred/ApprovalRequired no longer produce ERROR spans (opt-in).
+- 4: Like v3 but with GenAI semantic conventions for multimodal content (URI/blob parts, modality fields).
+- 5: Like v4 but CallDeferred/ApprovalRequired no longer produce ERROR spans (opt-in).
 """
 
 
