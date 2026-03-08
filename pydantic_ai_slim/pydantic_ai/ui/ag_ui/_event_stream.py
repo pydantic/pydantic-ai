@@ -69,14 +69,18 @@ __all__ = [
 
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
-_THINKING_METADATA_ATTRS: Final[tuple[str, ...]] = ('id', 'signature', 'provider_name', 'provider_details')
-
 
 def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
     """Collect non-None metadata fields from a ThinkingPart for AG-UI encrypted_value."""
-    encrypted: dict[str, Any] = {
-        attr: value for attr in _THINKING_METADATA_ATTRS if (value := getattr(part, attr)) is not None
-    }
+    encrypted: dict[str, Any] = {}
+    if part.id is not None:
+        encrypted['id'] = part.id
+    if part.signature is not None:
+        encrypted['signature'] = part.signature
+    if part.provider_name is not None:
+        encrypted['provider_name'] = part.provider_name
+    if part.provider_details is not None:
+        encrypted['provider_details'] = part.provider_details
     return encrypted
 
 

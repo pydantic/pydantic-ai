@@ -6,6 +6,7 @@ import json
 import uuid
 from base64 import b64decode
 from collections.abc import Mapping, Sequence
+from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
@@ -70,7 +71,9 @@ except ImportError as e:  # pragma: no cover
     ) from e
 
 if TYPE_CHECKING:
-    pass
+    from starlette.requests import Request
+
+    from ...agent import AbstractAgent
 
 __all__ = ['AGUIAdapter']
 
@@ -129,8 +132,18 @@ def _user_content_to_input(
         assert_never(item)
 
 
+@dataclass
 class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
     """UI adapter for the Agent-User Interaction (AG-UI) protocol."""
+
+    _: KW_ONLY
+    include_file_parts: bool = False
+    """Whether to include ``FilePart`` data in message conversion.
+
+    When ``True``, ``FilePart`` round-trips as ``ActivityMessage(activity_type='pydantic_ai_file')``.
+    When ``False`` (default), ``FilePart`` is silently dropped from ``dump_messages`` output
+    and ``ActivityMessage`` with ``activity_type='pydantic_ai_file'`` is ignored by ``load_messages``.
+    """
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RunAgentInput:
@@ -141,10 +154,22 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         """Build an AG-UI event stream transformer."""
         return AGUIEventStream(self.run_input, accept=self.accept)
 
+    @classmethod
+    async def from_request(
+        cls,
+        request: Request,
+        *,
+        agent: AbstractAgent[AgentDepsT, OutputDataT],
+        include_file_parts: bool = False,
+        **kwargs: Any,
+    ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
+        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with the `include_file_parts` parameter."""
+        return await super().from_request(request, agent=agent, include_file_parts=include_file_parts, **kwargs)
+
     @cached_property
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the AG-UI run input."""
-        return self.load_messages(self.run_input.messages)
+        return self.load_messages(self.run_input.messages, include_file_parts=self.include_file_parts)
 
     @cached_property
     def toolset(self) -> AbstractToolset[AgentDepsT] | None:
@@ -166,7 +191,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         return cast('dict[str, Any]', state)
 
     @classmethod
-    def load_messages(cls, messages: Sequence[Message]) -> list[ModelMessage]:  # noqa: C901
+    def load_messages(cls, messages: Sequence[Message], *, include_file_parts: bool = False) -> list[ModelMessage]:  # noqa: C901
         """Transform AG-UI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
         tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
@@ -268,9 +293,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
 
                 case ReasoningMessage() as reasoning_msg:
-                    metadata: dict[str, Any] = (
-                        json.loads(reasoning_msg.encrypted_value) if reasoning_msg.encrypted_value else {}
-                    )
+                    try:
+                        metadata: dict[str, Any] = (
+                            json.loads(reasoning_msg.encrypted_value) if reasoning_msg.encrypted_value else {}
+                        )
+                    except json.JSONDecodeError:
+                        metadata = {}
                     builder.add(
                         ThinkingPart(
                             content=reasoning_msg.content,
@@ -282,14 +310,19 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
 
                 case ActivityMessage() as activity_msg:
-                    content = activity_msg.content
-                    if activity_msg.activity_type == 'pydantic_ai_file':
+                    if activity_msg.activity_type == 'pydantic_ai_file' and include_file_parts:
+                        activity_content = activity_msg.content
+                        url = activity_content.get('url', '')
+                        if not url:
+                            raise ValueError(
+                                'ActivityMessage with activity_type=pydantic_ai_file must have a non-empty url.'
+                            )
                         builder.add(
                             FilePart(
-                                content=BinaryContent.from_data_uri(content.get('url', '')),
-                                id=content.get('id'),
-                                provider_name=content.get('provider_name'),
-                                provider_details=content.get('provider_details'),
+                                content=BinaryContent.from_data_uri(url),
+                                id=activity_content.get('id'),
+                                provider_name=activity_content.get('provider_name'),
+                                provider_details=activity_content.get('provider_details'),
                             )
                         )
 
@@ -299,14 +332,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         return builder.messages
 
     @staticmethod
-    def _dump_request_parts(msg: ModelRequest) -> tuple[list[Message], dict[str, str]]:
-        """Convert a `ModelRequest` into AG-UI messages.
-
-        Returns:
-            A tuple of (messages, tool_call_id_to_name mapping).
-        """
+    def _dump_request_parts(msg: ModelRequest) -> list[Message]:
+        """Convert a `ModelRequest` into AG-UI messages."""
         result: list[Message] = []
-        tool_call_names: dict[str, str] = {}
         system_content: list[str] = []
         user_content: list[TextInputContent | BinaryInputContent] = []
 
@@ -322,7 +350,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         if converted is not None:
                             user_content.append(converted)
             elif isinstance(part, ToolReturnPart):
-                tool_call_names[part.tool_call_id] = part.tool_name
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
@@ -332,7 +359,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name:
-                    tool_call_names[part.tool_call_id] = part.tool_name
                     result.append(
                         ToolMessage(
                             id=_new_message_id(),
@@ -356,10 +382,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             else:
                 messages.append(UserMessage(id=_new_message_id(), content=user_content))
         messages.extend(result)
-        return messages, tool_call_names
+        return messages
 
     @staticmethod
-    def _dump_response_parts(msg: ModelResponse) -> list[Message]:
+    def _dump_response_parts(msg: ModelResponse, *, include_file_parts: bool = False) -> list[Message]:  # noqa: C901
         """Convert a `ModelResponse` into AG-UI messages.
 
         Uses a flush pattern to preserve part ordering: text that appears after tool calls
@@ -431,21 +457,25 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 # Emitted when matching BuiltinToolCallPart is processed above.
                 pass
             elif isinstance(part, FilePart):
-                flush()
-                file_content: dict[str, Any] = {
-                    'url': part.content.data_uri,
-                    'media_type': part.content.media_type,
-                }
-                for attr in ['id', 'provider_name', 'provider_details']:
-                    if (value := getattr(part, attr)) is not None:
-                        file_content[attr] = value
-                result.append(
-                    ActivityMessage(
-                        id=_new_message_id(),
-                        activity_type='pydantic_ai_file',
-                        content=file_content,
+                if include_file_parts:
+                    flush()
+                    file_content: dict[str, Any] = {
+                        'url': part.content.data_uri,
+                        'media_type': part.content.media_type,
+                    }
+                    if part.id is not None:
+                        file_content['id'] = part.id
+                    if part.provider_name is not None:
+                        file_content['provider_name'] = part.provider_name
+                    if part.provider_details is not None:
+                        file_content['provider_details'] = part.provider_details
+                    result.append(
+                        ActivityMessage(
+                            id=_new_message_id(),
+                            activity_type='pydantic_ai_file',
+                            content=file_content,
+                        )
                     )
-                )
             else:
                 assert_never(part)
 
@@ -453,11 +483,21 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         return result
 
     @classmethod
-    def dump_messages(cls, messages: Sequence[ModelMessage]) -> list[Message]:
+    def dump_messages(cls, messages: Sequence[ModelMessage], *, include_file_parts: bool = False) -> list[Message]:
         """Transform Pydantic AI messages into AG-UI messages.
+
+        Note: The round-trip ``dump_messages`` -> ``load_messages`` is not fully lossless:
+
+        - ``TextPart.id``, ``.provider_name``, ``.provider_details`` are lost.
+        - ``ToolCallPart.id``, ``.provider_name``, ``.provider_details`` are lost.
+        - ``RetryPromptPart`` becomes ``ToolReturnPart`` (or ``UserPromptPart``) on reload.
+        - ``CachePoint`` and ``UploadedFile`` content items are dropped.
+        - ``FilePart`` is silently dropped unless ``include_file_parts=True``.
+        - Part ordering within a ``ModelResponse`` may change when text follows tool calls.
 
         Args:
             messages: A sequence of ModelMessage objects to convert.
+            include_file_parts: Whether to include ``FilePart`` as ``ActivityMessage``.
 
         Returns:
             A list of AG-UI Message objects.
@@ -466,10 +506,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
-                request_messages, _ = cls._dump_request_parts(msg)
+                request_messages = cls._dump_request_parts(msg)
                 result.extend(request_messages)
             elif isinstance(msg, ModelResponse):
-                result.extend(cls._dump_response_parts(msg))
+                result.extend(cls._dump_response_parts(msg, include_file_parts=include_file_parts))
             else:
                 assert_never(msg)
 

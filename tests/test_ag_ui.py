@@ -28,7 +28,9 @@ from pydantic_ai import (
     ImageUrl,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -1405,9 +1407,15 @@ def test_activity_message_other_types_ignored() -> None:
     assert messages == snapshot([ModelResponse(parts=[TextPart(content='Response')], timestamp=IsDatetime())])
 
 
-def _sync_part_timestamps(original_part: Any, new_part: Any) -> None:
-    """Sync timestamp attribute if both parts have it."""
-    if hasattr(new_part, 'timestamp') and hasattr(original_part, 'timestamp'):
+_TIMESTAMPED_PARTS = (UserPromptPart, RetryPromptPart, ToolReturnPart, BuiltinToolReturnPart, SystemPromptPart)
+
+
+def _sync_part_timestamps(
+    original_part: ModelRequestPart | ModelResponsePart,
+    new_part: ModelRequestPart | ModelResponsePart,
+) -> None:
+    """Sync timestamp attribute if both parts are request parts (which carry timestamps)."""
+    if isinstance(new_part, _TIMESTAMPED_PARTS) and isinstance(original_part, _TIMESTAMPED_PARTS):
         object.__setattr__(new_part, 'timestamp', original_part.timestamp)
 
 
@@ -1543,8 +1551,8 @@ def test_dump_load_roundtrip_file_part() -> None:
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original)
-    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, include_file_parts=True)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, include_file_parts=True)
     _sync_timestamps(original, reloaded)
 
     assert reloaded == original
@@ -1722,8 +1730,8 @@ def test_dump_load_roundtrip_file_part_minimal() -> None:
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original)
-    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, include_file_parts=True)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, include_file_parts=True)
     _sync_timestamps(original, reloaded)
 
     assert reloaded == original
@@ -1737,11 +1745,37 @@ def test_dump_load_roundtrip_file_part_only() -> None:
         ModelResponse(parts=[FilePart(content=BinaryImage(data=file_data, media_type='image/png'))]),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original)
-    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, include_file_parts=True)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, include_file_parts=True)
     _sync_timestamps(original, reloaded)
 
     assert reloaded == original
+
+
+def test_file_part_dropped_by_default() -> None:
+    """Test that FilePart is silently dropped when include_file_parts=False (default).
+
+    dump_messages drops FilePart from output, and load_messages ignores
+    ActivityMessage(pydantic_ai_file) — both without raising errors.
+    """
+    messages_with_file: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Generate an image')]),
+        ModelResponse(
+            parts=[
+                FilePart(content=BinaryImage(data=b'image data', media_type='image/png')),
+                TextPart(content='Here is your image.'),
+            ]
+        ),
+    ]
+
+    # dump_messages drops FilePart by default
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages_with_file)
+    assert not any(isinstance(m, ActivityMessage) and m.activity_type == 'pydantic_ai_file' for m in ag_ui_msgs)
+
+    # load_messages ignores ActivityMessage(pydantic_ai_file) by default
+    ag_ui_msgs_with_activity = AGUIAdapter.dump_messages(messages_with_file, include_file_parts=True)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs_with_activity)
+    assert not any(isinstance(part, FilePart) for msg in reloaded for part in msg.parts)
 
 
 def test_dump_load_roundtrip_interleaved_text_and_tools() -> None:
