@@ -285,6 +285,10 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     If ``True``, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     TTL is only included for Anthropic models; Gemini does not support explicit TTL.
 
+    Note: Gemini models only reliably cache system-level content; for Gemini, prefer
+    ``openrouter_cache_instructions`` instead. Anthropic supports prefix-based caching
+    across multi-turn conversations with this setting.
+
     See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
     """
 
