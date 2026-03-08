@@ -13,7 +13,7 @@ from pydantic_ai.settings import ModelSettings
 
 from ..otel.span_tree import SpanQuery
 from .context import EvaluatorContext
-from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
+from .evaluator import EvaluationReason, EvaluationScalar, Evaluator
 
 __all__ = (
     'Equals',
@@ -214,7 +214,7 @@ class LLMJudge(Evaluator[object, object, object]):
     async def evaluate(
         self,
         ctx: EvaluatorContext[object, object, object],
-    ) -> EvaluatorOutput:
+    ) -> dict[str, EvaluationScalar | EvaluationReason]:
         if self.include_input:
             if self.include_expected_output:
                 from .llm_as_a_judge import judge_input_output_expected
