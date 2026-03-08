@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import re
 import typing
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -86,6 +87,13 @@ if TYPE_CHECKING:
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
 _SUPPORTED_VIDEO_FORMATS = ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
 _SUPPORTED_DOCUMENT_FORMATS = ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
+_BEDROCK_TOOL_NAME_INVALID_CHAR_RE = re.compile(r'[^a-zA-Z0-9_-]')
+
+
+def _sanitize_bedrock_tool_name(name: str) -> str:
+    """Normalize tool names to match Bedrock's required ``[a-zA-Z0-9_-]+`` pattern."""
+    sanitized = _BEDROCK_TOOL_NAME_INVALID_CHAR_RE.sub('_', name)
+    return sanitized or '_'
 
 
 def _make_image_block(format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
@@ -954,7 +962,11 @@ class BedrockConverseModel(Model):
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
         return {
-            'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
+            'toolUse': {
+                'toolUseId': _utils.guard_tool_call_id(t=t),
+                'name': _sanitize_bedrock_tool_name(t.tool_name),
+                'input': t.args_as_dict(),
+            }
         }
 
     @staticmethod

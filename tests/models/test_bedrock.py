@@ -1786,6 +1786,34 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
     )
 
 
+def test_bedrock_map_tool_call_sanitizes_invalid_tool_name(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    tool_use = model._map_tool_call(  # pyright: ignore[reportPrivateUsage]
+        ToolCallPart(tool_name='search.evidence invalid', args={'q': 'x'}, tool_call_id='tooluse_123')
+    )
+
+    assert tool_use == snapshot(
+        {
+            'toolUse': {
+                'toolUseId': 'tooluse_123',
+                'name': 'search_evidence_invalid',
+                'input': {'q': 'x'},
+            }
+        }
+    )
+
+
+def test_bedrock_map_tool_call_replaces_empty_tool_name(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    tool_use = model._map_tool_call(  # pyright: ignore[reportPrivateUsage]
+        ToolCallPart(tool_name='', args={'q': 'x'}, tool_call_id='tooluse_123')
+    )
+
+    assert tool_use['toolUse']['name'] == '_'
+
+
 async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel(model_name='openai.gpt-oss-120b-1:0', provider=bedrock_provider)
     agent = Agent(model)
