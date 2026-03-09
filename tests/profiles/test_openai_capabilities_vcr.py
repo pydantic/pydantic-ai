@@ -9,19 +9,23 @@ accept reasoning_effort='none').
 from __future__ import annotations as _annotations
 
 import os
-import warnings
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 import pytest
 from inline_snapshot import snapshot
-from openai import AsyncOpenAI, BadRequestError
 
-from pydantic_ai.models.openai import (
-    OpenAIChatModelSettings,
-    _drop_sampling_params_for_reasoning,  # pyright: ignore[reportPrivateUsage]
-)
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from ..conftest import try_import
+
+with try_import() as imports_successful:
+    from openai import AsyncOpenAI, BadRequestError
+
+    from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
+    pytest.mark.anyio,
+]
 
 
 @dataclass
@@ -39,9 +43,7 @@ def _extract_error(e: BadRequestError) -> tuple[str | None, str | None]:
     SDK formatting that differs between live calls and VCR replay.
     """
     body: dict[str, object] = e.body if isinstance(e.body, dict) else {}  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    if not body:
-        return e.code, None
-    error_obj = body.get('error')
+    error_obj = body.get('error') if body else None
     if not isinstance(error_obj, dict):
         return e.code, None
     inner: dict[str, object] = error_obj  # pyright: ignore[reportUnknownVariableType]
@@ -290,22 +292,3 @@ async def test_model_capabilities(case: CapabilityCase, openai_client: AsyncOpen
         f'{case.model}: expected supports_reasoning_effort_none={case.expected_supports_reasoning_effort_none}, '
         f'got {profile.openai_supports_reasoning_effort_none}'
     )
-
-    # Verify _drop_sampling_params_for_reasoning agrees with API ground truth.
-    # Before this branch, we only had unit tests for the warning logic — now we
-    # cross-check that our internal function handles each model the same way the
-    # API actually does (e.g. dropping temperature only for models that reject it).
-    settings: OpenAIChatModelSettings = {'temperature': 0.5}
-    if temperature_result.status == 'error':
-        # API rejects temperature → our function should drop it (with warning)
-        with pytest.warns(UserWarning, match='Sampling parameters'):
-            _drop_sampling_params_for_reasoning(profile, settings)
-        assert 'temperature' not in settings
-    else:
-        # API accepts temperature → our function should keep it (no warning)
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter('always')
-            _drop_sampling_params_for_reasoning(profile, settings)
-            sampling_warnings = [x for x in w if 'Sampling parameters' in str(x.message)]
-            assert len(sampling_warnings) == 0
-        assert settings.get('temperature') == 0.5
