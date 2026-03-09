@@ -277,11 +277,12 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     """
 
     openrouter_cache_messages: bool | Literal['5m', '1h']
-    """Convenience setting to enable caching for the last user message.
+    """Convenience setting to enable caching for the last message in the conversation.
 
     When enabled, this automatically adds ``cache_control`` to the last content block
-    in the final user message, which is useful for caching conversation history
-    or context in multi-turn conversations.
+    in the final message (regardless of role), which is useful for Anthropic's prefix-based
+    caching in multi-turn conversations. In tool-use flows, this may target a tool result
+    message rather than a user message, which is correct for prefix caching.
     If ``True``, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     TTL is only included for Anthropic models; Gemini does not support explicit TTL.
 
@@ -835,7 +836,7 @@ class OpenRouterModel(OpenAIChatModel):
                 self._add_cache_control(content, ttl=item.ttl)
             else:
                 mapped_item = await self._map_content_item(item)
-                if mapped_item is not None:
+                if mapped_item is not None:  # pragma: no branch
                     content.append(mapped_item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
