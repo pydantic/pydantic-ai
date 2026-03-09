@@ -132,6 +132,8 @@ dbos = ["dbos>=2.10.0"]
 prefect = ["prefect>=3.4.21"]
 # Execution environments
 docker-environment = ["docker>=7.0"]
+# Templates
+handlebars = ["pydantic-handlebars>=0.1.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
