@@ -5,24 +5,22 @@ from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, cast
 
 from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai import ModelMessage, ModelResponse, ModelResponseStreamEvent, models
+from pydantic_ai import ModelMessage, ModelResponse, models
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, infer_model_profile, parse_model_id
-from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.usage import RequestUsage
 
 from ._run_context import TemporalRunContext
 
@@ -39,39 +37,6 @@ class _RequestParams:
 
 
 TemporalProviderFactory = Callable[[RunContext[AgentDepsT], str], Provider[Any]]
-
-
-class TemporalStreamedResponse(StreamedResponse):
-    def __init__(self, model_request_parameters: ModelRequestParameters, response: ModelResponse):
-        super().__init__(model_request_parameters)
-        self.response = response
-
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        return
-        # noinspection PyUnreachableCode
-        yield
-
-    def get(self) -> ModelResponse:
-        return self.response
-
-    def usage(self) -> RequestUsage:
-        return self.response.usage  # pragma: no cover
-
-    @property
-    def model_name(self) -> str:
-        return self.response.model_name or ''  # pragma: no cover
-
-    @property
-    def provider_name(self) -> str:
-        return self.response.provider_name or ''  # pragma: no cover
-
-    @property
-    def provider_url(self) -> str | None:
-        return self.response.provider_url  # pragma: no cover
-
-    @property
-    def timestamp(self) -> datetime:
-        return self.response.timestamp  # pragma: no cover
 
 
 class TemporalModel(WrapperModel):
@@ -235,7 +200,7 @@ class TemporalModel(WrapperModel):
             ],
             **activity_config,
         )
-        yield TemporalStreamedResponse(model_request_parameters, response)
+        yield CompletedStreamedResponse(model_request_parameters, response)
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
