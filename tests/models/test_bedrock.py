@@ -2664,9 +2664,12 @@ async def test_bedrock_cache_messages_no_user_messages(allow_model_requests: Non
     )
     # Should not crash, no cache point added since no real user message.
     # Synthetic user message is prepended because Bedrock requires conversations to start with a user turn.
-    assert len(bedrock_messages) == 2
-    assert bedrock_messages[0] == {'role': 'user', 'content': [{'text': ' '}]}
-    assert bedrock_messages[1]['role'] == 'assistant'
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': ' '}]},
+            {'role': 'assistant', 'content': [{'text': 'Assistant response'}]},
+        ]
+    )
 
 
 async def test_get_last_user_message_content_non_dict_block(
