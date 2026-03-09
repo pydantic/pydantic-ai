@@ -62,7 +62,7 @@ As the name suggests, a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset
 
 Functions can be added as tools in three different ways:
 
-* via the [`@toolset.tool`][pydantic_ai.toolsets.FunctionToolset.tool] decorator
+* via the [`@toolset.tool`][pydantic_ai.toolsets.FunctionToolset.tool] and [`@toolset.tool_plain`][pydantic_ai.toolsets.FunctionToolset.tool_plain] decorators
 * via the [`tools`][pydantic_ai.toolsets.FunctionToolset.__init__] keyword argument to the constructor which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
 * via the [`toolset.add_function()`][pydantic_ai.toolsets.FunctionToolset.add_function] and [`toolset.add_tool()`][pydantic_ai.toolsets.FunctionToolset.add_tool] methods which can take a plain function or an instance of [`Tool`][pydantic_ai.tools.Tool] respectively
 
@@ -460,12 +460,12 @@ from pydantic_ai import Agent, FunctionToolset
 toolset = FunctionToolset()
 
 
-@toolset.tool
+@toolset.tool_plain
 def get_default_language():
     return 'en-US'
 
 
-@toolset.tool
+@toolset.tool_plain
 def get_user_name():
     return 'David'
 

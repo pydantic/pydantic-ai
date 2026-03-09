@@ -2200,11 +2200,11 @@ async def test_approval_required_toolset():
 
     toolset = FunctionToolset[None]()
 
-    @toolset.tool
+    @toolset.tool_plain
     def foo(x: int) -> int:
         return x * 2
 
-    @toolset.tool
+    @toolset.tool_plain
     def bar(x: int) -> int:
         return x * 3
 
@@ -2424,7 +2424,7 @@ def test_tool_metadata():
     # Test with FunctionToolset.tool decorator
     toolset = FunctionToolset(metadata={'foo': 'bar'})
 
-    @toolset.tool
+    @toolset.tool_plain
     def toolset_plain_tool(a: str) -> str:
         return a.upper()  # pragma: no cover
 
