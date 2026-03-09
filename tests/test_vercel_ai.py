@@ -94,12 +94,6 @@ with try_import() as starlette_import_successful:
         ToolInputStartChunk,
     )
 
-from .conftest import try_import
-
-with try_import() as starlette_import_successful:
-    from starlette.requests import Request
-    from starlette.responses import StreamingResponse
-
 with try_import() as openai_import_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
