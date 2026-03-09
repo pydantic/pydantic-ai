@@ -880,8 +880,9 @@ class Model(ABC):
                     _, model_info = get_snapshot().find_provider_model(
                         self.model_name, None, provider_id, provider_api_url
                     )
-                    _profile = replace(_profile, context_window=model_info.context_window)
-                    break
+                    if model_info.context_window is not None:
+                        _profile = replace(_profile, context_window=model_info.context_window)
+                        break
                 except Exception:
                     # Could not find a context window through genai-prices
                     pass
