@@ -77,6 +77,9 @@ class ModelProfile:
     restrict this based on model capabilities.
     """
 
+    context_window: int | None = None
+    """Context window of the model"""
+
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:
         """Build a ModelProfile subclass instance from a ModelProfile instance."""

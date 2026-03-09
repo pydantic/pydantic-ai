@@ -17,6 +17,7 @@ from functools import cache, cached_property
 from typing import Any, Generic, Literal, TypeVar, get_args, overload
 
 import httpx
+from genai_prices.data_snapshot import get_snapshot
 from typing_extensions import TypeAliasType, TypedDict
 
 from .. import _utils
@@ -869,6 +870,21 @@ class Model(ABC):
 
         if effective_tools != profile_supported:
             _profile = replace(_profile, supported_builtin_tools=effective_tools)
+
+        # If context_window is none then find it from genai-prices for this model?
+
+        if _profile.context_window is None:
+            # Try to resolve from genai-prices
+            for provider_id, provider_api_url in [(self.system, None), (None, self.base_url)]:
+                try:
+                    _, model_info = get_snapshot().find_provider_model(
+                        self.model_name, None, provider_id, provider_api_url
+                    )
+                    _profile = replace(_profile, context_window=model_info.context_window)
+                    break
+                except Exception:
+                    # Could not find a context window through genai-prices
+                    pass
 
         return _profile
 
