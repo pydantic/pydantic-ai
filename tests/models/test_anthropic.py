@@ -2146,6 +2146,164 @@ async def test_uploaded_file_unsupported_media_type(allow_model_requests: None) 
         )
 
 
+async def test_uploaded_file_container_target_requires_code_execution_tool(allow_model_requests: None) -> None:
+    c = completion_message(
+        [BetaTextBlock(text='Should not reach here.', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=8),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(UserError, match='requires the code execution tool'):
+        await agent.run(
+            [
+                'Analyze this file',
+                UploadedFile(file_id='file-abc123', provider_name='anthropic', target='container'),
+            ]
+        )
+
+
+async def test_uploaded_file_container_target(allow_model_requests: None) -> None:
+    c = completion_message(
+        [BetaTextBlock(text='I loaded the file in the sandbox.', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=8),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run(
+        ['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic', target='container')]
+    )
+    assert result.output == 'I loaded the file in the sandbox.'
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Analyze this file', 'type': 'text'},
+                    {'type': 'container_upload', 'file_id': 'file-abc123'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_both_target(allow_model_requests: None) -> None:
+    c = completion_message(
+        [BetaTextBlock(text='I can both read and execute on the file.', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=8),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run(
+        [
+            'Analyze this file',
+            UploadedFile(
+                file_id='file-abc123',
+                provider_name='anthropic',
+                media_type='application/pdf',
+                target='both',
+            ),
+        ]
+    )
+    assert result.output == 'I can both read and execute on the file.'
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = completion_kwargs['messages']
+    assert messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Analyze this file', 'type': 'text'},
+                    {'source': {'file_id': 'file-abc123', 'type': 'file'}, 'type': 'document'},
+                    {'type': 'container_upload', 'file_id': 'file-abc123'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_tool_returned_uploaded_file_container_target(allow_model_requests: None) -> None:
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='tool_1', input={}, name='fetch_dataset', type='tool_use')],
+            usage=BetaUsage(input_tokens=5, output_tokens=3),
+        ),
+        completion_message(
+            [BetaTextBlock(text='I analyzed the dataset in the container.', type='text')],
+            usage=BetaUsage(input_tokens=8, output_tokens=6),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, builtin_tools=[CodeExecutionTool()])
+
+    @agent.tool_plain
+    def fetch_dataset() -> UploadedFile:
+        return UploadedFile(
+            file_id='file-tool-123',
+            provider_name='anthropic',
+            target='container',
+            identifier='dataset-1',
+        )
+
+    result = await agent.run('Analyze the dataset')
+    assert result.output == 'I analyzed the dataset in the container.'
+
+    all_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert len(all_kwargs) == 2
+    second_messages = all_kwargs[1]['messages']
+    user_messages = [m for m in second_messages if m['role'] == 'user']
+    assert user_messages, 'Expected a user message with tool return content'
+    user_content = cast(list[dict[str, Any]], user_messages[-1]['content'])
+
+    assert {'type': 'container_upload', 'file_id': 'file-tool-123'} in user_content
+    assert any(
+        item.get('type') == 'tool_result'
+        and item.get('tool_use_id') == 'tool_1'
+        and item.get('content') == 'See file dataset-1'
+        for item in user_content
+    )
+    assert any(item.get('type') == 'text' and item.get('text') == 'This is file dataset-1:' for item in user_content)
+
+
+async def test_tool_returned_uploaded_file_container_target_requires_code_execution_tool(
+    allow_model_requests: None,
+) -> None:
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='tool_1', input={}, name='fetch_dataset', type='tool_use')],
+            usage=BetaUsage(input_tokens=5, output_tokens=3),
+        ),
+        completion_message(
+            [BetaTextBlock(text='should not reach here', type='text')],
+            usage=BetaUsage(input_tokens=8, output_tokens=6),
+        ),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    def fetch_dataset() -> UploadedFile:
+        return UploadedFile(file_id='file-tool-123', provider_name='anthropic', target='container')
+
+    with pytest.raises(UserError, match='requires the code execution tool'):
+        await agent.run('Analyze the dataset')
+
+    # Only the first model request should have been sent.
+    assert len(get_mock_chat_completion_kwargs(mock_client)) == 1
+
+
+
 def test_init_with_provider():
     provider = AnthropicProvider(api_key='api-key')
     model = AnthropicModel('claude-3-opus-latest', provider=provider)

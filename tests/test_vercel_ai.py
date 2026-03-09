@@ -1969,6 +1969,75 @@ async def test_event_stream_file():
     )
 
 
+async def test_event_stream_uploaded_file():
+    async def event_generator():
+        yield PartStartEvent(
+            index=0,
+            part=UploadedFile(file_id='file-abc123', provider_name='openai', media_type='application/pdf'),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'file', 'url': 'file-abc123', 'mediaType': 'application/pdf'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_uploaded_file_container_target_is_skipped():
+    async def event_generator():
+        yield PartStartEvent(
+            index=0,
+            part=UploadedFile(file_id='file-container-123', provider_name='anthropic', target='container'),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 async def test_run_stream_output_tool():
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -3928,6 +3997,55 @@ async def test_adapter_dump_messages_with_files():
     )
 
 
+async def test_adapter_dump_messages_with_uploaded_file_response():
+    """Test dumping messages with UploadedFile in the response."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Here is a file')]),
+        ModelResponse(
+            parts=[
+                UploadedFile(file_id='file-abc123', provider_name='openai', media_type='application/pdf'),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [
+                    {'type': 'text', 'text': 'Here is a file', 'state': 'done', 'provider_metadata': None},
+                ],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'file',
+                        'media_type': 'application/pdf',
+                        'filename': None,
+                        'url': 'file-abc123',
+                        'provider_metadata': {
+                            'pydantic_ai': {
+                                'file_id': 'file-abc123',
+                                'provider_name': 'openai',
+                                'target': 'message',
+                            }
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+
+
+
 async def test_adapter_dump_messages_with_retry():
     """Test dumping messages with retry prompts."""
     messages = [
@@ -4637,6 +4755,7 @@ async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
                         'provider_name': 'google-gla',
                         'vendor_metadata': {'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
                         'identifier': 'my-custom-id',
+                        'target': 'message',
                     }
                 },
             ),

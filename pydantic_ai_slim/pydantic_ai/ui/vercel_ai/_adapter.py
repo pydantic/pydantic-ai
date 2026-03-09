@@ -598,6 +598,19 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             call_provider_metadata=call_provider_metadata,
                         )
                     )
+            elif isinstance(part, UploadedFile):
+                if part.target == 'container':
+                    # Container-only file references are informational; skip in UI rendering.
+                    continue
+                media_type = part.media_type or 'application/octet-stream'
+                provider_metadata = dump_provider_metadata(
+                    file_id=part.file_id,
+                    provider_name=part.provider_name,
+                    target=part.target,
+                )
+                ui_parts.append(
+                    FileUIPart(url=part.file_id, media_type=media_type, provider_metadata=provider_metadata)
+                )
             elif isinstance(part, ToolCallPart):
                 ui_parts.extend(cls._dump_tool_call_part(part, tool_results))
             else:

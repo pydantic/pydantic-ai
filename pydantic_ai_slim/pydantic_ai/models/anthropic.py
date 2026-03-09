@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
+from anthropic.types.beta import BetaContainerUploadBlockParam
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
@@ -1155,21 +1156,30 @@ class AnthropicModel(Model):
                             f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
                             f'Expected `provider_name` to be `{self.system!r}`.'
                         )
-                    if item.media_type.startswith('image/'):
-                        yield BetaImageBlockParam(
-                            source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
-                            type='image',
-                        )
-                    elif item.media_type.startswith(('text/', 'application/')):
-                        yield BetaRequestDocumentBlockParam(
-                            source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
-                            type='document',
-                        )
-                    else:
-                        raise UserError(
-                            f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
-                            'Only image and document (text/application) types are supported.'
-                        )
+                    if item.target in ('message', 'both'):
+                        if item.media_type.startswith('image/'):
+                            yield BetaImageBlockParam(
+                                source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
+                                type='image',
+                            )
+                        elif item.media_type.startswith(('text/', 'application/')):
+                            yield BetaRequestDocumentBlockParam(
+                                source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                                type='document',
+                            )
+                        else:
+                            raise UserError(
+                                f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
+                                'Only image and document (text/application) types are supported.'
+                            )
+                    if item.target in ('container', 'both'):
+                        if not has_code_execution_tool:
+                            raise UserError(
+                                'UploadedFile with `target` including `container` requires the code execution tool. '
+                                'Add `CodeExecutionTool()` to `builtin_tools`.'
+                            )
+
+                        yield BetaContainerUploadBlockParam(file_id=item.file_id, type='container_upload')
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
@@ -1379,6 +1389,9 @@ class AnthropicStreamedResponse(StreamedResponse):
                     self.provider_details = self.provider_details or {}
                     self.provider_details['finish_reason'] = raw_finish_reason
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                if event.delta.container:
+                    self.provider_details = self.provider_details or {}
+                    self.provider_details['container_id'] = event.delta.container.id
 
             elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
                 if isinstance(current_block, BetaMCPToolUseBlock):
