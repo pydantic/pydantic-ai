@@ -1,5 +1,6 @@
 from importlib.metadata import version as _metadata_version
 
+from ._template import TemplateStr
 from .agent import (
     Agent,
     CallToolsNode,
@@ -258,6 +259,8 @@ __all__ = (
     'PromptedOutput',
     'TextOutput',
     'StructuredDict',
+    # template
+    'TemplateStr',
     # format_prompt
     'format_as_xml',
     # settings

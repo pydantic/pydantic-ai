@@ -1,13 +1,15 @@
 from collections.abc import Sequence
 
+from pydantic_ai._template import TemplateStr
 from pydantic_ai.tools import AgentDepsT
 
 from . import _system_prompt
 
 Instructions = (
-    str
+    TemplateStr[AgentDepsT]
+    | str
     | _system_prompt.SystemPromptFunc[AgentDepsT]
-    | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
+    | Sequence[TemplateStr[AgentDepsT] | str | _system_prompt.SystemPromptFunc[AgentDepsT]]
     | None
 )
 
