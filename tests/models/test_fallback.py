@@ -8,7 +8,6 @@ from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsJson
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pydantic_core import to_json
 
@@ -32,6 +31,7 @@ from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
 
 if sys.version_info < (3, 11):

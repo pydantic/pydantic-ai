@@ -8,7 +8,6 @@ from collections.abc import AsyncIterator
 from importlib.metadata import distributions
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import UserError
 from pydantic_ai._utils import (
@@ -23,6 +22,7 @@ from pydantic_ai._utils import (
     validate_empty_kwargs,
 )
 
+from ._inline_snapshot import snapshot
 from .models.mock_async_stream import MockAsyncStream
 
 pytestmark = pytest.mark.anyio
@@ -527,6 +527,15 @@ def test_strip_markdown_fences():
         == '{"foo": "bar"}'
     )
     assert strip_markdown_fences('No JSON to be found') == 'No JSON to be found'
+    # Content after closing fence with braces should not be captured (issue #4397)
+    assert strip_markdown_fences('```json\n{"a": 1}\n```\nContext: {"b": 2}') == '{"a": 1}'
+    assert (
+        strip_markdown_fences('```json\n{"result": "pass"}\n```\nThis matches schema {"type": "object"}')
+        == '{"result": "pass"}'
+    )
+    # Nested JSON objects should still be fully captured
+    assert strip_markdown_fences('```json\n{"nested": {"key": "value"}}\n```') == '{"nested": {"key": "value"}}'
+    assert strip_markdown_fences('```json\n{"a": {"b": {"c": 1}}}\n```') == '{"a": {"b": {"c": 1}}}'
 
 
 def test_validate_empty_kwargs_empty():

@@ -76,6 +76,7 @@ making it ideal for queries that require up-to-date data.
 | Google | ✅ | No parameter support. No [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] is generated when streaming. Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | xAI | ✅ | Supports `blocked_domains` and `allowed_domains` parameters. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
+| OpenRouter | ✅ | Web search via [plugins](https://openrouter.ai/docs/features/web-search). Supports `search_context_size`. Uses native search for supported providers (OpenAI, Anthropic, Perplexity, xAI), Exa for others. |
 | OpenAI Chat Completions | ❌ | Not supported |
 | Bedrock | ❌ | Not supported |
 | Mistral | ❌ | Not supported |
@@ -88,7 +89,7 @@ making it ideal for queries that require up-to-date data.
 ```py {title="web_search_anthropic.py"}
 from pydantic_ai import Agent, WebSearchTool
 
-agent = Agent('anthropic:claude-sonnet-4-5', builtin_tools=[WebSearchTool()])
+agent = Agent('anthropic:claude-sonnet-4-6', builtin_tools=[WebSearchTool()])
 
 result = agent.run_sync('Give me a sentence with the biggest news in AI this week.')
 print(result.output)
@@ -119,7 +120,7 @@ The `WebSearchTool` supports several configuration parameters:
 from pydantic_ai import Agent, WebSearchTool, WebSearchUserLocation
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     builtin_tools=[
         WebSearchTool(
             search_context_size='high',
@@ -145,16 +146,17 @@ _(This example is complete, it can be run "as is")_
 
 #### Provider Support
 
-| Parameter | OpenAI | Anthropic | xAI | Groq |
-|-----------|--------|-----------|-----|------|
-| `search_context_size` | ✅ | ❌ | ❌ | ❌ |
-| `user_location` | ✅ | ✅ | ❌ | ❌ |
-| `blocked_domains` | ❌ | ✅ | ✅ | ✅ |
-| `allowed_domains` | ✅ | ✅ | ✅ | ✅ |
-| `max_uses` | ❌ | ✅ | ❌ | ❌ |
+| Parameter | OpenAI | Anthropic | xAI | Groq | OpenRouter |
+|-----------|--------|-----------|-----|------|------------|
+| `search_context_size` | ✅ | ❌ | ❌ | ❌ | ✅ |
+| `user_location` | ✅ | ✅ | ❌ | ❌ | ❌ |
+| `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
+| `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `max_uses` | ❌ | ✅ | ❌ | ❌ | ❌ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
+
 
 ## Code Execution Tool
 
@@ -181,7 +183,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 ```py {title="code_execution_basic.py"}
 from pydantic_ai import Agent, CodeExecutionTool
 
-agent = Agent('anthropic:claude-sonnet-4-5', builtin_tools=[CodeExecutionTool()])
+agent = Agent('anthropic:claude-sonnet-4-6', builtin_tools=[CodeExecutionTool()])
 
 result = agent.run_sync('Calculate the factorial of 15.')
 print(result.output)
@@ -436,7 +438,7 @@ The `WebFetchTool` supports several configuration parameters:
 from pydantic_ai import Agent, WebFetchTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     builtin_tools=[
         WebFetchTool(
             allowed_domains=['ai.pydantic.dev', 'docs.pydantic.dev'],
@@ -534,7 +536,7 @@ class FakeMemoryTool(BetaAbstractMemoryTool):
 
 fake_memory = FakeMemoryTool()
 
-agent = Agent('anthropic:claude-sonnet-4-5', builtin_tools=[MemoryTool()])
+agent = Agent('anthropic:claude-sonnet-4-6', builtin_tools=[MemoryTool()])
 
 
 @agent.tool_plain
@@ -583,7 +585,7 @@ but can result in optimized context use and caching, and faster performance due 
 from pydantic_ai import Agent, MCPServerTool
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     builtin_tools=[
         MCPServerTool(
             id='deepwiki',

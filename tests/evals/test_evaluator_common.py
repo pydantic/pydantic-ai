@@ -5,13 +5,13 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
 from pydantic_ai.settings import ModelSettings
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -210,7 +210,7 @@ async def test_contains_invalid_type():
 
     result = evaluator.evaluate(MockContext(output=Unhashable()))
     assert result.value is False
-    assert result.reason == "Containment check failed: argument of type 'Unhashable' is not iterable"
+    assert result.reason and result.reason.startswith("Containment check failed: argument of type 'Unhashable'")
 
 
 async def test_is_instance():

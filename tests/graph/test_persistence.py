@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 
 import pytest
 from dirty_equals import IsStr
-from inline_snapshot import snapshot
 
 from pydantic_graph import (
     BaseNode,
@@ -23,6 +22,7 @@ from pydantic_graph import (
 from pydantic_graph.exceptions import GraphNodeStatusError, GraphRuntimeError
 from pydantic_graph.persistence import BaseStatePersistence, build_snapshot_list_type_adapter
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsFloat, IsNow
 
 pytestmark = pytest.mark.anyio
