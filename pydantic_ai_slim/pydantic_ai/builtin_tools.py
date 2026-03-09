@@ -98,6 +98,7 @@ class WebSearchTool(AbstractBuiltinTool):
     * Groq
     * Google
     * xAI
+    * OpenRouter
     """
 
     search_context_size: Literal['low', 'medium', 'high'] = 'medium'
@@ -106,6 +107,7 @@ class WebSearchTool(AbstractBuiltinTool):
     Supported by:
 
     * OpenAI Responses
+    * OpenRouter
     """
 
     user_location: WebSearchUserLocation | None = None

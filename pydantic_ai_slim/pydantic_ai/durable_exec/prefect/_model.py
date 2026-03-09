@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
 from typing import Any
 
 from prefect import task
@@ -11,57 +10,14 @@ from prefect.context import FlowRunContext
 from pydantic_ai import (
     ModelMessage,
     ModelResponse,
-    ModelResponseStreamEvent,
 )
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.models import ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import RequestUsage
 
 from ._types import TaskConfig, default_task_config
-
-
-class PrefectStreamedResponse(StreamedResponse):
-    """A non-streaming response wrapper for Prefect tasks.
-
-    When a model request is executed inside a Prefect flow, the entire stream
-    is consumed within the task, and this wrapper is returned containing the
-    final response.
-    """
-
-    def __init__(self, model_request_parameters: ModelRequestParameters, response: ModelResponse):
-        super().__init__(model_request_parameters)
-        self.response = response
-
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        """Return an empty iterator since the stream has already been consumed."""
-        return
-        # noinspection PyUnreachableCode
-        yield
-
-    def get(self) -> ModelResponse:
-        return self.response
-
-    def usage(self) -> RequestUsage:
-        return self.response.usage  # pragma: no cover
-
-    @property
-    def model_name(self) -> str:
-        return self.response.model_name or ''  # pragma: no cover
-
-    @property
-    def provider_name(self) -> str:
-        return self.response.provider_name or ''  # pragma: no cover
-
-    @property
-    def provider_url(self) -> str | None:
-        return self.response.provider_url  # pragma: no cover
-
-    @property
-    def timestamp(self) -> datetime:
-        return self.response.timestamp  # pragma: no cover
 
 
 class PrefectModel(WrapperModel):
@@ -153,4 +109,4 @@ class PrefectModel(WrapperModel):
         response = await self._wrapped_request_stream.with_options(
             name=f'Model Request (Streaming): {self.wrapped.model_name}', **self.task_config
         )(messages, model_settings, model_request_parameters, run_context)
-        yield PrefectStreamedResponse(model_request_parameters, response)
+        yield CompletedStreamedResponse(model_request_parameters, response)
