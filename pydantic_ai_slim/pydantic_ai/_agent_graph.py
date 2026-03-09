@@ -92,6 +92,8 @@ class GraphAgentState:
     run_step: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
     metadata: dict[str, Any] | None = None
+    model_settings: Any = None
+    """Last-resolved model settings for the current step, used for error messages."""
 
     def increment_retries(
         self,
@@ -134,7 +136,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     new_message_index: int
 
     model: models.Model
-    model_settings: ModelSettings | None
+    get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
@@ -531,7 +533,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_request_parameters = await _prepare_request_parameters(ctx)
 
-        model_settings = ctx.deps.model_settings
+        model_settings = ctx.deps.get_model_settings(run_context)
+        ctx.state.model_settings = model_settings
         usage = ctx.state.usage
         if ctx.deps.usage_limits.count_tokens_before_request:
             # Copy to avoid modifying the original usage object with the counted usage
@@ -619,7 +622,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 if not self.model_response.parts:
                     # Don't retry if the model returned an empty response because the token limit was exceeded, possibly during thinking.
                     if self.model_response.finish_reason == 'length':
-                        model_settings = ctx.deps.model_settings
+                        model_settings = ctx.state.model_settings
                         max_tokens = model_settings.get('max_tokens') if model_settings else None
                         raise exceptions.UnexpectedModelBehavior(
                             f'Model token limit ({max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
@@ -664,7 +667,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # resubmit the most recent request that resulted in an empty response,
                     # as the empty response and request will not create any items in the API payload,
                     # in the hope the model will return a non-empty response this time.
-                    ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
+                    ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.state.model_settings)
                     run_context = build_run_context(ctx)
                     instructions = await ctx.deps.get_instructions(run_context)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
@@ -731,7 +734,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     raise ToolRetryError(m)
                 except ToolRetryError as e:
                     ctx.state.increment_retries(
-                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
                     )
                     run_context = build_run_context(ctx)
                     instructions = await ctx.deps.get_instructions(run_context)
@@ -942,7 +945,7 @@ async def process_tool_calls(  # noqa: C901
                 else:
                     # No valid result yet, so this is a real failure
                     ctx.state.increment_retries(
-                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
                     )
                     raise e  # pragma: lax no cover
             except ToolRetryError as e:
@@ -950,7 +953,7 @@ async def process_tool_calls(  # noqa: C901
                 # This allows the run to succeed if at least one output tool returned a valid result
                 if not final_result:
                     ctx.state.increment_retries(
-                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
                     )
                 yield _messages.FunctionToolCallEvent(call)
                 output_parts.append(e.tool_retry)
@@ -983,7 +986,7 @@ async def process_tool_calls(  # noqa: C901
 
     # Then, we handle unknown tool calls
     if tool_calls_by_kind['unknown']:
-        ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
+        ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.state.model_settings)
         calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     calls_to_run_results: dict[str, DeferredToolResult] = {}
