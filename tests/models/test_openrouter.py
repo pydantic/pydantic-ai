@@ -1901,7 +1901,7 @@ async def test_openrouter_cache_all_settings_real_api(allow_model_requests: None
     )
 
     @agent.tool_plain
-    def calculator(expression: str) -> str:  # pragma: no cover
+    def calculator(expression: str) -> str:
         """Evaluate a math expression."""
         return 'result'
 
