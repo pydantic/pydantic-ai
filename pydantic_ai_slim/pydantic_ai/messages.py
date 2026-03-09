@@ -1075,6 +1075,8 @@ class BaseToolReturnPart:
         data, files, was_list = self._split_content()
         if not data:
             return None, files
+        # Unwrap single-item data: either content was originally scalar (!was_list)
+        # or extracting files reduced a multi-item list to one element.
         if len(data) == 1 and (not was_list or bool(files)):
             return data[0], files
         return data, files

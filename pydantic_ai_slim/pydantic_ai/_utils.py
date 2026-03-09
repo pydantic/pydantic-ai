@@ -559,5 +559,5 @@ def get_event_loop():
 
 
 def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
-    """Check if obj is a dict with string keys, enabling type narrowing."""
+    """Check if obj is a dict, narrowing the type to `dict[str, Any]`."""
     return isinstance(obj, dict)

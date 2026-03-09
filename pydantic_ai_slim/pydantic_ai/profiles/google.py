@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from . import ModelProfile
 
+# MIME types supported in native FunctionResponseDict.parts for Gemini 3+.
+# See https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
 _GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES: tuple[str, ...] = (
     'image/png',
     'image/jpeg',
@@ -12,8 +14,6 @@ _GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES: tuple[str, ...] = (
     'application/pdf',
     'text/plain',
 )
-"""MIME types supported in native FunctionResponseDict.parts for Gemini 3+.
-See https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal"""
 
 
 @dataclass(kw_only=True)

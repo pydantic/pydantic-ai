@@ -100,6 +100,8 @@ def click_and_capture(x: int, y: int) -> ToolReturn:
         },
     )
 
+# The model receives the rich visual content for analysis
+# while your application can access the structured return_value and metadata
 result = agent.run_sync('Click on the submit button and tell me what happened')
 print(result.output)
 #> {"click_and_capture":"Successfully clicked at (0, 0)"}
@@ -109,7 +111,7 @@ print(result.output)
 - **`content`**: Content sent as a **separate user message** after the tool result. Use this when you explicitly want content to appear outside the tool result, or when combining structured return values with rich content.
 - **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature 'artifacts'.
 
-This gives you explicit control over what appears in the tool result vs as a separate user message. For multimodal content that should be sent natively in the tool result (when supported by the model), return it directly from the tool function or include it in `return_value` (see [Tool Output](#function-tool-output) above).
+This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic. For multimodal content that should be sent natively in the tool result (when supported by the model), return it directly from the tool function or include it in `return_value` (see [Tool Output](#function-tool-output) above).
 
 ## Custom Tool Schema
 

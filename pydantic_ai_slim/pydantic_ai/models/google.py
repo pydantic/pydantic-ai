@@ -807,112 +807,62 @@ class GoogleModel(Model):
             )
         return file.file_id, file.media_type
 
-    async def _map_file_to_part(self, file: FileUrl | BinaryContent | UploadedFile) -> PartDict:
-        """Map a multimodal file directly to a Google API part.
+    async def _resolve_file(
+        self, file: FileUrl | BinaryContent | UploadedFile
+    ) -> tuple[Literal['inline'], bytes, str] | tuple[Literal['file'], str, str]:
+        """Resolve a file to either inline data `('inline', data, mime_type)` or a file reference `('file', uri, mime_type)`.
 
-        See also `_map_file_to_function_response_part` which uses the same resolution
-        logic but returns `FunctionResponsePartDict` (no `video_metadata` support).
+        Shared resolution logic for both `_map_file_to_part` and `_map_file_to_function_response_part`.
         """
-        part_dict: PartDict
-        file_data_dict: FileDataDict
         if isinstance(file, BinaryContent):
-            inline_data_dict: BlobDict = {'data': file.data, 'mime_type': file.media_type}
-            part_dict = {'inline_data': inline_data_dict}
-            if file.vendor_metadata:
-                part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
-            return part_dict
+            return ('inline', file.data, file.media_type)
         elif isinstance(file, UploadedFile):
             file_uri, mime_type = self._validate_uploaded_file(file)
-            file_data_dict = {'file_uri': file_uri, 'mime_type': mime_type}
-            part_dict = {'file_data': file_data_dict}
-            if file.vendor_metadata:
-                part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
-            return part_dict
+            return ('file', file_uri, mime_type)
         elif isinstance(file, VideoUrl) and (
             file.is_youtube or (file.url.startswith('gs://') and self.system == 'google-vertex')
         ):
-            file_data_dict = {'file_uri': file.url, 'mime_type': file.media_type}
-            part_dict = {'file_data': file_data_dict}
-            if file.vendor_metadata:
-                part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
-            return part_dict
+            return ('file', file.url, file.media_type)
         elif isinstance(file, FileUrl):
             if file.force_download or (
                 self.system == 'google-gla'
                 and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
             ):
                 downloaded_item = await download_item(file, data_format='bytes')
-                inline_data: BlobDict = {
-                    'data': downloaded_item['data'],
-                    'mime_type': downloaded_item['data_type'],
-                }
-                part_dict = {'inline_data': inline_data}
-                if isinstance(file, VideoUrl) and file.vendor_metadata:
-                    part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
-                return part_dict
+                return ('inline', downloaded_item['data'], downloaded_item['data_type'])
             else:
-                file_data_dict = {'file_uri': file.url, 'mime_type': file.media_type}
-                part_dict = {'file_data': file_data_dict}
-                if isinstance(file, VideoUrl) and file.vendor_metadata:
-                    part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
-                return part_dict  # pragma: lax no cover
+                return ('file', file.url, file.media_type)  # pragma: lax no cover
         else:
             assert_never(file)
+
+    async def _map_file_to_part(self, file: FileUrl | BinaryContent | UploadedFile) -> PartDict:
+        """Map a multimodal file directly to a Google API `PartDict`."""
+        resolved = await self._resolve_file(file)
+        part_dict: PartDict
+        if resolved[0] == 'inline':
+            part_dict = {'inline_data': BlobDict(data=resolved[1], mime_type=resolved[2])}
+        else:
+            part_dict = {'file_data': FileDataDict(file_uri=resolved[1], mime_type=resolved[2])}
+        if isinstance(file, (BinaryContent, VideoUrl, UploadedFile)) and file.vendor_metadata:
+            part_dict['video_metadata'] = cast(VideoMetadataDict, file.vendor_metadata)
+        return part_dict
 
     async def _map_file_to_function_response_part(
         self, file: FileUrl | BinaryContent | UploadedFile
     ) -> FunctionResponsePartDict:
         """Map a multimodal file to `FunctionResponsePartDict` for Gemini 3+ native tool returns.
 
-        Uses the same resolution logic as `_map_file_to_part` but returns the simpler
-        `FunctionResponsePartDict` format — only inline_data or file_data, no video_metadata.
-
         Note: `FunctionResponseBlobDict`/`FunctionResponseFileDataDict` declare `display_name` but
         the google-genai SDK's `_live_converters.py` rejects it at runtime. We omit it until the
         SDK supports it, at which point we could also add `$ref` identifiers in the response dict.
         """
-        blob_dict: FunctionResponseBlobDict
-        file_data_dict: FunctionResponseFileDataDict
-        if isinstance(file, BinaryContent):
-            blob_dict = {
-                'data': file.data,
-                'mime_type': file.media_type,
-            }
+        resolved = await self._resolve_file(file)
+        if resolved[0] == 'inline':
+            blob_dict: FunctionResponseBlobDict = {'data': resolved[1], 'mime_type': resolved[2]}
             return FunctionResponsePartDict(inline_data=blob_dict)
-        elif isinstance(file, UploadedFile):
-            file_uri, mime_type = self._validate_uploaded_file(file)
-            file_data_dict = {
-                'file_uri': file_uri,
-                'mime_type': mime_type,
-            }
-            return FunctionResponsePartDict(file_data=file_data_dict)
-        elif isinstance(file, VideoUrl) and (
-            file.is_youtube or (file.url.startswith('gs://') and self.system == 'google-vertex')
-        ):
-            file_data_dict = {
-                'file_uri': file.url,
-                'mime_type': file.media_type,
-            }
-            return FunctionResponsePartDict(file_data=file_data_dict)
-        elif isinstance(file, FileUrl):
-            if file.force_download or (
-                self.system == 'google-gla'
-                and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
-            ):
-                downloaded_item = await download_item(file, data_format='bytes')
-                blob_dict = {
-                    'data': downloaded_item['data'],
-                    'mime_type': downloaded_item['data_type'],
-                }
-                return FunctionResponsePartDict(inline_data=blob_dict)
-            else:
-                file_data_dict = {
-                    'file_uri': file.url,
-                    'mime_type': file.media_type,
-                }
-                return FunctionResponsePartDict(file_data=file_data_dict)  # pragma: lax no cover
         else:
-            assert_never(file)
+            file_data_dict: FunctionResponseFileDataDict = {'file_uri': resolved[1], 'mime_type': resolved[2]}
+            return FunctionResponsePartDict(file_data=file_data_dict)
 
     async def _map_user_prompt(self, part: UserPromptPart) -> list[PartDict]:
         if isinstance(part.content, str):
