@@ -41,10 +41,12 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import (
+    CodeExecutionNetworkPolicy,
     CodeExecutionTool,
     FileSearchTool,
     ImageAspectRatio,
     MCPServerTool,
+    ShellTool,
     SkillReference,
     WebSearchTool,
 )
@@ -82,6 +84,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import (
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
+        _get_openai_code_execution_context,  # pyright: ignore[reportPrivateUsage]
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -199,17 +202,15 @@ async def test_openai_responses_shell_tool_mounts_uploaded_files(allow_model_req
 
 
 @pytest.mark.parametrize(
-    'settings,match',
+    'settings_kwargs,match',
     [
         pytest.param(
-            OpenAIResponsesModelSettings(
-                openai_shell_uploaded_files=[UploadedFile(file_id='file-123', provider_name='openai')]
-            ),
+            dict(openai_shell_uploaded_files=[UploadedFile(file_id='file-123', provider_name='openai')]),
             'requires exactly one',
             id='no-shell-tool',
         ),
         pytest.param(
-            OpenAIResponsesModelSettings(
+            dict(
                 openai_builtin_tools=[{'type': 'shell'}, {'type': 'shell'}],
                 openai_shell_uploaded_files=[UploadedFile(file_id='file-123', provider_name='openai')],
             ),
@@ -217,7 +218,7 @@ async def test_openai_responses_shell_tool_mounts_uploaded_files(allow_model_req
             id='multiple-shell-tools',
         ),
         pytest.param(
-            OpenAIResponsesModelSettings(
+            dict(
                 openai_builtin_tools=[{'type': 'shell', 'environment': {'type': 'local'}}],
                 openai_shell_uploaded_files=[UploadedFile(file_id='file-123', provider_name='openai')],
             ),
@@ -225,7 +226,7 @@ async def test_openai_responses_shell_tool_mounts_uploaded_files(allow_model_req
             id='local-environment',
         ),
         pytest.param(
-            OpenAIResponsesModelSettings(
+            dict(
                 openai_builtin_tools=[
                     {'type': 'shell', 'environment': {'type': 'container_reference', 'container_id': 'cntr_123'}}
                 ],
@@ -235,7 +236,7 @@ async def test_openai_responses_shell_tool_mounts_uploaded_files(allow_model_req
             id='container-reference',
         ),
         pytest.param(
-            OpenAIResponsesModelSettings(
+            dict(
                 openai_builtin_tools=[{'type': 'shell'}],
                 openai_shell_uploaded_files=[UploadedFile(file_id='file-123', provider_name='anthropic')],
             ),
@@ -245,7 +246,7 @@ async def test_openai_responses_shell_tool_mounts_uploaded_files(allow_model_req
     ],
 )
 async def test_openai_responses_shell_uploaded_files_validation(
-    allow_model_requests: None, settings: OpenAIResponsesModelSettings, match: str
+    allow_model_requests: None, settings_kwargs: dict[str, Any], match: str
 ):
     c = response_message(
         [
@@ -259,11 +260,166 @@ async def test_openai_responses_shell_uploaded_files_validation(
         ]
     )
     mock_client = MockOpenAIResponses.create_mock(c)
+    settings = OpenAIResponsesModelSettings(**settings_kwargs)
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client), settings=settings)
     agent = Agent(model=model)
 
     with pytest.raises(UserError, match=match):
         await agent.run('Use the hosted shell.')
+
+
+async def test_openai_responses_uploaded_file_container_target_requires_code_execution_tool(
+    allow_model_requests: None,
+):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(
+                    list[Content],
+                    [ResponseOutputText(text='should not reach here', type='output_text', annotations=[])],
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    with pytest.raises(UserError, match='requires the shell tool'):
+        await agent.run(
+            [
+                'Analyze this file',
+                UploadedFile(file_id='file-abc123', provider_name='openai', target='container'),
+            ]
+        )
+
+    assert get_mock_responses_kwargs(mock_client) == []
+
+
+async def test_openai_responses_uploaded_file_container_target_uses_hosted_shell(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, builtin_tools=[ShellTool()])
+
+    result = await agent.run(
+        ['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='openai', target='container')]
+    )
+    assert result.output == 'ok'
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    assert response_kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'type': 'shell',
+                'environment': {
+                    'type': 'container_auto',
+                    'file_ids': ['file-abc123'],
+                },
+            }
+        ]
+    )
+    assert response_kwargs[0]['input'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'input_text', 'text': 'Analyze this file'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_openai_responses_uploaded_file_both_target_uses_hosted_shell(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, builtin_tools=[ShellTool()])
+
+    result = await agent.run(
+        [
+            'Analyze this file',
+            UploadedFile(
+                file_id='file-abc123',
+                provider_name='openai',
+                media_type='text/csv',
+                target='both',
+            ),
+        ]
+    )
+    assert result.output == 'ok'
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    assert response_kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'type': 'shell',
+                'environment': {
+                    'type': 'container_auto',
+                    'file_ids': ['file-abc123'],
+                },
+            }
+        ]
+    )
+    assert response_kwargs[0]['input'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'input_text', 'text': 'Analyze this file'},
+                    {'type': 'input_file', 'file_id': 'file-abc123'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_openai_responses_code_execution_workspace_mode_uses_hosted_shell(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, builtin_tools=[ShellTool()])
+
+    result = await agent.run('Use the workspace interface for code execution.')
+    assert result.output == 'ok'
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    assert response_kwargs[0]['tools'] == snapshot([{'type': 'shell', 'environment': {'type': 'container_auto'}}])
 
 
 async def test_openai_responses_code_execution_skills_use_hosted_shell(allow_model_requests: None):
@@ -283,7 +439,7 @@ async def test_openai_responses_code_execution_skills_use_hosted_shell(allow_mod
     agent = Agent(
         model=model,
         builtin_tools=[
-            CodeExecutionTool(
+            ShellTool(
                 skills=[
                     SkillReference(skill_id='skill_custom', version=2),
                     SkillReference(skill_id='skill_provider', version='2026-01-01', source='provider'),
@@ -312,6 +468,94 @@ async def test_openai_responses_code_execution_skills_use_hosted_shell(allow_mod
     )
 
 
+async def test_openai_responses_code_execution_network_policy_uses_code_interpreter_container(
+    allow_model_requests: None,
+):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model,
+        builtin_tools=[ShellTool(network_policy=CodeExecutionNetworkPolicy(mode='disabled'))],
+    )
+
+    result = await agent.run('Run code without outbound network access.')
+    assert result.output == 'ok'
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    assert response_kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'type': 'shell',
+                'environment': {
+                    'type': 'container_auto',
+                    'network_policy': {'type': 'disabled'},
+                },
+            }
+        ]
+    )
+
+
+async def test_openai_responses_code_execution_skills_network_policy_uses_hosted_shell_allowlist(
+    allow_model_requests: None,
+):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model,
+        builtin_tools=[
+            ShellTool(
+                skills=[SkillReference(skill_id='skill_custom')],
+                network_policy=CodeExecutionNetworkPolicy(
+                    mode='allowlist',
+                    allowed_domains=['api.github.com', 'raw.githubusercontent.com'],
+                ),
+            )
+        ],
+    )
+
+    result = await agent.run('Run code with an outbound allowlist.')
+    assert result.output == 'ok'
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    assert response_kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'type': 'shell',
+                'environment': {
+                    'type': 'container_auto',
+                    'skills': [{'skill_id': 'skill_custom', 'type': 'skill_reference'}],
+                    'network_policy': {
+                        'type': 'allowlist',
+                        'allowed_domains': ['api.github.com', 'raw.githubusercontent.com'],
+                    },
+                },
+            }
+        ]
+    )
+
+
 async def test_openai_responses_code_execution_skills_mount_uploaded_files(allow_model_requests: None):
     c = response_message(
         [
@@ -334,7 +578,7 @@ async def test_openai_responses_code_execution_skills_mount_uploaded_files(allow
     )
     agent = Agent(
         model=model,
-        builtin_tools=[CodeExecutionTool(skills=[SkillReference(skill_id='skill_custom')])],
+        builtin_tools=[ShellTool(skills=[SkillReference(skill_id='skill_custom')])],
     )
 
     result = await agent.run('Use code execution with hosted skills.')
@@ -348,6 +592,45 @@ async def test_openai_responses_code_execution_skills_mount_uploaded_files(allow
                 'environment': {
                     'type': 'container_auto',
                     'skills': [{'skill_id': 'skill_custom', 'type': 'skill_reference'}],
+                    'file_ids': ['file-123'],
+                },
+            }
+        ]
+    )
+
+
+async def test_openai_responses_code_execution_mounts_uploaded_files_from_model_settings(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel(
+        'gpt-5.2',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(
+            openai_shell_uploaded_files=[UploadedFile(file_id='file-123', provider_name='openai')]
+        ),
+    )
+    agent = Agent(model=model, builtin_tools=[ShellTool()])
+
+    result = await agent.run('Use code execution with mounted files.')
+    assert result.output == 'ok'
+
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    assert response_kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'type': 'shell',
+                'environment': {
+                    'type': 'container_auto',
                     'file_ids': ['file-123'],
                 },
             }
@@ -373,10 +656,418 @@ async def test_openai_responses_code_execution_skills_conflict_with_raw_shell(al
         provider=OpenAIProvider(openai_client=mock_client),
         settings=OpenAIResponsesModelSettings(openai_builtin_tools=[{'type': 'shell'}]),
     )
-    agent = Agent(model=model, builtin_tools=[CodeExecutionTool(skills=[SkillReference(skill_id='skill_custom')])])
+    agent = Agent(model=model, builtin_tools=[ShellTool(skills=[SkillReference(skill_id='skill_custom')])])
 
     with pytest.raises(UserError, match='already manages the OpenAI hosted `shell` tool'):
         await agent.run('Use code execution with hosted skills.')
+
+
+async def test_openai_responses_uploaded_file_container_target_conflicts_with_raw_shell(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(
+                    list[Content],
+                    [ResponseOutputText(text='should not reach here', type='output_text', annotations=[])],
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel(
+        'gpt-5.2',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(openai_builtin_tools=[{'type': 'shell'}]),
+    )
+    agent = Agent(model=model, builtin_tools=[ShellTool()])
+
+    with pytest.raises(UserError, match='already manages the OpenAI hosted `shell` tool'):
+        await agent.run(
+            [
+                'Analyze this file',
+                UploadedFile(file_id='file-abc123', provider_name='openai', target='container'),
+            ]
+        )
+
+
+async def test_openai_responses_tool_returned_uploaded_file_container_target(allow_model_requests: None):
+    from openai.types import responses as resp
+
+    responses_to_send = [
+        response_message(
+            [
+                resp.ResponseFunctionToolCall.model_validate(
+                    {
+                        'id': 'fc_123',
+                        'call_id': 'call_123',
+                        'name': 'fetch_dataset',
+                        'arguments': '{}',
+                        'status': 'completed',
+                        'type': 'function_call',
+                    }
+                )
+            ]
+        ),
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg_123',
+                    content=cast(list[Content], [ResponseOutputText(text='ok', type='output_text', annotations=[])]),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock(responses_to_send)
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, builtin_tools=[ShellTool()])
+
+    @agent.tool_plain
+    def fetch_dataset() -> UploadedFile:
+        return UploadedFile(
+            file_id='file-tool-123',
+            provider_name='openai',
+            target='container',
+            identifier='dataset-1',
+        )
+
+    result = await agent.run('Analyze the dataset')
+    assert result.output == 'ok'
+
+    all_kwargs = get_mock_responses_kwargs(mock_client)
+    assert len(all_kwargs) == 2
+    shell_tool = next(tool for tool in all_kwargs[1]['tools'] if tool.get('type') == 'shell')
+    assert shell_tool == snapshot(
+        {
+            'type': 'shell',
+            'environment': {
+                'type': 'container_auto',
+                'file_ids': ['file-tool-123'],
+            },
+        }
+    )
+    assert all_kwargs[1]['input'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': 'Analyze the dataset',
+            },
+            {
+                'name': 'fetch_dataset',
+                'arguments': '{}',
+                'call_id': 'call_123',
+                'type': 'function_call',
+            },
+            {
+                'type': 'function_call_output',
+                'call_id': 'call_123',
+                'output': 'See file dataset-1',
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'input_text', 'text': 'This is file dataset-1:'},
+                ],
+            },
+        ]
+    )
+
+
+async def test_openai_responses_uploaded_file_container_target_round_trip(allow_model_requests: None):
+    from openai.types import responses as resp
+
+    shell_call = resp.ResponseFunctionShellToolCall.model_validate(
+        {
+            'id': 'shell_item_123',
+            'call_id': 'shell_call_123',
+            'action': {
+                'commands': ['ls -1 /mnt/data'],
+                'max_output_length': 500,
+                'timeout_ms': 15000,
+            },
+            'environment': {'type': 'container_reference', 'container_id': 'cntr_123'},
+            'status': 'completed',
+            'type': 'shell_call',
+        }
+    )
+    shell_output = resp.ResponseFunctionShellToolCallOutput.model_validate(
+        {
+            'id': 'shell_output_123',
+            'call_id': 'shell_call_123',
+            'max_output_length': 500,
+            'output': [
+                {
+                    'outcome': {'type': 'exit', 'exit_code': 0},
+                    'stdout': 'report.csv\n',
+                    'stderr': '',
+                }
+            ],
+            'status': 'completed',
+            'type': 'shell_call_output',
+        }
+    )
+
+    c1 = response_message(
+        [
+            shell_call,
+            shell_output,
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ]
+    )
+    c2 = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_456',
+                content=cast(list[Content], [ResponseOutputText(text='continued', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ]
+    )
+
+    mock_client = MockOpenAIResponses.create_mock([c1, c2])
+    model = OpenAIResponsesModel(
+        'gpt-5.2',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+    )
+    agent = Agent(model=model, builtin_tools=[ShellTool()])
+
+    result = await agent.run(
+        ['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='openai', target='container')]
+    )
+    assert result.output == 'done'
+    response = cast(ModelResponse, result.all_messages()[1])
+    assert response.parts == snapshot(
+        [
+            BuiltinToolCallPart(
+                tool_name='shell',
+                args={
+                    'commands': ['ls -1 /mnt/data'],
+                    'max_output_length': 500,
+                    'timeout_ms': 15000,
+                    'environment': {'type': 'container_reference', 'container_id': 'cntr_123'},
+                },
+                tool_call_id='shell_call_123',
+                id='shell_item_123',
+                provider_name='openai',
+            ),
+            BuiltinToolReturnPart(
+                tool_name='shell',
+                content={
+                    'status': 'completed',
+                    'output': [
+                        {
+                            'outcome': {'type': 'exit', 'exit_code': 0},
+                            'stdout': 'report.csv\n',
+                            'stderr': '',
+                        }
+                    ],
+                    'max_output_length': 500,
+                },
+                tool_call_id='shell_call_123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+            ),
+            TextPart(content='done', id='msg_123', provider_name='openai'),
+        ]
+    )
+
+    await agent.run('Continue.', message_history=result.all_messages())
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    replayed_shell_call = next(item for item in response_kwargs[1]['input'] if item.get('type') == 'shell_call')
+    replayed_shell_output = next(
+        item for item in response_kwargs[1]['input'] if item.get('type') == 'shell_call_output'
+    )
+
+    assert replayed_shell_call == snapshot(
+        {
+            'action': {
+                'commands': ['ls -1 /mnt/data'],
+                'max_output_length': 500,
+                'timeout_ms': 15000,
+            },
+            'call_id': 'shell_call_123',
+            'type': 'shell_call',
+            'status': 'completed',
+            'id': 'shell_item_123',
+            'environment': {'type': 'container_reference', 'container_id': 'cntr_123'},
+        }
+    )
+    assert replayed_shell_output == snapshot(
+        {
+            'call_id': 'shell_call_123',
+            'output': [
+                {
+                    'outcome': {'type': 'exit', 'exit_code': 0},
+                    'stdout': 'report.csv\n',
+                    'stderr': '',
+                }
+            ],
+            'type': 'shell_call_output',
+            'status': 'completed',
+            'max_output_length': 500,
+        }
+    )
+
+
+async def test_openai_responses_model_settings_shell_uploaded_files_round_trip(allow_model_requests: None):
+    from openai.types import responses as resp
+
+    shell_call = resp.ResponseFunctionShellToolCall.model_validate(
+        {
+            'id': 'shell_item_123',
+            'call_id': 'shell_call_123',
+            'action': {
+                'commands': ['ls -1 /mnt/data'],
+                'max_output_length': 500,
+                'timeout_ms': 15000,
+            },
+            'environment': {'type': 'container_reference', 'container_id': 'cntr_123'},
+            'status': 'completed',
+            'type': 'shell_call',
+        }
+    )
+    shell_output = resp.ResponseFunctionShellToolCallOutput.model_validate(
+        {
+            'id': 'shell_output_123',
+            'call_id': 'shell_call_123',
+            'max_output_length': 500,
+            'output': [
+                {
+                    'outcome': {'type': 'exit', 'exit_code': 0},
+                    'stdout': 'report.csv\n',
+                    'stderr': '',
+                }
+            ],
+            'status': 'completed',
+            'type': 'shell_call_output',
+        }
+    )
+
+    c1 = response_message(
+        [
+            shell_call,
+            shell_output,
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ]
+    )
+    c2 = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_456',
+                content=cast(list[Content], [ResponseOutputText(text='continued', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ]
+    )
+
+    mock_client = MockOpenAIResponses.create_mock([c1, c2])
+    model = OpenAIResponsesModel(
+        'gpt-5.2',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(
+            openai_send_reasoning_ids=True,
+            openai_shell_uploaded_files=[UploadedFile(file_id='file-abc123', provider_name='openai')],
+        ),
+    )
+    agent = Agent(model=model, builtin_tools=[ShellTool()])
+
+    result = await agent.run('Analyze the mounted file.')
+    assert result.output == 'done'
+    response = cast(ModelResponse, result.all_messages()[1])
+    assert response.parts == snapshot(
+        [
+            BuiltinToolCallPart(
+                tool_name='shell',
+                args={
+                    'commands': ['ls -1 /mnt/data'],
+                    'max_output_length': 500,
+                    'timeout_ms': 15000,
+                    'environment': {'type': 'container_reference', 'container_id': 'cntr_123'},
+                },
+                tool_call_id='shell_call_123',
+                id='shell_item_123',
+                provider_name='openai',
+            ),
+            BuiltinToolReturnPart(
+                tool_name='shell',
+                content={
+                    'status': 'completed',
+                    'output': [
+                        {
+                            'outcome': {'type': 'exit', 'exit_code': 0},
+                            'stdout': 'report.csv\n',
+                            'stderr': '',
+                        }
+                    ],
+                    'max_output_length': 500,
+                },
+                tool_call_id='shell_call_123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+            ),
+            TextPart(content='done', id='msg_123', provider_name='openai'),
+        ]
+    )
+
+    await agent.run('Continue.', message_history=result.all_messages())
+    response_kwargs = get_mock_responses_kwargs(mock_client)
+    replayed_shell_call = next(item for item in response_kwargs[1]['input'] if item.get('type') == 'shell_call')
+    replayed_shell_output = next(
+        item for item in response_kwargs[1]['input'] if item.get('type') == 'shell_call_output'
+    )
+
+    assert replayed_shell_call == snapshot(
+        {
+            'action': {
+                'commands': ['ls -1 /mnt/data'],
+                'max_output_length': 500,
+                'timeout_ms': 15000,
+            },
+            'call_id': 'shell_call_123',
+            'type': 'shell_call',
+            'status': 'completed',
+            'id': 'shell_item_123',
+            'environment': {'type': 'container_reference', 'container_id': 'cntr_123'},
+        }
+    )
+    assert replayed_shell_output == snapshot(
+        {
+            'call_id': 'shell_call_123',
+            'output': [
+                {
+                    'outcome': {'type': 'exit', 'exit_code': 0},
+                    'stdout': 'report.csv\n',
+                    'stderr': '',
+                }
+            ],
+            'type': 'shell_call_output',
+            'status': 'completed',
+            'max_output_length': 500,
+        }
+    )
 
 
 async def test_openai_responses_shell_tool_round_trip(allow_model_requests: None):
@@ -487,7 +1178,9 @@ async def test_openai_responses_shell_tool_round_trip(allow_model_requests: None
     await agent.run('Continue.', message_history=result.all_messages())
     response_kwargs = get_mock_responses_kwargs(mock_client)
     replayed_shell_call = next(item for item in response_kwargs[1]['input'] if item.get('type') == 'shell_call')
-    replayed_shell_output = next(item for item in response_kwargs[1]['input'] if item.get('type') == 'shell_call_output')
+    replayed_shell_output = next(
+        item for item in response_kwargs[1]['input'] if item.get('type') == 'shell_call_output'
+    )
 
     assert replayed_shell_call == snapshot(
         {
@@ -587,7 +1280,7 @@ async def test_openai_responses_code_execution_skills_round_trip(allow_model_req
     )
     agent = Agent(
         model=model,
-        builtin_tools=[CodeExecutionTool(skills=[SkillReference(skill_id='skill_custom')])],
+        builtin_tools=[ShellTool(skills=[SkillReference(skill_id='skill_custom')])],
     )
 
     result = await agent.run('Use code execution with hosted skills.')
@@ -596,7 +1289,7 @@ async def test_openai_responses_code_execution_skills_round_trip(allow_model_req
     assert response.parts == snapshot(
         [
             BuiltinToolCallPart(
-                tool_name='code_execution',
+                tool_name='shell',
                 args={
                     'commands': ['ls -1 /mnt/data', 'pwd'],
                     'max_output_length': 2000,
@@ -606,10 +1299,9 @@ async def test_openai_responses_code_execution_skills_round_trip(allow_model_req
                 tool_call_id='shell_call_123',
                 id='shell_item_123',
                 provider_name='openai',
-                provider_details={'openai_tool_type': 'shell'},
             ),
             BuiltinToolReturnPart(
-                tool_name='code_execution',
+                tool_name='shell',
                 content={
                     'status': 'completed',
                     'output': [
@@ -624,7 +1316,6 @@ async def test_openai_responses_code_execution_skills_round_trip(allow_model_req
                 tool_call_id='shell_call_123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_details={'openai_tool_type': 'shell'},
             ),
             TextPart(content='done', id='msg_123', provider_name='openai'),
         ]
@@ -633,7 +1324,9 @@ async def test_openai_responses_code_execution_skills_round_trip(allow_model_req
     await agent.run('Continue.', message_history=result.all_messages())
     response_kwargs = get_mock_responses_kwargs(mock_client)
     replayed_shell_call = next(item for item in response_kwargs[1]['input'] if item.get('type') == 'shell_call')
-    replayed_shell_output = next(item for item in response_kwargs[1]['input'] if item.get('type') == 'shell_call_output')
+    replayed_shell_output = next(
+        item for item in response_kwargs[1]['input'] if item.get('type') == 'shell_call_output'
+    )
 
     assert replayed_shell_call == snapshot(
         {
@@ -983,7 +1676,7 @@ async def test_openai_responses_code_execution_skills_streaming(allow_model_requ
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(
         model=model,
-        builtin_tools=[CodeExecutionTool(skills=[SkillReference(skill_id='skill_custom')])],
+        builtin_tools=[ShellTool(skills=[SkillReference(skill_id='skill_custom')])],
     )
 
     async with agent.iter(user_prompt='Use code execution with hosted skills.') as agent_run:
@@ -998,7 +1691,7 @@ async def test_openai_responses_code_execution_skills_streaming(allow_model_requ
     assert response.parts == snapshot(
         [
             BuiltinToolCallPart(
-                tool_name='code_execution',
+                tool_name='shell',
                 args={
                     'commands': ['ls -1 /mnt/data'],
                     'max_output_length': 500,
@@ -1008,10 +1701,9 @@ async def test_openai_responses_code_execution_skills_streaming(allow_model_requ
                 tool_call_id='shell_call_123',
                 id='shell_item_123',
                 provider_name='openai',
-                provider_details={'openai_tool_type': 'shell'},
             ),
             BuiltinToolReturnPart(
-                tool_name='code_execution',
+                tool_name='shell',
                 content={
                     'status': 'completed',
                     'output': [
@@ -1026,7 +1718,6 @@ async def test_openai_responses_code_execution_skills_streaming(allow_model_requ
                 tool_call_id='shell_call_123',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_details={'openai_tool_type': 'shell'},
             ),
             TextPart(content='done', id='msg_123', provider_name='openai'),
         ]
@@ -1075,9 +1766,8 @@ async def test_openai_responses_hosted_shell_with_uploaded_file(
                 environment = args.get('environment')
                 if isinstance(commands, list) and commands and isinstance(environment, dict):
                     environment_dict = cast(dict[str, Any], environment)
-                    if (
-                        environment_dict.get('type') == 'container_reference'
-                        and isinstance(environment_dict.get('container_id'), str)
+                    if environment_dict.get('type') == 'container_reference' and isinstance(
+                        environment_dict.get('container_id'), str
                     ):
                         has_shell_call_with_commands = True
                         break
@@ -1136,9 +1826,8 @@ async def test_openai_responses_hosted_shell_with_uploaded_file_stream(
                 environment = args.get('environment')
                 if isinstance(commands, list) and commands and isinstance(environment, dict):
                     environment_dict = cast(dict[str, Any], environment)
-                    if (
-                        environment_dict.get('type') == 'container_reference'
-                        and isinstance(environment_dict.get('container_id'), str)
+                    if environment_dict.get('type') == 'container_reference' and isinstance(
+                        environment_dict.get('container_id'), str
                     ):
                         has_shell_call_with_commands = True
                         break
@@ -9050,12 +9739,19 @@ async def test_openai_responses_builtin_tool_call_id_uses_id_field(allow_model_r
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
+        code_execution_context=_get_openai_code_execution_context(
+            messages=messages,
+            model_request_parameters=ModelRequestParameters(),
+            provider_name=model.system,
+        ),
     )
 
     # Find the web_search_call item in the output and verify the id field is preserved
-    web_search_items = [m for m in openai_messages if isinstance(m, dict) and m.get('type') == 'web_search_call']
+    web_search_items: list[dict[str, Any]] = [
+        cast(dict[str, Any], m) for m in openai_messages if isinstance(m, dict) and m.get('type') == 'web_search_call'
+    ]
     assert len(web_search_items) == 1
-    web_search_item = cast(dict[str, Any], web_search_items[0])
+    web_search_item = web_search_items[0]
     assert web_search_item['id'] == long_id
 
 

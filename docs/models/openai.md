@@ -141,35 +141,41 @@ Hosted shell and computer use can be enabled by passing OpenAI builtin tool para
 
 #### Hosted shell
 
-OpenAI's hosted shell tool can be used in two ways:
+OpenAI's hosted shell tool can be used in three ways:
 
 - Directly, by passing a raw `shell` tool in [`OpenAIResponsesModelSettings.openai_builtin_tools`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_builtin_tools].
-- Indirectly, through [`CodeExecutionTool(skills=[...])`][pydantic_ai.builtin_tools.CodeExecutionTool], which synthesizes a hosted shell tool with `environment.skills` under the hood while still surfacing normalized `code_execution` parts in message history and streaming events.
+- Through [`ShellTool`][pydantic_ai.builtin_tools.ShellTool], which provides the workspace-style interface with skills, network policy, and multi-language support. Shell tool calls and results appear as `shell`-named [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] and [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] in message history.
 
 When you include a `shell` tool in [`OpenAIResponsesModelSettings.openai_builtin_tools`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_builtin_tools], Pydantic AI maps hosted shell calls into [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] and [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts, including streaming responses and replayed message history.
 
-If the shell tool omits `environment`, Pydantic AI defaults it to `{'type': 'container_auto'}`. You can also mount previously uploaded OpenAI files into that hosted container with [`OpenAIResponsesModelSettings.openai_shell_uploaded_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_uploaded_files].
+If the shell tool omits `environment`, Pydantic AI defaults it to `{'type': 'container_auto'}`.
 
-```python {title="code_execution_skills_openai.py" test="skip"}
-from pydantic_ai import Agent, CodeExecutionTool, SkillReference
+[`ShellTool.network_policy`][pydantic_ai.builtin_tools.ShellTool.network_policy] maps to OpenAI container network controls, configuring the synthesized hosted shell `environment.network_policy`.
+
+```python {title="shell_tool_skills_openai.py" test="skip"}
+from pydantic_ai import Agent, CodeExecutionNetworkPolicy, ShellTool, SkillReference
 
 agent = Agent(
     'openai-responses:gpt-5.2',
     builtin_tools=[
-        CodeExecutionTool(
+        ShellTool(
             skills=[
                 SkillReference(skill_id='skill_custom', version=2),
-            ]
+            ],
+            network_policy=CodeExecutionNetworkPolicy(
+                mode='allowlist',
+                allowed_domains=['api.github.com', 'raw.githubusercontent.com'],
+            ),
         )
     ],
 )
 ```
 
-```python {title="hosted_shell_tool.py" test="skip"}
+```python {title="hosted_shell_uploaded_file.py" test="skip"}
 import asyncio
 
-from pydantic_ai import Agent, UploadedFile
-from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+from pydantic_ai import Agent, CodeExecutionTool, UploadedFile
+from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 
@@ -181,15 +187,12 @@ async def main():
     with open('report.csv', 'rb') as f:
         uploaded_file = await provider.client.files.create(file=f, purpose='user_data')
 
-    agent = Agent(model=model)
+    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()])
     result = await agent.run(
-        'Inspect the mounted CSV in the hosted shell and tell me how many data rows it contains.',
-        model_settings=OpenAIResponsesModelSettings(
-            openai_builtin_tools=[{'type': 'shell'}],
-            openai_shell_uploaded_files=[
-                UploadedFile(file_id=uploaded_file.id, provider_name=model.system),
-            ],
-        ),
+        [
+            'Inspect the mounted CSV in code execution and tell me how many data rows it contains.',
+            UploadedFile(file_id=uploaded_file.id, provider_name=model.system, target='container'),
+        ]
     )
     print(result.output)
     #> The CSV has 42 data rows.
@@ -200,11 +203,11 @@ asyncio.run(main())
 
 !!! note
 
-    [`OpenAIResponsesModelSettings.openai_shell_uploaded_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_uploaded_files] only mounts files into the hosted shell environment. It does not add those files to the user prompt. If you also want the model to inspect the file as input outside the shell, include the same [`UploadedFile`][pydantic_ai.messages.UploadedFile] in the prompt.
+    [`UploadedFile(target='container')`][pydantic_ai.messages.UploadedFile] only mounts the file into hosted shell. If you also want the model to inspect the file as message input, use [`UploadedFile(target='both')`][pydantic_ai.messages.UploadedFile].
 
 !!! note
 
-    Mounted files must be [`UploadedFile`][pydantic_ai.messages.UploadedFile] instances with `provider_name='openai'`. They require exactly one hosted `shell` tool in the request, either raw or synthesized from [`CodeExecutionTool.skills`][pydantic_ai.builtin_tools.CodeExecutionTool.skills], and only work with the hosted `container_auto` environment, not `local` or `container_reference`.
+    Mounted files must be [`UploadedFile`][pydantic_ai.messages.UploadedFile] instances with `provider_name='openai'`. Container-target uploads require [`ShellTool`][pydantic_ai.builtin_tools.ShellTool] (OpenAI's `code_interpreter` container does not support mounted `file_ids`). The OpenAI-specific [`OpenAIResponsesModelSettings.openai_shell_uploaded_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_uploaded_files] helper works with either a raw hosted `shell` tool or [`ShellTool`][pydantic_ai.builtin_tools.ShellTool], and only supports the hosted `container_auto` environment, not `local` or `container_reference`.
 
 #### Computer use
 

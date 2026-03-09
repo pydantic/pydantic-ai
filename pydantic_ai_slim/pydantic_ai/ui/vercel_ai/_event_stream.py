@@ -263,7 +263,12 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if isinstance(part, UploadedFile):
             if part.target == 'container':
                 return
-            yield FileChunk(url=part.file_id, media_type=part.media_type)
+            provider_metadata = dump_provider_metadata(
+                file_id=part.file_id,
+                provider_name=part.provider_name,
+                target=part.target,
+            )
+            yield FileChunk(url=part.file_id, media_type=part.media_type, provider_metadata=provider_metadata)
         else:
             file = part.content
             yield FileChunk(url=file.data_uri, media_type=file.media_type)

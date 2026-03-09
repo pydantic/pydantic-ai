@@ -365,19 +365,22 @@ Use [`UploadedFile`][pydantic_ai.messages.UploadedFile] with `target` to control
 | Model | `target='message'` | `target` includes `container` |
 |-------|--------------------|-------------------------------|
 | [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] | ✅ | ✅ via [`container_upload`](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/code-execution) |
+| [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] | ✅ | ✅ via hosted shell mounts on [`ShellTool`][pydantic_ai.builtin_tools.ShellTool] |
 | Other models | ✅ (provider-dependent) | ❌ Not yet supported |
 
-### Anthropic Container Uploads
+### Container Uploads
 
-Upload a file via the [Anthropic Files API](https://docs.anthropic.com/en/docs/build-with-claude/files), then use `UploadedFile(..., target='container')` to make it available in code execution.
+Anthropic and OpenAI Responses both support `UploadedFile(..., target='container')` and `target='both'`
+when [`ShellTool`][pydantic_ai.builtin_tools.ShellTool] is enabled.
+Anthropic sends a `container_upload` block; OpenAI Responses mounts the file into a hosted shell container.
 
-!!! note "Requires Code Execution"
-    `UploadedFile` with `target='container'` or `target='both'` requires [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool] to be enabled.
+!!! note "Requires ShellTool"
+    `UploadedFile` with `target='container'` or `target='both'` requires [`ShellTool`][pydantic_ai.builtin_tools.ShellTool] to be enabled.
 
 ```py {title="uploaded_file_container_anthropic.py" test="skip"}
 import asyncio
 
-from pydantic_ai import Agent, CodeExecutionTool, ModelSettings, UploadedFile
+from pydantic_ai import Agent, ModelSettings, ShellTool, UploadedFile
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -390,8 +393,8 @@ async def main():
     with open('data.csv', 'rb') as f:
         uploaded = await provider.client.beta.files.upload(file=f)
 
-    # Load the file into the code execution sandbox
-    agent = Agent(model, builtin_tools=[CodeExecutionTool()])
+    # Load the file into the shell workspace
+    agent = Agent(model, builtin_tools=[ShellTool()])
     result = await agent.run(
         [
             'Analyze this CSV data and create a summary with statistics',
@@ -406,19 +409,49 @@ async def main():
 asyncio.run(main())
 ```
 
+```py {title="uploaded_file_container_openai.py" test="skip"}
+import asyncio
+
+from pydantic_ai import Agent, ShellTool, UploadedFile
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+
+async def main():
+    provider = OpenAIProvider()
+    model = OpenAIResponsesModel('gpt-5.2', provider=provider)
+
+    # Upload a file using the provider's client
+    with open('data.csv', 'rb') as f:
+        uploaded = await provider.client.files.create(file=f, purpose='user_data')
+
+    agent = Agent(model, builtin_tools=[ShellTool()])
+    result = await agent.run(
+        [
+            'Analyze this CSV and report the row count.',
+            UploadedFile(file_id=uploaded.id, provider_name=model.system, target='container'),
+        ]
+    )
+    print(result.output)
+    #> The CSV contains 1000 data rows.
+
+
+asyncio.run(main())
+```
+
 ### Returning Container-Target `UploadedFile` from Tools
 
-A tool can upload a file and return `UploadedFile(..., target='container')` to load it into the code execution sandbox on the next model turn.
+A tool can upload a file and return `UploadedFile(..., target='container')` to load it into the shell workspace on the next model turn.
 
-```py {title="uploaded_file_container_tool.py" test="skip" noqa="F821"}
-from pydantic_ai import Agent, CodeExecutionTool, UploadedFile
+```py {title="uploaded_file_container_tool.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, ShellTool, UploadedFile
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.tools import RunContext
 
 provider = AnthropicProvider()
 model = AnthropicModel('claude-sonnet-4-5', provider=provider)
-agent = Agent(model, builtin_tools=[CodeExecutionTool()])
+agent = Agent(model, builtin_tools=[ShellTool()])
 
 
 @agent.tool
@@ -429,4 +462,4 @@ async def fetch_dataset(ctx: RunContext[None], name: str) -> UploadedFile:
     return UploadedFile(file_id=uploaded.id, provider_name=model.system, target='container')
 ```
 
-When a tool returns a container-target `UploadedFile`, the model receives a text reference and Anthropic includes a `container_upload` block in the next request, making the file accessible to code execution.
+When a tool returns a container-target `UploadedFile`, the model receives a text reference and the next request mounts the file into code execution. Anthropic includes a `container_upload` block; OpenAI Responses mounts the file into the hosted shell environment.

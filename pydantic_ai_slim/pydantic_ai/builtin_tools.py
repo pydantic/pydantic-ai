@@ -11,10 +11,12 @@ from typing_extensions import TypedDict, deprecated
 
 __all__ = (
     'AbstractBuiltinTool',
+    'CodeExecutionNetworkPolicy',
     'SkillReference',
     'WebSearchTool',
     'WebSearchUserLocation',
     'CodeExecutionTool',
+    'ShellTool',
     'WebFetchTool',
     'UrlContextTool',
     'ImageGenerationTool',
@@ -48,6 +50,27 @@ class SkillReference:
 
     source: Literal['custom', 'provider'] = 'custom'
     """Whether the skill is a custom/user-managed skill or a provider-managed skill."""
+
+
+@dataclass(kw_only=True)
+class CodeExecutionNetworkPolicy:
+    """Network access policy for provider-hosted code execution environments."""
+
+    mode: Literal['disabled', 'allowlist']
+    """How outbound network access should be handled.
+
+    Supported by:
+
+    * OpenAI Responses
+    """
+
+    allowed_domains: Sequence[str] = ()
+    """Explicit domain allowlist when `mode='allowlist'`.
+
+    Supported by:
+
+    * OpenAI Responses
+    """
 
 
 @dataclass(kw_only=True)
@@ -194,7 +217,7 @@ class WebSearchUserLocation(TypedDict, total=False):
 
 @dataclass(kw_only=True)
 class CodeExecutionTool(AbstractBuiltinTool):
-    """A builtin tool that allows your agent to execute code.
+    """A builtin tool that provides a simple Python code execution sandbox.
 
     Supported by:
 
@@ -203,6 +226,23 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * Google
     * Bedrock (Nova2.0)
     * xAI
+    """
+
+    kind: str = 'code_execution'
+    """The kind of tool."""
+
+
+@dataclass(kw_only=True)
+class ShellTool(AbstractBuiltinTool):
+    """A builtin tool that provides a full workspace execution environment.
+
+    Provides multi-language support, provider-hosted skills,
+    and network policy configuration.
+
+    Supported by:
+
+    * Anthropic
+    * OpenAI Responses
     """
 
     skills: Sequence[SkillReference] = ()
@@ -214,7 +254,15 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * OpenAI Responses
     """
 
-    kind: str = 'code_execution'
+    network_policy: CodeExecutionNetworkPolicy | None = None
+    """Network access policy for provider-hosted execution environments.
+
+    Supported by:
+
+    * OpenAI Responses
+    """
+
+    kind: str = 'shell'
     """The kind of tool."""
 
 

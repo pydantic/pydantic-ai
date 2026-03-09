@@ -24,7 +24,7 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from ..builtin_tools import AbstractBuiltinTool, CodeExecutionTool
+from ..builtin_tools import AbstractBuiltinTool, CodeExecutionTool, ShellTool
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -785,24 +785,36 @@ class Model(ABC):
 
         # Check if builtin tools are supported
         if params.builtin_tools:
-            if not self.profile.supports_code_execution_skills:
-                for tool in params.builtin_tools:
-                    if isinstance(tool, CodeExecutionTool) and tool.skills:
-                        raise UserError(
-                            '`CodeExecutionTool.skills` is not supported by this model. '
-                            'Use a provider/model with native skill support.'
-                        )
-
-            supported_types = self.profile.supported_builtin_tools
-            unsupported = [tool for tool in params.builtin_tools if not isinstance(tool, tuple(supported_types))]
-            if unsupported:
-                unsupported_names = [type(tool).__name__ for tool in unsupported]
-                supported_names = [t.__name__ for t in supported_types]
-                raise UserError(
-                    f'Builtin tool(s) {unsupported_names} not supported by this model. Supported: {supported_names}'
-                )
+            self._validate_builtin_tools(params.builtin_tools)
 
         return model_settings, params
+
+    def _validate_builtin_tools(self, builtin_tools: Sequence[AbstractBuiltinTool]) -> None:
+        has_code_execution = any(isinstance(t, CodeExecutionTool) for t in builtin_tools)
+        has_shell = any(isinstance(t, ShellTool) for t in builtin_tools)
+        if has_code_execution and has_shell:
+            raise UserError(
+                '`CodeExecutionTool` and `ShellTool` are mutually exclusive. '
+                'Use `CodeExecutionTool` for simple code execution or `ShellTool` for '
+                'workspace-style execution with skills and network policy.'
+            )
+
+        for tool in builtin_tools:
+            if isinstance(tool, ShellTool) and tool.network_policy is not None:
+                if not self.profile.supports_shell_network_policy:
+                    raise UserError(
+                        '`ShellTool.network_policy` is not supported by this model. '
+                        'Use OpenAI Responses for shell network policy controls.'
+                    )
+
+        supported_types = self.profile.supported_builtin_tools
+        unsupported = [tool for tool in builtin_tools if not isinstance(tool, tuple(supported_types))]
+        if unsupported:
+            unsupported_names = [type(tool).__name__ for tool in unsupported]
+            supported_names = [t.__name__ for t in supported_types]
+            raise UserError(
+                f'Builtin tool(s) {unsupported_names} not supported by this model. Supported: {supported_names}'
+            )
 
     @property
     @abstractmethod

@@ -8,6 +8,7 @@ Pydantic AI supports the following built-in tools:
 
 - **[`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]**: Allows agents to search the web
 - **[`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]**: Enables agents to execute code in a secure environment
+- **[`ShellTool`][pydantic_ai.builtin_tools.ShellTool]**: Enables agents to run shell commands in a workspace with skills, network policy, and multi-language support
 - **[`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool]**: Enables agents to generate images
 - **[`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool]**: Enables agents to fetch web pages
 - **[`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool]**: Enables agents to use memory
@@ -120,7 +121,7 @@ The `WebSearchTool` supports several configuration parameters:
 from pydantic_ai import Agent, WebSearchTool, WebSearchUserLocation
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'openai-responses:gpt-5.2',
     builtin_tools=[
         WebSearchTool(
             search_context_size='high',
@@ -167,9 +168,9 @@ in a secure environment, making it perfect for computational tasks, data analysi
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI | ✅ | To include code execution output on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. [`CodeExecutionTool.skills`][pydantic_ai.builtin_tools.CodeExecutionTool.skills] is supported on OpenAI Responses and uses hosted shell under the hood while still surfacing `code_execution` parts. |
+| OpenAI | ✅ | To include code execution output on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. For full workspace features (skills, network policy, multi-language support), use [`ShellTool`][pydantic_ai.builtin_tools.ShellTool] instead. |
 | Google | ✅ | Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
-| Anthropic | ✅ | Supports [`CodeExecutionTool.skills`][pydantic_ai.builtin_tools.CodeExecutionTool.skills] and loading files into the sandbox via [`UploadedFile`](input.md#uploadedfile-targets) with `target='container'` (or `target='both'`). Requires [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]. |
+| Anthropic | ✅ | Supports loading files into the sandbox via [`UploadedFile`](input.md#uploadedfile-targets) with `target='container'` (or `target='both'`). For the workspace-style interface with skills and network policy, use [`ShellTool`][pydantic_ai.builtin_tools.ShellTool]. |
 | xAI | ✅ | Full feature support. |
 | Groq | ❌ | |
 | Bedrock | ✅ | Only available for Nova 2.0 models. |
@@ -220,23 +221,48 @@ print(result.response.builtin_tool_calls)
 
 _(This example is complete, it can be run "as is")_
 
+!!! tip "ShellTool for advanced workspace features"
+    For full workspace features including skills, network policy, and multi-language support, use [`ShellTool`][pydantic_ai.builtin_tools.ShellTool] instead of `CodeExecutionTool`.
+
 ### Native skills
 
 Anthropic and OpenAI Responses both support provider-hosted skills through the shared
-[`CodeExecutionTool.skills`][pydantic_ai.builtin_tools.CodeExecutionTool.skills] interface.
+[`ShellTool.skills`][pydantic_ai.builtin_tools.ShellTool.skills] interface.
 Use [`SkillReference`][pydantic_ai.builtin_tools.SkillReference] values to reference already-published skills by ID.
 
 ```py {title="code_execution_skills.py" test="skip"}
-from pydantic_ai import Agent, CodeExecutionTool, SkillReference
+from pydantic_ai import Agent, ShellTool, SkillReference
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
     builtin_tools=[
-        CodeExecutionTool(
+        ShellTool(
             skills=[
                 SkillReference(skill_id='skill_custom', version=2),
                 SkillReference(skill_id='skill_provider', source='provider'),
-            ]
+            ],
+        )
+    ],
+)
+```
+
+[`ShellTool.network_policy`][pydantic_ai.builtin_tools.ShellTool.network_policy] is currently only supported by OpenAI Responses.
+When used with [`ShellTool.skills`][pydantic_ai.builtin_tools.ShellTool.skills], it configures the synthesized hosted shell environment:
+
+```py {title="code_execution_skills_network_policy.py" test="skip"}
+from pydantic_ai import Agent, CodeExecutionNetworkPolicy, ShellTool, SkillReference
+
+agent = Agent(
+    'openai:gpt-4o',
+    builtin_tools=[
+        ShellTool(
+            skills=[
+                SkillReference(skill_id='skill_custom', version=2),
+            ],
+            network_policy=CodeExecutionNetworkPolicy(
+                mode='allowlist',
+                allowed_domains=['api.github.com'],
+            ),
         )
     ],
 )
@@ -244,10 +270,14 @@ agent = Agent(
 
 `SkillReference.source='provider'` is currently used by Anthropic to distinguish Anthropic-managed skills from custom skills. OpenAI currently ignores `source` and uses the referenced skill ID and version.
 
-File mounting remains provider-specific in this release:
+[`ShellTool`][pydantic_ai.builtin_tools.ShellTool] provides the workspace-style interface with skills, network policy, and multi-language support. On OpenAI Responses, it uses hosted shell under the hood while still surfacing normalized `code_execution` parts. On Anthropic, it opts into the newer workspace-style code-execution backend.
 
-- Anthropic: use [`UploadedFile(target='container')`][pydantic_ai.messages.UploadedFile]
-- OpenAI Responses: use [`OpenAIResponsesModelSettings.openai_shell_uploaded_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_uploaded_files]
+Files can be mounted into code execution with the shared [`UploadedFile(target='container')`][pydantic_ai.messages.UploadedFile] or `target='both'` interface on:
+
+- Anthropic
+- OpenAI Responses
+
+[`OpenAIResponsesModelSettings.openai_shell_uploaded_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_uploaded_files] remains available as an OpenAI-specific helper for raw hosted shell usage or for mounting additional files without adding them to the prompt.
 
 In addition to text output, code execution with OpenAI can generate images as part of their response. Accessing this image via [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] or [image output](output.md#image-output) requires the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings) to be enabled.
 

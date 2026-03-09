@@ -10,11 +10,13 @@ from .agent import (
     capture_run_messages,
 )
 from .builtin_tools import (
+    CodeExecutionNetworkPolicy,
     CodeExecutionTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
+    ShellTool,
     SkillReference,
     UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
@@ -246,11 +248,13 @@ __all__ = (
     'ToolsetTool',
     'WrapperToolset',
     # builtin_tools
+    'CodeExecutionNetworkPolicy',
     'CodeExecutionTool',
     'FileSearchTool',
     'ImageGenerationTool',
     'MCPServerTool',
     'MemoryTool',
+    'ShellTool',
     'SkillReference',
     'UrlContextTool',
     'WebFetchTool',

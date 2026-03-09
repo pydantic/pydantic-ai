@@ -46,7 +46,6 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         profile = anthropic_model_profile(model_name)
         return ModelProfile(
             json_schema_transformer=AnthropicJsonSchemaTransformer,
-            supports_code_execution_skills=True,
         ).update(profile)
 
     @overload

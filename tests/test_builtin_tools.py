@@ -6,8 +6,10 @@ from pydantic import TypeAdapter
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import (
     AbstractBuiltinTool,
+    CodeExecutionNetworkPolicy,
     CodeExecutionTool,
     FileSearchTool,
+    ShellTool,
     SkillReference,
     UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
@@ -15,6 +17,7 @@ from pydantic_ai.builtin_tools import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
+from pydantic_ai.models.test import TestModel
 
 
 @pytest.mark.parametrize('model', ('bedrock', 'mistral', 'cohere', 'huggingface', 'test', 'outlines'), indirect=True)
@@ -52,18 +55,46 @@ async def test_builtin_tools_not_supported_code_execution_stream(model: Model, a
 
 
 @pytest.mark.parametrize('model', ('bedrock', 'openai'), indirect=True)
-async def test_builtin_tools_not_supported_code_execution_skills(model: Model, allow_model_requests: None):
-    agent = Agent(model=model, builtin_tools=[CodeExecutionTool(skills=[SkillReference(skill_id='skill_123')])])
+async def test_builtin_tools_not_supported_shell(model: Model, allow_model_requests: None):
+    agent = Agent(model=model, builtin_tools=[ShellTool(skills=[SkillReference(skill_id='skill_123')])])
 
-    with pytest.raises(UserError, match='CodeExecutionTool.skills'):
+    with pytest.raises(UserError, match='not supported by this model'):
         await agent.run('What day is tomorrow?')
 
 
 @pytest.mark.parametrize('model', ('bedrock', 'openai'), indirect=True)
-async def test_builtin_tools_not_supported_code_execution_skills_stream(model: Model, allow_model_requests: None):
-    agent = Agent(model=model, builtin_tools=[CodeExecutionTool(skills=[SkillReference(skill_id='skill_123')])])
+async def test_builtin_tools_not_supported_shell_stream(model: Model, allow_model_requests: None):
+    agent = Agent(model=model, builtin_tools=[ShellTool(skills=[SkillReference(skill_id='skill_123')])])
 
-    with pytest.raises(UserError, match='CodeExecutionTool.skills'):
+    with pytest.raises(UserError, match='not supported by this model'):
+        async with agent.run_stream('What day is tomorrow?'):
+            ...  # pragma: no cover
+
+
+@pytest.mark.parametrize('model', ('anthropic',), indirect=True)
+async def test_builtin_tools_not_supported_shell_network_policy(model: Model, allow_model_requests: None):
+    agent = Agent(
+        model=model,
+        builtin_tools=[ShellTool(network_policy=CodeExecutionNetworkPolicy(mode='disabled'))],
+    )
+
+    with pytest.raises(UserError, match='ShellTool.network_policy'):
+        await agent.run('What day is tomorrow?')
+
+
+@pytest.mark.parametrize('model', ('google',), indirect=True)
+async def test_builtin_tools_not_supported_shell_google(model: Model, allow_model_requests: None):
+    agent = Agent(model=model, builtin_tools=[ShellTool()])
+
+    with pytest.raises(UserError, match='not supported by this model'):
+        await agent.run('What day is tomorrow?')
+
+
+@pytest.mark.parametrize('model', ('google',), indirect=True)
+async def test_builtin_tools_not_supported_shell_google_stream(model: Model, allow_model_requests: None):
+    agent = Agent(model=model, builtin_tools=[ShellTool()])
+
+    with pytest.raises(UserError, match='not supported by this model'):
         async with agent.run_stream('What day is tomorrow?'):
             ...  # pragma: no cover
 
@@ -85,6 +116,13 @@ async def test_builtin_tools_not_supported_file_search_stream(model: Model, allo
     with pytest.raises(UserError):
         async with agent.run_stream('Search my files'):
             ...  # pragma: no cover
+
+
+async def test_builtin_tools_code_execution_and_shell_mutually_exclusive(allow_model_requests: None):
+    m = TestModel()
+    agent = Agent(model=m, builtin_tools=[CodeExecutionTool(), ShellTool()])
+    with pytest.raises(UserError, match='mutually exclusive'):
+        await agent.run('test')
 
 
 def test_url_context_tool_is_deprecated():

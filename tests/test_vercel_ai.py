@@ -1996,7 +1996,14 @@ async def test_event_stream_uploaded_file():
         [
             {'type': 'start'},
             {'type': 'start-step'},
-            {'type': 'file', 'url': 'file-abc123', 'mediaType': 'application/pdf'},
+            {
+                'type': 'file',
+                'url': 'file-abc123',
+                'mediaType': 'application/pdf',
+                'providerMetadata': {
+                    'pydantic_ai': {'file_id': 'file-abc123', 'provider_name': 'openai', 'target': 'message'}
+                },
+            },
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
@@ -4045,7 +4052,6 @@ async def test_adapter_dump_messages_with_uploaded_file_response():
     )
 
 
-
 async def test_adapter_dump_messages_with_retry():
     """Test dumping messages with retry prompts."""
     messages = [
@@ -4684,7 +4690,9 @@ async def test_convert_user_prompt_part_uploaded_file():
             FileUIPart(
                 media_type='application/pdf',
                 url='file-abc123',
-                provider_metadata={'pydantic_ai': {'file_id': 'file-abc123', 'provider_name': 'openai'}},
+                provider_metadata={
+                    'pydantic_ai': {'file_id': 'file-abc123', 'provider_name': 'openai', 'target': 'message'}
+                },
             ),
         ]
     )
@@ -4728,6 +4736,36 @@ async def test_adapter_load_messages_uploaded_file():
     )
 
 
+async def test_adapter_round_trip_user_uploaded_file_target():
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        UploadedFile(
+                            file_id='file-both-123',
+                            provider_name='openai',
+                            media_type='application/pdf',
+                            target='both',
+                        )
+                    ]
+                )
+            ]
+        )
+    ]
+
+    round_tripped = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+
+    loaded_request = round_tripped[0]
+    assert isinstance(loaded_request, ModelRequest)
+    loaded_part = loaded_request.parts[0]
+    assert isinstance(loaded_part, UserPromptPart)
+    uploaded_file = loaded_part.content[0]
+    assert isinstance(uploaded_file, UploadedFile)
+    assert uploaded_file.file_id == 'file-both-123'
+    assert uploaded_file.target == 'both'
+
+
 async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
     """Test converting a user prompt with UploadedFile that has vendor_metadata and custom identifier."""
     from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
@@ -4753,6 +4791,7 @@ async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
                     'pydantic_ai': {
                         'file_id': 'files/video123',
                         'provider_name': 'google-gla',
+                        'target': 'message',
                         'vendor_metadata': {'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
                         'identifier': 'my-custom-id',
                     }
@@ -4811,6 +4850,30 @@ async def test_adapter_load_messages_uploaded_file_with_vendor_metadata():
             )
         ]
     )
+
+
+async def test_adapter_round_trip_assistant_uploaded_file_target():
+    messages = [
+        ModelResponse(
+            parts=[
+                UploadedFile(
+                    file_id='file-assistant-123',
+                    provider_name='openai',
+                    media_type='application/pdf',
+                    target='both',
+                )
+            ]
+        )
+    ]
+
+    round_tripped = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+
+    loaded_response = round_tripped[0]
+    assert isinstance(loaded_response, ModelResponse)
+    uploaded_file = loaded_response.parts[0]
+    assert isinstance(uploaded_file, UploadedFile)
+    assert uploaded_file.file_id == 'file-assistant-123'
+    assert uploaded_file.target == 'both'
 
 
 async def test_adapter_load_messages_file_url_without_metadata():

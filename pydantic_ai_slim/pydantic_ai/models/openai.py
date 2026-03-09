@@ -4,12 +4,12 @@ import base64
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, TypeGuard, cast, overload
+from typing import Any, Literal, cast, overload
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
@@ -22,11 +22,13 @@ from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..builtin_tools import (
     AbstractBuiltinTool,
+    CodeExecutionNetworkPolicy,
     CodeExecutionTool,
     FileSearchTool,
     ImageAspectRatio,
     ImageGenerationTool,
     MCPServerTool,
+    ShellTool,
     SkillReference,
     WebSearchTool,
 )
@@ -112,6 +114,7 @@ try:
         SkillReferenceParam,
         WebSearchToolParam,
     )
+    from openai.types.responses.container_auto_param import NetworkPolicy as OpenAIContainerAutoNetworkPolicy
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.responses.response_reasoning_item_param import (
         Content as ReasoningContent,
@@ -187,8 +190,6 @@ _OPENAI_SHELL_TOOL_NAME: Literal['shell'] = 'shell'
 _OPENAI_CONTAINER_AUTO_TYPE: Literal['container_auto'] = 'container_auto'
 _OPENAI_CONTAINER_REFERENCE_TYPE: Literal['container_reference'] = 'container_reference'
 _OPENAI_LOCAL_ENVIRONMENT_TYPE: Literal['local'] = 'local'
-_OPENAI_TOOL_TYPE_PROVIDER_DETAIL_KEY = 'openai_tool_type'
-_OPENAI_TOOL_TYPE_SHELL: Literal['shell'] = 'shell'
 
 
 def _reorder_uploaded_file_reference_text(items: Sequence[UserContent]) -> list[UserContent]:
@@ -216,6 +217,30 @@ def _reorder_uploaded_file_reference_text(items: Sequence[UserContent]) -> list[
         i += 1
     return reordered
 
+
+_OpenAICodeExecutionTransport = Literal['none', 'code_interpreter', 'shell']
+
+
+@dataclass(frozen=True)
+class _OpenAICodeExecutionContext:
+    transport: _OpenAICodeExecutionTransport = 'none'
+    uploaded_files: tuple[UploadedFile, ...] = ()
+
+    @property
+    def uses_shell(self) -> bool:
+        return self.transport == 'shell'
+
+
+
+_OpenAIShellCallEnvironment = LocalEnvironmentParam | ContainerReferenceParam
+
+
+@dataclass(frozen=True)
+class _OpenAIShellCallArgs:
+    commands: list[str]
+    max_output_length: int | None = None
+    timeout_ms: int | None = None
+    environment: _OpenAIShellCallEnvironment | None = None
 
 
 class _AzureContentFilterResultDetail(BaseModel):
@@ -424,7 +449,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    openai_builtin_tools: Sequence[FileSearchToolParam | WebSearchToolParam | ComputerToolParam | FunctionShellToolParam]
+    openai_builtin_tools: Sequence[
+        FileSearchToolParam | WebSearchToolParam | ComputerToolParam | FunctionShellToolParam
+    ]
     """The provided OpenAI built-in tools to use.
 
     See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
@@ -434,7 +461,8 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Files to mount into an OpenAI hosted shell container.
 
     This requires exactly one hosted `shell` tool in the request, either from
-    `openai_builtin_tools` or synthesized from `CodeExecutionTool(skills=[...])`.
+    `openai_builtin_tools` or synthesized from `ShellTool()`, `ShellTool(skills=[...])`,
+    `UploadedFile(target='container')`, or `UploadedFile(target='both')`.
     Pydantic AI will normalize that shell tool to use a managed `container_auto`
     environment and add the listed file IDs to its `environment.file_ids`.
     """
@@ -630,14 +658,16 @@ class OpenAIChatModel(Model):
         """The model profile.
 
         WebSearchTool is only supported if openai_chat_supports_web_search is True.
+        Chat API doesn't support ShellTool.
         """
         _profile = super().profile
         openai_profile = OpenAIModelProfile.from_profile(_profile)
+        unsupported_tools: set[type[AbstractBuiltinTool]] = {ShellTool}
         if not openai_profile.openai_chat_supports_web_search:
-            new_tools = _profile.supported_builtin_tools - {WebSearchTool}
+            unsupported_tools.add(WebSearchTool)
+        new_tools = _profile.supported_builtin_tools - unsupported_tools
+        if new_tools != _profile.supported_builtin_tools:
             _profile = replace(_profile, supported_builtin_tools=new_tools)
-        if _profile.supports_code_execution_skills:
-            _profile = replace(_profile, supports_code_execution_skills=False)
         return _profile
 
     @property
@@ -1446,7 +1476,7 @@ class OpenAIResponsesModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool})
+        return frozenset({WebSearchTool, CodeExecutionTool, ShellTool, FileSearchTool, MCPServerTool, ImageGenerationTool})
 
     async def request(
         self,
@@ -1459,8 +1489,17 @@ class OpenAIResponsesModel(Model):
             model_settings,
             model_request_parameters,
         )
+        code_execution_context = _get_openai_code_execution_context(
+            messages=messages,
+            model_request_parameters=model_request_parameters,
+            provider_name=self.system,
+        )
         response = await self._responses_create(
-            messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
+            messages,
+            False,
+            cast(OpenAIResponsesModelSettings, model_settings or {}),
+            model_request_parameters,
+            code_execution_context,
         )
 
         # Handle ModelResponse
@@ -1468,7 +1507,10 @@ class OpenAIResponsesModel(Model):
             return response
 
         return self._process_response(
-            response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
+            response,
+            cast(OpenAIResponsesModelSettings, model_settings or {}),
+            model_request_parameters,
+            code_execution_context=code_execution_context,
         )
 
     @asynccontextmanager
@@ -1484,12 +1526,24 @@ class OpenAIResponsesModel(Model):
             model_settings,
             model_request_parameters,
         )
+        code_execution_context = _get_openai_code_execution_context(
+            messages=messages,
+            model_request_parameters=model_request_parameters,
+            provider_name=self.system,
+        )
         response = await self._responses_create(
-            messages, True, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
+            messages,
+            True,
+            cast(OpenAIResponsesModelSettings, model_settings or {}),
+            model_request_parameters,
+            code_execution_context,
         )
         async with response:
             yield await self._process_streamed_response(
-                response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
+                response,
+                cast(OpenAIResponsesModelSettings, model_settings or {}),
+                model_request_parameters,
+                code_execution_context=code_execution_context,
             )
 
     def _process_response(  # noqa: C901
@@ -1497,11 +1551,12 @@ class OpenAIResponsesModel(Model):
         response: responses.Response,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        code_execution_context: _OpenAICodeExecutionContext,
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
         refusal_text: str | None = None
-        use_shell_for_code_execution = _uses_openai_skill_backed_code_execution(model_request_parameters)
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
@@ -1589,9 +1644,9 @@ class OpenAIResponsesModel(Model):
                 # Pydantic AI doesn't yet support the `codex-mini-latest` LocalShell built-in tool
                 pass
             elif isinstance(item, responses.ResponseFunctionShellToolCall):
-                items.append(_map_shell_tool_call(item, self.system, use_shell_for_code_execution))
+                items.append(_map_shell_tool_call(item, self.system))
             elif isinstance(item, responses.ResponseFunctionShellToolCallOutput):
-                items.append(_map_shell_tool_call_output(item, self.system, use_shell_for_code_execution))
+                items.append(_map_shell_tool_call_output(item, self.system))
             elif isinstance(item, responses.ResponseFileSearchToolCall):
                 call_part, return_part = _map_file_search_tool_call(item, self.system)
                 items.append(call_part)
@@ -1640,6 +1695,8 @@ class OpenAIResponsesModel(Model):
         response: AsyncStream[responses.ResponseStreamEvent],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        code_execution_context: _OpenAICodeExecutionContext,
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
@@ -1655,7 +1712,7 @@ class OpenAIResponsesModel(Model):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
-            _uses_skill_backed_code_execution=_uses_openai_skill_backed_code_execution(model_request_parameters),
+            _code_execution_context=code_execution_context,
             _provider_timestamp=number_to_datetime(first_chunk.response.created_at)
             if first_chunk.response.created_at
             else None,
@@ -1668,6 +1725,7 @@ class OpenAIResponsesModel(Model):
         stream: Literal[False],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        code_execution_context: _OpenAICodeExecutionContext,
     ) -> responses.Response: ...
 
     @overload
@@ -1677,6 +1735,7 @@ class OpenAIResponsesModel(Model):
         stream: Literal[True],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        code_execution_context: _OpenAICodeExecutionContext,
     ) -> AsyncStream[responses.ResponseStreamEvent]: ...
 
     async def _responses_create(  # noqa: C901
@@ -1685,18 +1744,19 @@ class OpenAIResponsesModel(Model):
         stream: bool,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        code_execution_context: _OpenAICodeExecutionContext,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
-        uses_skill_backed_code_execution = _uses_openai_skill_backed_code_execution(model_request_parameters)
-        tools = (
-            self._apply_openai_shell_uploaded_files(
-                self._get_builtin_tools(model_request_parameters)
-                + self._get_openai_builtin_tools(
-                    model_settings, uses_skill_backed_code_execution=uses_skill_backed_code_execution
-                ),
-                model_settings,
+        tools = self._mount_openai_shell_uploaded_files(
+            self._get_builtin_tools(
+                model_request_parameters,
+                code_execution_context=code_execution_context,
             )
-            + self._get_tools(model_request_parameters)
-        )
+            + self._get_openai_builtin_tools(
+                model_settings,
+                code_execution_context=code_execution_context,
+            ),
+            model_settings,
+        ) + self._get_tools(model_request_parameters)
         profile = OpenAIModelProfile.from_profile(self.profile)
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
@@ -1709,7 +1769,12 @@ class OpenAIResponsesModel(Model):
         if previous_response_id == 'auto':
             previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
 
-        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+        instructions, openai_messages = await self._map_messages(
+            messages,
+            model_settings,
+            model_request_parameters,
+            code_execution_context=code_execution_context,
+        )
         reasoning = self._get_reasoning(model_settings)
 
         text: responses.ResponseTextConfigParam | None = None
@@ -1831,21 +1896,21 @@ class OpenAIResponsesModel(Model):
         self,
         model_settings: OpenAIResponsesModelSettings,
         *,
-        uses_skill_backed_code_execution: bool,
+        code_execution_context: _OpenAICodeExecutionContext,
     ) -> list[responses.ToolParam]:
         tools = [cast(responses.ToolParam, dict(tool)) for tool in model_settings.get('openai_builtin_tools', ())]
 
         shell_tool_indexes = [i for i, tool in enumerate(tools) if tool.get('type') == _OPENAI_SHELL_TOOL_NAME]
-        if uses_skill_backed_code_execution and shell_tool_indexes:
+        if code_execution_context.uses_shell and shell_tool_indexes:
             raise UserError(
-                '`CodeExecutionTool.skills` already manages the OpenAI hosted `shell` tool. '
+                '`ShellTool` already manages the OpenAI hosted `shell` tool for this request. '
                 'Do not also define a raw `shell` tool in `OpenAIResponsesModelSettings.openai_builtin_tools`.'
             )
         for index in shell_tool_indexes:
             tools[index] = self._normalize_openai_shell_tool(cast(FunctionShellToolParam, tools[index]))
         return tools
 
-    def _apply_openai_shell_uploaded_files(
+    def _mount_openai_shell_uploaded_files(
         self,
         tools: list[responses.ToolParam],
         model_settings: OpenAIResponsesModelSettings,
@@ -1865,11 +1930,11 @@ class OpenAIResponsesModel(Model):
                 '`shell` tools in the request.'
             )
 
-        shell_file_ids: list[str] = []
-        for item in shell_uploaded_files:
-            _check_openai_uploaded_file_provider(item, self.system, 'OpenAIResponsesModel')
-            if item.file_id not in shell_file_ids:
-                shell_file_ids.append(item.file_id)
+        shell_file_ids = _get_openai_uploaded_file_ids(
+            shell_uploaded_files,
+            provider_name=self.system,
+            model_name='OpenAIResponsesModel',
+        )
 
         index = shell_tool_indexes[0]
         shell_tool = cast(FunctionShellToolParam, tools[index])
@@ -1895,25 +1960,33 @@ class OpenAIResponsesModel(Model):
 
         container_auto_environment = cast(responses.ContainerAutoParam, environment)
         existing_file_ids = list(container_auto_environment.get('file_ids', ()))
-        normalized_environment = cast(ContainerAutoParam, dict(container_auto_environment))
+        normalized_environment = ContainerAutoParam(**container_auto_environment)
         normalized_environment['file_ids'] = list(dict.fromkeys([*existing_file_ids, *shell_file_ids]))
         shell_tool['environment'] = normalized_environment
         tools[index] = cast(responses.ToolParam, shell_tool)
         return tools
 
     def _normalize_openai_shell_tool(self, tool: FunctionShellToolParam) -> FunctionShellToolParam:
-        normalized_tool = cast(FunctionShellToolParam, dict(tool))
+        normalized_tool = FunctionShellToolParam(**tool)
         normalized_tool['environment'] = _normalize_openai_shell_environment(normalized_tool.get('environment'))
         return normalized_tool
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
-    def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
+    def _get_builtin_tools(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        *,
+        code_execution_context: _OpenAICodeExecutionContext,
+    ) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
         has_image_generating_tool = False
         for tool in model_request_parameters.builtin_tools:
-            mapped_tool, tool_generates_images = self._map_builtin_tool(tool)
+            mapped_tool, tool_generates_images = self._map_builtin_tool(
+                tool,
+                code_execution_context=code_execution_context,
+            )
             tools.append(mapped_tool)
             has_image_generating_tool = has_image_generating_tool or tool_generates_images
 
@@ -1921,13 +1994,29 @@ class OpenAIResponsesModel(Model):
             tools.append({'type': 'image_generation'})
         return tools
 
-    def _map_builtin_tool(self, tool: AbstractBuiltinTool) -> tuple[responses.ToolParam, bool]:
+    def _map_builtin_tool(
+        self,
+        tool: AbstractBuiltinTool,
+        *,
+        code_execution_context: _OpenAICodeExecutionContext,
+    ) -> tuple[responses.ToolParam, bool]:
         if isinstance(tool, WebSearchTool):
             return self._map_builtin_web_search_tool(tool), False
         elif isinstance(tool, FileSearchTool):
             return self._map_builtin_file_search_tool(tool), False
         elif isinstance(tool, CodeExecutionTool):
-            return self._map_builtin_code_execution_tool(tool), True
+            return (
+                self._map_builtin_code_execution_tool(tool),
+                True,
+            )
+        elif isinstance(tool, ShellTool):
+            return (
+                self._map_builtin_shell_tool(
+                    tool,
+                    code_execution_context=code_execution_context,
+                ),
+                True,
+            )
         elif isinstance(tool, MCPServerTool):
             return self._map_builtin_mcp_server_tool(tool), False
         elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
@@ -1948,22 +2037,38 @@ class OpenAIResponsesModel(Model):
         return web_search_tool
 
     def _map_builtin_file_search_tool(self, tool: FileSearchTool) -> responses.FileSearchToolParam:
-        return cast(
-            responses.FileSearchToolParam,
-            {'type': 'file_search', 'vector_store_ids': list(tool.file_store_ids)},
-        )
+        return responses.FileSearchToolParam(type='file_search', vector_store_ids=list(tool.file_store_ids))
 
-    def _map_builtin_code_execution_tool(self, tool: CodeExecutionTool) -> responses.ToolParam:
+    def _map_builtin_code_execution_tool(
+        self,
+        tool: CodeExecutionTool,
+    ) -> responses.ToolParam:
+        container = responses.tool_param.CodeInterpreterContainerCodeInterpreterToolAuto(type='auto')
+        return responses.tool_param.CodeInterpreter(type='code_interpreter', container=container)
+
+    def _map_builtin_shell_tool(
+        self,
+        tool: ShellTool,
+        *,
+        code_execution_context: _OpenAICodeExecutionContext,
+    ) -> responses.ToolParam:
+        environment: ContainerAutoParam = {
+            'type': _OPENAI_CONTAINER_AUTO_TYPE,
+        }
         if tool.skills:
-            return {
-                'type': _OPENAI_SHELL_TOOL_NAME,
-                'environment': {
-                    'type': _OPENAI_CONTAINER_AUTO_TYPE,
-                    'skills': [_map_openai_skill_reference(skill) for skill in tool.skills],
-                },
-            }
-        else:
-            return {'type': 'code_interpreter', 'container': {'type': 'auto'}}
+            environment['skills'] = [_map_openai_skill_reference(skill) for skill in tool.skills]
+        if code_execution_context.uploaded_files:
+            environment['file_ids'] = _get_openai_uploaded_file_ids(
+                code_execution_context.uploaded_files,
+                provider_name=self.system,
+                model_name='OpenAIResponsesModel',
+            )
+        if tool.network_policy is not None:
+            environment['network_policy'] = cast(
+                OpenAIContainerAutoNetworkPolicy,
+                _map_openai_code_execution_network_policy(tool.network_policy),
+            )
+        return FunctionShellToolParam(type=_OPENAI_SHELL_TOOL_NAME, environment=environment)
 
     def _map_builtin_mcp_server_tool(self, tool: MCPServerTool) -> responses.tool_param.Mcp:
         mcp_tool = responses.tool_param.Mcp(
@@ -2042,9 +2147,11 @@ class OpenAIResponsesModel(Model):
 
     async def _map_messages(  # noqa: C901
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        code_execution_context: _OpenAICodeExecutionContext,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -2059,7 +2166,6 @@ class OpenAIResponsesModel(Model):
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.openai_supports_encrypted_reasoning_content
         )
-
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
             if isinstance(message, ModelRequest):
@@ -2067,7 +2173,12 @@ class OpenAIResponsesModel(Model):
                     if isinstance(part, SystemPromptPart):
                         openai_messages.append(responses.EasyInputMessageParam(role='system', content=part.content))
                     elif isinstance(part, UserPromptPart):
-                        openai_messages.append(await self._map_user_prompt(part))
+                        openai_messages.append(
+                            await self._map_user_prompt(
+                                part,
+                                has_shell_tool=code_execution_context.uses_shell,
+                            )
+                        )
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
@@ -2149,8 +2260,12 @@ class OpenAIResponsesModel(Model):
                             if (
                                 _uses_openai_shell_tool(item)
                                 and item.tool_call_id
-                                and (args := item.args_as_dict())
-                                and (new_shell_call_item := _map_builtin_tool_call_part_to_openai_shell_call(item, args))
+                                and (shell_call_args := _parse_openai_shell_call_args(item))
+                                and (
+                                    new_shell_call_item := _map_builtin_tool_call_part_to_openai_shell_call(
+                                        item, shell_call_args
+                                    )
+                                )
                             ):
                                 shell_call_item = new_shell_call_item
                                 openai_messages.append(new_shell_call_item)
@@ -2268,7 +2383,8 @@ class OpenAIResponsesModel(Model):
                                 else:
                                     shell_output_item['status'] = 'completed'
                                 if isinstance(
-                                    max_output_length := cast(dict[str, Any], item.content).get('max_output_length'), int
+                                    max_output_length := cast(dict[str, Any], item.content).get('max_output_length'),
+                                    int,
                                 ):
                                     shell_output_item['max_output_length'] = max_output_length
                                 openai_messages.append(shell_output_item)
@@ -2351,94 +2467,132 @@ class OpenAIResponsesModel(Model):
             response_format_param['strict'] = o.strict
         return response_format_param
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> responses.EasyInputMessageParam:  # noqa: C901
+    async def _map_user_prompt(
+        self, part: UserPromptPart, *, has_shell_tool: bool
+    ) -> responses.EasyInputMessageParam:
         content: str | list[responses.ResponseInputContentParam]
         if isinstance(part.content, str):
             content = part.content
         else:
             content = []
             for item in _reorder_uploaded_file_reference_text(part.content):
-                if isinstance(item, str):
-                    content.append(responses.ResponseInputTextParam(text=item, type='input_text'))
-                elif isinstance(item, BinaryContent):
-                    if item.is_image:
-                        detail: Literal['auto', 'low', 'high'] = 'auto'
-                        if metadata := item.vendor_metadata:
-                            detail = cast(
-                                Literal['auto', 'low', 'high'],
-                                metadata.get('detail', 'auto'),
-                            )
-                        content.append(
-                            responses.ResponseInputImageParam(
-                                image_url=item.data_uri,
-                                type='input_image',
-                                detail=detail,
-                            )
-                        )
-                    elif item.is_document:
-                        content.append(
-                            responses.ResponseInputFileParam(
-                                type='input_file',
-                                file_data=item.data_uri,
-                                # NOTE: Type wise it's not necessary to include the filename, but it's required by the
-                                # API itself. If we add empty string, the server sends a 500 error - which OpenAI needs
-                                # to fix. In any case, we add a placeholder name.
-                                filename=f'filename.{item.format}',
-                            )
-                        )
-                    elif item.is_audio:
-                        raise NotImplementedError('Audio as binary content is not supported for OpenAI Responses API.')
-                    else:  # pragma: no cover
-                        raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
-                elif isinstance(item, ImageUrl):
-                    detail: Literal['auto', 'low', 'high'] = 'auto'
-                    image_url = item.url
-                    if metadata := item.vendor_metadata:
-                        detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
-                    if item.force_download:
-                        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
-                        image_url = downloaded_item['data']
-
-                    content.append(
-                        responses.ResponseInputImageParam(
-                            image_url=image_url,
-                            type='input_image',
-                            detail=detail,
-                        )
+                content.extend(
+                    await self._map_user_prompt_item(
+                        item,
+                        has_shell_tool=has_shell_tool,
                     )
-                elif isinstance(item, AudioUrl | DocumentUrl):
-                    if item.force_download:
-                        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
-                        content.append(
-                            responses.ResponseInputFileParam(
-                                type='input_file',
-                                file_data=downloaded_item['data'],
-                                filename=f'filename.{downloaded_item["data_type"]}',
-                            )
-                        )
-                    else:
-                        content.append(
-                            responses.ResponseInputFileParam(
-                                type='input_file',
-                                file_url=item.url,
-                            )
-                        )
-                elif isinstance(item, VideoUrl):  # pragma: no cover
-                    raise NotImplementedError('VideoUrl is not supported for OpenAI.')
-                elif isinstance(item, UploadedFile):
-                    _check_openai_uploaded_file_provider(item, self.system, 'OpenAIResponsesModel')
-                    content.append(
-                        responses.ResponseInputFileParam(
-                            type='input_file',
-                            file_id=item.file_id,
-                        )
-                    )
-                elif isinstance(item, CachePoint):
-                    # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
-                    pass
-                else:
-                    assert_never(item)
+                )
         return responses.EasyInputMessageParam(role='user', content=content)
+
+    async def _map_user_prompt_item(
+        self,
+        item: UserContent,
+        *,
+        has_shell_tool: bool,
+    ) -> Sequence[responses.ResponseInputContentParam]:
+        if isinstance(item, str):
+            return [responses.ResponseInputTextParam(text=item, type='input_text')]
+        elif isinstance(item, BinaryContent):
+            return [self._map_binary_content_user_prompt_item(item)]
+        elif isinstance(item, ImageUrl):
+            return [await self._map_image_url_user_prompt_item(item)]
+        elif isinstance(item, AudioUrl | DocumentUrl):
+            return [await self._map_file_url_user_prompt_item(item)]
+        elif isinstance(item, VideoUrl):  # pragma: no cover
+            raise NotImplementedError('VideoUrl is not supported for OpenAI.')
+        elif isinstance(item, UploadedFile):
+            return self._map_uploaded_file_user_prompt_item(
+                item,
+                has_shell_tool=has_shell_tool,
+            )
+        elif isinstance(item, CachePoint):
+            # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
+            return []
+        else:
+            assert_never(item)
+
+    def _map_binary_content_user_prompt_item(
+        self,
+        item: BinaryContent,
+    ) -> responses.ResponseInputImageParam | responses.ResponseInputFileParam:
+        if item.is_image:
+            detail: Literal['auto', 'low', 'high'] = 'auto'
+            if metadata := item.vendor_metadata:
+                detail = cast(
+                    Literal['auto', 'low', 'high'],
+                    metadata.get('detail', 'auto'),
+                )
+            return responses.ResponseInputImageParam(
+                image_url=item.data_uri,
+                type='input_image',
+                detail=detail,
+            )
+        elif item.is_document:
+            return responses.ResponseInputFileParam(
+                type='input_file',
+                file_data=item.data_uri,
+                # NOTE: Type wise it's not necessary to include the filename, but it's required by the
+                # API itself. If we add empty string, the server sends a 500 error - which OpenAI needs
+                # to fix. In any case, we add a placeholder name.
+                filename=f'filename.{item.format}',
+            )
+        elif item.is_audio:
+            raise NotImplementedError('Audio as binary content is not supported for OpenAI Responses API.')
+        else:  # pragma: no cover
+            raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
+
+    async def _map_image_url_user_prompt_item(self, item: ImageUrl) -> responses.ResponseInputImageParam:
+        detail: Literal['auto', 'low', 'high'] = 'auto'
+        image_url = item.url
+        if metadata := item.vendor_metadata:
+            detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
+        if item.force_download:
+            downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
+            image_url = downloaded_item['data']
+
+        return responses.ResponseInputImageParam(
+            image_url=image_url,
+            type='input_image',
+            detail=detail,
+        )
+
+    async def _map_file_url_user_prompt_item(
+        self,
+        item: AudioUrl | DocumentUrl,
+    ) -> responses.ResponseInputFileParam:
+        if item.force_download:
+            downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
+            return responses.ResponseInputFileParam(
+                type='input_file',
+                file_data=downloaded_item['data'],
+                filename=f'filename.{downloaded_item["data_type"]}',
+            )
+        else:
+            return responses.ResponseInputFileParam(
+                type='input_file',
+                file_url=item.url,
+            )
+
+    def _map_uploaded_file_user_prompt_item(
+        self,
+        item: UploadedFile,
+        *,
+        has_shell_tool: bool,
+    ) -> Sequence[responses.ResponseInputContentParam]:
+        _check_openai_uploaded_file_provider(item, self.system, 'OpenAIResponsesModel')
+        if item.target in ('container', 'both') and not has_shell_tool:
+            raise UserError(
+                'UploadedFile with `target` including `container` requires the shell tool. '
+                'Add `ShellTool()` to `builtin_tools`.'
+            )
+        if item.target in ('message', 'both'):
+            return [
+                responses.ResponseInputFileParam(
+                    type='input_file',
+                    file_id=item.file_id,
+                )
+            ]
+        return []
 
 
 @dataclass
@@ -2635,7 +2789,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _model_settings: OpenAIResponsesModelSettings
-    _uses_skill_backed_code_execution: bool
+    _code_execution_context: _OpenAICodeExecutionContext
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _provider_name: str
     _provider_url: str
@@ -2736,14 +2890,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
-                elif _is_openai_shell_tool_call(chunk.item):
-                    call_part = _map_shell_tool_call(
-                        chunk.item, self.provider_name, self._uses_skill_backed_code_execution
-                    )
+                elif isinstance(chunk.item, responses.ResponseFunctionShellToolCall):
+                    call_part = _map_shell_tool_call(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(
                         vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                     )
-                elif _is_openai_shell_tool_call_output(chunk.item):
+                elif isinstance(chunk.item, responses.ResponseFunctionShellToolCallOutput):
                     pass
                 elif isinstance(chunk.item, responses.response_output_item.ImageGenerationCall):
                     call_part, _, _ = _map_image_generation_tool_call(chunk.item, self.provider_name)
@@ -2794,21 +2946,19 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             vendor_part_id=f'{chunk.item.id}-file-{i}', part=file_part
                         )
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
-                elif _is_openai_shell_tool_call(chunk.item):
-                    call_part = _map_shell_tool_call(
-                        chunk.item, self.provider_name, self._uses_skill_backed_code_execution
-                    )
+                elif isinstance(chunk.item, responses.ResponseFunctionShellToolCall):
+                    call_part = _map_shell_tool_call(chunk.item, self.provider_name)
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=f'{chunk.item.id}-call',
                         args=call_part.args,
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
-                elif _is_openai_shell_tool_call_output(chunk.item):
-                    return_part = _map_shell_tool_call_output(
-                        chunk.item, self.provider_name, self._uses_skill_backed_code_execution
+                elif isinstance(chunk.item, responses.ResponseFunctionShellToolCallOutput):
+                    return_part = _map_shell_tool_call_output(chunk.item, self.provider_name)
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=f'{chunk.item.call_id}-return', part=return_part
                     )
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.call_id}-return', part=return_part)
                 elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
                     call_part, return_part = _map_web_search_tool_call(chunk.item, self.provider_name)
 
@@ -3175,8 +3325,63 @@ def _check_openai_uploaded_file_provider(item: UploadedFile, provider_name: str,
         )
 
 
-def _uses_openai_skill_backed_code_execution(model_request_parameters: ModelRequestParameters) -> bool:
-    return any(isinstance(tool, CodeExecutionTool) and bool(tool.skills) for tool in model_request_parameters.builtin_tools)
+def _get_openai_uploaded_file_ids(items: Sequence[UploadedFile], *, provider_name: str, model_name: str) -> list[str]:
+    file_ids: list[str] = []
+    for item in items:
+        _check_openai_uploaded_file_provider(item, provider_name, model_name)
+        if item.file_id not in file_ids:
+            file_ids.append(item.file_id)
+    return file_ids
+
+
+def _get_openai_code_execution_context(
+    *,
+    messages: Sequence[ModelMessage],
+    model_request_parameters: ModelRequestParameters,
+    provider_name: str,
+) -> _OpenAICodeExecutionContext:
+    shell_tool = next(
+        (tool for tool in model_request_parameters.builtin_tools if isinstance(tool, ShellTool)),
+        None,
+    )
+    code_execution_tool = next(
+        (tool for tool in model_request_parameters.builtin_tools if isinstance(tool, CodeExecutionTool)),
+        None,
+    )
+    container_uploaded_files = tuple(
+        _iter_openai_container_target_uploaded_files(messages, provider_name=provider_name)
+    )
+
+    if container_uploaded_files and shell_tool is None:
+        raise UserError(
+            'UploadedFile with `target` including `container` requires the shell tool. '
+            'Add `ShellTool()` to `builtin_tools`.'
+        )
+
+    if shell_tool is not None:
+        transport: _OpenAICodeExecutionTransport = 'shell'
+    elif code_execution_tool is not None:
+        transport = 'code_interpreter'
+    else:
+        transport = 'none'
+
+    return _OpenAICodeExecutionContext(
+        transport=transport,
+        uploaded_files=container_uploaded_files,
+    )
+
+
+def _iter_openai_container_target_uploaded_files(
+    messages: Sequence[ModelMessage], *, provider_name: str
+) -> Iterator[UploadedFile]:
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            for part in message.parts:
+                if isinstance(part, UserPromptPart) and isinstance(part.content, list):
+                    for item in part.content:
+                        if isinstance(item, UploadedFile) and item.target in ('container', 'both'):
+                            _check_openai_uploaded_file_provider(item, provider_name, 'OpenAIResponsesModel')
+                            yield item
 
 
 def _map_openai_skill_reference(skill: SkillReference) -> SkillReferenceParam:
@@ -3189,29 +3394,83 @@ def _map_openai_skill_reference(skill: SkillReference) -> SkillReferenceParam:
     return skill_reference
 
 
-def _uses_openai_shell_tool(item: BuiltinToolCallPart | BuiltinToolReturnPart) -> bool:
-    if item.tool_name == _OPENAI_SHELL_TOOL_NAME:
-        return True
+def _map_openai_code_execution_network_policy(network_policy: CodeExecutionNetworkPolicy) -> dict[str, Any]:
+    if network_policy.mode == 'disabled':
+        if network_policy.allowed_domains:
+            raise UserError(
+                '`ShellTool.network_policy.allowed_domains` can only be used with '
+                '`CodeExecutionNetworkPolicy(mode="allowlist")`.'
+            )
+        return {'type': 'disabled'}
+    elif network_policy.mode == 'allowlist':
+        if not network_policy.allowed_domains:
+            raise UserError(
+                '`CodeExecutionNetworkPolicy(mode="allowlist")` requires at least one `allowed_domains` entry.'
+            )
+        return {'type': 'allowlist', 'allowed_domains': list(network_policy.allowed_domains)}
+    else:  # pragma: no cover
+        assert_never(network_policy.mode)
 
-    provider_details = item.provider_details or {}
-    return (
-        item.tool_name == CodeExecutionTool.kind
-        and provider_details.get(_OPENAI_TOOL_TYPE_PROVIDER_DETAIL_KEY) == _OPENAI_TOOL_TYPE_SHELL
+
+def _uses_openai_shell_tool(item: BuiltinToolCallPart | BuiltinToolReturnPart) -> bool:
+    return item.tool_name == ShellTool.kind
+
+
+def _parse_openai_shell_call_args(item: BuiltinToolCallPart) -> _OpenAIShellCallArgs | None:
+    raw_args = item.args_as_dict()
+
+    raw_commands = raw_args.get('commands')
+    if isinstance(raw_commands, list):
+        commands_list = cast(list[Any], raw_commands)
+        string_commands: list[str] = []
+        for command in commands_list:
+            if isinstance(command, str):
+                string_commands.append(command)
+        if len(string_commands) == len(commands_list):
+            shell_commands = string_commands
+        else:
+            shell_commands = None
+    elif isinstance(command := raw_args.get('command'), str):
+        shell_commands = [command]
+    else:
+        shell_commands = None
+
+    if not shell_commands:
+        return None
+
+    environment: _OpenAIShellCallEnvironment | None = None
+    raw_environment = raw_args.get('environment')
+    if isinstance(raw_environment, dict):
+        environment_dict = cast(dict[str, Any], raw_environment)
+        environment_type = environment_dict.get('type')
+        if environment_type == _OPENAI_LOCAL_ENVIRONMENT_TYPE:
+            environment = LocalEnvironmentParam(type=_OPENAI_LOCAL_ENVIRONMENT_TYPE)
+        elif environment_type == _OPENAI_CONTAINER_REFERENCE_TYPE and isinstance(
+            container_id := environment_dict.get('container_id'), str
+        ):
+            environment = ContainerReferenceParam(
+                type=_OPENAI_CONTAINER_REFERENCE_TYPE,
+                container_id=container_id,
+            )
+
+    return _OpenAIShellCallArgs(
+        commands=shell_commands,
+        max_output_length=raw_args.get('max_output_length')
+        if isinstance(raw_args.get('max_output_length'), int)
+        else None,
+        timeout_ms=raw_args.get('timeout_ms') if isinstance(raw_args.get('timeout_ms'), int) else None,
+        environment=environment,
     )
 
 
 def _map_builtin_tool_call_part_to_openai_shell_call(
-    item: BuiltinToolCallPart, args: dict[str, Any]
-) -> responses.response_input_item_param.ShellCall | None:
-    commands = _get_shell_commands(args)
-    if not commands:
-        return None
-
-    shell_call_action: responses.response_input_item_param.ShellCallAction = {'commands': commands}
-    if isinstance(max_output_length := args.get('max_output_length'), int):
-        shell_call_action['max_output_length'] = max_output_length
-    if isinstance(timeout_ms := args.get('timeout_ms'), int):
-        shell_call_action['timeout_ms'] = timeout_ms
+    item: BuiltinToolCallPart, args: _OpenAIShellCallArgs
+) -> responses.response_input_item_param.ShellCall:
+    shell_call_action: responses.response_input_item_param.ShellCallAction = {'commands': args.commands}
+    if args.max_output_length is not None:
+        shell_call_action['max_output_length'] = args.max_output_length
+    if args.timeout_ms is not None:
+        shell_call_action['timeout_ms'] = args.timeout_ms
 
     shell_call_item: responses.response_input_item_param.ShellCall = {
         'action': shell_call_action,
@@ -3221,8 +3480,8 @@ def _map_builtin_tool_call_part_to_openai_shell_call(
     }
     if item.id:  # pragma: no branch
         shell_call_item['id'] = item.id
-    if environment := _get_shell_environment(args):
-        shell_call_item['environment'] = environment
+    if args.environment is not None:
+        shell_call_item['environment'] = args.environment
     return shell_call_item
 
 
@@ -3230,13 +3489,13 @@ def _normalize_openai_shell_environment(
     environment: ContainerAutoParam | LocalEnvironmentParam | ContainerReferenceParam | None,
 ) -> ContainerAutoParam | LocalEnvironmentParam | ContainerReferenceParam:
     if environment is None:
-        return cast(ContainerAutoParam, {'type': _OPENAI_CONTAINER_AUTO_TYPE})
+        return ContainerAutoParam(type=_OPENAI_CONTAINER_AUTO_TYPE)
 
     environment_dict = cast(dict[str, Any], environment)
     environment_type = environment_dict.get('type')
 
     if environment_type == _OPENAI_CONTAINER_AUTO_TYPE:
-        normalized_environment = cast(ContainerAutoParam, {'type': _OPENAI_CONTAINER_AUTO_TYPE})
+        normalized_environment = ContainerAutoParam(type=_OPENAI_CONTAINER_AUTO_TYPE)
         if 'memory_limit' in environment_dict:
             normalized_environment['memory_limit'] = environment_dict['memory_limit']
         if 'network_policy' in environment_dict:
@@ -3257,63 +3516,16 @@ def _normalize_openai_shell_environment(
             normalized_environment['skills'] = skills
         return normalized_environment
     elif environment_type == _OPENAI_LOCAL_ENVIRONMENT_TYPE:
-        return cast(LocalEnvironmentParam, {'type': _OPENAI_LOCAL_ENVIRONMENT_TYPE})
+        return LocalEnvironmentParam(type=_OPENAI_LOCAL_ENVIRONMENT_TYPE)
     elif environment_type == _OPENAI_CONTAINER_REFERENCE_TYPE and isinstance(
         container_id := environment_dict.get('container_id'), str
     ):
-        return cast(
-            ContainerReferenceParam,
-            {'type': _OPENAI_CONTAINER_REFERENCE_TYPE, 'container_id': container_id},
+        return ContainerReferenceParam(
+            type=_OPENAI_CONTAINER_REFERENCE_TYPE,
+            container_id=container_id,
         )
     else:
         return cast(ContainerAutoParam | LocalEnvironmentParam | ContainerReferenceParam, dict(environment_dict))
-
-
-def _get_shell_commands(args: dict[str, Any]) -> list[str] | None:
-    commands = args.get('commands')
-    if isinstance(commands, list):
-        commands_list = cast(list[Any], commands)
-        string_commands: list[str] = []
-        for command in commands_list:
-            if isinstance(command, str):
-                string_commands.append(command)
-        if len(string_commands) == len(commands_list):
-            return string_commands
-
-    if isinstance(command := args.get('command'), str):
-        return [command]
-
-    return None
-
-
-def _get_shell_environment(
-    args: dict[str, Any],
-) -> responses.response_input_item_param.ShellCallEnvironment | None:
-    environment = args.get('environment')
-    if not isinstance(environment, dict):
-        return None
-
-    environment_dict = cast(dict[str, Any], environment)
-    environment_type = environment_dict.get('type')
-    if environment_type == _OPENAI_LOCAL_ENVIRONMENT_TYPE:
-        return cast(LocalEnvironmentParam, {'type': _OPENAI_LOCAL_ENVIRONMENT_TYPE})
-    elif environment_type == _OPENAI_CONTAINER_REFERENCE_TYPE and isinstance(
-        container_id := environment_dict.get('container_id'), str
-    ):
-        return cast(
-            ContainerReferenceParam,
-            {'type': _OPENAI_CONTAINER_REFERENCE_TYPE, 'container_id': container_id},
-        )
-    else:
-        return None
-
-
-def _is_openai_shell_tool_call(item: Any) -> TypeGuard[responses.ResponseFunctionShellToolCall]:
-    return getattr(item, 'type', None) == 'shell_call'
-
-
-def _is_openai_shell_tool_call_output(item: Any) -> TypeGuard[responses.ResponseFunctionShellToolCallOutput]:
-    return getattr(item, 'type', None) == 'shell_call_output'
 
 
 def _map_code_interpreter_tool_call(
@@ -3365,7 +3577,6 @@ def _map_code_interpreter_tool_call(
 def _map_shell_tool_call(
     item: responses.ResponseFunctionShellToolCall,
     provider_name: str,
-    use_for_code_execution: bool = False,
 ) -> BuiltinToolCallPart:
     args: dict[str, Any] = {'commands': item.action.commands}
     if item.action.max_output_length is not None:
@@ -3376,21 +3587,17 @@ def _map_shell_tool_call(
         args['environment'] = item.environment.model_dump(mode='json')
 
     return BuiltinToolCallPart(
-        tool_name=CodeExecutionTool.kind if use_for_code_execution else _OPENAI_SHELL_TOOL_NAME,
+        tool_name=ShellTool.kind,
         tool_call_id=item.call_id,
         args=args,
         provider_name=provider_name,
         id=item.id,
-        provider_details={_OPENAI_TOOL_TYPE_PROVIDER_DETAIL_KEY: _OPENAI_TOOL_TYPE_SHELL}
-        if use_for_code_execution
-        else None,
     )
 
 
 def _map_shell_tool_call_output(
     item: responses.ResponseFunctionShellToolCallOutput,
     provider_name: str,
-    use_for_code_execution: bool = False,
 ) -> BuiltinToolReturnPart:
     content: dict[str, Any] = {
         'status': item.status,
@@ -3400,13 +3607,10 @@ def _map_shell_tool_call_output(
         content['max_output_length'] = item.max_output_length
 
     return BuiltinToolReturnPart(
-        tool_name=CodeExecutionTool.kind if use_for_code_execution else _OPENAI_SHELL_TOOL_NAME,
+        tool_name=ShellTool.kind,
         tool_call_id=item.call_id,
         content=content,
         provider_name=provider_name,
-        provider_details={_OPENAI_TOOL_TYPE_PROVIDER_DETAIL_KEY: _OPENAI_TOOL_TYPE_SHELL}
-        if use_for_code_execution
-        else None,
     )
 
 

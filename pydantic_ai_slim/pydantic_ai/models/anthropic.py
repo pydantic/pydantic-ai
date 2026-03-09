@@ -19,6 +19,7 @@ from ..builtin_tools import (
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
+    ShellTool,
     SkillReference,
     WebFetchTool,
     WebSearchTool,
@@ -45,6 +46,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
+    UploadedFileProviderName,
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
@@ -65,6 +67,11 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'refusal': 'content_filter',
 }
 
+_TEXT_EDITOR_CODE_EXECUTION_TOOL_NAME = 'text_editor_code_execution'
+_BASH_CODE_EXECUTION_TOOL_NAME = 'bash_code_execution'
+_BASH_CODE_EXECUTION_TOOL_RESULT_TYPE = 'bash_code_execution_tool_result'
+_TEXT_EDITOR_CODE_EXECUTION_TOOL_RESULT_TYPE = 'text_editor_code_execution_tool_result'
+
 
 try:
     from anthropic import (
@@ -78,10 +85,15 @@ try:
     from anthropic.types.anthropic_beta_param import AnthropicBetaParam
     from anthropic.types.beta import (
         BetaBase64PDFSourceParam,
+        BetaBashCodeExecutionResultBlock,
+        BetaBashCodeExecutionToolResultBlock,
+        BetaBashCodeExecutionToolResultBlockParam,
         BetaCacheControlEphemeralParam,
         BetaCitationsConfigParam,
         BetaCitationsDelta,
+        BetaCodeExecutionResultBlock,
         BetaCodeExecutionTool20250522Param,
+        BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionToolResultBlock,
         BetaCodeExecutionToolResultBlockContent,
         BetaCodeExecutionToolResultBlockParam,
@@ -124,6 +136,8 @@ try:
         BetaTextBlock,
         BetaTextBlockParam,
         BetaTextDelta,
+        BetaTextEditorCodeExecutionToolResultBlock,
+        BetaTextEditorCodeExecutionToolResultBlockParam,
         BetaThinkingBlock,
         BetaThinkingBlockParam,
         BetaThinkingConfigParam,
@@ -142,6 +156,12 @@ try:
         BetaWebSearchToolResultBlockContent,
         BetaWebSearchToolResultBlockParam,
         BetaWebSearchToolResultBlockParamContentParam,
+    )
+    from anthropic.types.beta.beta_bash_code_execution_tool_result_block_param import (
+        Content as BashCodeExecutionToolResultBlockParamContent,
+    )
+    from anthropic.types.beta.beta_text_editor_code_execution_tool_result_block_param import (
+        Content as TextEditorCodeExecutionToolResultBlockParamContent,
     )
     from anthropic.types.beta.beta_user_location_param import BetaUserLocationParam
     from anthropic.types.beta.beta_web_fetch_tool_result_block_param import (
@@ -302,7 +322,7 @@ class AnthropicModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """The set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
+        return frozenset({WebSearchTool, CodeExecutionTool, ShellTool, WebFetchTool, MemoryTool, MCPServerTool})
 
     async def request(
         self,
@@ -508,18 +528,18 @@ class AnthropicModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> BetaContainerParams | None:
         """Get container config for the API request."""
-        skills = _get_anthropic_code_execution_skills(model_request_parameters)
+        skills = _get_anthropic_shell_skills(model_request_parameters)
 
         if (container := model_settings.get('anthropic_container')) is not None:
             if container is False:
                 return BetaContainerParams(skills=skills) if skills else None
             if skills and container.get('skills'):
                 raise UserError(
-                    '`CodeExecutionTool.skills` cannot be used together with '
+                    '`ShellTool.skills` cannot be used together with '
                     '`AnthropicModelSettings.anthropic_container["skills"]`.'
                 )
 
-            merged_container = cast(BetaContainerParams, dict(container))
+            merged_container = BetaContainerParams(**container)
             if skills:
                 merged_container['skills'] = skills
             return merged_container
@@ -532,7 +552,7 @@ class AnthropicModel(Model):
                     break
 
         if history_container_id is not None:
-            container = cast(BetaContainerParams, {'id': history_container_id})
+            container = BetaContainerParams(id=history_container_id)
             if skills:
                 container['skills'] = skills
             return container
@@ -598,7 +618,15 @@ class AnthropicModel(Model):
             elif isinstance(item, BetaWebSearchToolResultBlock):
                 items.append(_map_web_search_tool_result_block(item, self.system))
             elif isinstance(item, BetaCodeExecutionToolResultBlock):
-                items.append(_map_code_execution_tool_result_block(item, self.system))
+                return_part, uploaded_files = _map_code_execution_tool_result_block(item, self.system)
+                items.append(return_part)
+                items.extend(uploaded_files)
+            elif isinstance(item, BetaTextEditorCodeExecutionToolResultBlock):
+                items.append(_map_text_editor_tool_result_block(item, self.system))
+            elif isinstance(item, BetaBashCodeExecutionToolResultBlock):
+                return_part, uploaded_files = _map_bash_code_execution_tool_result_block(item, self.system)
+                items.append(return_part)
+                items.extend(uploaded_files)
             elif isinstance(item, BetaWebFetchToolResultBlock):
                 items.append(_map_web_fetch_tool_result_block(item, self.system))
             elif isinstance(item, BetaRedactedThinkingBlock):
@@ -698,9 +726,14 @@ class AnthropicModel(Model):
                         user_location=user_location,
                     )
                 )
-            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
-                tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
+            elif isinstance(tool, CodeExecutionTool):
+                tools.append(
+                    BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522')
+                )
                 beta_features.add('code-execution-2025-05-22')
+            elif isinstance(tool, ShellTool):
+                tools.append(BetaCodeExecutionTool20250825Param(name='code_execution', type='code_execution_20250825'))
+                beta_features.add('code-execution-2025-08-25')
                 if tool.skills:
                     beta_features.add('skills-2025-10-02')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
@@ -775,8 +808,8 @@ class AnthropicModel(Model):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
-        has_code_execution_tool = any(
-            isinstance(tool, CodeExecutionTool) for tool in model_request_parameters.builtin_tools
+        has_shell_tool = any(
+            isinstance(tool, ShellTool) for tool in model_request_parameters.builtin_tools
         )
         for m in messages:
             if isinstance(m, ModelRequest):
@@ -785,7 +818,7 @@ class AnthropicModel(Model):
                     if isinstance(request_part, SystemPromptPart):
                         system_prompt_parts.append(request_part.content)
                     elif isinstance(request_part, UserPromptPart):
-                        async for content in self._map_user_prompt(request_part, has_code_execution_tool):
+                        async for content in self._map_user_prompt(request_part, has_shell_tool):
                             if isinstance(content, CachePoint):
                                 self._add_cache_control_to_last_param(user_content_params, ttl=content.ttl)
                             else:
@@ -819,6 +852,8 @@ class AnthropicModel(Model):
                     | BetaServerToolUseBlockParam
                     | BetaWebSearchToolResultBlockParam
                     | BetaCodeExecutionToolResultBlockParam
+                    | BetaBashCodeExecutionToolResultBlockParam
+                    | BetaTextEditorCodeExecutionToolResultBlockParam
                     | BetaWebFetchToolResultBlockParam
                     | BetaThinkingBlockParam
                     | BetaRedactedThinkingBlockParam
@@ -893,6 +928,14 @@ class AnthropicModel(Model):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
+                            elif response_part.tool_name in (_TEXT_EDITOR_CODE_EXECUTION_TOOL_NAME, _BASH_CODE_EXECUTION_TOOL_NAME):
+                                server_tool_use_block_param = BetaServerToolUseBlockParam(
+                                    id=tool_use_id,
+                                    type='server_tool_use',
+                                    name=response_part.tool_name,
+                                    input=response_part.args_as_dict(),
+                                )
+                                assistant_content_params.append(server_tool_use_block_param)
                             elif (
                                 response_part.tool_name.startswith(MCPServerTool.kind)
                                 and (server_id := response_part.tool_name.split(':', 1)[1])
@@ -952,6 +995,46 @@ class AnthropicModel(Model):
                                         ),
                                     )
                                 )
+                            elif response_part.tool_name in (
+                                _BASH_CODE_EXECUTION_TOOL_NAME,
+                                _BASH_CODE_EXECUTION_TOOL_RESULT_TYPE,
+                            ) and isinstance(
+                                response_part.content, dict
+                            ):
+                                bash_result_content = cast(
+                                    dict[str, Any],
+                                    cast(Any, response_part.content),  # pyright: ignore[reportUnknownMemberType]
+                                )
+                                assistant_content_params.append(
+                                    BetaBashCodeExecutionToolResultBlockParam(
+                                        tool_use_id=tool_use_id,
+                                        type='bash_code_execution_tool_result',
+                                        content=cast(
+                                            BashCodeExecutionToolResultBlockParamContent,
+                                            _unwrap_anthropic_tool_result_block_content(bash_result_content),
+                                        ),
+                                    )
+                                )
+                            elif response_part.tool_name in (
+                                _TEXT_EDITOR_CODE_EXECUTION_TOOL_NAME,
+                                _TEXT_EDITOR_CODE_EXECUTION_TOOL_RESULT_TYPE,
+                            ) and isinstance(
+                                response_part.content, dict
+                            ):
+                                text_editor_result_content = cast(
+                                    dict[str, Any],
+                                    cast(Any, response_part.content),  # pyright: ignore[reportUnknownMemberType]
+                                )
+                                assistant_content_params.append(
+                                    BetaTextEditorCodeExecutionToolResultBlockParam(
+                                        tool_use_id=tool_use_id,
+                                        type='text_editor_code_execution_tool_result',
+                                        content=cast(
+                                            TextEditorCodeExecutionToolResultBlockParamContent,
+                                            _unwrap_anthropic_tool_result_block_content(text_editor_result_content),
+                                        ),
+                                    )
+                                )
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
                                 response_part.content, dict
                             ):  # pragma: no branch
@@ -966,9 +1049,10 @@ class AnthropicModel(Model):
                         # Files generated by models are not sent back to models that don't themselves generate files.
                         pass
                     elif isinstance(response_part, UploadedFile):
-                        assistant_content_params.extend(
-                            self._map_uploaded_file(response_part, has_code_execution_tool=has_code_execution_tool)
-                        )
+                        # UploadedFile references are not sent back in assistant messages —
+                        # document/image/container_upload blocks are input-only (user messages).
+                        # Container file persistence is handled via the top-level `container` param.
+                        pass
                     else:
                         assert_never(response_part)
                 if len(assistant_content_params) > 0:
@@ -1154,7 +1238,7 @@ class AnthropicModel(Model):
     async def _map_user_prompt(  # noqa: C901
         self,
         part: UserPromptPart,
-        has_code_execution_tool: bool,
+        has_shell_tool: bool,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):
             if part.content:  # Only yield non-empty text
@@ -1194,13 +1278,13 @@ class AnthropicModel(Model):
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
                 elif isinstance(item, UploadedFile):
-                    for content in self._map_uploaded_file(item, has_code_execution_tool=has_code_execution_tool):
+                    for content in self._map_uploaded_file(item, has_shell_tool=has_shell_tool):
                         yield content
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
     def _map_uploaded_file(
-        self, item: UploadedFile, *, has_code_execution_tool: bool
+        self, item: UploadedFile, *, has_shell_tool: bool
     ) -> list[BetaImageBlockParam | BetaRequestDocumentBlockParam | BetaContainerUploadBlockParam]:
         if item.provider_name != self.system:
             raise UserError(
@@ -1230,10 +1314,10 @@ class AnthropicModel(Model):
                     'Only image and document (text/application) types are supported.'
                 )
         if item.target in ('container', 'both'):
-            if not has_code_execution_tool:
+            if not has_shell_tool:
                 raise UserError(
-                    'UploadedFile with `target` including `container` requires the code execution tool. '
-                    'Add `CodeExecutionTool()` to `builtin_tools`.'
+                    'UploadedFile with `target` including `container` requires the shell tool. '
+                    'Add `ShellTool()` to `builtin_tools`.'
                 )
 
             content_blocks.append(BetaContainerUploadBlockParam(file_id=item.file_id, type='container_upload'))
@@ -1373,10 +1457,34 @@ class AnthropicStreamedResponse(StreamedResponse):
                         part=_map_web_search_tool_result_block(current_block, self.provider_name),
                     )
                 elif isinstance(current_block, BetaCodeExecutionToolResultBlock):
+                    return_part, uploaded_files = _map_code_execution_tool_result_block(current_block, self.provider_name)
                     yield self._parts_manager.handle_part(
                         vendor_part_id=event.index,
-                        part=_map_code_execution_tool_result_block(current_block, self.provider_name),
+                        part=return_part,
                     )
+                    for i, uploaded_file in enumerate(uploaded_files):
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=(event.index, 'uploaded_file', i),
+                            part=uploaded_file,
+                        )
+                elif isinstance(current_block, BetaTextEditorCodeExecutionToolResultBlock):
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=event.index,
+                        part=_map_text_editor_tool_result_block(current_block, self.provider_name),
+                    )
+                elif isinstance(current_block, BetaBashCodeExecutionToolResultBlock):
+                    return_part, uploaded_files = _map_bash_code_execution_tool_result_block(
+                        current_block, self.provider_name
+                    )
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=event.index,
+                        part=return_part,
+                    )
+                    for i, uploaded_file in enumerate(uploaded_files):
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=(event.index, 'uploaded_file', i),
+                            part=uploaded_file,
+                        )
                 elif isinstance(current_block, BetaWebFetchToolResultBlock):  # pragma: lax no cover
                     yield self._parts_manager.handle_part(
                         vendor_part_id=event.index,
@@ -1483,11 +1591,11 @@ class AnthropicStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _get_anthropic_code_execution_skills(
+def _get_anthropic_shell_skills(
     model_request_parameters: ModelRequestParameters,
 ) -> list[BetaSkillParams]:
     for tool in model_request_parameters.builtin_tools:
-        if isinstance(tool, CodeExecutionTool) and tool.skills:
+        if isinstance(tool, ShellTool) and tool.skills:
             return [_map_anthropic_skill_reference(skill) for skill in tool.skills]
     return []
 
@@ -1524,13 +1632,32 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
-    elif item.name in ('bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
-        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
+    elif item.name == _TEXT_EDITOR_CODE_EXECUTION_TOOL_NAME:
+        return BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=_TEXT_EDITOR_CODE_EXECUTION_TOOL_NAME,
+            args=cast(dict[str, Any], item.input) or None,
+            tool_call_id=item.id,
+        )
+    elif item.name == _BASH_CODE_EXECUTION_TOOL_NAME:
+        return BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=_BASH_CODE_EXECUTION_TOOL_NAME,
+            args=cast(dict[str, Any], item.input) or None,
+            tool_call_id=item.id,
+        )
     elif item.name in ('tool_search_tool_regex', 'tool_search_tool_bm25'):  # pragma: no cover
         # NOTE this is being implemented in https://github.com/pydantic/pydantic-ai/pull/3550
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     else:
         assert_never(item.name)
+
+
+def _unwrap_anthropic_tool_result_block_content(content: dict[str, Any]) -> dict[str, Any]:
+    nested_content = content.get('content')
+    if 'tool_use_id' in content and isinstance(nested_content, dict):
+        return cast(dict[str, Any], nested_content)
+    return content
 
 
 web_search_tool_result_content_ta: TypeAdapter[BetaWebSearchToolResultBlockContent] = TypeAdapter(
@@ -1552,14 +1679,52 @@ code_execution_tool_result_content_ta: TypeAdapter[BetaCodeExecutionToolResultBl
 )
 
 
+def _extract_uploaded_files_from_result_outputs(
+    content: Any, provider_name: str
+) -> list[UploadedFile]:
+    """Extract UploadedFile instances from code execution result blocks that contain file outputs."""
+    if isinstance(content, (BetaCodeExecutionResultBlock, BetaBashCodeExecutionResultBlock)):
+        uploaded_provider = cast(UploadedFileProviderName, provider_name)
+        return [UploadedFile(file_id=output.file_id, provider_name=uploaded_provider) for output in content.content]
+    return []
+
+
 def _map_code_execution_tool_result_block(
     item: BetaCodeExecutionToolResultBlock, provider_name: str
+) -> tuple[BuiltinToolReturnPart, list[UploadedFile]]:
+    return (
+        BuiltinToolReturnPart(
+            provider_name=provider_name,
+            tool_name=CodeExecutionTool.kind,
+            content=code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
+            tool_call_id=item.tool_use_id,
+        ),
+        _extract_uploaded_files_from_result_outputs(item.content, provider_name),
+    )
+
+
+def _map_text_editor_tool_result_block(
+    item: BetaTextEditorCodeExecutionToolResultBlock, provider_name: str
 ) -> BuiltinToolReturnPart:
     return BuiltinToolReturnPart(
         provider_name=provider_name,
-        tool_name=CodeExecutionTool.kind,
-        content=code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
+        tool_name=_TEXT_EDITOR_CODE_EXECUTION_TOOL_NAME,
+        content=item.model_dump(mode='json'),
         tool_call_id=item.tool_use_id,
+    )
+
+
+def _map_bash_code_execution_tool_result_block(
+    item: BetaBashCodeExecutionToolResultBlock, provider_name: str
+) -> tuple[BuiltinToolReturnPart, list[UploadedFile]]:
+    return (
+        BuiltinToolReturnPart(
+            provider_name=provider_name,
+            tool_name=item.type,
+            content=item.model_dump(mode='json'),
+            tool_call_id=item.tool_use_id,
+        ),
+        _extract_uploaded_files_from_result_outputs(item.content, provider_name),
     )
 
 

@@ -149,15 +149,17 @@ See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/do
 
 ## Code Execution Skills
 
-Anthropic exposes native code-execution skills through [`CodeExecutionTool.skills`][pydantic_ai.builtin_tools.CodeExecutionTool.skills]. Pydantic AI maps these shared [`SkillReference`][pydantic_ai.builtin_tools.SkillReference] values into Anthropic `container.skills`.
+Anthropic exposes native code-execution skills through [`ShellTool.skills`][pydantic_ai.builtin_tools.ShellTool.skills]. Pydantic AI maps these shared [`SkillReference`][pydantic_ai.builtin_tools.SkillReference] values into Anthropic `container.skills`.
+
+Use [`ShellTool`][pydantic_ai.builtin_tools.ShellTool] for the workspace-style code-execution interface with skills, network policy, and multi-language support.
 
 ```python {test="skip"}
-from pydantic_ai import Agent, CodeExecutionTool, SkillReference
+from pydantic_ai import Agent, ShellTool, SkillReference
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
     builtin_tools=[
-        CodeExecutionTool(
+        ShellTool(
             skills=[
                 SkillReference(skill_id='skill_custom', version=2),
                 SkillReference(skill_id='skill_provider', source='provider'),
@@ -171,7 +173,7 @@ Use `source='provider'` for Anthropic-managed skills and the default `source='cu
 
 Anthropic file mounting remains separate from skills: use [`UploadedFile(target='container')`][pydantic_ai.messages.UploadedFile] or `target='both'` when you want to upload files into the code execution container.
 
-If you also use [`AnthropicModelSettings.anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container], Pydantic AI will merge `CodeExecutionTool.skills` into that container automatically and continue to reuse `container_id` values from prior Anthropic responses.
+If you also use [`AnthropicModelSettings.anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container], Pydantic AI will merge [`ShellTool.skills`][pydantic_ai.builtin_tools.ShellTool.skills] into that container automatically and continue to reuse `container_id` values from prior Anthropic responses.
 
 ## Prompt Caching
 
