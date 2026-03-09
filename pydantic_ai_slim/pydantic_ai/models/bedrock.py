@@ -427,9 +427,19 @@ class BedrockConverseModel(Model):
         """
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         settings = cast(BedrockModelSettings, model_settings or {})
+        profile = BedrockModelProfile.from_profile(self.profile)
+        if profile.bedrock_count_tokens_model_id:
+            count_tokens_model_id = profile.bedrock_count_tokens_model_id
+        elif self.model_name.startswith('arn:'):
+            raise UserError(
+                f'Bedrock `count_tokens` does not support ARN-based model identifiers: {self.model_name!r}, '
+                'set `bedrock_count_tokens_model_id` on your `BedrockModelProfile`'
+            )
+        else:
+            count_tokens_model_id = remove_bedrock_geo_prefix(self.model_name)
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
         params: CountTokensRequestTypeDef = {
-            'modelId': remove_bedrock_geo_prefix(self.model_name),
+            'modelId': count_tokens_model_id,
             'input': {
                 'converse': {
                     'messages': bedrock_messages,

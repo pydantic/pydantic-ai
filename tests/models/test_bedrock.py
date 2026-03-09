@@ -60,7 +60,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-    from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
@@ -249,6 +249,90 @@ async def test_bedrock_count_tokens_non_http_error():
     assert exc_info.value.message == snapshot(
         'An error occurred (TestException) when calling the count_tokens operation: broken connection'
     )
+
+
+class _CountTokensClient:
+    """Stub client that records count_tokens calls."""
+
+    meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
+
+    def __init__(self) -> None:
+        self.captured_model_ids: list[str] = []
+
+    def count_tokens(self, **kwargs: Any) -> dict[str, Any]:
+        self.captured_model_ids.append(kwargs['modelId'])
+        return {'inputTokens': 23}
+
+
+class _CountTokensProvider(Provider[Any]):
+    """Provider backed by _CountTokensClient."""
+
+    def __init__(self) -> None:
+        self._client = _CountTokensClient()
+
+    @property
+    def name(self) -> str:
+        return 'bedrock-stub'
+
+    @property
+    def base_url(self) -> str:
+        return 'https://bedrock.stub'
+
+    @property
+    def client(self) -> _CountTokensClient:
+        return self._client
+
+    @staticmethod
+    def model_profile(model_name: str):
+        return DEFAULT_PROFILE
+
+
+async def test_bedrock_count_tokens_arn_without_profile_field():
+    """Test that count_tokens raises UserError for ARN model names."""
+    arn = 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-profile'
+    provider = _CountTokensProvider()
+    model = BedrockConverseModel(arn, provider=provider)
+    params = ModelRequestParameters()
+
+    with pytest.raises(UserError, match=r'`bedrock_count_tokens_model_id`'):
+        await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert provider.name == 'bedrock-stub'
+    assert provider.base_url == 'https://bedrock.stub'
+
+
+async def test_bedrock_count_tokens_arn_with_profile_field():
+    """Test that count_tokens uses bedrock_count_tokens_model_id when set explicitly."""
+    arn = 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-profile'
+    foundational_model_id = 'anthropic.claude-haiku-4-5-20251001-v1:0'
+    provider = _CountTokensProvider()
+
+    profile = BedrockModelProfile(bedrock_count_tokens_model_id=foundational_model_id)
+    model = BedrockConverseModel(arn, provider=provider, profile=profile)
+    params = ModelRequestParameters()
+
+    result = await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert result.input_tokens == 23
+    assert provider.client.captured_model_ids == [foundational_model_id]
+
+
+async def test_bedrock_count_tokens_arn_with_auto_set_profile():
+    """Test that count_tokens works with ARN when using a profile from BedrockProvider.model_profile()."""
+    arn = 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-profile'
+    provider = _CountTokensProvider()
+
+    profile = BedrockProvider.model_profile('us.anthropic.claude-haiku-4-5-20251001-v1:0')
+    assert isinstance(profile, BedrockModelProfile)
+    assert profile.bedrock_count_tokens_model_id == 'anthropic.claude-haiku-4-5-20251001-v1:0'
+
+    model = BedrockConverseModel(arn, provider=provider, profile=profile)
+    params = ModelRequestParameters()
+
+    result = await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert result.input_tokens == 23
+    assert provider.client.captured_model_ids == ['anthropic.claude-haiku-4-5-20251001-v1:0']
 
 
 async def test_bedrock_stream_non_http_error():
