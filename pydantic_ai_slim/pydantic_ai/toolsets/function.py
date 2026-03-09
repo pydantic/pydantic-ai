@@ -226,6 +226,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Defaults to None (no timeout).
         """
 
+        extra_stack = 0 if func is None else 1
+
         def tool_decorator(
             func_: ToolFuncContext[AgentDepsT, ToolParams],
         ) -> ToolFuncContext[AgentDepsT, ToolParams]:
@@ -254,7 +256,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                     'use `FunctionToolset.tool_plain` instead. '
                     '(`FunctionToolset.tool` will require `RunContext` as the first parameter in a future version.)',
                     DeprecationWarning,
-                    stacklevel=2,
+                    stacklevel=2 + extra_stack,
                 )
             return func_
 
