@@ -147,6 +147,32 @@ agent = Agent(model)
 
 See [Anthropic's Microsoft Foundry documentation](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry) for setup instructions including Entra ID authentication.
 
+## Code Execution Skills
+
+Anthropic exposes native code-execution skills through [`CodeExecutionTool.skills`][pydantic_ai.builtin_tools.CodeExecutionTool.skills]. Pydantic AI maps these shared [`SkillReference`][pydantic_ai.builtin_tools.SkillReference] values into Anthropic `container.skills`.
+
+```python {test="skip"}
+from pydantic_ai import Agent, CodeExecutionTool, SkillReference
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    builtin_tools=[
+        CodeExecutionTool(
+            skills=[
+                SkillReference(skill_id='skill_custom', version=2),
+                SkillReference(skill_id='skill_provider', source='provider'),
+            ]
+        )
+    ],
+)
+```
+
+Use `source='provider'` for Anthropic-managed skills and the default `source='custom'` for custom skills.
+
+Anthropic file mounting remains separate from skills: use [`UploadedFile(target='container')`][pydantic_ai.messages.UploadedFile] or `target='both'` when you want to upload files into the code execution container.
+
+If you also use [`AnthropicModelSettings.anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container], Pydantic AI will merge `CodeExecutionTool.skills` into that container automatically and continue to reuse `container_id` values from prior Anthropic responses.
+
 ## Prompt Caching
 
 Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI provides four ways to use prompt caching:

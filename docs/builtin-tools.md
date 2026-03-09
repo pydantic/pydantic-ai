@@ -167,9 +167,9 @@ in a secure environment, making it perfect for computational tasks, data analysi
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI | ✅ | To include code execution output on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. |
+| OpenAI | ✅ | To include code execution output on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] that's available via [`ModelResponse.builtin_tool_calls`][pydantic_ai.messages.ModelResponse.builtin_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings). If the code execution generated images, like charts, they will be available on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] as [`BinaryImage`][pydantic_ai.messages.BinaryImage] objects. The generated image can also be used as [image output](output.md#image-output) for the agent run. [`CodeExecutionTool.skills`][pydantic_ai.builtin_tools.CodeExecutionTool.skills] is supported on OpenAI Responses and uses hosted shell under the hood while still surfacing `code_execution` parts. |
 | Google | ✅ | Using built-in tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
-| Anthropic | ✅ | Supports loading files into the sandbox via [`UploadedFile`](input.md#uploadedfile-targets) with `target='container'` (or `target='both'`). Requires [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]. |
+| Anthropic | ✅ | Supports [`CodeExecutionTool.skills`][pydantic_ai.builtin_tools.CodeExecutionTool.skills] and loading files into the sandbox via [`UploadedFile`](input.md#uploadedfile-targets) with `target='container'` (or `target='both'`). Requires [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]. |
 | xAI | ✅ | Full feature support. |
 | Groq | ❌ | |
 | Bedrock | ✅ | Only available for Nova 2.0 models. |
@@ -219,6 +219,35 @@ print(result.response.builtin_tool_calls)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+### Native skills
+
+Anthropic and OpenAI Responses both support provider-hosted skills through the shared
+[`CodeExecutionTool.skills`][pydantic_ai.builtin_tools.CodeExecutionTool.skills] interface.
+Use [`SkillReference`][pydantic_ai.builtin_tools.SkillReference] values to reference already-published skills by ID.
+
+```py {title="code_execution_skills.py" test="skip"}
+from pydantic_ai import Agent, CodeExecutionTool, SkillReference
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    builtin_tools=[
+        CodeExecutionTool(
+            skills=[
+                SkillReference(skill_id='skill_custom', version=2),
+                SkillReference(skill_id='skill_provider', source='provider'),
+            ]
+        )
+    ],
+)
+```
+
+`SkillReference.source='provider'` is currently used by Anthropic to distinguish Anthropic-managed skills from custom skills. OpenAI currently ignores `source` and uses the referenced skill ID and version.
+
+File mounting remains provider-specific in this release:
+
+- Anthropic: use [`UploadedFile(target='container')`][pydantic_ai.messages.UploadedFile]
+- OpenAI Responses: use [`OpenAIResponsesModelSettings.openai_shell_uploaded_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_uploaded_files]
 
 In addition to text output, code execution with OpenAI can generate images as part of their response. Accessing this image via [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images] or [image output](output.md#image-output) requires the [`OpenAIResponsesModelSettings.openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs] [model setting](agent.md#model-run-settings) to be enabled.
 

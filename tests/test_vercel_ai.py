@@ -4755,7 +4755,6 @@ async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
                         'provider_name': 'google-gla',
                         'vendor_metadata': {'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
                         'identifier': 'my-custom-id',
-                        'target': 'message',
                     }
                 },
             ),

@@ -5,6 +5,7 @@ from pydantic_ai.builtin_tools import (
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
+    SkillReference,
     WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
@@ -81,7 +82,10 @@ def test_model_request_parameters_are_serializable():
                     'allowed_domains': None,
                     'max_uses': None,
                 },
-                {'kind': 'code_execution'},
+                {
+                    'kind': 'code_execution',
+                    'skills': [],
+                },
                 {
                     'kind': 'web_fetch',
                     'max_uses': None,
@@ -143,3 +147,36 @@ def test_model_request_parameters_are_serializable():
         }
     )
     assert ta.validate_python(dumped) == params
+
+    params_with_skills = ModelRequestParameters(
+        builtin_tools=[
+            CodeExecutionTool(
+                skills=[
+                    SkillReference(skill_id='skill_custom', version=2),
+                    SkillReference(skill_id='skill_provider', version='2026-01-01', source='provider'),
+                ]
+            )
+        ]
+    )
+    dumped_with_skills = ta.dump_python(params_with_skills)
+    assert dumped_with_skills == snapshot(
+        {
+            'function_tools': [],
+            'builtin_tools': [
+                {
+                    'kind': 'code_execution',
+                    'skills': [
+                        {'skill_id': 'skill_custom', 'version': 2, 'source': 'custom'},
+                        {'skill_id': 'skill_provider', 'version': '2026-01-01', 'source': 'provider'},
+                    ],
+                }
+            ],
+            'output_mode': 'text',
+            'output_object': None,
+            'output_tools': [],
+            'prompted_output_template': None,
+            'allow_text_output': True,
+            'allow_image_output': False,
+        }
+    )
+    assert ta.validate_python(dumped_with_skills) == params_with_skills

@@ -77,6 +77,9 @@ class ModelProfile:
     restrict this based on model capabilities.
     """
 
+    supports_code_execution_skills: bool = False
+    """Whether the model supports provider-hosted skills on `CodeExecutionTool`."""
+
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:
         """Build a ModelProfile subclass instance from a ModelProfile instance."""

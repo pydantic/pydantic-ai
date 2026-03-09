@@ -8,6 +8,7 @@ from pydantic_ai.builtin_tools import (
     AbstractBuiltinTool,
     CodeExecutionTool,
     FileSearchTool,
+    SkillReference,
     UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
     WebSearchTool,
@@ -46,6 +47,23 @@ async def test_builtin_tools_not_supported_code_execution_stream(model: Model, a
     agent = Agent(model=model, builtin_tools=[CodeExecutionTool()])
 
     with pytest.raises(UserError):
+        async with agent.run_stream('What day is tomorrow?'):
+            ...  # pragma: no cover
+
+
+@pytest.mark.parametrize('model', ('bedrock', 'openai'), indirect=True)
+async def test_builtin_tools_not_supported_code_execution_skills(model: Model, allow_model_requests: None):
+    agent = Agent(model=model, builtin_tools=[CodeExecutionTool(skills=[SkillReference(skill_id='skill_123')])])
+
+    with pytest.raises(UserError, match='CodeExecutionTool.skills'):
+        await agent.run('What day is tomorrow?')
+
+
+@pytest.mark.parametrize('model', ('bedrock', 'openai'), indirect=True)
+async def test_builtin_tools_not_supported_code_execution_skills_stream(model: Model, allow_model_requests: None):
+    agent = Agent(model=model, builtin_tools=[CodeExecutionTool(skills=[SkillReference(skill_id='skill_123')])])
+
+    with pytest.raises(UserError, match='CodeExecutionTool.skills'):
         async with agent.run_stream('What day is tomorrow?'):
             ...  # pragma: no cover
 

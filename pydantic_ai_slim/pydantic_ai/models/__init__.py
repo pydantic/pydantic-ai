@@ -24,7 +24,7 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from ..builtin_tools import AbstractBuiltinTool
+from ..builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -785,6 +785,14 @@ class Model(ABC):
 
         # Check if builtin tools are supported
         if params.builtin_tools:
+            if not self.profile.supports_code_execution_skills:
+                for tool in params.builtin_tools:
+                    if isinstance(tool, CodeExecutionTool) and tool.skills:
+                        raise UserError(
+                            '`CodeExecutionTool.skills` is not supported by this model. '
+                            'Use a provider/model with native skill support.'
+                        )
+
             supported_types = self.profile.supported_builtin_tools
             unsupported = [tool for tool in params.builtin_tools if not isinstance(tool, tuple(supported_types))]
             if unsupported:

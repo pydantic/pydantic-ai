@@ -19,6 +19,7 @@ from ..builtin_tools import (
     CodeExecutionTool,
     MCPServerTool,
     MemoryTool,
+    SkillReference,
     WebFetchTool,
     WebSearchTool,
 )
@@ -118,6 +119,7 @@ try:
         BetaServerToolUseBlock,
         BetaServerToolUseBlockParam,
         BetaSignatureDelta,
+        BetaSkillParams,
         BetaStopReason,
         BetaTextBlock,
         BetaTextBlockParam,
@@ -440,7 +442,7 @@ class AnthropicModel(Model):
         output_config = self._build_output_config(model_request_parameters, model_settings)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
-        container = self._get_container(messages, model_settings)
+        container = self._get_container(messages, model_settings, model_request_parameters)
         try:
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -500,15 +502,44 @@ class AnthropicModel(Model):
         return betas, extra_headers
 
     def _get_container(
-        self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
+        self,
+        messages: list[ModelMessage],
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> BetaContainerParams | None:
         """Get container config for the API request."""
+        skills = _get_anthropic_code_execution_skills(model_request_parameters)
+
         if (container := model_settings.get('anthropic_container')) is not None:
-            return None if container is False else container
+            if container is False:
+                return BetaContainerParams(skills=skills) if skills else None
+            if skills and container.get('skills'):
+                raise UserError(
+                    '`CodeExecutionTool.skills` cannot be used together with '
+                    '`AnthropicModelSettings.anthropic_container["skills"]`.'
+                )
+
+            merged_container = cast(BetaContainerParams, dict(container))
+            if skills:
+                merged_container['skills'] = skills
+            return merged_container
+
+        history_container_id: str | None = None
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
-                    return BetaContainerParams(id=cid)
+                    history_container_id = cid
+                    break
+
+        if history_container_id is not None:
+            container = cast(BetaContainerParams, {'id': history_container_id})
+            if skills:
+                container['skills'] = skills
+            return container
+
+        if skills:
+            return BetaContainerParams(skills=skills)
+
         return None
 
     async def _messages_count_tokens(
@@ -670,6 +701,8 @@ class AnthropicModel(Model):
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
                 beta_features.add('code-execution-2025-05-22')
+                if tool.skills:
+                    beta_features.add('skills-2025-10-02')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
                 tools.append(
@@ -742,6 +775,9 @@ class AnthropicModel(Model):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
+        has_code_execution_tool = any(
+            isinstance(tool, CodeExecutionTool) for tool in model_request_parameters.builtin_tools
+        )
         for m in messages:
             if isinstance(m, ModelRequest):
                 user_content_params: list[BetaContentBlockParam] = []
@@ -749,7 +785,7 @@ class AnthropicModel(Model):
                     if isinstance(request_part, SystemPromptPart):
                         system_prompt_parts.append(request_part.content)
                     elif isinstance(request_part, UserPromptPart):
-                        async for content in self._map_user_prompt(request_part):
+                        async for content in self._map_user_prompt(request_part, has_code_execution_tool):
                             if isinstance(content, CachePoint):
                                 self._add_cache_control_to_last_param(user_content_params, ttl=content.ttl)
                             else:
@@ -788,6 +824,9 @@ class AnthropicModel(Model):
                     | BetaRedactedThinkingBlockParam
                     | BetaMCPToolUseBlockParam
                     | BetaMCPToolResultBlock
+                    | BetaImageBlockParam
+                    | BetaRequestDocumentBlockParam
+                    | BetaContainerUploadBlockParam
                 ] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
@@ -926,6 +965,10 @@ class AnthropicModel(Model):
                     elif isinstance(response_part, FilePart):  # pragma: no cover
                         # Files generated by models are not sent back to models that don't themselves generate files.
                         pass
+                    elif isinstance(response_part, UploadedFile):
+                        assistant_content_params.extend(
+                            self._map_uploaded_file(response_part, has_code_execution_tool=has_code_execution_tool)
+                        )
                     else:
                         assert_never(response_part)
                 if len(assistant_content_params) > 0:
@@ -1111,6 +1154,7 @@ class AnthropicModel(Model):
     async def _map_user_prompt(  # noqa: C901
         self,
         part: UserPromptPart,
+        has_code_execution_tool: bool,
     ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):
             if part.content:  # Only yield non-empty text
@@ -1150,38 +1194,51 @@ class AnthropicModel(Model):
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
                 elif isinstance(item, UploadedFile):
-                    # Verify provider matches
-                    if item.provider_name != self.system:
-                        raise UserError(
-                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
-                            f'Expected `provider_name` to be `{self.system!r}`.'
-                        )
-                    if item.target in ('message', 'both'):
-                        if item.media_type.startswith('image/'):
-                            yield BetaImageBlockParam(
-                                source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
-                                type='image',
-                            )
-                        elif item.media_type.startswith(('text/', 'application/')):
-                            yield BetaRequestDocumentBlockParam(
-                                source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
-                                type='document',
-                            )
-                        else:
-                            raise UserError(
-                                f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
-                                'Only image and document (text/application) types are supported.'
-                            )
-                    if item.target in ('container', 'both'):
-                        if not has_code_execution_tool:
-                            raise UserError(
-                                'UploadedFile with `target` including `container` requires the code execution tool. '
-                                'Add `CodeExecutionTool()` to `builtin_tools`.'
-                            )
-
-                        yield BetaContainerUploadBlockParam(file_id=item.file_id, type='container_upload')
+                    for content in self._map_uploaded_file(item, has_code_execution_tool=has_code_execution_tool):
+                        yield content
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
+
+    def _map_uploaded_file(
+        self, item: UploadedFile, *, has_code_execution_tool: bool
+    ) -> list[BetaImageBlockParam | BetaRequestDocumentBlockParam | BetaContainerUploadBlockParam]:
+        if item.provider_name != self.system:
+            raise UserError(
+                f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
+                f'Expected `provider_name` to be `{self.system!r}`.'
+            )
+
+        content_blocks: list[BetaImageBlockParam | BetaRequestDocumentBlockParam | BetaContainerUploadBlockParam] = []
+        if item.target in ('message', 'both'):
+            if item.media_type.startswith('image/'):
+                content_blocks.append(
+                    BetaImageBlockParam(
+                        source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
+                        type='image',
+                    )
+                )
+            elif item.media_type.startswith(('text/', 'application/')):
+                content_blocks.append(
+                    BetaRequestDocumentBlockParam(
+                        source=BetaFileDocumentSourceParam(file_id=item.file_id, type='file'),
+                        type='document',
+                    )
+                )
+            else:
+                raise UserError(
+                    f'Unsupported media type {item.media_type!r} for Anthropic file upload. '
+                    'Only image and document (text/application) types are supported.'
+                )
+        if item.target in ('container', 'both'):
+            if not has_code_execution_tool:
+                raise UserError(
+                    'UploadedFile with `target` including `container` requires the code execution tool. '
+                    'Add `CodeExecutionTool()` to `builtin_tools`.'
+                )
+
+            content_blocks.append(BetaContainerUploadBlockParam(file_id=item.file_id, type='container_upload'))
+
+        return content_blocks
 
     def _map_tool_definition(self, f: ToolDefinition) -> BetaToolParam:
         """Maps a `ToolDefinition` dataclass to an Anthropic `BetaToolParam` dictionary."""
@@ -1424,6 +1481,25 @@ class AnthropicStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+def _get_anthropic_code_execution_skills(
+    model_request_parameters: ModelRequestParameters,
+) -> list[BetaSkillParams]:
+    for tool in model_request_parameters.builtin_tools:
+        if isinstance(tool, CodeExecutionTool) and tool.skills:
+            return [_map_anthropic_skill_reference(skill) for skill in tool.skills]
+    return []
+
+
+def _map_anthropic_skill_reference(skill: SkillReference) -> BetaSkillParams:
+    skill_param: BetaSkillParams = {
+        'skill_id': skill.skill_id,
+        'type': 'anthropic' if skill.source == 'provider' else 'custom',
+    }
+    if skill.version is not None:
+        skill_param['version'] = str(skill.version)
+    return skill_param
 
 
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:

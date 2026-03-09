@@ -11,6 +11,7 @@ from typing_extensions import TypedDict, deprecated
 
 __all__ = (
     'AbstractBuiltinTool',
+    'SkillReference',
     'WebSearchTool',
     'WebSearchUserLocation',
     'CodeExecutionTool',
@@ -33,6 +34,20 @@ This dict is populated automatically via `__init_subclass__` when tool classes a
 
 ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
 """Supported aspect ratios for image generation tools."""
+
+
+@dataclass(kw_only=True)
+class SkillReference:
+    """Reference to a provider-hosted skill used by a builtin tool."""
+
+    skill_id: str
+    """The provider skill identifier."""
+
+    version: str | int | None = None
+    """The optional provider skill version."""
+
+    source: Literal['custom', 'provider'] = 'custom'
+    """Whether the skill is a custom/user-managed skill or a provider-managed skill."""
 
 
 @dataclass(kw_only=True)
@@ -188,6 +203,15 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * Google
     * Bedrock (Nova2.0)
     * xAI
+    """
+
+    skills: Sequence[SkillReference] = ()
+    """Provider-hosted skill references to mount in the execution environment.
+
+    Supported by:
+
+    * Anthropic
+    * OpenAI Responses
     """
 
     kind: str = 'code_execution'

@@ -22,7 +22,9 @@ from ..messages import (
     FilePart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
@@ -30,6 +32,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserContent,
     UserPromptPart,
 )
@@ -376,37 +379,41 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
     response_tokens = 0
     for message in messages:
         if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if isinstance(part, SystemPromptPart | UserPromptPart):
-                    request_tokens += _estimate_string_tokens(part.content)
-                elif isinstance(part, ToolReturnPart):
-                    request_tokens += _estimate_string_tokens(part.model_response_str())
-                elif isinstance(part, RetryPromptPart):
-                    request_tokens += _estimate_string_tokens(part.model_response())
-                else:
-                    assert_never(part)
+            request_tokens += sum(_estimate_request_part_tokens(part) for part in message.parts)
         elif isinstance(message, ModelResponse):
-            for part in message.parts:
-                if isinstance(part, TextPart):
-                    response_tokens += _estimate_string_tokens(part.content)
-                elif isinstance(part, ThinkingPart):
-                    response_tokens += _estimate_string_tokens(part.content)
-                elif isinstance(part, ToolCallPart):
-                    response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                elif isinstance(part, BuiltinToolCallPart):
-                    response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                elif isinstance(part, BuiltinToolReturnPart):
-                    response_tokens += _estimate_string_tokens(part.model_response_str())
-                elif isinstance(part, FilePart):
-                    response_tokens += _estimate_string_tokens([part.content])
-                else:
-                    assert_never(part)
+            response_tokens += sum(_estimate_response_part_tokens(part) for part in message.parts)
         else:
             assert_never(message)
     return usage.RequestUsage(
         input_tokens=request_tokens,
         output_tokens=response_tokens,
     )
+
+
+def _estimate_request_part_tokens(part: ModelRequestPart) -> int:
+    if isinstance(part, SystemPromptPart | UserPromptPart):
+        return _estimate_string_tokens(part.content)
+    elif isinstance(part, ToolReturnPart):
+        return _estimate_string_tokens(part.model_response_str())
+    elif isinstance(part, RetryPromptPart):
+        return _estimate_string_tokens(part.model_response())
+    else:
+        assert_never(part)
+
+
+def _estimate_response_part_tokens(part: ModelResponsePart) -> int:
+    if isinstance(part, TextPart | ThinkingPart):
+        return _estimate_string_tokens(part.content)
+    elif isinstance(part, ToolCallPart | BuiltinToolCallPart):
+        return 1 + _estimate_string_tokens(part.args_as_json_str())
+    elif isinstance(part, BuiltinToolReturnPart):
+        return _estimate_string_tokens(part.model_response_str())
+    elif isinstance(part, FilePart):
+        return _estimate_string_tokens([part.content])
+    elif isinstance(part, UploadedFile):
+        return _estimate_string_tokens(part.identifier)
+    else:
+        assert_never(part)
 
 
 def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:

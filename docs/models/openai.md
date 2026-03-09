@@ -141,11 +141,29 @@ Hosted shell and computer use can be enabled by passing OpenAI builtin tool para
 
 #### Hosted shell
 
-OpenAI's hosted shell tool is separate from [`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]. `CodeExecutionTool` uses OpenAI's code interpreter integration, while the hosted shell tool lets the model run shell commands directly in an OpenAI-managed container.
+OpenAI's hosted shell tool can be used in two ways:
+
+- Directly, by passing a raw `shell` tool in [`OpenAIResponsesModelSettings.openai_builtin_tools`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_builtin_tools].
+- Indirectly, through [`CodeExecutionTool(skills=[...])`][pydantic_ai.builtin_tools.CodeExecutionTool], which synthesizes a hosted shell tool with `environment.skills` under the hood while still surfacing normalized `code_execution` parts in message history and streaming events.
 
 When you include a `shell` tool in [`OpenAIResponsesModelSettings.openai_builtin_tools`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_builtin_tools], Pydantic AI maps hosted shell calls into [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] and [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts, including streaming responses and replayed message history.
 
 If the shell tool omits `environment`, Pydantic AI defaults it to `{'type': 'container_auto'}`. You can also mount previously uploaded OpenAI files into that hosted container with [`OpenAIResponsesModelSettings.openai_shell_uploaded_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_uploaded_files].
+
+```python {title="code_execution_skills_openai.py" test="skip"}
+from pydantic_ai import Agent, CodeExecutionTool, SkillReference
+
+agent = Agent(
+    'openai-responses:gpt-5.2',
+    builtin_tools=[
+        CodeExecutionTool(
+            skills=[
+                SkillReference(skill_id='skill_custom', version=2),
+            ]
+        )
+    ],
+)
+```
 
 ```python {title="hosted_shell_tool.py" test="skip"}
 import asyncio
@@ -186,7 +204,7 @@ asyncio.run(main())
 
 !!! note
 
-    Mounted files must be [`UploadedFile`][pydantic_ai.messages.UploadedFile] instances with `provider_name='openai'`. They require exactly one `shell` tool and only work with the hosted `container_auto` environment, not `local` or `container_reference`.
+    Mounted files must be [`UploadedFile`][pydantic_ai.messages.UploadedFile] instances with `provider_name='openai'`. They require exactly one hosted `shell` tool in the request, either raw or synthesized from [`CodeExecutionTool.skills`][pydantic_ai.builtin_tools.CodeExecutionTool.skills], and only work with the hosted `container_auto` environment, not `local` or `container_reference`.
 
 #### Computer use
 
