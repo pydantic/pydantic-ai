@@ -33,6 +33,12 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
+# Key used to wrap malformed tool-call arguments so they can still be round-tripped
+# through a model API without crashing.  The specific string 'INVALID_JSON' is the
+# value recommended by the Anthropic docs for this situation:
+# https://docs.anthropic.com/en/docs/build-with-claude/tool-use/overview#handling-tool-use-errors
+INVALID_JSON_KEY = 'INVALID_JSON'
+
 _mime_types = MimeTypes()
 # Replicate what is being done in `mimetypes.init()`
 _mime_types.read_windows_registry()
@@ -1450,7 +1456,7 @@ class BaseToolCallPart:
                 self.tool_name,
                 self.args,
             )
-            return {'INVALID_JSON': self.args}
+            return {INVALID_JSON_KEY: self.args}
 
     def args_as_json_str(self) -> str:
         """Return the arguments as a JSON string.

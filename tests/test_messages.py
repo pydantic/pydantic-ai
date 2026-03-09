@@ -29,6 +29,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.messages import INVALID_JSON_KEY
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
@@ -1174,7 +1175,7 @@ def test_args_as_dict_malformed_json_returns_invalid_json_wrapper():
     malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
     part = ToolCallPart(tool_name='test_tool', args=malformed)
     result = part.args_as_dict()
-    assert result == {'INVALID_JSON': malformed}
+    assert result == {INVALID_JSON_KEY: malformed}
 
 
 def test_args_as_dict_empty_args():
