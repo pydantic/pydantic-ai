@@ -92,7 +92,7 @@ class GraphAgentState:
     run_step: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
     metadata: dict[str, Any] | None = None
-    model_settings: Any = None
+    model_settings: ModelSettings | None = None
     """Last-resolved model settings for the current step, used for error messages."""
 
     def increment_retries(
