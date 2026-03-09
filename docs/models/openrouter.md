@@ -92,7 +92,7 @@ OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-prac
 
 Use `openrouter_cache_instructions` to cache long system prompts — this is the most broadly supported approach across providers:
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 
@@ -104,16 +104,16 @@ agent = Agent(
         openrouter_cache_instructions=True,  # Cache system instructions
     ),
 )
-
-result = agent.run_sync('What is the CAP theorem?')
-print(f'Cache write: {result.usage().cache_write_tokens}')
+...
 ```
+
+After running, `result.usage().cache_write_tokens` shows how many tokens were written to the cache.
 
 ### Example 2: Automatic Message Caching
 
 Use `openrouter_cache_messages` to cache conversation history in multi-turn conversations. This works best with Anthropic models:
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 
@@ -125,41 +125,38 @@ agent = Agent(
         openrouter_cache_messages=True,
     ),
 )
-
-result1 = agent.run_sync('Tell me about distributed systems...')
-
-# Subsequent calls with message history benefit from cache
-result2 = agent.run_sync(
-    'Can you summarize that?',
-    message_history=result1.all_messages(),
-)
-print(f'Cache read: {result2.usage().cache_read_tokens}')
+...
 ```
+
+On subsequent calls with `message_history=result.all_messages()`, cached tokens are reused and `result.usage().cache_read_tokens` shows the savings.
 
 ### Example 3: Fine-Grained Control with CachePoint
 
 Use [`CachePoint`][pydantic_ai.messages.CachePoint] markers to control exactly where cache boundaries are placed:
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent, CachePoint
 from pydantic_ai.models.openrouter import OpenRouterModel
 
 model = OpenRouterModel('anthropic/claude-sonnet-4-6')
 agent = Agent(model)
 
-result = agent.run_sync([
-    'Long reference document or context to cache...',
-    CachePoint(),  # Cache everything before this point
-    'Now answer my question about the context above',
-])
-print(result.output)
+# Pass a list with CachePoint markers to agent.run_sync():
+# result = agent.run_sync([
+#     'Long reference document or context to cache...',
+#     CachePoint(),  # Cache everything before this point
+#     'Now answer my question about the context above',
+# ])
+...
 ```
+
+Everything before the `CachePoint()` marker is cached. You can place multiple markers for fine-grained control over cache boundaries.
 
 ### Example 4: Comprehensive Caching Strategy
 
 Combine multiple cache settings for maximum savings:
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 
@@ -179,19 +176,16 @@ agent = Agent(
 def search_docs(ctx: RunContext, query: str) -> str:
     """Search documentation."""
     return f'Results for {query}'
-
-
-result = agent.run_sync('Search for Python best practices')
-usage = result.usage()
-print(f'Cache write tokens: {usage.cache_write_tokens}')
-print(f'Cache read tokens: {usage.cache_read_tokens}')
+...
 ```
+
+After running, check `result.usage().cache_write_tokens` and `result.usage().cache_read_tokens` to see caching in action.
 
 ### Provider Routing for Cache Locality
 
 OpenRouter load-balances requests across providers by default. Since cache state is provider-specific, consecutive requests may be routed to different providers, resulting in cache misses. Use [`openrouter_provider`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_provider] to pin requests to a specific downstream provider:
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 
@@ -206,6 +200,7 @@ agent = Agent(
         },
     ),
 )
+...
 ```
 
 ## Web Search
