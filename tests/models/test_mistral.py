@@ -24,6 +24,7 @@ from pydantic_ai import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -810,6 +811,7 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                {'first': ''},
                 {'first': 'O'},
                 {'first': 'On'},
                 {'first': 'One'},
@@ -923,6 +925,7 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                [],
                 [''],
                 ['f'],
                 ['fi'],
@@ -1015,6 +1018,7 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                MyTypedBaseModel(first='', second=''),
                 MyTypedBaseModel(first='O', second=''),
                 MyTypedBaseModel(first='On', second=''),
                 MyTypedBaseModel(first='One', second=''),
@@ -2310,6 +2314,16 @@ async def test_video_url_input(allow_model_requests: None):
 
     with pytest.raises(RuntimeError, match='VideoUrl is not supported in Mistral.'):
         await agent.run(['hello', VideoUrl(url='https://www.google.com')])
+
+
+async def test_uploaded_file_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(RuntimeError, match='UploadedFile is not supported by Mistral.'):
+        await agent.run(['hello', UploadedFile(file_id='file-123', provider_name='anthropic')])
 
 
 def test_model_status_error(allow_model_requests: None) -> None:

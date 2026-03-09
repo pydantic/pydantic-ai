@@ -252,4 +252,4 @@ Read the [docs](agent.md) to learn more about building applications with Pydanti
 
 Read the [API Reference](api/agent.md) to understand Pydantic AI's interface.
 
-Join [:simple-slack: Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [:simple-github: GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.
+Join [Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [:simple-github: GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.

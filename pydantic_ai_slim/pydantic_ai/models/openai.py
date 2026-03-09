@@ -53,6 +53,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -1252,7 +1253,7 @@ class OpenAIChatModel(Model):
         raise NotImplementedError('VideoUrl is not supported for OpenAI')
 
     async def _map_content_item(
-        self, item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | CachePoint
+        self, item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl | UploadedFile | CachePoint
     ) -> ChatCompletionContentPartParam | None:
         """Map a single content item to a chat completion content part, or None to filter it out."""
         if isinstance(item, str):
@@ -1267,6 +1268,17 @@ class OpenAIChatModel(Model):
             return await self._map_document_url_item(item)
         elif isinstance(item, VideoUrl):
             return await self._map_video_url_item(item)
+        elif isinstance(item, UploadedFile):
+            # Verify provider matches
+            if item.provider_name != self.system:
+                raise UserError(
+                    f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIChatModel. '
+                    f'Expected `provider_name` to be `{self.system!r}`.'
+                )
+            return File(
+                file=FileFile(file_id=item.file_id),
+                type='file',
+            )
         elif isinstance(item, CachePoint):
             # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
             return None
@@ -1995,7 +2007,7 @@ class OpenAIResponsesModel(Model):
                                 # We need to exclude None values because of https://github.com/pydantic/pydantic-ai/issues/3653
                                 args = {k: v for k, v in args.items() if v is not None}
                                 web_search_item = responses.ResponseFunctionWebSearchParam(
-                                    id=item.tool_call_id,
+                                    id=item.id or item.tool_call_id,
                                     action=cast(responses.response_function_web_search_param.Action, args),
                                     status='completed',
                                     type='web_search_call',
@@ -2009,7 +2021,7 @@ class OpenAIResponsesModel(Model):
                                 file_search_item = cast(
                                     responses.ResponseFileSearchToolCallParam,
                                     {
-                                        'id': item.tool_call_id,
+                                        'id': item.id or item.tool_call_id,
                                         'queries': args.get('queries', []),
                                         'status': 'completed',
                                         'type': 'file_search_call',
@@ -2145,8 +2157,7 @@ class OpenAIResponsesModel(Model):
             response_format_param['strict'] = o.strict
         return response_format_param
 
-    @staticmethod
-    async def _map_user_prompt(part: UserPromptPart) -> responses.EasyInputMessageParam:  # noqa: C901
+    async def _map_user_prompt(self, part: UserPromptPart) -> responses.EasyInputMessageParam:  # noqa: C901
         content: str | list[responses.ResponseInputContentParam]
         if isinstance(part.content, str):
             content = part.content
@@ -2220,6 +2231,19 @@ class OpenAIResponsesModel(Model):
                         )
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
+                elif isinstance(item, UploadedFile):
+                    # Verify provider matches
+                    if item.provider_name != self.system:
+                        raise UserError(
+                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIResponsesModel. '
+                            f'Expected `provider_name` to be `{self.system!r}`.'
+                        )
+                    content.append(
+                        responses.ResponseInputFileParam(
+                            type='input_file',
+                            file_id=item.file_id,
+                        )
+                    )
                 elif isinstance(item, CachePoint):
                     # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
                     pass
@@ -2998,6 +3022,7 @@ def _map_web_search_tool_call(
             tool_call_id=item.id,
             args=args,
             provider_name=provider_name,
+            id=item.id,
         ),
         BuiltinToolReturnPart(
             tool_name=WebSearchTool.kind,
@@ -3026,6 +3051,7 @@ def _map_file_search_tool_call(
             tool_call_id=item.id,
             args=args,
             provider_name=provider_name,
+            id=item.id,
         ),
         BuiltinToolReturnPart(
             tool_name=FileSearchTool.kind,
