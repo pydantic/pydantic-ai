@@ -264,6 +264,20 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
     return None
 
 
+@dataclass
+class _ResponsesRequestParams:
+    """Shared parameters for OpenAI Responses API requests."""
+
+    input: list[responses.ResponseInputItemParam]
+    instructions: str | Omit
+    tools: list[responses.ToolParam] | Omit
+    tool_choice: Literal['none', 'required', 'auto'] | Omit
+    previous_response_id: str | Omit
+    reasoning: Reasoning | Omit
+    text: responses.ResponseTextConfigParam | Omit
+    profile: OpenAIModelProfile
+
+
 def _drop_sampling_params_for_reasoning(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
     """Drop sampling params when reasoning is enabled on models that support it.
 
@@ -1398,6 +1412,47 @@ class OpenAIResponsesModel(Model):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool})
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.RequestUsage:
+        check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+        ms = cast(OpenAIResponsesModelSettings, model_settings or {})
+        params = await self._build_request_params(messages, ms, model_request_parameters)
+
+        try:
+            extra_headers = dict(ms.get('extra_headers', {}))
+            extra_headers.setdefault('User-Agent', get_user_agent())
+            response = await self.client.responses.input_tokens.count(
+                input=params.input,
+                model=self.model_name,
+                instructions=params.instructions,
+                parallel_tool_calls=ms.get('parallel_tool_calls', OMIT),
+                tools=params.tools,
+                tool_choice=params.tool_choice,
+                previous_response_id=params.previous_response_id,
+                reasoning=params.reasoning,
+                text=params.text,
+                truncation=ms.get('openai_truncation', OMIT),
+                timeout=ms.get('timeout', NOT_GIVEN),
+                extra_headers=extra_headers,
+                extra_body=ms.get('extra_body'),
+            )
+        except APIStatusError as e:
+            if (status_code := e.status_code) >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise  # pragma: lax no cover
+        except APIConnectionError as e:
+            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+
+        return usage.RequestUsage(input_tokens=response.input_tokens)
+
     async def request(
         self,
         messages: list[ModelRequest | ModelResponse],
@@ -1605,52 +1660,41 @@ class OpenAIResponsesModel(Model):
             else None,
         )
 
-    @overload
-    async def _responses_create(
+    async def _build_request_params(
         self,
-        messages: list[ModelRequest | ModelResponse],
-        stream: Literal[False],
+        messages: list[ModelMessage],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response: ...
+    ) -> _ResponsesRequestParams:
+        """Build the shared parameters for OpenAI Responses API requests.
 
-    @overload
-    async def _responses_create(
-        self,
-        messages: list[ModelRequest | ModelResponse],
-        stream: Literal[True],
-        model_settings: OpenAIResponsesModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[responses.ResponseStreamEvent]: ...
-
-    async def _responses_create(  # noqa: C901
-        self,
-        messages: list[ModelRequest | ModelResponse],
-        stream: bool,
-        model_settings: OpenAIResponsesModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
-        tools = (
+        Used by both `_responses_create` and `count_tokens`.
+        """
+        tools: list[responses.ToolParam] = (
             self._get_builtin_tools(model_request_parameters)
             + list(model_settings.get('openai_builtin_tools', []))
             + self._get_tools(model_request_parameters)
         )
         profile = OpenAIModelProfile.from_profile(self.profile)
         if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
+            tool_choice: Literal['none', 'required', 'auto'] | Omit = OMIT
         elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
 
-        previous_response_id = model_settings.get('openai_previous_response_id')
-        if previous_response_id == 'auto':
-            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
+        previous_response_id: str | Omit
+        previous_response_id_setting = model_settings.get('openai_previous_response_id')
+        if previous_response_id_setting == 'auto':
+            prev_id, messages = self._get_previous_response_id_and_new_messages(messages)
+            previous_response_id = prev_id or OMIT
+        else:
+            previous_response_id = previous_response_id_setting or OMIT
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._get_reasoning(model_settings)
 
-        text: responses.ResponseTextConfigParam | None = None
+        text: responses.ResponseTextConfigParam | Omit = OMIT
         if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object
             assert output_object is not None
@@ -1671,15 +1715,66 @@ class OpenAIResponsesModel(Model):
             instructions = OMIT
 
         if verbosity := model_settings.get('openai_text_verbosity'):
-            text = text or {}
-            text['verbosity'] = verbosity
+            if isinstance(text, Omit):
+                text = {'verbosity': verbosity}
+            else:
+                text['verbosity'] = verbosity
 
-        _drop_sampling_params_for_reasoning(profile, model_settings)
+        # When there are no input messages and we're not reusing a previous response,
+        # the OpenAI API will reject a request without any input,
+        # even if there are instructions.
+        # To avoid this provide an explicit empty user message.
+        if not openai_messages and previous_response_id is OMIT:
+            openai_messages.append(
+                responses.EasyInputMessageParam(
+                    role='user',
+                    content='',
+                )
+            )
 
-        _drop_unsupported_params(profile, model_settings)
+        return _ResponsesRequestParams(
+            input=openai_messages,
+            instructions=instructions,
+            tools=tools or OMIT,
+            tool_choice=tool_choice,
+            previous_response_id=previous_response_id,
+            reasoning=reasoning,
+            text=text,
+            profile=profile,
+        )
+
+    @overload
+    async def _responses_create(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        stream: Literal[False],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> responses.Response: ...
+
+    @overload
+    async def _responses_create(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        stream: Literal[True],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncStream[responses.ResponseStreamEvent]: ...
+
+    async def _responses_create(
+        self,
+        messages: list[ModelRequest | ModelResponse],
+        stream: bool,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
+        params = await self._build_request_params(messages, model_settings, model_request_parameters)
+
+        _drop_sampling_params_for_reasoning(params.profile, model_settings)
+        _drop_unsupported_params(params.profile, model_settings)
 
         include: list[responses.ResponseIncludable] = []
-        if profile.openai_supports_encrypted_reasoning_content:
+        if params.profile.openai_supports_encrypted_reasoning_content:
             include.append('reasoning.encrypted_content')
         if model_settings.get('openai_include_code_execution_outputs'):
             include.append('code_interpreter_call.outputs')
@@ -1690,30 +1785,18 @@ class OpenAIResponsesModel(Model):
         if model_settings.get('openai_logprobs'):
             include.append('message.output_text.logprobs')
 
-        # When there are no input messages and we're not reusing a previous response,
-        # the OpenAI API will reject a request without any input,
-        # even if there are instructions.
-        # To avoid this provide an explicit empty user message.
-        if not openai_messages and not previous_response_id:
-            openai_messages.append(
-                responses.EasyInputMessageParam(
-                    role='user',
-                    content='',
-                )
-            )
-
         try:
-            extra_headers = model_settings.get('extra_headers', {})
+            extra_headers = dict(model_settings.get('extra_headers', {}))
             extra_headers.setdefault('User-Agent', get_user_agent())
             # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
             prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
             return await self.client.responses.create(
-                input=openai_messages,
+                input=params.input,
                 model=self.model_name,
-                instructions=instructions,
+                instructions=params.instructions,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
-                tools=tools or OMIT,
-                tool_choice=tool_choice or OMIT,
+                tools=params.tools,
+                tool_choice=params.tool_choice,
                 max_output_tokens=model_settings.get('max_tokens', OMIT),
                 stream=stream,
                 temperature=model_settings.get('temperature', OMIT),
@@ -1721,12 +1804,12 @@ class OpenAIResponsesModel(Model):
                 truncation=model_settings.get('openai_truncation', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', OMIT),
-                previous_response_id=previous_response_id or OMIT,
+                previous_response_id=params.previous_response_id,
                 top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                 store=model_settings.get('openai_store', OMIT),
-                reasoning=reasoning,
+                reasoning=params.reasoning,
                 user=model_settings.get('openai_user', OMIT),
-                text=text or OMIT,
+                text=params.text,
                 include=include or OMIT,
                 prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                 prompt_cache_retention=prompt_cache_retention,

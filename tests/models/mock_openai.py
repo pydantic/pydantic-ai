@@ -14,6 +14,7 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion import Choice, ChoiceLogprobs
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
     from openai.types.completion_usage import CompletionUsage
+    from openai.types.responses.input_token_count_response import InputTokenCountResponse
     from openai.types.responses.response import ResponseUsage
     from openai.types.responses.response_output_item import ResponseOutputItem
 
@@ -105,7 +106,14 @@ class MockOpenAIResponses:
 
     @cached_property
     def responses(self) -> Any:
-        return type('Responses', (), {'create': self.responses_create})
+        mock = self
+
+        class InputTokens:
+            async def count(self_inner: Any, **kwargs: Any) -> InputTokenCountResponse:
+                mock.response_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
+                return InputTokenCountResponse(input_tokens=10, object='response.input_tokens')
+
+        return type('Responses', (), {'create': self.responses_create, 'input_tokens': InputTokens()})
 
     @classmethod
     def create_mock(cls, responses: MockResponse | Sequence[MockResponse]) -> AsyncOpenAI:

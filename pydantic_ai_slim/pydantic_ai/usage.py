@@ -278,8 +278,7 @@ class UsageLimits:
     - Anthropic
     - Google
     - Bedrock Converse
-
-    Support for OpenAI is in development: https://github.com/pydantic/pydantic-ai/issues/3430
+    - OpenAI Responses
     """
 
     @property
