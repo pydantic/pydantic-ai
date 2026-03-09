@@ -1,3 +1,4 @@
+import base64
 import uuid
 from datetime import timezone
 
@@ -5,11 +6,11 @@ import anyio
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -22,6 +23,7 @@ from pydantic_ai import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
@@ -333,7 +335,7 @@ async def test_a2a_file_message_with_file():
             )
 
 
-async def test_a2a_file_message_with_file_content():
+async def test_a2a_file_message_with_file_content(image_content: BinaryContent):
     agent = Agent(model=model, output_type=tuple[str, str])
     app = agent.to_a2a()
 
@@ -342,10 +344,11 @@ async def test_a2a_file_message_with_file_content():
         async with httpx.AsyncClient(transport=transport) as http_client:
             a2a_client = A2AClient(http_client=http_client)
 
+            base64_image = base64.b64encode(image_content.data).decode('utf-8')
             message = Message(
                 role='user',
                 parts=[
-                    FilePart(file={'bytes': 'foo', 'mime_type': 'text/plain'}, kind='file'),
+                    FilePart(file={'bytes': base64_image, 'mime_type': image_content.media_type}, kind='file'),
                 ],
                 kind='message',
                 message_id=str(uuid.uuid4()),
@@ -364,7 +367,9 @@ async def test_a2a_file_message_with_file_content():
                     'history': [
                         {
                             'role': 'user',
-                            'parts': [{'kind': 'file', 'file': {'bytes': 'foo', 'mime_type': 'text/plain'}}],
+                            'parts': [
+                                {'kind': 'file', 'file': {'bytes': base64_image, 'mime_type': image_content.media_type}}
+                            ],
                             'kind': 'message',
                             'message_id': IsStr(),
                             'context_id': IsStr(),
@@ -392,7 +397,12 @@ async def test_a2a_file_message_with_file_content():
                         'history': [
                             {
                                 'role': 'user',
-                                'parts': [{'kind': 'file', 'file': {'bytes': 'foo', 'mime_type': 'text/plain'}}],
+                                'parts': [
+                                    {
+                                        'kind': 'file',
+                                        'file': {'bytes': base64_image, 'mime_type': image_content.media_type},
+                                    }
+                                ],
                                 'kind': 'message',
                                 'message_id': IsStr(),
                                 'context_id': IsStr(),

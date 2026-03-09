@@ -584,7 +584,7 @@ Consider the following example, where we limit the number of response tokens:
 ```py
 from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
 
-agent = Agent('anthropic:claude-sonnet-4-5')
+agent = Agent('anthropic:claude-sonnet-4-6')
 
 result_sync = agent.run_sync(
     'What is the capital of Italy? Answer with just the city.',
@@ -622,7 +622,7 @@ class NeverOutputType(TypedDict):
 
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-5',
+    'anthropic:claude-sonnet-4-6',
     retries=3,
     output_type=NeverOutputType,
     system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
@@ -655,7 +655,7 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import UsageLimits
 
-agent = Agent('anthropic:claude-sonnet-4-5')
+agent = Agent('anthropic:claude-sonnet-4-6')
 
 @agent.tool_plain
 def do_work() -> str:
@@ -997,7 +997,7 @@ Instructions, like system prompts, can be specified at different times:
 
 1. **Static instructions**: These are known when writing the code and can be defined via the `instructions` parameter of the [`Agent` constructor][pydantic_ai.agent.Agent.__init__].
 2. **Dynamic instructions**: These rely on context that is only available at runtime and should be defined using functions decorated with [`@agent.instructions`][pydantic_ai.agent.Agent.instructions]. Unlike dynamic system prompts, which may be reused when `message_history` is present, dynamic instructions are always reevaluated.
-3. **Runtime instructions*: These are additional instructions for a specific run that can be passed to one of the [run methods](#running-agents) using the `instructions` argument.
+3. **Runtime instructions**: These are additional instructions for a specific run that can be passed to one of the [run methods](#running-agents) using the `instructions` argument.
 
 All three types of instructions can be added to a single agent, and they are appended in the order they are defined at runtime.
 

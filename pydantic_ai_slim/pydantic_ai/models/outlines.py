@@ -36,6 +36,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
@@ -52,7 +53,7 @@ from . import (
 try:
     from outlines.inputs import Chat, Image
     from outlines.models.base import AsyncModel as OutlinesAsyncBaseModel, Model as OutlinesBaseModel
-    from outlines.models.llamacpp import LlamaCpp, from_llamacpp
+    from outlines.models.llamacpp import LlamaCpp, from_llamacpp  # pyright: ignore[reportUnknownVariableType]
     from outlines.models.mlxlm import MLXLM, from_mlxlm  # pyright: ignore[reportUnknownVariableType]
     from outlines.models.sglang import AsyncSGLang, SGLang, from_sglang
     from outlines.models.transformers import (
@@ -72,7 +73,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 if TYPE_CHECKING:
-    import llama_cpp
+    import llama_cpp  # pyright: ignore[reportMissingImports]
     import mlx.nn as nn  # pyright: ignore[reportMissingImports]
     import transformers
 
@@ -110,8 +111,7 @@ class OutlinesModel(Model):
     def from_transformers(
         cls,
         hf_model: transformers.modeling_utils.PreTrainedModel,
-        hf_tokenizer_or_processor: transformers.tokenization_utils.PreTrainedTokenizer
-        | transformers.processing_utils.ProcessorMixin,
+        hf_tokenizer_or_processor: transformers.PreTrainedTokenizer | transformers.processing_utils.ProcessorMixin,
         *,
         provider: Literal['outlines'] | Provider[OutlinesBaseModel] = 'outlines',
         profile: ModelProfileSpec | None = None,
@@ -137,7 +137,7 @@ class OutlinesModel(Model):
     @classmethod
     def from_llamacpp(  # pragma: lax no cover
         cls,
-        llama_model: llama_cpp.Llama,
+        llama_model: llama_cpp.Llama,  # pyright: ignore[reportUnknownMemberType, reportUnknownParameterType]
         *,
         provider: Literal['outlines'] | Provider[OutlinesBaseModel] = 'outlines',
         profile: ModelProfileSpec | None = None,
@@ -152,14 +152,14 @@ class OutlinesModel(Model):
             profile: The model profile to use. Defaults to a profile picked by the provider.
             settings: Default model settings for this model instance.
         """
-        outlines_model: OutlinesBaseModel = from_llamacpp(llama_model)
+        outlines_model: OutlinesBaseModel = from_llamacpp(llama_model)  # pyright: ignore[reportUnknownArgumentType]
         return cls(outlines_model, provider=provider, profile=profile, settings=settings)
 
     @classmethod
     def from_mlxlm(  # pragma: no cover
         cls,
         mlx_model: nn.Module,  # pyright: ignore[reportUnknownParameterType, reportUnknownMemberType]
-        mlx_tokenizer: transformers.tokenization_utils.PreTrainedTokenizer,
+        mlx_tokenizer: transformers.PreTrainedTokenizer,
         *,
         provider: Literal['outlines'] | Provider[OutlinesBaseModel] = 'outlines',
         profile: ModelProfileSpec | None = None,
@@ -452,6 +452,8 @@ class OutlinesModel(Model):
                                 elif isinstance(item, BinaryContent) and item.is_image:
                                     image = self._create_PIL_image(item.data, item.media_type)
                                     outlines_input.append(Image(image))
+                                elif isinstance(item, UploadedFile):
+                                    raise NotImplementedError('UploadedFile is not supported by Outlines.')
                                 else:
                                     raise UserError(
                                         'Each element of the content sequence must be a string, an `ImageUrl`'

@@ -8,7 +8,8 @@ from typing import Any, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from inline_snapshot import snapshot
+
+from ._inline_snapshot import snapshot
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
