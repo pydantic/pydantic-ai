@@ -3,6 +3,7 @@ import warnings
 from importlib import import_module
 from unittest.mock import patch
 
+from inline_snapshot import snapshot
 import pytest
 
 from pydantic_ai import UserError
@@ -383,3 +384,16 @@ def test_custom_provider_instance_method_model_profile():
     # Instance call should still work
     profile = provider.model_profile('some-model')
     assert isinstance(profile, ModelProfile)
+
+
+@pytest.mark.parametrize(
+    ('mock_env_vars', 'model_id', 'context_window'),
+    [
+        pytest.param({'OPENAI_API_KEY': 'test_key'}, 'openai:gpt-5', 400000),
+        pytest.param({'ANTHROPIC_API_KEY': 'test_key'}, 'anthropic:claude-sonnet-4-5', 1000000),
+    ],
+)
+def test_context_window_from_profile(mock_env_vars: dict[str, str], model_id: str, context_window: int):
+    with patch.dict(os.environ, mock_env_vars):
+        model = infer_model(model_id)
+        assert model.profile.context_window == context_window

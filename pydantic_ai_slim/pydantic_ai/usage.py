@@ -3,16 +3,17 @@ from __future__ import annotations as _annotations
 import dataclasses
 from copy import copy
 from dataclasses import dataclass, fields
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field
 from typing_extensions import deprecated, overload
 
-from pydantic_ai.models import Model
-
 from . import _utils
 from .exceptions import UsageLimitExceeded
+
+if TYPE_CHECKING:
+    from .models import Model
 
 __all__ = 'RequestUsage', 'RunUsage', 'Usage', 'UsageLimits'
 
