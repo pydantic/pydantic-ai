@@ -170,6 +170,10 @@ allow any name in the type hints.
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
 
+# Tool names for code execution sub-tools
+_BASH_CODE_EXECUTION_TOOL_NAME = 'bash_code_execution'
+_TEXT_EDITOR_CODE_EXECUTION_TOOL_NAME = 'text_editor_code_execution'
+
 
 class AnthropicModelSettings(ModelSettings, total=False):
     """Settings used for an Anthropic model request."""
@@ -755,12 +759,12 @@ class AnthropicModel(Model):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
-        # Extract container_file_ids from CodeExecutionTool instances in builtin_tools.
-        # Note: This happens on every agent turn and the container_upload blocks are prepended
-        # to the first user message in the history. This is intentional - Anthropic's API is
-        # stateless and requires files to be declared in the messages on every request.
-        # We keep container_upload blocks out of ModelRequest/ModelResponse to maintain
-        # provider-agnostic message history - they're regenerated from CodeExecutionTool.files.
+        # Extract file IDs from CodeExecutionTool instances in builtin_tools.
+        # container_upload blocks are prepended to the first ModelRequest with user content
+        # on every API call. This is intentional: Anthropic's API is stateless and requires
+        # files to be declared in every request. We regenerate them from CodeExecutionTool.files
+        # rather than persisting them in ModelRequest/ModelResponse to keep message history
+        # provider-agnostic.
         pending_container_uploads: list[str] = []
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, CodeExecutionTool) and tool.files:
@@ -801,7 +805,7 @@ class AnthropicModel(Model):
                             )
                         user_content_params.append(retry_param)
                 if len(user_content_params) > 0:
-                    # Add container_upload blocks for file_ids at the start of the first user message
+                    # Prepend container_upload blocks to the first user message with content
                     if pending_container_uploads:
                         upload_blocks = [
                             BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
@@ -890,7 +894,10 @@ class AnthropicModel(Model):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name in ('bash_code_execution', 'text_editor_code_execution'):
+                            elif response_part.tool_name in (
+                                _BASH_CODE_EXECUTION_TOOL_NAME,
+                                _TEXT_EDITOR_CODE_EXECUTION_TOOL_NAME,
+                            ):
                                 server_tool_use_block_param = BetaServerToolUseBlockParam(
                                     id=tool_use_id,
                                     type='server_tool_use',
@@ -957,7 +964,7 @@ class AnthropicModel(Model):
                                         ),
                                     )
                                 )
-                            elif response_part.tool_name == 'bash_code_execution' and isinstance(
+                            elif response_part.tool_name == _BASH_CODE_EXECUTION_TOOL_NAME and isinstance(
                                 response_part.content, dict
                             ):
                                 assistant_content_params.append(
@@ -970,7 +977,7 @@ class AnthropicModel(Model):
                                         ),
                                     )
                                 )
-                            elif response_part.tool_name == 'text_editor_code_execution' and isinstance(
+                            elif response_part.tool_name == _TEXT_EDITOR_CODE_EXECUTION_TOOL_NAME and isinstance(
                                 response_part.content, dict
                             ):
                                 assistant_content_params.append(
@@ -1516,7 +1523,7 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
-    elif item.name in ('bash_code_execution', 'text_editor_code_execution'):
+    elif item.name in (_BASH_CODE_EXECUTION_TOOL_NAME, _TEXT_EDITOR_CODE_EXECUTION_TOOL_NAME):
         # Preserve original tool name for message history round-trip
         return BuiltinToolCallPart(
             provider_name=provider_name,
@@ -1566,7 +1573,7 @@ def _map_bash_code_execution_tool_result_block(
 ) -> BuiltinToolReturnPart:
     return BuiltinToolReturnPart(
         provider_name=provider_name,
-        tool_name='bash_code_execution',
+        tool_name=_BASH_CODE_EXECUTION_TOOL_NAME,
         content=item.content.model_dump(mode='json'),
         tool_call_id=item.tool_use_id,
     )
@@ -1577,7 +1584,7 @@ def _map_text_editor_code_execution_tool_result_block(
 ) -> BuiltinToolReturnPart:
     return BuiltinToolReturnPart(
         provider_name=provider_name,
-        tool_name='text_editor_code_execution',
+        tool_name=_TEXT_EDITOR_CODE_EXECUTION_TOOL_NAME,
         content=item.content.model_dump(mode='json'),
         tool_call_id=item.tool_use_id,
     )

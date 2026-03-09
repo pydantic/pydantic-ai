@@ -4599,6 +4599,38 @@ def test_openai_filters_files_from_other_providers():
     assert code_interpreter['container'] == {'type': 'auto', 'file_ids': ['file_openai']}
 
 
+def test_openai_filters_all_files_from_other_providers():
+    """Test that when all files are from other providers, no file_ids are added to container."""
+    from pydantic_ai.builtin_tools import CodeExecutionTool
+    from pydantic_ai.messages import UploadedFile
+
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    # Create CodeExecutionTool with files only from other providers (no OpenAI files)
+    code_exec_tool = CodeExecutionTool(
+        files=[
+            UploadedFile(file_id='file_anthropic', provider_name='anthropic'),
+            UploadedFile(file_id='file_google', provider_name='google-gla'),
+        ]
+    )
+
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[code_exec_tool],
+        output_tools=[],
+        output_mode='text',
+    )
+
+    # Call _get_builtin_tools to see the generated tool config
+    tools = m._get_builtin_tools(model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+
+    # Should have one code_interpreter tool without file_ids (all filtered out)
+    assert len(tools) == 1
+    code_interpreter = tools[0]
+    assert code_interpreter['type'] == 'code_interpreter'
+    assert code_interpreter['container'] == {'type': 'auto'}
+
+
 async def test_openai_chat_refusal_non_streaming(allow_model_requests: None):
     """Test that a refusal field on ChatCompletionMessage triggers ContentFilterError."""
     c = completion_message(

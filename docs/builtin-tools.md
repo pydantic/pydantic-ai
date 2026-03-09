@@ -260,7 +260,7 @@ async def main():
 
     # Create an agent with CodeExecutionTool that has access to the uploaded file
     agent = Agent(
-        'anthropic:claude-sonnet-4-5',
+        'anthropic:claude-sonnet-4-6',
         builtin_tools=[
             CodeExecutionTool(files=[UploadedFile(file_id=file.id, provider_name='anthropic')])
         ],

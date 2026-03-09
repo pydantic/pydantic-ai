@@ -7548,7 +7548,7 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     )
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     # First run to get server tool history
@@ -7602,7 +7602,7 @@ async def test_anthropic_bash_code_execution_tool_result(env: TestEnv, allow_mod
     )
 
     mock_client = MockAnthropic.create_mock([first_response])
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     result = await agent.run('Run echo hello')
@@ -7659,7 +7659,7 @@ async def test_anthropic_text_editor_code_execution_tool_result(env: TestEnv, al
     )
 
     mock_client = MockAnthropic.create_mock([first_response])
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     result = await agent.run('View the file /tmp/test.txt')
@@ -7722,7 +7722,7 @@ async def test_anthropic_bash_code_execution_pass_history_back(env: TestEnv, all
     )
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     # First run to get server tool history
@@ -7783,7 +7783,7 @@ async def test_anthropic_text_editor_code_execution_pass_history_back(env: TestE
     )
 
     mock_client = MockAnthropic.create_mock([first_response, second_response])
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
 
     # First run to get server tool history
