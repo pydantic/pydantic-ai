@@ -762,7 +762,7 @@ class OpenRouterModel(OpenAIChatModel):
                         msg['content'] = [  # type: ignore[typeddict-unknown-key]
                             {'type': 'text', 'text': content, 'cache_control': self._build_cache_control(ttl)}
                         ]
-                    elif isinstance(content, list) and content:
+                    elif isinstance(content, list) and content:  # pragma: no branch
                         last_part = cast(dict[str, Any], content[-1])
                         last_part['cache_control'] = self._build_cache_control(ttl)
                     break
