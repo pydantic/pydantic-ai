@@ -84,6 +84,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
 
+    @property
+    def context_window_used(self) -> float | None:
+        return self.usage.context_window_used(self.model)
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
