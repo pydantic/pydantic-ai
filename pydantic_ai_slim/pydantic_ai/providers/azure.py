@@ -133,8 +133,9 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 )
 
             if http_client is None:
-                http_client = create_async_http_client(provider='azure')
+                http_client = create_async_http_client()
                 self._own_http_client = http_client
+                self._http_client_factory = create_async_http_client
             self._client = AsyncAzureOpenAI(
                 azure_endpoint=azure_endpoint,
                 api_key=api_key,
@@ -142,3 +143,6 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 http_client=http_client,
             )
             self._base_url = str(self._client.base_url)
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

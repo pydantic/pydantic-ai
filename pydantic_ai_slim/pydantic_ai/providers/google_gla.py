@@ -48,9 +48,13 @@ class GoogleGLAProvider(Provider[httpx.AsyncClient]):
             )
 
         if http_client is None:
-            http_client = create_async_http_client(provider='google-gla')
+            http_client = create_async_http_client()
             self._own_http_client = http_client
+            self._http_client_factory = create_async_http_client
         self._client = http_client
         self._client.base_url = self.base_url
         # https://cloud.google.com/docs/authentication/api-keys-use#using-with-rest
         self._client.headers['X-Goog-Api-Key'] = api_key
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client = http_client

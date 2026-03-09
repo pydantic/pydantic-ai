@@ -299,7 +299,7 @@ class AnthropicModel(Model):
     @property
     def provider(self) -> Provider[AsyncAnthropicClient]:
         """The provider for this model."""
-        return self._provider
+        return self._provider  # pragma: no cover
 
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:

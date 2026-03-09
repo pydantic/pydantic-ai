@@ -5882,6 +5882,23 @@ async def test_provider_del_warns_on_unclosed_client():
 
 
 @requires_openai
+async def test_provider_reentry_after_close():
+    """Provider can be re-entered after exit by recreating the HTTP client."""
+    provider = OpenAIProvider(api_key='test-key')
+
+    async with provider:
+        first_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not first_client.is_closed
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not second_client.is_closed
+        assert second_client is not first_client
+    assert second_client.is_closed
+
+
+@requires_openai
 async def test_azure_provider_lifecycle_closes_client():
     """Azure provider lifecycle closes owned HTTP client on exit.
 

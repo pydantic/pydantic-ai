@@ -1314,9 +1314,7 @@ def infer_model(  # noqa: C901
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def create_async_http_client(
-    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
-) -> httpx.AsyncClient:
+def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx.AsyncClient:
     """Create an HTTPX async client.
 
     Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
@@ -1331,9 +1329,7 @@ def create_async_http_client(
     )
 
 
-def cached_async_http_client(
-    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
-) -> httpx.AsyncClient:
+def cached_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx.AsyncClient:
     """Deprecated. Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
     warnings.warn(
         'cached_async_http_client is deprecated, use create_async_http_client instead. '
@@ -1341,7 +1337,7 @@ def cached_async_http_client(
         DeprecationWarning,
         stacklevel=2,
     )
-    return create_async_http_client(provider=provider, timeout=timeout, connect=connect)
+    return create_async_http_client(timeout=timeout, connect=connect)
 
 
 DataT = TypeVar('DataT', str, bytes)

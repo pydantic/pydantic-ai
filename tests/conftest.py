@@ -344,14 +344,14 @@ def vcr_config():
     }
 
 
-_HttpClientCache: TypeAlias = 'dict[tuple[str | None, int, int], httpx.AsyncClient]'
+_HttpClientCache: TypeAlias = 'dict[tuple[int, int], httpx.AsyncClient]'
 
 
 @pytest.fixture(autouse=True)
 def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClientCache]:
     """Monkeypatch `create_async_http_client` in all loaded modules and track created clients.
 
-    Within a single test, calls with the same (provider, timeout, connect) args reuse the same
+    Within a single test, calls with the same (timeout, connect) args reuse the same
     httpx.AsyncClient. On teardown, all clients are closed — no process-global state leaks.
 
     This is a sync fixture so it applies to both sync and async tests. For async tests, the
@@ -361,7 +361,7 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
     original = pydantic_ai.models.create_async_http_client
 
     def cached_per_test(**kwargs: Any) -> httpx.AsyncClient:
-        key = (kwargs.get('provider'), kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
+        key = (kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
         if key not in cache or cache[key].is_closed:
             cache[key] = original(**kwargs)
         return cache[key]

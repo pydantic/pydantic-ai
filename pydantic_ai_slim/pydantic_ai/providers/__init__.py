@@ -8,7 +8,7 @@ from __future__ import annotations as _annotations
 import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
-from contextlib import AsyncExitStack
+from collections.abc import Callable
 from types import TracebackType
 from typing import Any, Generic, TypeVar
 
@@ -35,8 +35,8 @@ class Provider(ABC, Generic[InterfaceClient]):
 
     _client: InterfaceClient
     _own_http_client: httpx.AsyncClient | None = None
+    _http_client_factory: Callable[[], httpx.AsyncClient] | None = None
     _entered_count: int = 0
-    _exit_stack: AsyncExitStack | None = None
     _enter_lock: Lock | None = None
 
     @property
@@ -62,14 +62,22 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
 
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        """Update the SDK client's internal HTTP client reference.
+
+        Subclasses that manage their own HTTP client should override this to inject
+        the new client into their SDK client after re-creation.
+        """
+
     async def __aenter__(self) -> Self:
         if self._enter_lock is None:
             self._enter_lock = Lock()
         async with self._enter_lock:
             if self._entered_count == 0 and self._own_http_client is not None:
-                async with AsyncExitStack() as exit_stack:
-                    await exit_stack.enter_async_context(self._own_http_client)
-                    self._exit_stack = exit_stack.pop_all()
+                if self._own_http_client.is_closed and self._http_client_factory is not None:
+                    new_client = self._http_client_factory()
+                    self._own_http_client = new_client
+                    self._set_http_client(new_client)
             self._entered_count += 1
         return self
 
@@ -83,9 +91,8 @@ class Provider(ABC, Generic[InterfaceClient]):
             return
         async with self._enter_lock:
             self._entered_count -= 1
-            if self._entered_count == 0 and self._exit_stack is not None:
-                await self._exit_stack.aclose()
-                self._exit_stack = None
+            if self._entered_count == 0 and self._own_http_client is not None:
+                await self._own_http_client.aclose()
 
     def __del__(self) -> None:
         http_client = self._own_http_client
