@@ -141,16 +141,15 @@ from pydantic_ai.models.openrouter import OpenRouterModel
 model = OpenRouterModel('anthropic/claude-sonnet-4-6')
 agent = Agent(model)
 
-# Pass a list with CachePoint markers to agent.run_sync():
-# result = agent.run_sync([
-#     'Long reference document or context to cache...',
-#     CachePoint(),  # Cache everything before this point
-#     'Now answer my question about the context above',
-# ])
+prompt = [
+    'Long reference document or context to cache...',
+    CachePoint(),  # Cache everything before this point
+    'Now answer my question about the context above',
+]
 ...
 ```
 
-Everything before the `CachePoint()` marker is cached. You can place multiple markers for fine-grained control over cache boundaries.
+Pass the prompt list to `agent.run_sync(prompt)`. Everything before the `CachePoint()` marker is cached. You can place multiple markers for fine-grained control over cache boundaries.
 
 ### Example 4: Comprehensive Caching Strategy
 
