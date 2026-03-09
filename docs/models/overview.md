@@ -157,10 +157,12 @@ in sequence until one succeeds. Pydantic AI can switch to the next model when th
 raises an exception (like a 4xx/5xx API error) **or** when the response content indicates a semantic
 failure (like a truncated response or a failed built-in tool call).
 
+By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (4xx/5xx API errors),
+so you don't need to configure anything for the most common use case.
+
 This behavior is controlled by the `fallback_on` parameter (see
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]), which accepts exception types,
 exception handlers, and response handlers — all of which can be sync or async.
-By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (4xx/5xx API errors).
 
 !!! note
     The provider SDKs on which Models are based (like OpenAI, Anthropic, etc.) often have built-in retry logic that can delay the `FallbackModel` from activating.
@@ -315,10 +317,9 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a built-in tool reporting failure.
 
-!!! note "Streaming limitation"
-    For streaming requests, only exception-based fallback is currently supported. Response handlers
-    are ignored for streaming requests. Response-based fallback for streaming is planned for a future
-    release (see [#4140](https://github.com/pydantic/pydantic-ai/issues/4140)).
+!!! note "Non-streaming only"
+    Response-based fallback currently only works with non-streaming requests (`agent.run()` and `agent.run_sync()`).
+    For streaming requests (`agent.run_stream()`), only exception-based fallback is supported.
 
 The `fallback_on` parameter accepts:
 
@@ -364,7 +365,10 @@ print(result.output)
     To keep exception-based fallback alongside a response handler, pass them together as a list — see the [mixed example below](#combining-handlers).
 
 !!! note
-    By default, `FallbackModel` doesn't reject responses based on finish reason. Use a response handler to trigger fallback on specific finish reasons like `'length'` or `'content_filter'`.
+    Note that Pydantic AI already handles some finish reasons automatically in the [agent loop](../agent.md):
+    responses with a `'length'` or `'content_filter'` finish reason raise exceptions (which `FallbackModel`
+    catches by default), and empty responses are retried. A response handler is useful for custom
+    checks beyond these built-in behaviors.
 
 #### Built-in Tool Failure Example
 

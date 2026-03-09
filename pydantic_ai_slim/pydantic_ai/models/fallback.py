@@ -1,10 +1,8 @@
 from __future__ import annotations as _annotations
 
-import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from datetime import datetime
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
 
@@ -16,9 +14,8 @@ from pydantic_ai._utils import get_first_param_type, is_async_callable
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
-from ..messages import ModelResponse, ModelResponseStreamEvent
+from ..messages import ModelResponse
 from ..profiles import ModelProfile
-from ..usage import RequestUsage
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
@@ -64,88 +61,6 @@ def _is_response_handler(handler: Callable[..., Any]) -> bool:
 def _is_exception_type(value: Any) -> TypeGuard[type[Exception]]:
     """Check if value is a single exception type."""
     return isinstance(value, type) and issubclass(value, Exception)
-
-
-class _ResponseCheckingStream(StreamedResponse):
-    """Wraps a StreamedResponse to check response handlers after stream consumption.
-
-    Proxies all attributes to the wrapped stream via __getattr__.
-    After all events are yielded, calls the response handler and raises
-    ResponseRejected if the response is rejected.
-    """
-
-    def __init__(
-        self,
-        wrapped: StreamedResponse,
-        should_fallback: Callable[[Exception | ModelResponse], Awaitable[bool]],
-    ):
-        # Skip super().__init__() so dataclass field defaults don't create instance attributes
-        object.__setattr__(self, '_wrapped', wrapped)
-        object.__setattr__(self, '_should_fallback', should_fallback)
-        object.__setattr__(self, '_cached_iter', None)
-
-    # Dataclass fields with default=None create class-level attributes that shadow __getattr__.
-    # Derived from StreamedResponse's fields so new fields are automatically included.
-    _PROXIED_FIELDS = frozenset(
-        f.name for f in dataclasses.fields(StreamedResponse) if not f.init and f.default is not dataclasses.MISSING
-    )
-
-    def __getattribute__(self, name: str) -> Any:
-        # For proxied fields, go straight to the wrapped stream instead of finding
-        # the class-level None default inherited from StreamedResponse's dataclass.
-        if name in object.__getattribute__(self, '_PROXIED_FIELDS'):
-            return getattr(object.__getattribute__(self, '_wrapped'), name)
-        return object.__getattribute__(self, name)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._wrapped, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        # Redirect writes to the wrapped stream (e.g. final_result_event set by agent loop)
-        if name in ('_wrapped', '_should_fallback', '_cached_iter'):
-            object.__setattr__(self, name, value)
-        else:
-            setattr(self._wrapped, name, value)
-
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        if self._cached_iter is None:
-            object.__setattr__(self, '_cached_iter', self._iterate())
-        return self._cached_iter
-
-    async def _iterate(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        async for event in self._wrapped:
-            yield event
-        # Stream fully consumed — check response handlers
-        response = self._wrapped.get()
-        if await self._should_fallback(response):
-            raise ResponseRejected(1)
-
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        # Not called — __aiter__ is overridden to proxy the wrapped stream directly
-        raise NotImplementedError  # pragma: no cover
-        yield  # pragma: no cover
-
-    def get(self) -> ModelResponse:
-        return self._wrapped.get()
-
-    def usage(self) -> RequestUsage:
-        return self._wrapped.usage()
-
-    @property
-    def model_name(self) -> str:
-        return self._wrapped.model_name
-
-    @property
-    def provider_name(self) -> str | None:
-        return self._wrapped.provider_name
-
-    @property
-    def provider_url(self) -> str | None:
-        return self._wrapped.provider_url
-
-    @property
-    def timestamp(self) -> datetime:
-        return self._wrapped.timestamp
 
 
 @dataclass(init=False)
@@ -298,13 +213,7 @@ class FallbackModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        """Try each model in sequence until one succeeds.
-
-        Response handlers are checked after stream consumption. If the response
-        is rejected, a `ResponseRejected` is raised (wrapped in a `FallbackExceptionGroup`).
-        Unlike non-streaming requests, transparent retry with the next model is not possible
-        because events have already been yielded to the caller.
-        """
+        """Try each model in sequence until one succeeds."""
         exceptions: list[Exception] = []
 
         for model in self.models:
@@ -321,16 +230,7 @@ class FallbackModel(Model):
                     raise exc  # pragma: no cover
 
                 self._set_span_attributes(model, prepared_parameters)
-                if self._response_handlers:
-                    try:
-                        yield _ResponseCheckingStream(response, self._should_fallback)
-                    except ResponseRejected as e:
-                        # Response was rejected after stream consumption.
-                        # Can't retry — events already consumed by caller.
-                        exceptions.append(e)
-                        break
-                else:
-                    yield response
+                yield response
                 return
 
         _raise_fallback_exception_group(exceptions, [])
