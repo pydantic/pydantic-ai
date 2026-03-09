@@ -1422,12 +1422,19 @@ class BaseToolCallPart:
         """Return the arguments as a Python dictionary.
 
         This is just for convenience with models that require dicts as input.
+
+        Returns `{}` if `args` is falsy or contains invalid JSON, so that
+        malformed tool calls from model responses can be safely included in
+        message history reconstruction without crashing providers.
         """
         if not self.args:
             return {}
         if isinstance(self.args, dict):
             return self.args
-        args = pydantic_core.from_json(self.args)
+        try:
+            args = pydantic_core.from_json(self.args)
+        except ValueError:
+            return {}
         assert isinstance(args, dict), 'args should be a dict'
         return cast(dict[str, Any], args)
 

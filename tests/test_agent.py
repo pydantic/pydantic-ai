@@ -3215,6 +3215,99 @@ def test_tool_exceeds_token_limit_but_complete_args():
     assert result.output == 'done'
 
 
+def test_malformed_tool_args_retry():
+    """When a model returns malformed JSON in tool call args, the agent should retry and recover."""
+
+    def return_malformed_then_correct(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', args='{"foo": "bar",')])
+        if len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('my_tool', args='{"foo": "bar"}')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(return_malformed_then_correct), output_type=str, retries=2)
+
+    @agent.tool_plain
+    def my_tool(foo: str) -> str:
+        return f'tool called with {foo}'
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'done'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='my_tool',
+                        args='{"foo": "bar",',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='function:return_malformed_then_correct:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'json_invalid',
+                                'loc': (),
+                                'msg': 'Invalid JSON: EOF while parsing a value at line 1 column 14',
+                                'input': '{"foo": "bar",',
+                            }
+                        ],
+                        tool_name='my_tool',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='my_tool',
+                        args='{"foo": "bar"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=89, output_tokens=10),
+                model_name='function:return_malformed_then_correct:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content='tool called with bar',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=93, output_tokens=11),
+                model_name='function:return_malformed_then_correct:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 def test_empty_response_with_finish_reason_length():
     def return_empty_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[])
