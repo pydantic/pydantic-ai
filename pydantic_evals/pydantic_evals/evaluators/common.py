@@ -333,6 +333,7 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     Equals,
     EqualsExpected,
     Contains,
+    ContainsExpected,
     IsInstance,
     MaxDuration,
     LLMJudge,

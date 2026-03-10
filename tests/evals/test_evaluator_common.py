@@ -231,6 +231,25 @@ async def test_contains_expected():
     # Test with no expected output
     assert evaluator.evaluate(MockContext(output='this is a test', expected_output=None)) == {}
 
+    # Test dictionary containment
+    assert evaluator.evaluate(
+        MockContext(output={'key': 'value', 'extra': 'data'}, expected_output={'key': 'value'})
+    ) == snapshot(EvaluationReason(value=True))
+
+    # Test list containment
+    assert evaluator.evaluate(MockContext(output=[1, 42, 3], expected_output=42)) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test BaseModel containment
+    class MockModel(BaseModel):
+        key: str
+        extra: str | None = None
+
+    assert evaluator.evaluate(
+        MockContext(output=MockModel(key='value', extra='data'), expected_output={'key': 'value'})
+    ) == snapshot(EvaluationReason(value=True))
+
 
 async def test_is_instance():
     """Test IsInstance evaluator."""

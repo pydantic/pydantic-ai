@@ -485,6 +485,7 @@ including how to write custom report evaluators that produce `ScalarResult` and 
 | [`EqualsExpected`][pydantic_evals.evaluators.EqualsExpected] | Exact match with expected | `bool` | Free | Instant |
 | [`Equals`][pydantic_evals.evaluators.Equals] | Equals specific value | `bool` | Free | Instant |
 | [`Contains`][pydantic_evals.evaluators.Contains] | Contains value/substring | `bool` + reason | Free | Instant |
+| [`ContainsExpected`][pydantic_evals.evaluators.ContainsExpected] | Contains expected | `bool` + reason | Free | Instant |
 | [`IsInstance`][pydantic_evals.evaluators.IsInstance] | Type validation | `bool` + reason | Free | Instant |
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | `bool` | Free | Instant |
 | [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] | Subjective quality | `bool` and/or `float` | $$ | Slow |
