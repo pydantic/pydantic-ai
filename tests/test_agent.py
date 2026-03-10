@@ -8004,7 +8004,7 @@ def test_context_window_used():
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='my_tool', tool_call_id='pyd_ai_647426d8619a4c98ba39e067b6e9e9ae')],
+                parts=[ToolCallPart(tool_name='my_tool', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=50000, output_tokens=25000),
                 model_name='function:func_model:',
                 timestamp=IsDatetime(),
@@ -8015,7 +8015,7 @@ def test_context_window_used():
                     ToolReturnPart(
                         tool_name='my_tool',
                         content=0.75,
-                        tool_call_id='pyd_ai_647426d8619a4c98ba39e067b6e9e9ae',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ],
