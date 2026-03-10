@@ -5394,6 +5394,25 @@ class TestStreamEventsContextManager:
 
         assert stream.is_closed
 
+    async def test_cleanup_propagates_task_exception(self):
+        """Non-CancelledError exceptions raised by the internal task propagate from _cleanup.
+
+        When the agent task raises an unexpected exception, the producer closes the send stream
+        (ending consumer iteration cleanly via EndOfStream), then _cleanup awaits the task and
+        the exception propagates instead of being silently suppressed.
+        """
+
+        async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+            raise RuntimeError('unexpected task error')
+            yield  # pragma: no cover
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        with pytest.raises(RuntimeError, match='unexpected task error'):
+            async with agent.run_stream_events('test') as stream:
+                async for _ in stream:
+                    pass  # pragma: no cover
+
     async def test_reuse_after_close_raises(self):
         """Attempting to iterate a closed StreamEventsResult raises RuntimeError."""
         agent = Agent(TestModel())

@@ -4596,6 +4596,7 @@ async def test_openai_responses_streamed_response_cancel():
     response = OpenAIResponsesStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
         _model_name='gpt-4o',
+        _model_settings=OpenAIResponsesModelSettings(),
         _response=mock_stream,
         _provider_name='openai',
         _provider_url='https://api.openai.com',
@@ -4646,6 +4647,7 @@ async def test_openai_responses_streamed_response_cancel_without_stream():
     response = OpenAIResponsesStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
         _model_name='gpt-4o',
+        _model_settings=OpenAIResponsesModelSettings(),
         _response=mock_stream,
         _provider_name='openai',
         _provider_url='https://api.openai.com',

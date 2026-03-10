@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
 from contextlib import aclosing
 from copy import deepcopy
@@ -31,6 +32,8 @@ from .output import (
     ToolOutput,
 )
 from .usage import RunUsage, UsageLimits
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .agent.abstract import AbstractAgent, AgentMetadata, Instructions
@@ -245,6 +248,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             # exceptions (httpx, aiohttp, boto3, etc.) that we can't enumerate. Since the user
             # explicitly requested cancellation, any exception here is expected and safe to suppress.
             if self._cancelled:
+                logger.debug('Exception suppressed after stream cancellation', exc_info=True)
                 return
             raise
 
@@ -356,6 +360,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 except Exception:
                     # Closing the stream mid-read can raise exceptions. Reraise if not cancelled.
                     if self._cancelled:
+                        logger.debug('Exception suppressed after stream cancellation', exc_info=True)
                         return
                     raise
 
@@ -479,7 +484,7 @@ class StreamEventsResult(Generic[AgentDepsT, OutputDataT]):
             self._task.cancel()
         # Always await the task to retrieve its result/exception and prevent
         # "Task exception was never retrieved" warnings
-        with contextlib.suppress(asyncio.CancelledError, Exception):
+        with contextlib.suppress(asyncio.CancelledError):
             await self._task
         self._cleaned_up = True
 
