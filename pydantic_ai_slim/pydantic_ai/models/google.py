@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Literal, cast, overload
 from uuid import uuid4
 
-from typing_extensions import assert_never
+from typing_extensions import assert_never, override
 
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
@@ -50,7 +50,7 @@ from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..thinking import resolve_thinking_config
+from ..thinking import ResolvedThinkingConfig
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -295,21 +295,15 @@ class GoogleModel(Model):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
 
-    def _resolve_thinking_config(self, model_settings: GoogleModelSettings) -> ThinkingConfigDict | None:
-        """Resolve unified thinking settings to Google thinking config.
-
-        Uses silent-drop semantics for unsupported settings.
-        """
-        resolved = resolve_thinking_config(model_settings, self.profile)
-        if resolved is None:
-            return None
-
+    @override
+    def _translate_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> ThinkingConfigDict | None:
+        """Translate unified thinking settings to Google `thinking_config`."""
         # Gemini 3 uses thinking_level API while 2.5 uses thinking_budget.
         # This check is intentionally separate from profiles/google.py — the profile
         # tracks *capability* (supports_thinking), while this tracks *API format*.
         uses_thinking_level = 'gemini-3' in self.model_name
 
-        if not resolved.enabled:
+        if not resolved_thinking.enabled:
             if uses_thinking_level:
                 return {'thinking_level': ThinkingLevel.MINIMAL, 'include_thoughts': False}
             return {'thinking_budget': 0}
@@ -318,12 +312,12 @@ class GoogleModel(Model):
 
         if uses_thinking_level:
             # Gemini 3+: Map effort to thinking_level
-            if resolved.effort:
-                result['thinking_level'] = _GOOGLE_EFFORT_TO_LEVEL.get(resolved.effort, ThinkingLevel.HIGH)
+            if resolved_thinking.effort:
+                result['thinking_level'] = _GOOGLE_EFFORT_TO_LEVEL.get(resolved_thinking.effort, ThinkingLevel.HIGH)
             # No else: let the model use its default thinking level when no effort specified
-        elif resolved.effort:
+        elif resolved_thinking.effort:
             # Gemini 2.5: Map effort to thinking_budget
-            result['thinking_budget'] = _GOOGLE_EFFORT_TO_BUDGET[resolved.effort]
+            result['thinking_budget'] = _GOOGLE_EFFORT_TO_BUDGET[resolved_thinking.effort]
 
         return result if result else None
 
@@ -342,16 +336,7 @@ class GoogleModel(Model):
                 raise UserError(
                     f'Google does not support output tools and built-in tools at the same time. Use `output_type={output_mode}(...)` instead.'
                 )
-        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        merged_settings = cast(GoogleModelSettings, merged_settings or {})
-
-        # Apply unified thinking config if no provider-specific setting
-        if 'google_thinking_config' not in merged_settings:
-            thinking_config = self._resolve_thinking_config(merged_settings)
-            if thinking_config is not None:
-                merged_settings['google_thinking_config'] = thinking_config
-
-        return merged_settings, customized_parameters
+        return super().prepare_request(model_settings, model_request_parameters)
 
     async def request(
         self,
@@ -618,6 +603,13 @@ class GoogleModel(Model):
             else:
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
 
+        if 'google_thinking_config' in model_settings:
+            thinking_config = model_settings['google_thinking_config']
+        elif resolved_thinking := model_request_parameters.resolved_thinking:
+            thinking_config = self._translate_thinking(resolved_thinking)
+        else:
+            thinking_config = None
+
         config = GenerateContentConfigDict(
             http_options=http_options,
             system_instruction=system_instruction,
@@ -629,7 +621,7 @@ class GoogleModel(Model):
             frequency_penalty=model_settings.get('frequency_penalty'),
             seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
-            thinking_config=model_settings.get('google_thinking_config'),
+            thinking_config=thinking_config,
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
             cached_content=model_settings.get('google_cached_content'),

@@ -41,8 +41,9 @@
 When adding or modifying a model that supports thinking/reasoning:
 
 1. **Profile** (`profiles/{provider}.py`): Set `supports_thinking=True`. If thinking can't be disabled (always-on models like o-series, DeepSeek R1), also set `thinking_always_enabled=True`.
-2. **Resolver**: Add a `_resolve_{provider}_thinking()` method that calls `resolve_thinking_config(settings, self.profile)` and translates to the provider's native format. See existing providers for the pattern.
-3. **OpenAIChatModel subclasses**: If inheriting from `OpenAIChatModel`, strip `openai_reasoning_effort` in `prepare_request()` after calling `super()` — the parent injects it, but your provider has its own mechanism.
-4. **Tests** (`tests/test_unified_thinking.py`): Add tests for `thinking=True`, `thinking=False`, each effort level, silent drop on unsupported models, and provider-specific precedence.
+2. **Base resolution**: Unified thinking is resolved centrally in `Model.prepare_request()` and stored on `ModelRequestParameters.resolved_thinking`. Models should not call `resolve_thinking_config()` themselves.
+3. **Translation**: Override `_translate_thinking()` to map `ResolvedThinkingConfig` to the provider's native request format. Provider-specific settings still take precedence over the unified field.
+4. **Send path**: Read `model_request_parameters.resolved_thinking` at request time (or at the final OpenAI-compatible translation step for wrapper models) instead of mutating `model_settings` in `prepare_request()`.
+5. **Tests** (`tests/test_unified_thinking.py`): Add tests for `thinking=True`, `thinking=False`, each effort level, silent drop on unsupported models, and provider-specific precedence.
 
 <!-- /braindump -->

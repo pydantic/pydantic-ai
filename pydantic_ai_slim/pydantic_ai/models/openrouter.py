@@ -2,26 +2,35 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Literal, TypeAlias, cast
+from typing import Annotated, Any, Literal, TypeAlias, cast, overload
 
 from pydantic import BaseModel, Discriminator
 from typing_extensions import TypedDict, assert_never, override
 
 from ..exceptions import ModelHTTPError
-from ..messages import BinaryContent, FinishReason, ModelResponseStreamEvent, ThinkingPart, VideoUrl
+from ..messages import (
+    BinaryContent,
+    FinishReason,
+    ModelMessage,
+    ModelResponse,
+    ModelResponseStreamEvent,
+    ThinkingPart,
+    VideoUrl,
+)
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
 from ..settings import ModelSettings
-from ..thinking import resolve_thinking_config
+from ..thinking import ResolvedThinkingConfig
 from . import ModelRequestParameters, download_item
 
 try:
-    from openai import APIError, AsyncOpenAI
+    from openai import APIError, AsyncOpenAI, AsyncStream
     from openai.types import chat, completion_usage
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
     from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
     from openai.types.chat.chat_completion_message import Annotation as _OpenAIAnnotation
+    from openai.types.shared import ReasoningEffort
 
     from .openai import (
         OpenAIChatModel,
@@ -563,44 +572,72 @@ class OpenRouterModel(OpenAIChatModel):
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
         merged_settings = cast(OpenRouterModelSettings, merged_settings or {})
 
-        # Strip OpenAI reasoning_effort injected by parent — OpenRouter uses its own reasoning config
-        merged_settings.pop('openai_reasoning_effort', None)
-
-        # Apply unified thinking config if no provider-specific setting
-        if 'openrouter_reasoning' not in merged_settings:
-            reasoning_config = self._resolve_openrouter_thinking(merged_settings)
-            if reasoning_config is not None:
-                merged_settings['openrouter_reasoning'] = reasoning_config
-
         new_settings = _openrouter_settings_to_openai_settings(merged_settings)
         return new_settings, customized_parameters
 
-    def _resolve_openrouter_thinking(self, model_settings: OpenRouterModelSettings) -> OpenRouterReasoning | None:
-        """Resolve unified thinking settings to OpenRouter reasoning config.
-
-        OpenRouter handles per-provider translation, so we pass effort through directly.
-        Uses `resolve_thinking_config` without a profile intentionally:
-        OpenRouter routes to many models and handles per-model capability detection
-        server-side, so we skip profile-based guards and let OpenRouter decide.
-        """
-        resolved = resolve_thinking_config(model_settings)
-        if resolved is None:
-            return None
-
-        if not resolved.enabled:
+    @override
+    def _translate_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> OpenRouterReasoning | None:
+        """Translate unified thinking settings to OpenRouter `reasoning` config."""
+        if not resolved_thinking.enabled:
             return {'effort': 'none'}
 
         result: OpenRouterReasoning = {}
 
         # Map effort directly (OpenRouter uses same values)
-        if resolved.effort:
-            result['effort'] = resolved.effort
+        if resolved_thinking.effort:
+            result['effort'] = resolved_thinking.effort
 
         # If no specific settings, just enable
         if not result:
             result['enabled'] = True
 
         return result
+
+    @override
+    def _get_reasoning_effort(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ReasoningEffort | None:
+        del model_request_parameters
+        return model_settings.get('openai_reasoning_effort')
+
+    @overload
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[True],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncStream[chat_completion_chunk.ChatCompletionChunk]: ...
+
+    @overload
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[False],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> chat.ChatCompletion | ModelResponse: ...
+
+    @override
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: bool,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> chat.ChatCompletion | AsyncStream[chat_completion_chunk.ChatCompletionChunk] | ModelResponse:
+        extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
+        if (
+            'reasoning' not in extra_body
+            and (resolved_thinking := model_request_parameters.resolved_thinking)
+            and (reasoning := self._translate_thinking(resolved_thinking)) is not None
+        ):
+            extra_body['reasoning'] = reasoning
+            model_settings = model_settings | {'extra_body': extra_body}
+
+        return await super()._completions_create(messages, stream, model_settings, model_request_parameters)
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:

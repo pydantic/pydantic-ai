@@ -52,7 +52,7 @@ from pydantic_ai.profiles.anthropic import (
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.thinking import resolve_thinking_config
+from pydantic_ai.thinking import ResolvedThinkingConfig
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -416,53 +416,23 @@ class BedrockConverseModel(Model):
         return {'toolSpec': tool_spec}
 
     @override
-    def prepare_request(
-        self,
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        merged_settings = cast(BedrockModelSettings, merged_settings or {})
-
-        # Inject unified thinking via additionalModelRequestFields.
-        # Each model family uses a different key and format:
-        #   - Claude/DeepSeek R1: 'thinking' → {'type': 'enabled', 'budget_tokens': N}
-        #   - Amazon Nova 2:     'reasoningConfig' → {'type': 'enabled', 'maxReasoningEffort': '...'}
-        additional = dict(merged_settings.get('bedrock_additional_model_requests_fields') or {})
-        thinking_key, thinking_value = self._resolve_bedrock_thinking(merged_settings)
-        if thinking_key and thinking_key not in additional and thinking_value is not None:
-            additional[thinking_key] = thinking_value
-            merged_settings['bedrock_additional_model_requests_fields'] = additional
-
-        return merged_settings, customized_parameters
-
-    def _resolve_bedrock_thinking(
-        self, model_settings: BedrockModelSettings
-    ) -> tuple[str | None, dict[str, Any] | None]:
-        """Dispatch thinking resolution to the appropriate model-family handler.
-
-        Returns (key, config) where key is the additionalModelRequestFields key
-        to use, or (None, None) if no thinking should be injected.
-        """
+    def _translate_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> tuple[str, dict[str, Any]] | None:
+        """Translate unified thinking settings for the current Bedrock model family."""
         if 'anthropic' in self.model_name or 'deepseek' in self.model_name:
-            return 'thinking', self._resolve_thinking_config(model_settings)
-        elif 'amazon' in self.model_name:
-            return 'reasoningConfig', self._resolve_nova_thinking_config(model_settings)
+            return 'thinking', self._translate_claude_thinking(resolved_thinking)
+        if 'amazon' in self.model_name:
+            return 'reasoningConfig', self._translate_nova_thinking(resolved_thinking)
         # Other model families (OpenAI GPT-OSS, Qwen, etc.) don't have unified thinking
         # support yet — use bedrock_additional_model_requests_fields for them.
-        return None, None
+        return None
 
-    def _resolve_thinking_config(self, model_settings: BedrockModelSettings) -> dict[str, Any] | None:
-        """Resolve unified thinking to Claude/DeepSeek format.
+    def _translate_claude_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> dict[str, Any]:
+        """Translate unified thinking to Claude/DeepSeek format.
 
         Both use additionalModelRequestFields.thinking with budget_tokens,
         but DeepSeek R1 has a lower recommended budget ceiling (8192 max).
         """
-        resolved = resolve_thinking_config(model_settings, self.profile)
-        if resolved is None:
-            return None
-
-        if not resolved.enabled:
+        if not resolved_thinking.enabled:
             return {'type': 'disabled'}
 
         # Select model-appropriate budget mapping
@@ -471,25 +441,25 @@ class BedrockConverseModel(Model):
         else:
             effort_to_budget, default_budget = EFFORT_TO_BUDGET, DEFAULT_THINKING_BUDGET
 
-        budget = effort_to_budget.get(resolved.effort, default_budget) if resolved.effort else default_budget
+        budget = (
+            effort_to_budget.get(resolved_thinking.effort, default_budget)
+            if resolved_thinking.effort
+            else default_budget
+        )
         return {'type': 'enabled', 'budget_tokens': budget}
 
-    def _resolve_nova_thinking_config(self, model_settings: BedrockModelSettings) -> dict[str, Any] | None:
-        """Resolve unified thinking to Amazon Nova's reasoningConfig format.
+    def _translate_nova_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> dict[str, Any]:
+        """Translate unified thinking to Amazon Nova's `reasoningConfig` format.
 
         Nova uses additionalModelRequestFields.reasoningConfig with maxReasoningEffort
         which maps 1:1 to our unified thinking_effort levels.
         """
-        resolved = resolve_thinking_config(model_settings, self.profile)
-        if resolved is None:
-            return None
-
-        if not resolved.enabled:
+        if not resolved_thinking.enabled:
             return {'type': 'disabled'}
 
         result: dict[str, Any] = {'type': 'enabled'}
-        if resolved.effort:
-            result['maxReasoningEffort'] = resolved.effort
+        if resolved_thinking.effort:
+            result['maxReasoningEffort'] = resolved_thinking.effort
         return result
 
     async def request(
@@ -699,9 +669,16 @@ class BedrockConverseModel(Model):
             'bedrock_additional_model_response_fields_paths', None
         ):
             params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
-        # Thinking/reasoning config is already resolved in prepare_request()
-        if additional_model_requests_fields := settings.get('bedrock_additional_model_requests_fields', None):
-            params['additionalModelRequestFields'] = additional_model_requests_fields
+        additional_model_request_fields = dict(settings.get('bedrock_additional_model_requests_fields') or {})
+        if (
+            model_request_parameters.resolved_thinking
+            and (translated_thinking := self._translate_thinking(model_request_parameters.resolved_thinking))
+            and translated_thinking[0] not in additional_model_request_fields
+        ):
+            additional_model_request_fields[translated_thinking[0]] = translated_thinking[1]
+
+        if additional_model_request_fields:
+            params['additionalModelRequestFields'] = additional_model_request_fields
         if prompt_variables := settings.get('bedrock_prompt_variables', None):
             params['promptVariables'] = prompt_variables
         if service_tier := settings.get('bedrock_service_tier', None):

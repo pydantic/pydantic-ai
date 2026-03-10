@@ -3,18 +3,22 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, overload
 
 from typing_extensions import override
 
+from ..messages import ModelMessage, ModelResponse
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
-from ..thinking import resolve_thinking_config
+from ..thinking import ResolvedThinkingConfig
 from . import ModelRequestParameters
 
 try:
-    from openai import AsyncOpenAI
+    from openai import AsyncOpenAI, AsyncStream
+    from openai.types import chat
+    from openai.types.chat import ChatCompletionChunk
+    from openai.types.shared import ReasoningEffort
 
     from .openai import OpenAIChatModel, OpenAIChatModelSettings
 except ImportError as _import_error:
@@ -95,33 +99,63 @@ class CerebrasModel(OpenAIChatModel):
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
         merged_settings = cast(CerebrasModelSettings, merged_settings or {})
 
-        # Strip OpenAI reasoning_effort injected by parent — Cerebras uses its own mechanism
-        merged_settings.pop('openai_reasoning_effort', None)
-
-        # Apply unified thinking config if no provider-specific setting
-        if 'cerebras_disable_reasoning' not in merged_settings:
-            disable_reasoning = self._resolve_cerebras_thinking(merged_settings)
-            if disable_reasoning is not None:
-                merged_settings['cerebras_disable_reasoning'] = disable_reasoning
-
         new_settings = _cerebras_settings_to_openai_settings(merged_settings)
         return new_settings, customized_parameters
 
-    def _resolve_cerebras_thinking(self, model_settings: CerebrasModelSettings) -> bool | None:
-        """Resolve unified thinking settings to Cerebras disable_reasoning config.
-
-        Returns True to disable reasoning, None to leave default behavior.
-        Uses silent-drop semantics: effort is silently ignored (Cerebras has no effort control).
-        """
-        resolved = resolve_thinking_config(model_settings, self.profile)
-        if resolved is None:
-            return None
-
-        if not resolved.enabled:
+    @override
+    def _translate_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> bool | None:
+        """Translate unified thinking settings to Cerebras `disable_reasoning`."""
+        if not resolved_thinking.enabled:
             return True  # disable_reasoning=True
 
         # Effort is silently ignored (Cerebras only supports enable/disable)
         return None  # Don't set disable_reasoning (use default enabled behavior)
+
+    @override
+    def _get_reasoning_effort(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ReasoningEffort | None:
+        del model_request_parameters
+        return model_settings.get('openai_reasoning_effort')
+
+    @overload
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[True],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncStream[ChatCompletionChunk]: ...
+
+    @overload
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[False],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> chat.ChatCompletion | ModelResponse: ...
+
+    @override
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: bool,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk] | ModelResponse:
+        extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
+        if (
+            'disable_reasoning' not in extra_body
+            and (resolved_thinking := model_request_parameters.resolved_thinking)
+            and (disable_reasoning := self._translate_thinking(resolved_thinking)) is not None
+        ):
+            extra_body['disable_reasoning'] = disable_reasoning
+            model_settings = model_settings | {'extra_body': extra_body}
+
+        return await super()._completions_create(messages, stream, model_settings, model_request_parameters)
 
 
 def _cerebras_settings_to_openai_settings(model_settings: CerebrasModelSettings) -> OpenAIChatModelSettings:

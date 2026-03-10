@@ -3,7 +3,7 @@
 Tests the three-layer architecture:
 1. ModelSettings (user input): `thinking: bool` + `thinking_effort: Literal['low', 'medium', 'high']`
 2. resolve_thinking_config() (pure normalization): no validation, no errors
-3. Model._resolve_*() (per-provider translation): silent-drop for unsupported settings
+3. Model._translate_thinking() (per-provider translation): silent-drop for unsupported settings
 
 Integration tests at the bottom verify the full Agent -> Model -> API client pipeline
 using mock clients, ensuring unified settings translate to correct native API params.
@@ -20,6 +20,8 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.thinking import ResolvedThinkingConfig, resolve_thinking_config
 
 from .conftest import try_import
 
@@ -47,6 +49,7 @@ with try_import() as imports_successful:
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='model extras not installed')
@@ -54,6 +57,34 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='model extras n
 # ============================================================================
 # Test fixtures
 # ============================================================================
+
+
+def _translated_thinking(model: Any, settings: ModelSettings) -> Any:
+    resolved = resolve_thinking_config(settings, model.profile)
+    if resolved is None:
+        return None
+    return model._translate_thinking(resolved)
+
+
+def _resolved_thinking(model: Any, settings: ModelSettings | None) -> ResolvedThinkingConfig | None:
+    _, request_parameters = model.prepare_request(settings, ModelRequestParameters())
+    return request_parameters.resolved_thinking
+
+
+def _prepared_request(
+    model: Any,
+    settings: ModelSettings | None,
+    request_parameters: ModelRequestParameters | None = None,
+) -> tuple[Any, ModelRequestParameters]:
+    return model.prepare_request(settings, request_parameters or ModelRequestParameters())
+
+
+def _translated_bedrock_thinking(model: Any, settings: ModelSettings) -> Any:
+    translated = _translated_thinking(model, settings)
+    if translated is None:
+        return None
+    _, payload = translated
+    return payload
 
 
 @pytest.fixture
@@ -151,7 +182,7 @@ class TestAnthropicUnifiedThinking:
         model._profile = thinking_profile
 
         settings: AnthropicModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == {'type': 'enabled', 'budget_tokens': 4096}
 
@@ -162,7 +193,7 @@ class TestAnthropicUnifiedThinking:
         model._profile = AnthropicModelProfile(supports_thinking=True, anthropic_supports_adaptive_thinking=True)
 
         settings: AnthropicModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == {'type': 'adaptive'}
 
@@ -173,7 +204,7 @@ class TestAnthropicUnifiedThinking:
         model._profile = thinking_profile
 
         settings: AnthropicModelSettings = {'thinking': False}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == {'type': 'disabled'}
 
@@ -188,7 +219,7 @@ class TestAnthropicUnifiedThinking:
         model._profile = thinking_profile
 
         settings: AnthropicModelSettings = {'thinking_effort': effort}  # type: ignore[typeddict-item]
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == {'type': 'enabled', 'budget_tokens': expected_budget}
 
@@ -199,7 +230,7 @@ class TestAnthropicUnifiedThinking:
         model._profile = AnthropicModelProfile(supports_thinking=True, anthropic_supports_adaptive_thinking=True)
 
         settings: AnthropicModelSettings = {'thinking_effort': 'high'}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == {'type': 'adaptive'}
 
@@ -214,26 +245,26 @@ class TestAnthropicUnifiedThinking:
             'thinking': True,
             'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 5000},
         }
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, _ = _prepared_request(model, settings)
 
         assert cast(AnthropicModelSettings, merged).get('anthropic_thinking') == {
             'type': 'enabled',
             'budget_tokens': 5000,
         }
 
-    def test_prepare_request_adaptive_effort_passthrough(self):
-        """prepare_request() maps thinking_effort → anthropic_effort for adaptive models."""
+    def test_prepare_request_stores_adaptive_thinking(self):
+        """prepare_request() resolves unified thinking without mutating provider settings."""
         model = AnthropicModel.__new__(AnthropicModel)
         model._model_name = 'claude-sonnet-4-6'
         model._profile = AnthropicModelProfile(supports_thinking=True, anthropic_supports_adaptive_thinking=True)
         model._settings = None
 
         settings: AnthropicModelSettings = {'thinking_effort': 'high'}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
-        merged = cast(AnthropicModelSettings, merged)
-        assert merged.get('anthropic_thinking') == {'type': 'adaptive'}
-        assert merged.get('anthropic_effort') == 'high'
+        assert cast(AnthropicModelSettings, merged).get('anthropic_thinking') is None
+        assert cast(AnthropicModelSettings, merged).get('anthropic_effort') is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort='high')
 
     def test_empty_settings_returns_none(self, thinking_profile: ModelProfile):
         """No thinking fields → None."""
@@ -241,7 +272,7 @@ class TestAnthropicUnifiedThinking:
         model._model_name = 'claude-sonnet-4'
         model._profile = thinking_profile
 
-        result = model._resolve_thinking_config({})
+        result = _translated_thinking(model, {})
         assert result is None
 
     def test_silent_drop_unsupported_model(self, non_thinking_profile: ModelProfile):
@@ -251,7 +282,7 @@ class TestAnthropicUnifiedThinking:
         model._profile = non_thinking_profile
 
         settings: AnthropicModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
@@ -276,7 +307,7 @@ class TestGoogleUnifiedThinking:
         model._profile = google_thinking_profile
 
         settings: GoogleModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         # No explicit config means provider defaults (thinking already on for 2.5)
         assert result is None
@@ -288,7 +319,7 @@ class TestGoogleUnifiedThinking:
         model._profile = google_thinking_profile
 
         settings: GoogleModelSettings = {'thinking': False}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == {'thinking_budget': 0}
 
@@ -305,7 +336,7 @@ class TestGoogleUnifiedThinking:
         model._profile = google_thinking_profile
 
         settings: GoogleModelSettings = {'thinking_effort': effort}  # type: ignore[typeddict-item]
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == {'thinking_budget': expected_budget}
 
@@ -316,7 +347,7 @@ class TestGoogleUnifiedThinking:
         model._profile = google_thinking_profile
 
         settings: GoogleModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
@@ -327,7 +358,7 @@ class TestGoogleUnifiedThinking:
         model._profile = google_thinking_profile
 
         settings: GoogleModelSettings = {'thinking': False}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == {'thinking_level': ThinkingLevel.MINIMAL, 'include_thoughts': False}
 
@@ -341,7 +372,7 @@ class TestGoogleUnifiedThinking:
         model._profile = google_thinking_profile
 
         settings: GoogleModelSettings = {'thinking_effort': effort}  # type: ignore[typeddict-item]
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == {'thinking_level': expected_level}
 
@@ -356,21 +387,22 @@ class TestGoogleUnifiedThinking:
             'thinking': True,
             'google_thinking_config': {'thinking_budget': 5000},
         }
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, _ = _prepared_request(model, settings)
 
         assert cast(GoogleModelSettings, merged).get('google_thinking_config') == {'thinking_budget': 5000}
 
-    def test_prepare_request_applies_unified_thinking(self, google_thinking_profile: ModelProfile):
-        """prepare_request() stores resolved thinking config in google_thinking_config."""
+    def test_prepare_request_stores_resolved_thinking(self, google_thinking_profile: ModelProfile):
+        """prepare_request() stores unified thinking on request parameters."""
         model = GoogleModel.__new__(GoogleModel)
         model._model_name = 'gemini-2.5-flash'
         model._profile = google_thinking_profile
         model._settings = None
 
         settings: GoogleModelSettings = {'thinking_effort': 'low'}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
-        assert cast(GoogleModelSettings, merged).get('google_thinking_config') == {'thinking_budget': 1024}
+        assert cast(GoogleModelSettings, merged).get('google_thinking_config') is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort='low')
 
     def test_thinking_false_gemini25_pro_silent_drop(self):
         """thinking=False on Gemini 2.5 Pro → None (Pro can't disable, min budget 128)."""
@@ -380,7 +412,7 @@ class TestGoogleUnifiedThinking:
         model._profile = pro_profile
 
         settings: GoogleModelSettings = {'thinking': False}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
@@ -392,7 +424,7 @@ class TestGoogleUnifiedThinking:
         model._profile = pro_profile
 
         settings: GoogleModelSettings = {'thinking': False}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
@@ -404,7 +436,7 @@ class TestGoogleUnifiedThinking:
         model._profile = pro_profile
 
         settings: GoogleModelSettings = {'thinking_effort': 'high'}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == {'thinking_budget': 24576}
 
@@ -415,7 +447,7 @@ class TestGoogleUnifiedThinking:
         model._profile = non_thinking_profile
 
         settings: GoogleModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
@@ -477,60 +509,61 @@ class TestGoogleEndToEndWithRealProfiles:
     def test_flash_25_thinking_false_disables(self):
         """thinking=False on real Flash profile → thinking_budget: 0."""
         model = self._make_google_model('gemini-2.5-flash')
-        result = model._resolve_thinking_config({'thinking': False})
+        result = _translated_thinking(model, {'thinking': False})
         assert result == {'thinking_budget': 0}
 
     def test_flash_25_effort_high_within_limits(self):
         """effort='high' on real Flash profile → budget within [0, 24576]."""
         model = self._make_google_model('gemini-2.5-flash')
-        result = model._resolve_thinking_config({'thinking_effort': 'high'})
+        result = _translated_thinking(model, {'thinking_effort': 'high'})
         assert result is not None
         budget = result.get('thinking_budget')
         assert budget is not None
         assert 0 <= budget <= 24576
 
     def test_flash_25_prepare_request_effort(self):
-        """Full prepare_request pipeline on Flash with effort."""
+        """Full prepare_request pipeline on Flash stores resolved thinking."""
         model = self._make_google_model('gemini-2.5-flash')
-        merged, _ = model.prepare_request({'thinking_effort': 'medium'}, ModelRequestParameters())
-        config = cast(GoogleModelSettings, merged).get('google_thinking_config')
-        assert config == {'thinking_budget': 8192}
+        merged, request_parameters = _prepared_request(model, {'thinking_effort': 'medium'})
+        assert cast(GoogleModelSettings, merged).get('google_thinking_config') is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort='medium')
 
     # -- Gemini 2.5 Pro (budget-based, always-on) --
 
     def test_pro_25_thinking_false_silent_drop(self):
         """thinking=False on real Pro profile → None (Pro can't disable)."""
         model = self._make_google_model('gemini-2.5-pro')
-        result = model._resolve_thinking_config({'thinking': False})
+        result = _translated_thinking(model, {'thinking': False})
         assert result is None
 
     def test_pro_25_effort_high_within_limits(self):
         """effort='high' on real Pro profile → budget within [128, 32768]."""
         model = self._make_google_model('gemini-2.5-pro')
-        result = model._resolve_thinking_config({'thinking_effort': 'high'})
+        result = _translated_thinking(model, {'thinking_effort': 'high'})
         assert result is not None
         budget = result.get('thinking_budget')
         assert budget is not None
         assert 128 <= budget <= 32768
 
-    def test_pro_25_prepare_request_thinking_false_no_config(self):
-        """Full prepare_request on Pro with thinking=False → no google_thinking_config."""
+    def test_pro_25_prepare_request_thinking_false_no_resolved_config(self):
+        """Full prepare_request on Pro with thinking=False → no resolved thinking."""
         model = self._make_google_model('gemini-2.5-pro')
-        merged, _ = model.prepare_request({'thinking': False}, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, {'thinking': False})
         assert 'google_thinking_config' not in cast(GoogleModelSettings, merged)
+        assert request_parameters.resolved_thinking is None
 
     # -- Gemini 3 Flash (level-based, can disable) --
 
     def test_flash_3_thinking_false_minimal(self):
         """thinking=False on real Gemini 3 Flash → MINIMAL level."""
         model = self._make_google_model('gemini-3-flash')
-        result = model._resolve_thinking_config({'thinking': False})
+        result = _translated_thinking(model, {'thinking': False})
         assert result == {'thinking_level': ThinkingLevel.MINIMAL, 'include_thoughts': False}
 
     def test_flash_3_effort_maps_to_level(self):
         """effort on real Gemini 3 Flash → correct thinking_level."""
         model = self._make_google_model('gemini-3-flash')
-        result = model._resolve_thinking_config({'thinking_effort': 'low'})
+        result = _translated_thinking(model, {'thinking_effort': 'low'})
         assert result == {'thinking_level': ThinkingLevel.LOW}
 
     # -- Gemini 3 Pro (level-based, always-on) --
@@ -538,13 +571,13 @@ class TestGoogleEndToEndWithRealProfiles:
     def test_pro_3_thinking_false_silent_drop(self):
         """thinking=False on real Gemini 3 Pro → None (Pro can't disable)."""
         model = self._make_google_model('gemini-3-pro')
-        result = model._resolve_thinking_config({'thinking': False})
+        result = _translated_thinking(model, {'thinking': False})
         assert result is None
 
     def test_pro_3_effort_maps_to_level(self):
         """effort on real Gemini 3 Pro → correct thinking_level."""
         model = self._make_google_model('gemini-3-pro')
-        result = model._resolve_thinking_config({'thinking_effort': 'high'})
+        result = _translated_thinking(model, {'thinking_effort': 'high'})
         assert result == {'thinking_level': ThinkingLevel.HIGH}
 
     # -- Non-thinking models --
@@ -552,7 +585,7 @@ class TestGoogleEndToEndWithRealProfiles:
     def test_old_model_thinking_silent_drop(self):
         """thinking=True on real Gemini 2.0 Flash → None (doesn't support thinking)."""
         model = self._make_google_model('gemini-2.0-flash')
-        result = model._resolve_thinking_config({'thinking': True})
+        result = _translated_thinking(model, {'thinking': True})
         assert result is None
 
 
@@ -576,7 +609,7 @@ class TestOpenAIChatUnifiedThinking:
         model._profile = openai_reasoning_profile
 
         settings: OpenAIChatModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == 'medium'
 
@@ -588,7 +621,7 @@ class TestOpenAIChatUnifiedThinking:
         model._profile = openai_reasoning_profile
 
         settings: OpenAIChatModelSettings = {'thinking_effort': effort}  # type: ignore[typeddict-item]
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == effort
 
@@ -599,7 +632,7 @@ class TestOpenAIChatUnifiedThinking:
         model._profile = openai_reasoning_profile
 
         settings: OpenAIChatModelSettings = {'thinking': False}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
@@ -614,7 +647,7 @@ class TestOpenAIChatUnifiedThinking:
             'thinking_effort': 'low',
             'openai_reasoning_effort': 'high',
         }
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, _ = _prepared_request(model, settings)
 
         assert cast(OpenAIChatModelSettings, merged).get('openai_reasoning_effort') == 'high'
 
@@ -625,7 +658,7 @@ class TestOpenAIChatUnifiedThinking:
         model._profile = non_thinking_profile
 
         settings: OpenAIChatModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
@@ -635,7 +668,7 @@ class TestOpenAIChatUnifiedThinking:
         model._model_name = 'o3'
         model._profile = openai_reasoning_profile
 
-        result = model._resolve_thinking_config({})
+        result = _translated_thinking(model, {})
         assert result is None
 
 
@@ -645,10 +678,7 @@ class TestOpenAIChatUnifiedThinking:
 
 
 class TestOpenAIResponsesUnifiedThinking:
-    """Tests for unified thinking settings on OpenAI Responses API models.
-
-    Resolution happens in prepare_request(), so tests verify the merged settings.
-    """
+    """Tests for unified thinking settings on OpenAI Responses API models."""
 
     @pytest.fixture
     def openai_responses_reasoning_profile(self) -> ModelProfile:
@@ -665,9 +695,12 @@ class TestOpenAIResponsesUnifiedThinking:
         model._settings = None
 
         settings: OpenAIResponsesModelSettings = {'thinking': True}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
-        assert cast(OpenAIResponsesModelSettings, merged).get('openai_reasoning_effort') == 'medium'
+        assert cast(OpenAIResponsesModelSettings, merged).get('openai_reasoning_effort') is None
+        assert model._get_reasoning(cast(OpenAIResponsesModelSettings, merged), request_parameters) == {
+            'effort': 'medium'
+        }
 
     def test_effort_direct_mapping(self, openai_responses_reasoning_profile: ModelProfile):
         """thinking_effort maps 1:1 to reasoning effort."""
@@ -679,12 +712,16 @@ class TestOpenAIResponsesUnifiedThinking:
         model._settings = None
 
         settings: OpenAIResponsesModelSettings = {'thinking_effort': 'high'}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
-        assert cast(OpenAIResponsesModelSettings, merged).get('openai_reasoning_effort') == 'high'
+        assert model._get_reasoning(cast(OpenAIResponsesModelSettings, merged), request_parameters) == {
+            'effort': 'high'
+        }
 
     def test_thinking_false_silent_drop(self, openai_responses_reasoning_profile: ModelProfile):
         """thinking=False on always-on model → no change (silent drop)."""
+        from openai import Omit
+
         from pydantic_ai.models.openai import OpenAIResponsesModel
 
         model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
@@ -693,9 +730,10 @@ class TestOpenAIResponsesUnifiedThinking:
         model._settings = None
 
         settings: OpenAIResponsesModelSettings = {'thinking': False}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         assert cast(OpenAIResponsesModelSettings, merged).get('openai_reasoning_effort') is None
+        assert isinstance(model._get_reasoning(cast(OpenAIResponsesModelSettings, merged), request_parameters), Omit)
 
     def test_preserves_existing_reasoning_effort(self, openai_responses_reasoning_profile: ModelProfile):
         """Provider-specific reasoning_effort is preserved when unified also set."""
@@ -707,7 +745,7 @@ class TestOpenAIResponsesUnifiedThinking:
         model._settings = None
 
         settings: OpenAIResponsesModelSettings = {'thinking_effort': 'low', 'openai_reasoning_effort': 'high'}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, _ = _prepared_request(model, settings)
 
         # Existing 'high' should be preserved
         assert cast(OpenAIResponsesModelSettings, merged).get('openai_reasoning_effort') == 'high'
@@ -722,9 +760,10 @@ class TestOpenAIResponsesUnifiedThinking:
         model._settings = None
 
         settings: OpenAIResponsesModelSettings = {'thinking': True}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         assert cast(OpenAIResponsesModelSettings, merged).get('openai_reasoning_effort') is None
+        assert request_parameters.resolved_thinking is None
 
 
 # ============================================================================
@@ -742,7 +781,7 @@ class TestBedrockUnifiedThinking:
         model._profile = thinking_profile
 
         settings: BedrockModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_bedrock_thinking(model, settings)
 
         assert result == {'type': 'enabled', 'budget_tokens': 4096}
 
@@ -753,7 +792,7 @@ class TestBedrockUnifiedThinking:
         model._profile = thinking_profile
 
         settings: BedrockModelSettings = {'thinking': False}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_bedrock_thinking(model, settings)
 
         assert result == {'type': 'disabled'}
 
@@ -768,7 +807,7 @@ class TestBedrockUnifiedThinking:
         model._profile = thinking_profile
 
         settings: BedrockModelSettings = {'thinking_effort': effort}  # type: ignore[typeddict-item]
-        result = model._resolve_thinking_config(settings)
+        result = _translated_bedrock_thinking(model, settings)
 
         assert result == {'type': 'enabled', 'budget_tokens': expected_budget}
 
@@ -779,7 +818,7 @@ class TestBedrockUnifiedThinking:
         model._profile = non_thinking_profile
 
         settings: BedrockModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_bedrock_thinking(model, settings)
 
         assert result is None
 
@@ -789,26 +828,25 @@ class TestBedrockUnifiedThinking:
         model._model_name = 'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
         model._profile = thinking_profile
 
-        result = model._resolve_thinking_config({})
+        result = _translated_bedrock_thinking(model, {})
         assert result is None
 
-    def test_prepare_request_dispatches_claude(self, thinking_profile: ModelProfile):
-        """prepare_request injects 'thinking' key for Claude models."""
+    def test_prepare_request_stores_resolved_thinking_for_claude(self, thinking_profile: ModelProfile):
+        """prepare_request stores unified thinking without mutating Bedrock settings."""
         model = BedrockConverseModel.__new__(BedrockConverseModel)
         model._model_name = 'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
         model._profile = thinking_profile
         model._settings = None
 
         settings: BedrockModelSettings = {'thinking': True}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         additional = cast(BedrockModelSettings, merged).get('bedrock_additional_model_requests_fields')
-        assert additional is not None
-        assert 'thinking' in additional
-        assert additional['thinking'] == {'type': 'enabled', 'budget_tokens': 4096}
+        assert additional is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort=None)
 
     def test_prepare_request_preserves_existing_additional(self, thinking_profile: ModelProfile):
-        """prepare_request merges into existing additionalModelRequestFields."""
+        """prepare_request preserves existing additionalModelRequestFields."""
         model = BedrockConverseModel.__new__(BedrockConverseModel)
         model._model_name = 'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
         model._profile = thinking_profile
@@ -818,12 +856,13 @@ class TestBedrockUnifiedThinking:
             'thinking': True,
             'bedrock_additional_model_requests_fields': {'custom_key': 'custom_value'},
         }
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         additional = cast(BedrockModelSettings, merged).get('bedrock_additional_model_requests_fields')
         assert additional is not None
         assert additional.get('custom_key') == 'custom_value'
-        assert 'thinking' in additional
+        assert 'thinking' not in additional
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort=None)
 
     def test_prepare_request_skips_when_thinking_key_exists(self, thinking_profile: ModelProfile):
         """prepare_request doesn't overwrite existing 'thinking' in additional fields."""
@@ -838,11 +877,12 @@ class TestBedrockUnifiedThinking:
                 'thinking': {'type': 'enabled', 'budget_tokens': 9999},
             },
         }
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         additional = cast(BedrockModelSettings, merged).get('bedrock_additional_model_requests_fields')
         assert additional is not None
         assert additional['thinking'] == {'type': 'enabled', 'budget_tokens': 9999}
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort=None)
 
 
 class TestBedrockDeepSeekThinking:
@@ -855,7 +895,7 @@ class TestBedrockDeepSeekThinking:
         model._profile = thinking_profile
 
         settings: BedrockModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_bedrock_thinking(model, settings)
 
         assert result == {'type': 'enabled', 'budget_tokens': 4096}
 
@@ -866,7 +906,7 @@ class TestBedrockDeepSeekThinking:
         model._profile = thinking_profile
 
         settings: BedrockModelSettings = {'thinking': False}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_bedrock_thinking(model, settings)
 
         assert result == {'type': 'disabled'}
 
@@ -881,24 +921,23 @@ class TestBedrockDeepSeekThinking:
         model._profile = thinking_profile
 
         settings: BedrockModelSettings = {'thinking_effort': effort}  # type: ignore[typeddict-item]
-        result = model._resolve_thinking_config(settings)
+        result = _translated_bedrock_thinking(model, settings)
 
         assert result == {'type': 'enabled', 'budget_tokens': expected_budget}
 
-    def test_prepare_request_dispatches_deepseek(self, thinking_profile: ModelProfile):
-        """prepare_request injects 'thinking' key for DeepSeek models."""
+    def test_prepare_request_stores_resolved_thinking_for_deepseek(self, thinking_profile: ModelProfile):
+        """prepare_request stores resolved thinking for DeepSeek models."""
         model = BedrockConverseModel.__new__(BedrockConverseModel)
         model._model_name = 'us.deepseek.deepseek-r1-v1:0'
         model._profile = thinking_profile
         model._settings = None
 
         settings: BedrockModelSettings = {'thinking_effort': 'high'}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         additional = cast(BedrockModelSettings, merged).get('bedrock_additional_model_requests_fields')
-        assert additional is not None
-        assert 'thinking' in additional
-        assert additional['thinking'] == {'type': 'enabled', 'budget_tokens': 8192}
+        assert additional is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort='high')
 
 
 class TestBedrockNovaThinking:
@@ -916,7 +955,7 @@ class TestBedrockNovaThinking:
         model._profile = nova_thinking_profile
 
         settings: BedrockModelSettings = {'thinking': True}
-        result = model._resolve_nova_thinking_config(settings)
+        result = _translated_bedrock_thinking(model, settings)
 
         assert result == {'type': 'enabled'}
 
@@ -927,7 +966,7 @@ class TestBedrockNovaThinking:
         model._profile = nova_thinking_profile
 
         settings: BedrockModelSettings = {'thinking': False}
-        result = model._resolve_nova_thinking_config(settings)
+        result = _translated_bedrock_thinking(model, settings)
 
         assert result == {'type': 'disabled'}
 
@@ -939,7 +978,7 @@ class TestBedrockNovaThinking:
         model._profile = nova_thinking_profile
 
         settings: BedrockModelSettings = {'thinking_effort': effort}  # type: ignore[typeddict-item]
-        result = model._resolve_nova_thinking_config(settings)
+        result = _translated_bedrock_thinking(model, settings)
 
         assert result == {'type': 'enabled', 'maxReasoningEffort': effort}
 
@@ -950,24 +989,23 @@ class TestBedrockNovaThinking:
         model._profile = non_thinking_profile
 
         settings: BedrockModelSettings = {'thinking': True}
-        result = model._resolve_nova_thinking_config(settings)
+        result = _translated_bedrock_thinking(model, settings)
 
         assert result is None
 
-    def test_prepare_request_dispatches_nova(self, nova_thinking_profile: ModelProfile):
-        """prepare_request injects 'reasoningConfig' key for Amazon models."""
+    def test_prepare_request_stores_resolved_thinking_for_nova(self, nova_thinking_profile: ModelProfile):
+        """prepare_request stores resolved thinking for Amazon models."""
         model = BedrockConverseModel.__new__(BedrockConverseModel)
         model._model_name = 'us.amazon.nova-2-lite-v1:0'
         model._profile = nova_thinking_profile
         model._settings = None
 
         settings: BedrockModelSettings = {'thinking': True, 'thinking_effort': 'high'}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         additional = cast(BedrockModelSettings, merged).get('bedrock_additional_model_requests_fields')
-        assert additional is not None
-        assert 'reasoningConfig' in additional
-        assert additional['reasoningConfig'] == {'type': 'enabled', 'maxReasoningEffort': 'high'}
+        assert additional is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort='high')
 
     def test_prepare_request_skips_when_reasoning_config_exists(self, nova_thinking_profile: ModelProfile):
         """prepare_request doesn't overwrite existing 'reasoningConfig'."""
@@ -982,11 +1020,12 @@ class TestBedrockNovaThinking:
                 'reasoningConfig': {'type': 'enabled', 'maxReasoningEffort': 'low'},
             },
         }
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         additional = cast(BedrockModelSettings, merged).get('bedrock_additional_model_requests_fields')
         assert additional is not None
         assert additional['reasoningConfig'] == {'type': 'enabled', 'maxReasoningEffort': 'low'}
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort=None)
 
     def test_prepare_request_no_inject_for_non_amazon(self, non_thinking_profile: ModelProfile):
         """prepare_request doesn't inject reasoning for non-Amazon/non-Claude/non-DeepSeek models."""
@@ -996,10 +1035,11 @@ class TestBedrockNovaThinking:
         model._settings = None
 
         settings: BedrockModelSettings = {'thinking': True}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         additional = cast(BedrockModelSettings, merged).get('bedrock_additional_model_requests_fields')
         assert additional is None
+        assert request_parameters.resolved_thinking is None
 
     def test_empty_settings_returns_none(self, nova_thinking_profile: ModelProfile):
         """No thinking fields → None."""
@@ -1007,7 +1047,7 @@ class TestBedrockNovaThinking:
         model._model_name = 'us.amazon.nova-2-lite-v1:0'
         model._profile = nova_thinking_profile
 
-        result = model._resolve_nova_thinking_config({})
+        result = _translated_bedrock_thinking(model, {})
         assert result is None
 
 
@@ -1019,6 +1059,18 @@ class TestBedrockNovaThinking:
 class TestOpenRouterUnifiedThinking:
     """Tests for unified thinking settings on OpenRouter models."""
 
+    def test_openai_reasoning_profile_allows_disable(self):
+        """OpenRouter clears always-on reasoning so unified disable can resolve."""
+        provider = OpenRouterProvider.__new__(OpenRouterProvider)
+        profile = provider.model_profile('openai/o3')
+
+        assert profile is not None
+        assert profile.supports_thinking is True
+        assert profile.thinking_always_enabled is False
+        assert resolve_thinking_config({'thinking': False}, profile) == ResolvedThinkingConfig(
+            enabled=False, effort=None
+        )
+
     def test_thinking_true_enables_reasoning(self):
         """thinking=True → {enabled: True}."""
         model = OpenRouterModel.__new__(OpenRouterModel)
@@ -1026,7 +1078,7 @@ class TestOpenRouterUnifiedThinking:
         model._profile = ModelProfile(supports_thinking=True)
 
         settings: OpenRouterModelSettings = {'thinking': True}
-        result = model._resolve_openrouter_thinking(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == {'enabled': True}
 
@@ -1037,7 +1089,7 @@ class TestOpenRouterUnifiedThinking:
         model._profile = ModelProfile(supports_thinking=True)
 
         settings: OpenRouterModelSettings = {'thinking': False}
-        result = model._resolve_openrouter_thinking(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == {'effort': 'none'}
 
@@ -1049,7 +1101,7 @@ class TestOpenRouterUnifiedThinking:
         model._profile = ModelProfile(supports_thinking=True)
 
         settings: OpenRouterModelSettings = {'thinking_effort': effort}  # type: ignore[typeddict-item]
-        result = model._resolve_openrouter_thinking(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == {'effort': effort}
 
@@ -1059,22 +1111,22 @@ class TestOpenRouterUnifiedThinking:
         model._model_name = 'openai/o3'
         model._profile = ModelProfile(supports_thinking=True)
 
-        result = model._resolve_openrouter_thinking({})
+        result = _translated_thinking(model, {})
         assert result is None
 
-    def test_prepare_request_sets_openrouter_reasoning(self):
-        """prepare_request() stores resolved config in extra_body.reasoning."""
+    def test_prepare_request_stores_resolved_thinking(self):
+        """prepare_request() stores unified thinking on request parameters."""
         model = OpenRouterModel.__new__(OpenRouterModel)
         model._model_name = 'anthropic/claude-sonnet-4-5'
         model._profile = ModelProfile(supports_thinking=True)
         model._settings = None
 
         settings: OpenRouterModelSettings = {'thinking': True}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
-        # _openrouter_settings_to_openai_settings pops openrouter_reasoning into extra_body
         assert merged is not None
-        assert cast(dict[str, Any], merged).get('extra_body', {}).get('reasoning') == {'enabled': True}
+        assert cast(dict[str, Any], merged).get('extra_body', {}).get('reasoning') is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort=None)
 
     def test_provider_specific_takes_precedence(self):
         """openrouter_reasoning takes precedence over unified fields."""
@@ -1084,10 +1136,11 @@ class TestOpenRouterUnifiedThinking:
         model._settings = None
 
         settings: OpenRouterModelSettings = {'thinking': True, 'openrouter_reasoning': {'enabled': False}}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         assert merged is not None
         assert cast(dict[str, Any], merged).get('extra_body', {}).get('reasoning') == {'enabled': False}
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort=None)
 
     def test_openai_reasoning_effort_stripped(self):
         """openai_reasoning_effort from parent is stripped — OpenRouter uses its own reasoning config."""
@@ -1097,12 +1150,13 @@ class TestOpenRouterUnifiedThinking:
         model._settings = None
 
         settings: OpenRouterModelSettings = {'thinking': True}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         assert merged is not None
         merged_dict = cast(dict[str, Any], merged)
         assert 'openai_reasoning_effort' not in merged_dict
-        assert merged_dict.get('extra_body', {}).get('reasoning') == {'enabled': True}
+        assert merged_dict.get('extra_body', {}).get('reasoning') is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort=None)
 
     def test_openai_reasoning_effort_stripped_with_effort(self):
         """openai_reasoning_effort stripped even when thinking_effort set."""
@@ -1112,12 +1166,33 @@ class TestOpenRouterUnifiedThinking:
         model._settings = None
 
         settings: OpenRouterModelSettings = {'thinking_effort': 'high'}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         assert merged is not None
         merged_dict = cast(dict[str, Any], merged)
         assert 'openai_reasoning_effort' not in merged_dict
-        assert merged_dict.get('extra_body', {}).get('reasoning') == {'effort': 'high'}
+        assert merged_dict.get('extra_body', {}).get('reasoning') is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort='high')
+
+    def test_prepare_request_preserves_disable_for_openai_reasoning_model(self):
+        """Real OpenRouter OpenAI profiles preserve unified disable in request parameters."""
+        provider = OpenRouterProvider.__new__(OpenRouterProvider)
+        profile = provider.model_profile('openai/o3')
+        assert profile is not None
+
+        model = OpenRouterModel.__new__(OpenRouterModel)
+        model._model_name = 'openai/o3'
+        model._profile = profile
+        model._settings = None
+
+        settings: OpenRouterModelSettings = {'thinking': False}
+        merged, request_parameters = _prepared_request(model, settings)
+
+        assert merged is not None
+        merged_dict = cast(dict[str, Any], merged)
+        assert 'openai_reasoning_effort' not in merged_dict
+        assert merged_dict.get('extra_body', {}).get('reasoning') is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=False, effort=None)
 
 
 # ============================================================================
@@ -1135,7 +1210,7 @@ class TestGroqUnifiedThinking:
         model._profile = thinking_profile
 
         settings: GroqModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == 'parsed'
 
@@ -1146,7 +1221,7 @@ class TestGroqUnifiedThinking:
         model._profile = thinking_profile
 
         settings: GroqModelSettings = {'thinking': False}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == 'hidden'
 
@@ -1157,7 +1232,7 @@ class TestGroqUnifiedThinking:
         model._profile = thinking_profile
 
         settings: GroqModelSettings = {'thinking_effort': 'high'}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         # Effort triggers enable, but effort value itself is dropped
         assert result == 'parsed'
@@ -1169,7 +1244,7 @@ class TestGroqUnifiedThinking:
         model._profile = non_thinking_profile
 
         settings: GroqModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
@@ -1179,20 +1254,21 @@ class TestGroqUnifiedThinking:
         model._model_name = 'deepseek-r1-distill-llama-70b'
         model._profile = thinking_profile
 
-        result = model._resolve_thinking_config({})
+        result = _translated_thinking(model, {})
         assert result is None
 
-    def test_prepare_request_sets_groq_reasoning_format(self, thinking_profile: ModelProfile):
-        """prepare_request() stores resolved config in groq_reasoning_format."""
+    def test_prepare_request_stores_resolved_thinking(self, thinking_profile: ModelProfile):
+        """prepare_request() stores resolved config on request parameters."""
         model = GroqModel.__new__(GroqModel)
         model._model_name = 'deepseek-r1-distill-llama-70b'
         model._profile = thinking_profile
         model._settings = None
 
         settings: GroqModelSettings = {'thinking': True}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
-        assert cast(GroqModelSettings, merged).get('groq_reasoning_format') == 'parsed'
+        assert cast(GroqModelSettings, merged).get('groq_reasoning_format') is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort=None)
 
     def test_provider_specific_takes_precedence(self, thinking_profile: ModelProfile):
         """groq_reasoning_format takes precedence over unified fields."""
@@ -1202,9 +1278,10 @@ class TestGroqUnifiedThinking:
         model._settings = None
 
         settings: GroqModelSettings = {'thinking': True, 'groq_reasoning_format': 'raw'}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         assert cast(GroqModelSettings, merged).get('groq_reasoning_format') == 'raw'
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort=None)
 
 
 # ============================================================================
@@ -1222,7 +1299,7 @@ class TestCerebrasUnifiedThinking:
         model._profile = thinking_profile
 
         settings: CerebrasModelSettings = {'thinking': True}
-        result = model._resolve_cerebras_thinking(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
@@ -1233,7 +1310,7 @@ class TestCerebrasUnifiedThinking:
         model._profile = thinking_profile
 
         settings: CerebrasModelSettings = {'thinking': False}
-        result = model._resolve_cerebras_thinking(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is True
 
@@ -1244,7 +1321,7 @@ class TestCerebrasUnifiedThinking:
         model._profile = thinking_profile
 
         settings: CerebrasModelSettings = {'thinking_effort': 'high'}
-        result = model._resolve_cerebras_thinking(settings)
+        result = _translated_thinking(model, settings)
 
         # Enabled (None → don't set disable_reasoning), effort is dropped
         assert result is None
@@ -1256,7 +1333,7 @@ class TestCerebrasUnifiedThinking:
         model._profile = non_thinking_profile
 
         settings: CerebrasModelSettings = {'thinking': True}
-        result = model._resolve_cerebras_thinking(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
@@ -1266,22 +1343,22 @@ class TestCerebrasUnifiedThinking:
         model._model_name = 'zai-glm-4.6'
         model._profile = thinking_profile
 
-        result = model._resolve_cerebras_thinking({})
+        result = _translated_thinking(model, {})
         assert result is None
 
-    def test_prepare_request_sets_cerebras_disable_reasoning(self, thinking_profile: ModelProfile):
-        """prepare_request() stores resolved config in extra_body.disable_reasoning."""
+    def test_prepare_request_stores_resolved_thinking(self, thinking_profile: ModelProfile):
+        """prepare_request() stores resolved config on request parameters."""
         model = CerebrasModel.__new__(CerebrasModel)
         model._model_name = 'zai-glm-4.6'
         model._profile = thinking_profile
         model._settings = None
 
         settings: CerebrasModelSettings = {'thinking': False}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
-        # _cerebras_settings_to_openai_settings pops cerebras_disable_reasoning into extra_body
         assert merged is not None
-        assert cast(dict[str, Any], merged).get('extra_body', {}).get('disable_reasoning') is True
+        assert cast(dict[str, Any], merged).get('extra_body', {}).get('disable_reasoning') is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=False, effort=None)
 
     def test_provider_specific_takes_precedence(self, thinking_profile: ModelProfile):
         """cerebras_disable_reasoning takes precedence over unified fields."""
@@ -1291,10 +1368,11 @@ class TestCerebrasUnifiedThinking:
         model._settings = None
 
         settings: CerebrasModelSettings = {'thinking': True, 'cerebras_disable_reasoning': True}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         assert merged is not None
         assert cast(dict[str, Any], merged).get('extra_body', {}).get('disable_reasoning') is True
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort=None)
 
     def test_openai_reasoning_effort_stripped(self, thinking_profile: ModelProfile):
         """openai_reasoning_effort from parent is stripped — Cerebras uses its own mechanism."""
@@ -1304,10 +1382,11 @@ class TestCerebrasUnifiedThinking:
         model._settings = None
 
         settings: CerebrasModelSettings = {'thinking': True}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         assert merged is not None
         assert 'openai_reasoning_effort' not in cast(dict[str, Any], merged)
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort=None)
 
     def test_openai_reasoning_effort_stripped_with_effort(self, thinking_profile: ModelProfile):
         """openai_reasoning_effort stripped even when thinking_effort explicitly set."""
@@ -1317,10 +1396,11 @@ class TestCerebrasUnifiedThinking:
         model._settings = None
 
         settings: CerebrasModelSettings = {'thinking_effort': 'high'}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         assert merged is not None
         assert 'openai_reasoning_effort' not in cast(dict[str, Any], merged)
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort='high')
 
 
 # ============================================================================
@@ -1340,7 +1420,7 @@ class TestCohereUnifiedThinking:
         model._profile = thinking_profile
 
         settings: CohereModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == Thinking(type='enabled')
 
@@ -1353,7 +1433,7 @@ class TestCohereUnifiedThinking:
         model._profile = thinking_profile
 
         settings: CohereModelSettings = {'thinking': False}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == Thinking(type='disabled')
 
@@ -1366,7 +1446,7 @@ class TestCohereUnifiedThinking:
         model._profile = thinking_profile
 
         settings: CohereModelSettings = {'thinking_effort': 'high'}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         # Enabled, but effort is dropped
         assert result == Thinking(type='enabled')
@@ -1378,13 +1458,12 @@ class TestCohereUnifiedThinking:
         model._profile = non_thinking_profile
 
         settings: CohereModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
-    def test_prepare_request_applies_unified_thinking(self, thinking_profile: ModelProfile):
-        """prepare_request() stores resolved thinking config in cohere_thinking."""
-        from cohere import Thinking
+    def test_prepare_request_stores_resolved_thinking(self, thinking_profile: ModelProfile):
+        """prepare_request() stores resolved thinking on request parameters."""
 
         model = CohereModel.__new__(CohereModel)
         model._model_name = 'command-a-reasoning'
@@ -1392,9 +1471,10 @@ class TestCohereUnifiedThinking:
         model._settings = None
 
         settings: CohereModelSettings = {'thinking': True}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
-        assert cast(CohereModelSettings, merged).get('cohere_thinking') == Thinking(type='enabled')
+        assert cast(CohereModelSettings, merged).get('cohere_thinking') is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort=None)
 
     def test_prepare_request_skips_when_provider_set(self, thinking_profile: ModelProfile):
         """prepare_request() skips unified thinking when cohere_thinking already set."""
@@ -1409,10 +1489,11 @@ class TestCohereUnifiedThinking:
             'thinking': False,
             'cohere_thinking': Thinking(type='enabled'),
         }
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         # Provider-specific takes precedence, unified thinking=False is ignored
         assert cast(CohereModelSettings, merged).get('cohere_thinking') == Thinking(type='enabled')
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=False, effort=None)
 
     def test_empty_settings_returns_none(self, thinking_profile: ModelProfile):
         """No thinking fields → None."""
@@ -1420,7 +1501,7 @@ class TestCohereUnifiedThinking:
         model._model_name = 'command-a-reasoning'
         model._profile = thinking_profile
 
-        result = model._resolve_thinking_config({})
+        result = _translated_thinking(model, {})
         assert result is None
 
 
@@ -1449,7 +1530,7 @@ class TestXaiUnifiedThinking:
         model._profile = grok3_mini_profile
 
         settings: XaiModelSettings = {'thinking_effort': 'low'}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == 'low'
 
@@ -1460,7 +1541,7 @@ class TestXaiUnifiedThinking:
         model._profile = grok3_mini_profile
 
         settings: XaiModelSettings = {'thinking_effort': 'medium'}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == 'low'
 
@@ -1471,7 +1552,7 @@ class TestXaiUnifiedThinking:
         model._profile = grok3_mini_profile
 
         settings: XaiModelSettings = {'thinking_effort': 'high'}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result == 'high'
 
@@ -1482,7 +1563,7 @@ class TestXaiUnifiedThinking:
         model._profile = grok3_mini_profile
 
         settings: XaiModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
@@ -1493,7 +1574,7 @@ class TestXaiUnifiedThinking:
         model._profile = grok3_mini_profile
 
         settings: XaiModelSettings = {'thinking': False}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
@@ -1504,7 +1585,7 @@ class TestXaiUnifiedThinking:
         model._profile = grok4_profile
 
         settings: XaiModelSettings = {'thinking_effort': 'high'}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
@@ -1515,21 +1596,22 @@ class TestXaiUnifiedThinking:
         model._profile = non_thinking_profile
 
         settings: XaiModelSettings = {'thinking': True}
-        result = model._resolve_thinking_config(settings)
+        result = _translated_thinking(model, settings)
 
         assert result is None
 
-    def test_prepare_request_applies_unified_effort(self, grok3_mini_profile: ModelProfile):
-        """prepare_request() stores resolved effort in xai_reasoning_effort."""
+    def test_prepare_request_stores_resolved_thinking(self, grok3_mini_profile: ModelProfile):
+        """prepare_request() stores resolved effort on request parameters."""
         model = XaiModel.__new__(XaiModel)
         model._model_name = 'grok-3-mini'
         model._profile = grok3_mini_profile
         model._settings = None
 
         settings: XaiModelSettings = {'thinking_effort': 'high'}
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
-        assert cast(XaiModelSettings, merged).get('xai_reasoning_effort') == 'high'
+        assert cast(XaiModelSettings, merged).get('xai_reasoning_effort') is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort='high')
 
     def test_prepare_request_skips_when_provider_set(self, grok3_mini_profile: ModelProfile):
         """prepare_request() skips unified thinking when xai_reasoning_effort already set."""
@@ -1542,10 +1624,11 @@ class TestXaiUnifiedThinking:
             'thinking_effort': 'low',
             'xai_reasoning_effort': 'high',
         }
-        merged, _ = model.prepare_request(settings, ModelRequestParameters())
+        merged, request_parameters = _prepared_request(model, settings)
 
         # Provider-specific takes precedence
         assert cast(XaiModelSettings, merged).get('xai_reasoning_effort') == 'high'
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort='low')
 
     def test_empty_settings_returns_none(self, grok3_mini_profile: ModelProfile):
         """No thinking fields → None."""
@@ -1553,7 +1636,7 @@ class TestXaiUnifiedThinking:
         model._model_name = 'grok-3-mini'
         model._profile = grok3_mini_profile
 
-        result = model._resolve_thinking_config({})
+        result = _translated_thinking(model, {})
         assert result is None
 
 
@@ -1771,28 +1854,28 @@ class TestCrossProviderPortability:
         anthropic_model = AnthropicModel.__new__(AnthropicModel)
         anthropic_model._model_name = 'claude-sonnet-4'
         anthropic_model._profile = ModelProfile(supports_thinking=True)
-        result = anthropic_model._resolve_thinking_config(AnthropicModelSettings(thinking=True, thinking_effort='high'))
+        result = _translated_thinking(anthropic_model, AnthropicModelSettings(thinking=True, thinking_effort='high'))
         assert result == {'type': 'enabled', 'budget_tokens': 16384}
 
         # OpenAI Chat
         openai_model = OpenAIChatModel.__new__(OpenAIChatModel)
         openai_model._model_name = 'o3'
         openai_model._profile = ModelProfile(supports_thinking=True, thinking_always_enabled=True)
-        result = openai_model._resolve_thinking_config(OpenAIChatModelSettings(thinking=True, thinking_effort='high'))
+        result = _translated_thinking(openai_model, OpenAIChatModelSettings(thinking=True, thinking_effort='high'))
         assert result == 'high'
 
         # Groq (effort silently ignored)
         groq_model = GroqModel.__new__(GroqModel)
         groq_model._model_name = 'deepseek-r1-distill-llama-70b'
         groq_model._profile = ModelProfile(supports_thinking=True)
-        result = groq_model._resolve_thinking_config(GroqModelSettings(thinking=True, thinking_effort='high'))
+        result = _translated_thinking(groq_model, GroqModelSettings(thinking=True, thinking_effort='high'))
         assert result == 'parsed'
 
         # Cerebras (effort silently ignored)
         cerebras_model = CerebrasModel.__new__(CerebrasModel)
         cerebras_model._model_name = 'zai-glm-4.6'
         cerebras_model._profile = ModelProfile(supports_thinking=True)
-        result = cerebras_model._resolve_cerebras_thinking(CerebrasModelSettings(thinking=True, thinking_effort='high'))
+        result = _translated_thinking(cerebras_model, CerebrasModelSettings(thinking=True, thinking_effort='high'))
         assert result is None  # enabled is default, effort dropped
 
     def test_settings_on_unsupported_models_silently_dropped(self):
@@ -1804,22 +1887,20 @@ class TestCrossProviderPortability:
         anthropic_model._model_name = 'claude-3-opus'
         anthropic_model._profile = non_thinking
         assert (
-            anthropic_model._resolve_thinking_config(AnthropicModelSettings(thinking=True, thinking_effort='high'))
-            is None
+            _translated_thinking(anthropic_model, AnthropicModelSettings(thinking=True, thinking_effort='high')) is None
         )
 
         openai_model = OpenAIChatModel.__new__(OpenAIChatModel)
         openai_model._model_name = 'gpt-4o'
         openai_model._profile = non_thinking
         assert (
-            openai_model._resolve_thinking_config(OpenAIChatModelSettings(thinking=True, thinking_effort='high'))
-            is None
+            _translated_thinking(openai_model, OpenAIChatModelSettings(thinking=True, thinking_effort='high')) is None
         )
 
         groq_model = GroqModel.__new__(GroqModel)
         groq_model._model_name = 'llama-3.1-8b'
         groq_model._profile = non_thinking
-        assert groq_model._resolve_thinking_config(GroqModelSettings(thinking=True, thinking_effort='high')) is None
+        assert _translated_thinking(groq_model, GroqModelSettings(thinking=True, thinking_effort='high')) is None
 
 
 # ============================================================================
@@ -2005,50 +2086,45 @@ class TestPrepareRequestNoMutation:
     Regression tests for the bug where merge_model_settings returned the same
     dict object as self.settings when no per-run overrides were provided,
     causing prepare_request to permanently taint the instance settings with
-    provider-specific keys (e.g., anthropic_thinking, google_thinking_config).
+    request-scoped derived data.
     """
 
     def test_anthropic_sequential_calls_no_leakage(self):
-        """Sequential prepare_request calls don't leak anthropic_thinking into self.settings."""
+        """Sequential prepare_request calls don't leak request-scoped thinking state into self.settings."""
         profile = AnthropicModelProfile(supports_thinking=True)
         model = AnthropicModel.__new__(AnthropicModel)
         model._model_name = 'claude-sonnet-4-5'
         model._profile = profile
         model._settings = AnthropicModelSettings(thinking=True)
 
-        # First call: should resolve thinking and add anthropic_thinking to merged result
-        model.prepare_request(None, ModelRequestParameters())
+        # First call should only populate request parameters.
+        _prepared_request(model, None)
 
-        # self.settings must NOT contain the provider-specific key
         assert 'anthropic_thinking' not in (model._settings or {}), (
             'prepare_request leaked anthropic_thinking into self._settings'
         )
 
-        # Second call with thinking=False: should NOT see stale anthropic_thinking
-        merged2, _ = model.prepare_request({'thinking': False}, ModelRequestParameters())
-        anthropic_thinking = cast(AnthropicModelSettings, merged2).get('anthropic_thinking')
-        # thinking=False on non-always-on model → disabled config
-        assert anthropic_thinking is not None
-        assert anthropic_thinking.get('type') == 'disabled'
+        merged2, request_parameters2 = _prepared_request(model, {'thinking': False})
+        assert cast(AnthropicModelSettings, merged2).get('anthropic_thinking') is None
+        assert request_parameters2.resolved_thinking == ResolvedThinkingConfig(enabled=False, effort=None)
 
     def test_google_sequential_calls_no_leakage(self):
-        """Sequential prepare_request calls don't leak google_thinking_config into self.settings."""
+        """Sequential prepare_request calls don't leak resolved thinking into self.settings."""
         profile = ModelProfile(supports_thinking=True)
         model = GoogleModel.__new__(GoogleModel)
         model._model_name = 'gemini-2.5-flash'
         model._profile = profile
         model._settings = GoogleModelSettings(thinking_effort='high')
 
-        model.prepare_request(None, ModelRequestParameters())
+        _prepared_request(model, None)
 
         assert 'google_thinking_config' not in (model._settings or {}), (
             'prepare_request leaked google_thinking_config into self._settings'
         )
 
-        # Second call with thinking=False: should produce thinking_budget: 0
-        merged2, _ = model.prepare_request({'thinking': False}, ModelRequestParameters())
-        google_config = cast(GoogleModelSettings, merged2).get('google_thinking_config')
-        assert google_config == {'thinking_budget': 0}
+        merged2, request_parameters2 = _prepared_request(model, {'thinking': False})
+        assert cast(GoogleModelSettings, merged2).get('google_thinking_config') is None
+        assert request_parameters2.resolved_thinking == ResolvedThinkingConfig(enabled=False, effort=None)
 
     def test_openai_chat_sequential_calls_no_leakage(self):
         """Sequential prepare_request calls don't leak openai_reasoning_effort into self.settings."""
@@ -2058,7 +2134,7 @@ class TestPrepareRequestNoMutation:
         model._profile = profile
         model._settings = OpenAIChatModelSettings(thinking_effort='high')
 
-        model.prepare_request(None, ModelRequestParameters())
+        _prepared_request(model, None)
 
         assert 'openai_reasoning_effort' not in (model._settings or {}), (
             'prepare_request leaked openai_reasoning_effort into self._settings'

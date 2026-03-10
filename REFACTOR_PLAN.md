@@ -74,22 +74,36 @@ class ModelRequestParameters:
 ### Base class resolves thinking in `prepare_request()`
 
 ```python
-# models/__init__.py — Model.prepare_request()
+# models/__init__.py — Model class
 
-def prepare_request(self, model_settings, model_request_parameters):
-    model_settings = merge_model_settings(self.settings, model_settings)
-    params = self.customize_request_parameters(model_request_parameters)
+class Model(ABC):
+    # ... existing methods ...
 
-    # ... existing output mode resolution ...
+    def _translate_thinking(self, resolved: ResolvedThinkingConfig) -> tuple[str, Any] | None:
+        """Translate resolved thinking config to provider-native format.
 
-    # NEW: Resolve unified thinking settings (mirrors output mode resolution)
-    if model_settings:
-        resolved_thinking = resolve_thinking_config(model_settings, self.profile)
-        if resolved_thinking is not None:
-            params = replace(params, resolved_thinking=resolved_thinking)
+        Override in models whose profile has supports_thinking=True.
+        Returns (provider_settings_key, native_value) or None.
+        The default returns None (thinking silently ignored).
+        """
+        return None
 
-    return model_settings, params
+    def prepare_request(self, model_settings, model_request_parameters):
+        model_settings = merge_model_settings(self.settings, model_settings)
+        params = self.customize_request_parameters(model_request_parameters)
+
+        # ... existing output mode resolution ...
+
+        # NEW: Resolve unified thinking settings (mirrors output mode resolution)
+        if model_settings:
+            resolved_thinking = resolve_thinking_config(model_settings, self.profile)
+            if resolved_thinking is not None:
+                params = replace(params, resolved_thinking=resolved_thinking)
+
+        return model_settings, params
 ```
+
+The default `_translate_thinking()` returns `None`, following the same convention as `customize_request_parameters()` (default is a pass-through) and `supported_builtin_tools()` (default is empty frozenset). Non-thinking models don't need to override it.
 
 This mirrors how output mode resolution works:
 - Profile capabilities (`supports_thinking`, `thinking_always_enabled`) drive the guards
@@ -165,46 +179,50 @@ After the refactor:
 
 ### Anthropic — conflict check uses `resolved_thinking` directly
 
-Anthropic's `prepare_request()` currently checks thinking-vs-output-tools conflict by reading `merged_settings.get('anthropic_thinking')`. After the refactor:
+Anthropic's `prepare_request()` currently checks thinking-vs-output-tools conflict and can mutate `output_mode` (from `'auto'` to `'native'`/`'prompted'`). This mutation must happen **before** the base class resolves output mode, so Anthropic's conflict check runs first:
 
 ```python
 # AnthropicModel.prepare_request():
-merged_settings, params = super().prepare_request(model_settings, model_request_parameters)
-merged_settings = cast(AnthropicModelSettings, merged_settings or {})
 
-# Check thinking-vs-output conflict using resolved config directly
+# Merge settings early to check thinking state for the conflict check
+merged_settings = cast(AnthropicModelSettings, merge_model_settings(self.settings, model_settings) or {})
+
+# Determine if thinking is enabled (from provider-specific or unified settings)
 thinking_enabled = False
 if 'anthropic_thinking' in merged_settings:
     thinking_enabled = merged_settings['anthropic_thinking'].get('type') in ('enabled', 'adaptive')
-elif params.resolved_thinking is not None:
-    thinking_enabled = params.resolved_thinking.enabled
+else:
+    resolved = resolve_thinking_config(merged_settings, self.profile)
+    thinking_enabled = resolved is not None and resolved.enabled
 
-if thinking_enabled and params.output_tools and not params.allow_text_output:
-    suggested = 'NativeOutput' if self.profile.supports_json_schema_output else 'PromptedOutput'
-    raise UserError(f'Anthropic does not support thinking and output tools...')
+# Thinking-vs-output conflict check — may mutate output_mode before super() resolves it
+if thinking_enabled and model_request_parameters.output_tools:
+    if model_request_parameters.output_mode == 'auto':
+        output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
+        model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
+    elif not model_request_parameters.allow_text_output:
+        suggested = 'NativeOutput' if self.profile.supports_json_schema_output else 'PromptedOutput'
+        raise UserError(f'Anthropic does not support thinking and output tools...')
 
-return merged_settings, params
+# Now call super() — base class resolves output mode and thinking
+return super().prepare_request(merged_settings, model_request_parameters)
 ```
 
-Anthropic's `_build_output_config` reads effort from `params.resolved_thinking.effort` instead of a forwarded `anthropic_effort` field — no more effort forwarding.
+Note: Anthropic calls `merge_model_settings` itself and passes the merged result to `super()` (same pattern as today). The base class's `prepare_request` detects the already-merged settings and resolves thinking from them.
 
-### OpenRouter — overrides resolution for no-profile-guard behavior
+Anthropic's `_build_output_config` reads effort from `params.resolved_thinking.effort` instead of a forwarded `anthropic_effort` field — no more effort forwarding. This requires passing `model_request_parameters` to `_build_output_config` (currently it only receives `model_settings`).
 
-OpenRouter intentionally skips profile guards. It overrides `prepare_request()` to re-resolve without profile:
+### OpenRouter — set `supports_thinking=True` universally
+
+OpenRouter delegates capability detection to its backend, so its profiles should set `supports_thinking=True` for all models. This lets the base class resolve thinking normally — no re-resolution override needed. OpenRouter's `prepare_request()` still strips `openai_reasoning_effort` (injected by the OpenAI parent) and converts settings, but no longer needs thinking-specific logic:
 
 ```python
 # OpenRouterModel.prepare_request():
 merged_settings, params = super().prepare_request(model_settings, model_request_parameters)
 merged_settings = cast(OpenRouterModelSettings, merged_settings or {})
 
-# Strip parent's openai_reasoning_effort (still needed for OpenAI parent)
+# Strip parent's openai_reasoning_effort (OpenRouter uses its own reasoning format)
 merged_settings.pop('openai_reasoning_effort', None)
-
-# Override resolved_thinking: bypass profile guards, let OpenRouter handle capabilities
-if params.resolved_thinking is None and (model_settings or {}):
-    resolved = resolve_thinking_config(merged_settings)  # No profile
-    if resolved is not None:
-        params = replace(params, resolved_thinking=resolved)
 
 new_settings = _openrouter_settings_to_openai_settings(merged_settings)
 return new_settings, params
@@ -276,11 +294,13 @@ if model_request_parameters.resolved_thinking is not None:
 Under this pattern, a new provider developer:
 
 1. Sets `supports_thinking=True` in their profile — the base class will then resolve thinking settings
-2. Checks `model_request_parameters.resolved_thinking` at request time — translates to native format
-3. If they forget step 2, thinking settings are silently ignored (correct behavior — same as forgetting to read `output_mode`)
-4. `models/AGENTS.md` documents the pattern with a checklist
+2. Overrides `_translate_thinking()` to map `ResolvedThinkingConfig` → provider-native format
+3. Reads `model_request_parameters.resolved_thinking` at request time, with provider-specific settings taking precedence
+4. If they forget steps 2-3, thinking settings are silently ignored (correct behavior — same as forgetting to read `output_mode`)
 
-This is analogous to how new providers handle output mode: set the profile capabilities, then read the resolved mode at request time.
+The base `Model._translate_thinking()` returns `None` by default, so non-thinking models don't need to do anything. This follows the `customize_request_parameters` and `supported_builtin_tools` convention: optional hooks with sensible defaults, no abstract method enforcement for optional capabilities.
+
+`models/AGENTS.md` documents the pattern with a checklist.
 
 ---
 
@@ -311,12 +331,16 @@ For each of the 9 providers:
 
 ---
 
-## 9. Open Questions
+## 9. Design Decisions
 
-### Should `ModelRequestParameters.resolved_thinking` be public API?
+### `ModelRequestParameters.resolved_thinking` is public API
 
-`ModelRequestParameters` is a public dataclass. Adding `resolved_thinking` makes it visible to users who access parameters in `customize_request_parameters()` overrides. This seems fine — it's read-only metadata, analogous to `output_mode`. But if maintainers prefer to keep it internal, it could be prefixed with `_` and excluded from repr.
+`ModelRequestParameters` is already a public dataclass. `resolved_thinking` is read-only metadata analogous to `output_mode` — users who override `customize_request_parameters()` already interact with this dataclass. Hiding it would be inconsistent.
 
-### Does OpenRouter's profile need `supports_thinking=True`?
+### OpenRouter sets `supports_thinking=True` universally
 
-OpenRouter's profile is dynamically generated from model names. For unrecognized models, it may default to `supports_thinking=False`, causing the base class to silently drop thinking settings. The proposed solution (OpenRouter overrides to re-resolve without profile) handles this, but alternatively OpenRouter could just set `supports_thinking=True` on all its profiles since it delegates capability detection to the backend.
+OpenRouter delegates capability detection to the backend, so its profiles set `supports_thinking=True` for all models. This lets the base class resolve thinking normally without needing an OpenRouter-specific re-resolution override. If the backend model doesn't support thinking, it returns an error — same as any other unsupported parameter sent through OpenRouter.
+
+### `_translate_thinking()` uses default implementation, not abstract enforcement
+
+The base `Model._translate_thinking()` returns `None` by default. This follows the codebase's established pattern of minimal enforcement + maximum flexibility (only `request` and `model_name` are abstract). Silent-drop for unimplemented capabilities is the explicit design philosophy per DouweM's review guidance. Test coverage across all providers serves as the practical safety net.

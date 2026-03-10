@@ -52,7 +52,7 @@ from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..thinking import resolve_thinking_config
+from ..thinking import ResolvedThinkingConfig
 from ..usage import RequestUsage
 
 try:
@@ -501,23 +501,15 @@ class XaiModel(Model):
 
         return None
 
-    def _resolve_thinking_config(self, model_settings: XaiModelSettings) -> ReasoningEffort | None:
-        """Resolve unified thinking settings to xAI reasoning_effort.
-
-        Only grok-3-mini supports reasoning_effort with 2 levels ("low", "high").
-        Maps: low→"low", medium→"low" (downmap), high→"high".
-        Silent drop for all other models.
-        """
-        resolved = resolve_thinking_config(model_settings, self.profile)
-        if resolved is None:
-            return None
-
+    @override
+    def _translate_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> ReasoningEffort | None:
+        """Translate unified thinking settings to xAI `reasoning_effort`."""
         # Only grok-3-mini has tunable effort; other models use model-name variants
         if 'grok-3-mini' not in self.model_name:
             return None
 
-        if resolved.effort:
-            return _XAI_EFFORT_MAP.get(resolved.effort)
+        if resolved_thinking.effort:
+            return _XAI_EFFORT_MAP.get(resolved_thinking.effort)
 
         return None
 
@@ -580,8 +572,12 @@ class XaiModel(Model):
         if model_settings.get('xai_include_mcp_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
 
-        # Reasoning effort is resolved in prepare_request()
-        reasoning_effort = model_settings.get('xai_reasoning_effort')
+        if 'xai_reasoning_effort' in model_settings:
+            reasoning_effort = model_settings['xai_reasoning_effort']
+        elif resolved_thinking := model_request_parameters.resolved_thinking:
+            reasoning_effort = self._translate_thinking(resolved_thinking)
+        else:
+            reasoning_effort = None
 
         # Create and return chat instance
         return self._provider.client.chat.create(
@@ -595,23 +591,6 @@ class XaiModel(Model):
             **(dict(reasoning_effort=reasoning_effort) if reasoning_effort is not None else {}),
             **xai_settings,
         )
-
-    @override
-    def prepare_request(
-        self,
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        merged_settings = cast(XaiModelSettings, merged_settings or {})
-
-        # Apply unified thinking config if no provider-specific setting
-        if 'xai_reasoning_effort' not in merged_settings:
-            reasoning_effort = self._resolve_thinking_config(merged_settings)
-            if reasoning_effort is not None:
-                merged_settings['xai_reasoning_effort'] = reasoning_effort
-
-        return merged_settings, customized_parameters
 
     async def request(
         self,

@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Literal, cast, overload
 
 from pydantic import TypeAdapter
-from typing_extensions import assert_never
+from typing_extensions import assert_never, override
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
@@ -54,7 +54,7 @@ from ..profiles.anthropic import (
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
-from ..thinking import resolve_thinking_config
+from ..thinking import ResolvedThinkingConfig, resolve_thinking_config
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
@@ -307,16 +307,10 @@ class AnthropicModel(Model):
         """The set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 
-    def _resolve_thinking_config(self, model_settings: AnthropicModelSettings) -> BetaThinkingConfigParam | None:
-        """Resolve unified thinking settings to Anthropic thinking config.
-
-        Uses silent-drop semantics for unsupported settings.
-        """
-        resolved = resolve_thinking_config(model_settings, self.profile)
-        if resolved is None:
-            return None
-
-        if not resolved.enabled:
+    @override
+    def _translate_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> BetaThinkingConfigParam | None:
+        """Translate unified thinking settings to Anthropic `thinking` config."""
+        if not resolved_thinking.enabled:
             return {'type': 'disabled'}
 
         # Adaptive models (Opus 4.6, Sonnet 4.6): effort flows through output_config, not thinking config
@@ -325,9 +319,22 @@ class AnthropicModel(Model):
 
         # Budget-based models (3.7, Sonnet 4/4.5, Opus 4/4.1/4.5, Haiku 4.5): map effort to budget_tokens
         budget = DEFAULT_THINKING_BUDGET
-        if resolved.effort:
-            budget = EFFORT_TO_BUDGET.get(resolved.effort, DEFAULT_THINKING_BUDGET)
+        if resolved_thinking.effort:
+            budget = EFFORT_TO_BUDGET.get(resolved_thinking.effort, DEFAULT_THINKING_BUDGET)
         return {'type': 'enabled', 'budget_tokens': budget}
+
+    def _get_thinking_config(
+        self,
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> BetaThinkingConfigParam | None:
+        if 'anthropic_thinking' in model_settings:
+            return model_settings['anthropic_thinking']
+
+        if resolved_thinking := model_request_parameters.resolved_thinking:
+            return self._translate_thinking(resolved_thinking)
+
+        return None
 
     async def request(
         self,
@@ -395,29 +402,18 @@ class AnthropicModel(Model):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        # Merge settings early to resolve thinking config for validation
+        # Merge settings early so the thinking/output conflict check can run before
+        # the base class resolves output mode.
         merged_settings = cast(AnthropicModelSettings, merge_model_settings(self.settings, model_settings) or {})
 
-        # Resolve thinking config (provider-specific takes precedence)
-        if 'anthropic_thinking' not in merged_settings:
-            thinking_config = self._resolve_thinking_config(merged_settings)
-            if thinking_config is not None:
-                merged_settings['anthropic_thinking'] = thinking_config
-                # For adaptive models, map unified thinking_effort → anthropic_effort
-                # so _build_output_config doesn't need to re-resolve thinking.
-                if (
-                    thinking_config.get('type') == 'adaptive'
-                    and 'anthropic_effort' not in merged_settings
-                    and (effort := merged_settings.get('thinking_effort'))
-                ):
-                    merged_settings['anthropic_effort'] = effort
+        thinking_enabled = False
+        if 'anthropic_thinking' in merged_settings:
+            thinking_config = merged_settings['anthropic_thinking']
+            thinking_enabled = thinking_config.get('type') in ('enabled', 'adaptive')
+        elif resolved_thinking := resolve_thinking_config(merged_settings, self.profile):
+            thinking_enabled = resolved_thinking.enabled
 
-        thinking_config = merged_settings.get('anthropic_thinking')
-        if (
-            model_request_parameters.output_tools
-            and thinking_config
-            and thinking_config.get('type') in ('enabled', 'adaptive')
-        ):
+        if model_request_parameters.output_tools and thinking_enabled:
             if model_request_parameters.output_mode == 'auto':
                 output_mode = 'native' if self.profile.supports_json_schema_output else 'prompted'
                 model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
@@ -439,7 +435,6 @@ class AnthropicModel(Model):
             model_request_parameters = replace(
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
-        # Pass merged_settings so super() picks up the resolved anthropic_thinking
         return super().prepare_request(merged_settings, model_request_parameters)
 
     @overload
@@ -485,6 +480,7 @@ class AnthropicModel(Model):
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
         container = self._get_container(messages, model_settings)
+        thinking_config = self._get_thinking_config(model_settings, model_request_parameters)
         try:
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
@@ -497,7 +493,7 @@ class AnthropicModel(Model):
                 output_config=output_config or OMIT,
                 betas=sorted(betas) or OMIT,
                 stream=stream,
-                thinking=model_settings.get('anthropic_thinking', OMIT),
+                thinking=thinking_config or OMIT,
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
                 top_p=model_settings.get('top_p', OMIT),
@@ -575,6 +571,7 @@ class AnthropicModel(Model):
         output_config = self._build_output_config(model_request_parameters, model_settings)
         betas, extra_headers = self._get_betas_and_extra_headers(tools, model_request_parameters, model_settings)
         betas.update(builtin_tool_betas)
+        thinking_config = self._get_thinking_config(model_settings, model_request_parameters)
         try:
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
@@ -585,7 +582,7 @@ class AnthropicModel(Model):
                 mcp_servers=mcp_servers or OMIT,
                 betas=sorted(betas) or OMIT,
                 output_config=output_config or OMIT,
-                thinking=model_settings.get('anthropic_thinking', OMIT),
+                thinking=thinking_config or OMIT,
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
@@ -1238,6 +1235,13 @@ class AnthropicModel(Model):
             output_format = {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
 
         effort = model_settings.get('anthropic_effort')
+        if (
+            effort is None
+            and 'anthropic_thinking' not in model_settings
+            and (resolved_thinking := model_request_parameters.resolved_thinking)
+            and self._translate_thinking(resolved_thinking) == {'type': 'adaptive'}
+        ):
+            effort = resolved_thinking.effort
 
         if output_format is None and effort is None:
             return None
