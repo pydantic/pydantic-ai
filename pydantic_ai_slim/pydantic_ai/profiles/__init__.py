@@ -78,7 +78,7 @@ class ModelProfile:
     """
 
     context_window: int | None = None
-    """Context window of the model"""
+    """The model's maximum context window size in tokens, if known. Auto-populated from genai-prices when not set explicitly."""
 
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:

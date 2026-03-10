@@ -86,6 +86,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     @property
     def context_window_used(self) -> float | None:
+        """Fraction of the model's context window used by the most recent request, or `None` if unknown."""
         for message in reversed(self.messages):
             if isinstance(message, _messages.ModelResponse):
                 tokens_used = message.usage.total_tokens
