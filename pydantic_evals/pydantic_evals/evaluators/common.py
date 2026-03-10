@@ -100,7 +100,7 @@ def _check_containment(
 
             if isinstance(target_value, dict):
                 # Cast to Any to avoid type checking issues
-                expected_dict = cast(dict[Any, Any], target_value)  # pyright: ignore[reportUnknownMemberType]
+                expected_dict = cast(dict[Any, Any], target_value)
                 for k in expected_dict:
                     if k not in output_dict:
                         k_trunc = _truncated_repr(k, max_length=30)
