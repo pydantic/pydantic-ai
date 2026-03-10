@@ -720,7 +720,7 @@ The callable is invoked before each model request, so settings can vary per step
 The current resolved settings so far are available via `ctx.model_settings` inside the callable.
 
 ```py
-from pydantic_ai import Agent, ModelSettings, RunContext
+from pydantic_ai import Agent, ModelSettings
 
 agent = Agent(
     'openai:gpt-5',
