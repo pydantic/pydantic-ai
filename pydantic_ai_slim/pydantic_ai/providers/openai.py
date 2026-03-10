@@ -22,6 +22,9 @@ except ImportError as _import_error:  # pragma: no cover
 class OpenAIProvider(Provider[AsyncOpenAI]):
     """Provider for OpenAI API."""
 
+    is_gateway: bool = False
+    """Whether this provider was created via `gateway_provider()`."""
+
     @property
     def name(self) -> str:
         return 'openai'

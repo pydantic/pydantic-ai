@@ -1679,7 +1679,8 @@ class OpenAIResponsesModel(Model):
         _drop_unsupported_params(profile, model_settings)
 
         include: list[responses.ResponseIncludable] = []
-        if profile.openai_supports_encrypted_reasoning_content:
+        is_gateway = getattr(self._provider, 'is_gateway', False)
+        if profile.openai_supports_encrypted_reasoning_content and not is_gateway:
             include.append('reasoning.encrypted_content')
         if model_settings.get('openai_include_code_execution_outputs'):
             include.append('code_interpreter_call.outputs')
@@ -1736,6 +1737,50 @@ class OpenAIResponsesModel(Model):
         except APIStatusError as e:
             if model_response := _check_azure_content_filter(e, self.system, self.model_name):
                 return model_response
+
+            # Retry once on invalid_encrypted_content by stripping signatures
+            if (
+                e.status_code == 400
+                and isinstance(e.body, dict)
+                and e.body.get('error', {}).get('code') == 'invalid_encrypted_content'
+            ):
+                # Strip encrypted_content from reasoning items and retry
+                for msg in openai_messages:
+                    if isinstance(msg, dict) and msg.get('type') == 'reasoning':
+                        msg['encrypted_content'] = None
+                # Also remove reasoning.encrypted_content from include
+                include = [i for i in include if i != 'reasoning.encrypted_content']
+                try:
+                    return await self.client.responses.create(
+                        input=openai_messages,
+                        model=self.model_name,
+                        instructions=instructions,
+                        parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
+                        tools=tools or OMIT,
+                        tool_choice=tool_choice or OMIT,
+                        max_output_tokens=model_settings.get('max_tokens', OMIT),
+                        stream=stream,
+                        temperature=model_settings.get('temperature', OMIT),
+                        top_p=model_settings.get('top_p', OMIT),
+                        truncation=model_settings.get('openai_truncation', OMIT),
+                        timeout=model_settings.get('timeout', NOT_GIVEN),
+                        service_tier=model_settings.get('openai_service_tier', OMIT),
+                        previous_response_id=previous_response_id or OMIT,
+                        top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+                        store=model_settings.get('openai_store', OMIT),
+                        reasoning=reasoning,
+                        user=model_settings.get('openai_user', OMIT),
+                        text=text or OMIT,
+                        include=include or OMIT,
+                        prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+                        prompt_cache_retention=prompt_cache_retention,
+                        extra_headers=extra_headers,
+                        extra_body=model_settings.get('extra_body'),
+                    )
+                except APIStatusError as retry_e:
+                    if (status_code := retry_e.status_code) >= 400:
+                        raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=retry_e.body) from retry_e
+                    raise  # pragma: lax no cover
 
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
@@ -2103,6 +2148,7 @@ class OpenAIResponsesModel(Model):
                                 item.signature
                                 and item.provider_name == self.system
                                 and profile.openai_supports_encrypted_reasoning_content
+                                and not getattr(self._provider, 'is_gateway', False)
                             ):
                                 signature = item.signature
 
