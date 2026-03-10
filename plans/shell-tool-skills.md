@@ -49,6 +49,7 @@ class ShellTool(AbstractBuiltinTool):
 | `skills` | `container.skills` (beta `skills-2025-10-02`) | `environment.skills` on `FunctionShellToolParam` |
 | `network_policy` | N/A (raises if set) | `environment.network_policy` on `ContainerAutoParam` |
 | File mounting | `container_upload` block via `UploadedFile(target='container')` | `environment.file_ids` on `ContainerAutoParam` |
+| Container reuse | `anthropic_container` setting (auto-extracts `container_id` from history) | `openai_shell_container` setting (`container_reference` env) or implicit via message history round-tripping |
 
 ### Message History
 
@@ -73,6 +74,7 @@ UploadedFileTarget = Literal['message', 'container', 'both']
 ### OpenAI-Specific
 
 - `OpenAIResponsesModelSettings.openai_shell_uploaded_files`: convenience for mounting files into hosted shell without adding them to the prompt.
+- `OpenAIResponsesModelSettings.openai_shell_container`: explicit container reuse across turns. Accepts a container ID string to use `container_reference`, `False` to force a fresh container, or `None` (default) for standard `container_auto` behavior. Cannot be combined with skills, network policy, or uploaded files (which require `container_auto`).
 - Raw `shell` tools in `openai_builtin_tools` are auto-normalized (default `container_auto` environment).
 - `_OpenAICodeExecutionContext` tracks whether the request uses shell transport and collects container-target `UploadedFile` references to merge into `environment.file_ids`.
 

@@ -209,6 +209,44 @@ asyncio.run(main())
 
     Mounted files must be [`UploadedFile`][pydantic_ai.messages.UploadedFile] instances with `provider_name='openai'`. Container-target uploads require [`ShellTool`][pydantic_ai.builtin_tools.ShellTool] (OpenAI's `code_interpreter` container does not support mounted `file_ids`). The OpenAI-specific [`OpenAIResponsesModelSettings.openai_shell_uploaded_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_uploaded_files] helper works with either a raw hosted `shell` tool or [`ShellTool`][pydantic_ai.builtin_tools.ShellTool], and only supports the hosted `container_auto` environment, not `local` or `container_reference`.
 
+#### Container reuse
+
+By default, each request creates a fresh `container_auto` environment. To reuse an existing container across turns, set [`OpenAIResponsesModelSettings.openai_shell_container`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_container] to the container ID:
+
+```python {title="shell_container_reuse.py" test="skip"}
+from pydantic_ai import Agent, ShellTool
+from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
+agent = Agent('openai-responses:gpt-5.2', builtin_tools=[ShellTool()])
+
+# First turn — let OpenAI create a container
+result1 = agent.run_sync('Create a file called hello.txt with "Hello, world!" in it.')
+
+# Extract the container ID from the shell call in the response
+container_id = None
+for call, ret in result1.response.builtin_tool_calls:
+    if (env := call.args_as_dict().get('environment')) and env.get('type') == 'container_reference':
+        container_id = env['container_id']
+        break
+
+# Second turn — reuse the same container
+result2 = agent.run_sync(
+    'Read hello.txt and tell me its contents.',
+    model_settings=OpenAIResponsesModelSettings(openai_shell_container=container_id),
+)
+print(result2.output)
+#> The file contains: Hello, world!
+```
+
+!!! note
+
+    An explicit container ID (`openai_shell_container='cntr_xxx'`) cannot be combined with
+    [`ShellTool.skills`][pydantic_ai.builtin_tools.ShellTool.skills],
+    [`ShellTool.network_policy`][pydantic_ai.builtin_tools.ShellTool.network_policy],
+    [`UploadedFile(target='container')`][pydantic_ai.messages.UploadedFile], or
+    [`openai_shell_uploaded_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_uploaded_files],
+    as these require a `container_auto` environment.
+
 #### Computer use
 
 Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in [`OpenAIResponsesModelSettings.openai_builtin_tools`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_builtin_tools]. It doesn't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this built-in tool.

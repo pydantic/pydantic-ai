@@ -467,6 +467,20 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     environment and add the listed file IDs to its `environment.file_ids`.
     """
 
+    openai_shell_container: str | Literal[False] | None
+    """Container configuration for the OpenAI shell tool.
+
+    Controls which container the shell tool uses:
+
+    - `None` (default): Creates a fresh `container_auto` environment each time.
+      Container reuse across turns happens implicitly via message history round-tripping.
+    - A string (e.g. `'cntr_xxx'`): Use this specific container via `container_reference`.
+      Cannot be combined with `ShellTool.skills`, `ShellTool.network_policy`,
+      `UploadedFile(target='container')`, or `openai_shell_uploaded_files`.
+    - `False`: Explicitly force a fresh container, ignoring any container references
+      in message history.
+    """
+
     openai_reasoning_generate_summary: Literal['detailed', 'concise']
     """Deprecated alias for `openai_reasoning_summary`."""
 
@@ -1750,6 +1764,7 @@ class OpenAIResponsesModel(Model):
             self._get_builtin_tools(
                 model_request_parameters,
                 code_execution_context=code_execution_context,
+                model_settings=model_settings,
             )
             + self._get_openai_builtin_tools(
                 model_settings,
@@ -1979,6 +1994,7 @@ class OpenAIResponsesModel(Model):
         model_request_parameters: ModelRequestParameters,
         *,
         code_execution_context: _OpenAICodeExecutionContext,
+        model_settings: OpenAIResponsesModelSettings,
     ) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
         has_image_generating_tool = False
@@ -1986,6 +2002,7 @@ class OpenAIResponsesModel(Model):
             mapped_tool, tool_generates_images = self._map_builtin_tool(
                 tool,
                 code_execution_context=code_execution_context,
+                model_settings=model_settings,
             )
             tools.append(mapped_tool)
             has_image_generating_tool = has_image_generating_tool or tool_generates_images
@@ -1999,6 +2016,7 @@ class OpenAIResponsesModel(Model):
         tool: AbstractBuiltinTool,
         *,
         code_execution_context: _OpenAICodeExecutionContext,
+        model_settings: OpenAIResponsesModelSettings,
     ) -> tuple[responses.ToolParam, bool]:
         if isinstance(tool, WebSearchTool):
             return self._map_builtin_web_search_tool(tool), False
@@ -2014,6 +2032,7 @@ class OpenAIResponsesModel(Model):
                 self._map_builtin_shell_tool(
                     tool,
                     code_execution_context=code_execution_context,
+                    model_settings=model_settings,
                 ),
                 True,
             )
@@ -2051,24 +2070,47 @@ class OpenAIResponsesModel(Model):
         tool: ShellTool,
         *,
         code_execution_context: _OpenAICodeExecutionContext,
+        model_settings: OpenAIResponsesModelSettings,
     ) -> responses.ToolParam:
-        environment: ContainerAutoParam = {
+        container_setting = model_settings.get('openai_shell_container')
+
+        if isinstance(container_setting, str):
+            # Explicit container reference — validate no conflicting options
+            has_container_auto_features = (
+                tool.skills
+                or tool.network_policy is not None
+                or code_execution_context.uploaded_files
+                or model_settings.get('openai_shell_uploaded_files')
+            )
+            if has_container_auto_features:
+                raise UserError(
+                    '`openai_shell_container` with an explicit container ID cannot be combined with '
+                    '`ShellTool.skills`, `ShellTool.network_policy`, `UploadedFile(target="container")`, '
+                    'or `openai_shell_uploaded_files`. These options require a `container_auto` environment.'
+                )
+            environment: ContainerAutoParam | ContainerReferenceParam = ContainerReferenceParam(
+                type=_OPENAI_CONTAINER_REFERENCE_TYPE,
+                container_id=container_setting,
+            )
+            return FunctionShellToolParam(type=_OPENAI_SHELL_TOOL_NAME, environment=environment)
+
+        auto_environment: ContainerAutoParam = {
             'type': _OPENAI_CONTAINER_AUTO_TYPE,
         }
         if tool.skills:
-            environment['skills'] = [_map_openai_skill_reference(skill) for skill in tool.skills]
+            auto_environment['skills'] = [_map_openai_skill_reference(skill) for skill in tool.skills]
         if code_execution_context.uploaded_files:
-            environment['file_ids'] = _get_openai_uploaded_file_ids(
+            auto_environment['file_ids'] = _get_openai_uploaded_file_ids(
                 code_execution_context.uploaded_files,
                 provider_name=self.system,
                 model_name='OpenAIResponsesModel',
             )
         if tool.network_policy is not None:
-            environment['network_policy'] = cast(
+            auto_environment['network_policy'] = cast(
                 OpenAIContainerAutoNetworkPolicy,
                 _map_openai_code_execution_network_policy(tool.network_policy),
             )
-        return FunctionShellToolParam(type=_OPENAI_SHELL_TOOL_NAME, environment=environment)
+        return FunctionShellToolParam(type=_OPENAI_SHELL_TOOL_NAME, environment=auto_environment)
 
     def _map_builtin_mcp_server_tool(self, tool: MCPServerTool) -> responses.tool_param.Mcp:
         mcp_tool = responses.tool_param.Mcp(
