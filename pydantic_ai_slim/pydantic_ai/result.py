@@ -3,7 +3,16 @@ from __future__ import annotations as _annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Iterator,
+    Sequence,
+)
 from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -326,7 +335,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     ) -> AsyncIterator[str]:
         """Stream the response as an async iterable of text."""
 
-        async def _stream_text_deltas() -> AsyncIterator[str]:
+        async def _stream_text_deltas() -> AsyncGenerator[str]:
             async with _utils.group_by_temporal(self._stream_text_deltas_ungrouped(), debounce_by) as group_iter:
                 async for items in group_iter:
                     # Note: we are currently just dropping the part index on the group here
