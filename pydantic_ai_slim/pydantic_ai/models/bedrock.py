@@ -750,7 +750,7 @@ class BedrockConverseModel(Model):
                                     )
                             elif is_multi_modal_content(item):
                                 if isinstance(item, AudioUrl):
-                                    raise UserError('AudioUrl is not supported in Bedrock tool returns')
+                                    raise NotImplementedError('AudioUrl is not supported in Bedrock tool returns')
                                 file_block = await self._map_file_to_content_block(item, document_count)  # pyright: ignore[reportArgumentType]
                                 kind = next((k for k in ('image', 'document', 'video') if k in file_block), None)
                                 if kind in profile.bedrock_supported_media_kinds_in_tool_returns:

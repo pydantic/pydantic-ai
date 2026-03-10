@@ -1058,6 +1058,8 @@ class BaseToolReturnPart:
         elif isinstance(self.content, list):
             non_files: list[Any] = []
             files: list[MultiModalContent] = []
+            # ToolReturnContent uses a recursive TypeAliasType at runtime (for Pydantic validation)
+            # but a simpler union at type-check time, so pyright can't infer `p`'s type from the list.
             for p in self.content:  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
                 if is_multi_modal_content(p):
                     files.append(p)
@@ -1181,6 +1183,8 @@ class BaseToolReturnPart:
 
         if was_list:
             return tool_return_ta.dump_json(tool_content_parts).decode(), file_content
+        # Safe: when was_list is False, content is either scalar data (→ str item) or a single
+        # MultiModalContent (→ 'See file ...' placeholder), so tool_content_parts always has one entry.
         return tool_content_parts[0], file_content
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
