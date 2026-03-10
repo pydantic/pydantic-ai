@@ -19,6 +19,7 @@ __all__ = (
     'Equals',
     'EqualsExpected',
     'Contains',
+    'ContainsExpected',
     'IsInstance',
     'MaxDuration',
     'LLMJudge',
@@ -63,11 +64,11 @@ def _truncated_repr(value: Any, max_length: int = 100) -> str:
 
 @dataclass(repr=False)
 class Contains(Evaluator[object, object, object]):
-    """Check if the output contains the expected output.
+    """Check if the output contains the provided value.
 
-    For strings, checks if expected_output is a substring of output.
-    For lists/tuples, checks if expected_output is in output.
-    For dicts, checks if all key-value pairs in expected_output are in output.
+    For strings, checks if provided value is a substring of output.
+    For lists/tuples, checks if provided value is in output.
+    For dicts, checks if all key-value pairs in provided value are in output.
     For model-like types (BaseModel, dataclasses), converts to a dict and checks key-value pairs.
 
     Note: case_sensitive only applies when both the value and output are strings.
@@ -81,13 +82,20 @@ class Contains(Evaluator[object, object, object]):
     def evaluate(
         self,
         ctx: EvaluatorContext[object, object, object],
+    ) -> EvaluationReason | dict[str, bool]:
+        return self._check_containment(ctx, self.value)
+
+    def _check_containment(
+        self,
+        ctx: EvaluatorContext[object, object, object],
+        target_value: Any,
     ) -> EvaluationReason:
         # Convert objects to strings if requested
         failure_reason: str | None = None
-        as_strings = self.as_strings or (isinstance(self.value, str) and isinstance(ctx.output, str))
+        as_strings = self.as_strings or (isinstance(target_value, str) and isinstance(ctx.output, str))
         if as_strings:
             output_str = str(ctx.output)
-            expected_str = str(self.value)
+            expected_str = str(target_value)
 
             if not self.case_sensitive:
                 output_str = output_str.lower()
@@ -112,9 +120,9 @@ class Contains(Evaluator[object, object, object]):
                     # Cast to Any to avoid type checking issues
                     output_dict = cast(dict[Any, Any], ctx.output)  # pyright: ignore[reportUnknownMemberType]
 
-                if isinstance(self.value, dict):
+                if isinstance(target_value, dict):
                     # Cast to Any to avoid type checking issues
-                    expected_dict = cast(dict[Any, Any], self.value)  # pyright: ignore[reportUnknownMemberType]
+                    expected_dict = cast(dict[Any, Any], target_value)  # pyright: ignore[reportUnknownMemberType]
                     for k in expected_dict:
                         if k not in output_dict:
                             k_trunc = _truncated_repr(k, max_length=30)
@@ -129,16 +137,46 @@ class Contains(Evaluator[object, object, object]):
                             )
                             break
                 else:
-                    if self.value not in output_dict:
+                    if target_value not in output_dict:
                         output_trunc = _truncated_repr(output_dict, max_length=200)
                         failure_reason = f'Output {output_trunc} does not contain provided value as a key'
-            elif self.value not in ctx.output:  # pyright: ignore[reportOperatorIssue]  # will be handled by except block
+            elif target_value not in ctx.output:  # pyright: ignore[reportOperatorIssue]  # will be handled by except block
                 output_trunc = _truncated_repr(ctx.output, max_length=200)
                 failure_reason = f'Output {output_trunc} does not contain provided value'
         except (TypeError, ValueError) as e:
             failure_reason = f'Containment check failed: {e}'
 
         return EvaluationReason(value=failure_reason is None, reason=failure_reason)
+
+
+@dataclass(repr=False)
+class ContainsExpected(Contains):
+    """Check if the output contains the expected output.
+
+    For strings, checks if expected_output is a substring of output.
+    For lists/tuples, checks if expected_output is in output.
+    For dicts, checks if all key-value pairs in expected_output are in output.
+    For model-like types (BaseModel, dataclasses), converts to a dict and checks key-value pairs.
+
+    Note: case_sensitive only applies when both the value and output are strings.
+
+    This uses the same logic as `Contains`, but compares against
+    `ctx.expected_output` instead of a fixed value.
+    """
+
+    # The `value` field is required by the base class, but we won't use it in this subclass.
+    value: Any = field(default=None, init=False)
+
+    def evaluate(
+        self,
+        ctx: EvaluatorContext[object, object, object],
+    ) -> EvaluationReason | dict[str, bool]:
+        if ctx.expected_output is None:
+            return EvaluationReason(
+                value=False, reason='Containment check failed: No expected_output provided in context.'
+            )
+
+        return self._check_containment(ctx, ctx.expected_output)
 
 
 @dataclass(repr=False)

@@ -153,6 +153,79 @@ dataset = Dataset(
 
 ---
 
+### ContainsExpected
+
+Check if the output contains the expected output defined in the case.
+
+```python
+from pydantic_evals.evaluators import ContainsExpected
+
+ContainsExpected(
+    case_sensitive=True,
+    as_strings=False,
+)
+```
+
+**Parameters:**
+
+- `case_sensitive` (bool): Case-sensitive comparison for strings (default: `True`)
+- `as_strings` (bool): Convert both values to strings before checking (default: `False`)
+- `evaluation_name` (str | None): Custom name for this evaluation in reports
+
+**Returns:** [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason] - Pass/fail with explanation
+
+**Behavior:**
+
+This evaluator uses the same logic as [`Contains`][pydantic_evals.evaluators.Contains], but dynamically pulls the comparison value from the case's expected_output.
+- Strings: Checks if `expected_output` is a substring of the actual output.
+- Collections (Lists/Tuples): Checks if `expected_output` is a member of the result.
+- Dictionaries/Models: Checks if all key-value pairs defined in expected_output exist in the result.
+
+**Example:**
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import ContainsExpected
+
+dataset = Dataset(
+    # Define expected substring in `expected_output` rather than
+    # a value passed to Contains
+    cases=[Case(inputs='test', expected_output='terms and conditions')],
+    evaluators=[
+        ContainsExpected(case_sensitive=False),
+        # Compare to Contains(value='terms and conditions', case_sensitive=False)
+    ],
+)
+
+dataset = Dataset(
+    cases=[
+        Case(
+            name='extract_entities',
+            inputs='The CEO of Acme Corp is Alice Smith.',
+            expected_output={'company': 'Acme Corp', 'role': 'CEO'},
+        ),
+    ],
+    evaluators=[
+        # Ensures the output dict contains at least the company and role keys
+        ContainsExpected()
+    ],
+)
+```
+
+**Use Cases:**
+
+- Validating that specific facts exist in a long-form response.
+- Checking that a generated JSON object contains mandatory fields while ignoring optional ones.
+- Keyword verification against dynamic ground truth.
+
+**Notes:**
+
+- Skips evaluation if `expected_output` is `None` (returns empty dict `{}`)
+- Inherits all behavior from Contains, including the as_strings and case_sensitive toggles.
+- Useful for "partial match" scenarios where the model might return extra information that shouldn't cause a failure.
+
+---
+
 ## Type Validation
 
 ### IsInstance

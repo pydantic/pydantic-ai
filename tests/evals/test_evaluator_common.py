@@ -21,6 +21,7 @@ with try_import() as imports_successful:
     from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
     from pydantic_evals.evaluators.common import (
         Contains,
+        ContainsExpected,
         Equals,
         EqualsExpected,
         HasMatchingSpan,
@@ -211,6 +212,19 @@ async def test_contains_invalid_type():
     result = evaluator.evaluate(MockContext(output=Unhashable()))
     assert result.value is False
     assert result.reason and result.reason.startswith("Containment check failed: argument of type 'Unhashable'")
+
+
+async def test_contains_expected():
+    """Test ContainsExpected evaluator."""
+    evaluator = ContainsExpected()
+
+    # Test string containment against expected output
+    assert evaluator.evaluate(MockContext(output='this is a test', expected_output='test')).value is True
+
+    # Test string non-containment against expected output
+    assert evaluator.evaluate(MockContext(output='no match', expected_output='test output')) == snapshot(
+        EvaluationReason(value=False, reason="Output string 'no match' does not contain expected string 'test output'")
+    )
 
 
 async def test_is_instance():
