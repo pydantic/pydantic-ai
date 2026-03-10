@@ -6,7 +6,7 @@ import inspect
 import re
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
@@ -175,7 +175,7 @@ async def _cleanup_temporal_group(
 
 
 @asynccontextmanager
-async def group_by_temporal(  # noqa: C901
+async def group_by_temporal(
     aiterable: AsyncIterable[T], soft_max_interval: float | None
 ) -> AsyncIterator[AsyncIterable[list[T]]]:
     """Group items from an async iterable into lists based on time interval between them.

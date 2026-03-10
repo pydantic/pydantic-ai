@@ -3534,6 +3534,8 @@ async def test_uploaded_file_audio_not_supported(allow_model_requests: None, bed
                 UploadedFile(file_id='s3://bucket/audio.wav', provider_name='bedrock', media_type='audio/wav'),
             ]
         )
+
+
 async def test_bedrock_streamed_response_cancel():
     """Test that BedrockStreamedResponse.cancel() closes the underlying event stream."""
     from mypy_boto3_bedrock_runtime.type_defs import ConverseStreamOutputTypeDef

@@ -6256,6 +6256,8 @@ async def test_google_prompt_feedback_streaming(
         assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
         assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
         assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True
+
+
 async def test_gemini_streamed_response_cancel():
     """Test that GeminiStreamedResponse.cancel() closes the underlying stream."""
 

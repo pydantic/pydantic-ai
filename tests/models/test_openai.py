@@ -4556,6 +4556,8 @@ async def test_openai_chat_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I'm sorry, I can't help with that."
+
+
 async def test_openai_streamed_response_cancel():
     """Test that OpenAIStreamedResponse.cancel() closes the underlying stream."""
     from pydantic_ai.models import ModelRequestParameters
