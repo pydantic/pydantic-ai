@@ -144,7 +144,7 @@ async def test_create_http_client_usage(mocker: MockerFixture):
 
         provider = LiteLLMProvider(api_key='test-key')
 
-        mock_create_func.assert_called_once_with(provider='litellm')
+        mock_create_func.assert_called_once_with()
 
         # Verify the client was created
         assert isinstance(provider.client, AsyncOpenAI)

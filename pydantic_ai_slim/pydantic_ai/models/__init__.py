@@ -1329,7 +1329,9 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
     )
 
 
-def cached_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx.AsyncClient:
+def cached_async_http_client(
+    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
+) -> httpx.AsyncClient:
     """Deprecated. Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
     warnings.warn(
         'cached_async_http_client is deprecated, use create_async_http_client instead. '
