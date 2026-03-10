@@ -873,15 +873,19 @@ class Model(ABC):
 
         if _profile.context_window is None:
             # Try to resolve from genai-prices, first by system, then by base_url
-            for provider_id, get_api_url in [(self.system, lambda: None), (None, lambda: self.base_url)]:
+            try:
+                provider_url = self.base_url
+            except UserError:
+                provider_url = None
+            for provider_id, provider_api_url in [(self.system, None), (None, provider_url)]:
                 try:
                     _, model_info = get_snapshot().find_provider_model(
-                        self.model_name, None, provider_id, get_api_url()
+                        self.model_name, None, provider_id, provider_api_url
                     )
                     if model_info.context_window is not None:
                         _profile = replace(_profile, context_window=model_info.context_window)
                         break
-                except (LookupError, UserError):
+                except LookupError:
                     pass
 
         return _profile
