@@ -23,7 +23,7 @@ if [ -n "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
     fi
 else
     # Fall back to gcloud
-    GCLOUD="$(command -v gcloud 2>/dev/null || echo "$HOME/projects/google-cloud-sdk/bin/gcloud")"
+    GCLOUD="$(command -v gcloud 2>/dev/null)"
     if [ ! -x "$GCLOUD" ]; then
         echo "ERROR: No GOOGLE_APPLICATION_CREDENTIALS set and gcloud not found."
         echo "Either set GOOGLE_APPLICATION_CREDENTIALS or install Google Cloud SDK."
