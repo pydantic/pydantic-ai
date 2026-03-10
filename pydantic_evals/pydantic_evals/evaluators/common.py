@@ -180,9 +180,7 @@ class ContainsExpected(Evaluator[object, object, object]):
         ctx: EvaluatorContext[object, object, object],
     ) -> EvaluationReason | dict[str, bool]:
         if ctx.expected_output is None:
-            return EvaluationReason(
-                value=False, reason='Containment check failed: No expected_output provided in context.'
-            )
+            return {}  # Only compare if expected output is provided
 
         return _check_containment(
             ctx,

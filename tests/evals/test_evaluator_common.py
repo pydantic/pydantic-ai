@@ -228,6 +228,9 @@ async def test_contains_expected():
         EvaluationReason(value=False, reason="Output string 'no match' does not contain expected string 'test output'")
     )
 
+    # Test with no expected output
+    assert evaluator.evaluate(MockContext(output='this is a test', expected_output=None)) == {}
+
 
 async def test_is_instance():
     """Test IsInstance evaluator."""
