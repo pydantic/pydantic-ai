@@ -871,19 +871,19 @@ class Model(ABC):
         if effective_tools != profile_supported:
             _profile = replace(_profile, supported_builtin_tools=effective_tools)
 
-        # If context_window is none then find it from genai-prices for this model?
-
         if _profile.context_window is None:
             # Try to resolve from genai-prices
             for provider_id, provider_api_url in [(self.system, None), (None, self.base_url)]:
                 try:
+                    # TODO: (Aditya) -> We are introducing dependency on genai-prices in this module with this change
                     _, model_info = get_snapshot().find_provider_model(
                         self.model_name, None, provider_id, provider_api_url
                     )
                     if model_info.context_window is not None:
+                        # Got the model_info but context_window is None in genai-prices
                         _profile = replace(_profile, context_window=model_info.context_window)
                         break
-                except Exception:
+                except LookupError:
                     # Could not find a context window through genai-prices
                     pass
 

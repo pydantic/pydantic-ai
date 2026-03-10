@@ -86,7 +86,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     @property
     def context_window_used(self) -> float | None:
-        return self.usage.context_window_used(self.model)
+        for message in reversed(self.messages):
+            if isinstance(message, _messages.ModelResponse):
+                tokens_used = message.usage.total_tokens
+                if (ctx_window := self.model.profile.context_window) is not None:
+                    return tokens_used / ctx_window
+        return None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

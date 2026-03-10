@@ -7970,3 +7970,64 @@ async def test_central_content_filter_with_partial_content():
     # Should NOT raise ContentFilterError
     result = await agent.run('Trigger filter')
     assert result.output == 'Partially generated content...'
+
+
+def test_context_window_used():
+    """ """
+
+    count = 0
+
+    def func_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal count
+        if count == 0:
+            count += 1
+            return ModelResponse(
+                parts=[ToolCallPart('my_tool')], usage=RequestUsage(input_tokens=50000, output_tokens=25000)
+            )
+
+        return ModelResponse(
+            parts=[TextPart('Run finished.')], usage=RequestUsage(input_tokens=50000, output_tokens=12000)
+        )
+
+    agent = Agent(model=FunctionModel(func_model, profile=ModelProfile(context_window=100000)))
+
+    @agent.tool
+    def my_tool(ctx: RunContext) -> float | None:
+        return ctx.context_window_used
+
+    result = agent.run_sync('Find context window used')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Find context window used', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', tool_call_id='pyd_ai_647426d8619a4c98ba39e067b6e9e9ae')],
+                usage=RequestUsage(input_tokens=50000, output_tokens=25000),
+                model_name='function:func_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content=0.75,
+                        tool_call_id='pyd_ai_647426d8619a4c98ba39e067b6e9e9ae',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Run finished.')],
+                usage=RequestUsage(input_tokens=50000, output_tokens=12000),
+                model_name='function:func_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )

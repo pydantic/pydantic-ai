@@ -223,11 +223,6 @@ class RunUsage(UsageBase):
         new_usage.incr(other)
         return new_usage
 
-    def context_window_used(self, model: Model) -> float | None:
-        # return model.profile
-        if (ctx_window := model.profile.context_window) is not None:
-            return self.input_tokens / ctx_window
-
 
 def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
     """Increment the usage in place.
