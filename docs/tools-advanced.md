@@ -467,7 +467,7 @@ Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of end
 
 For individual tools, set `lazy=True` on [`Tool`][pydantic_ai.tools.Tool], [`@agent.tool`][pydantic_ai.agent.Agent.tool], or [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain]. For entire toolsets (including [MCP servers](mcp/client.md) and [`FastMCPToolset`][pydantic_ai.toolsets.FastMCPToolset]), use the [`.lazy()`][pydantic_ai.toolsets.AbstractToolset.lazy] method — pass a list of tool names to hide only specific tools, or `None` to hide all.
 
-```python {title="tool_search.py" test="skip"}
+```python {title="tool_search.py"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-5.2')

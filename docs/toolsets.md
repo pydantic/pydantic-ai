@@ -389,7 +389,7 @@ _(This example is complete, it can be run "as is")_
 
 To easily chain different modifications, you can also call [`.lazy()`][pydantic_ai.toolsets.AbstractToolset.lazy] on any toolset instead of directly constructing a `LazyToolset`. Pass a list of tool names to hide only specific tools, or `None` (the default) to hide all.
 
-```python {title="lazy_toolset.py" test="skip"}
+```python {title="lazy_toolset.py"}
 from pydantic_ai import Agent, FunctionToolset
 
 toolset: FunctionToolset[None] = FunctionToolset()
