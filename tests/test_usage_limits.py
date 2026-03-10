@@ -408,6 +408,35 @@ def test_add_usages_with_none_detail_value():
     )
 
 
+def test_add_does_not_mutate_details_run_usage():
+    """Regression test: Usage.__add__ must not mutate the original details dict (RunUsage)."""
+    a = RunUsage(requests=1, input_tokens=10, details={'reasoning_tokens': 5, 'custom': 100})
+    b = RunUsage(requests=1, input_tokens=5, details={'reasoning_tokens': 3})
+
+    # Snapshot of original details before addition
+    original_details = dict(a.details)  # type: ignore[arg-type]
+
+    result = a + b
+
+    # Result should have summed details
+    assert result.details == {'reasoning_tokens': 8, 'custom': 100}
+    # Original must not be mutated
+    assert a.details == original_details, f'a.details was mutated: {a.details!r} != {original_details!r}'
+
+
+def test_add_does_not_mutate_details_request_usage():
+    """Regression test: Usage.__add__ must not mutate the original details dict (RequestUsage)."""
+    a = RequestUsage(input_tokens=10, output_tokens=20, details={'reasoning_tokens': 7})
+    b = RequestUsage(input_tokens=5, output_tokens=10, details={'reasoning_tokens': 2, 'extra': 99})
+
+    original_details = dict(a.details)  # type: ignore[arg-type]
+
+    result = a + b
+
+    assert result.details == {'reasoning_tokens': 9, 'extra': 99}
+    assert a.details == original_details, f'a.details was mutated: {a.details!r} != {original_details!r}'
+
+
 async def test_tool_call_limit() -> None:
     test_agent = Agent(TestModel())
 
