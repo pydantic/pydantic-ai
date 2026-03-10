@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal, TypeAlias, cast, overload
 from pydantic import BaseModel, Discriminator
 from typing_extensions import TypedDict, assert_never, override
 
+from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelHTTPError
 from ..messages import (
     BinaryContent,
@@ -30,6 +31,7 @@ try:
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
     from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
     from openai.types.chat.chat_completion_message import Annotation as _OpenAIAnnotation
+    from openai.types.chat.completion_create_params import WebSearchOptions
     from openai.types.shared import ReasoningEffort
 
     from .openai import (
@@ -513,11 +515,14 @@ def _map_openrouter_provider_details(
     return provider_details
 
 
-def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSettings) -> OpenAIChatModelSettings:
+def _openrouter_settings_to_openai_settings(
+    model_settings: OpenRouterModelSettings, model_request_parameters: ModelRequestParameters
+) -> OpenAIChatModelSettings:
     """Transforms a 'OpenRouterModelSettings' object into an 'OpenAIChatModelSettings' object.
 
     Args:
         model_settings: The 'OpenRouterModelSettings' object to transform.
+        model_request_parameters: The 'ModelRequestParameters' object to use for the transformation.
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
@@ -536,6 +541,11 @@ def _openrouter_settings_to_openai_settings(model_settings: OpenRouterModelSetti
         extra_body['reasoning'] = reasoning
     if usage := model_settings.pop('openrouter_usage', None):
         extra_body['usage'] = usage
+
+    for builtin_tool in model_request_parameters.builtin_tools:
+        if isinstance(builtin_tool, WebSearchTool):
+            extra_body.setdefault('plugins', []).append({'id': 'web'})
+            extra_body['web_search_options'] = {'search_context_size': builtin_tool.search_context_size}
 
     model_settings['extra_body'] = extra_body
 
@@ -563,6 +573,15 @@ class OpenRouterModel(OpenAIChatModel):
         """
         super().__init__(model_name, provider=provider or OpenRouterProvider(), profile=profile, settings=settings)
 
+    @classmethod
+    @override
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        """Return the set of builtin tool types this model can handle.
+
+        OpenRouter supports web search via its plugins system.
+        """
+        return frozenset({WebSearchTool})
+
     @override
     def prepare_request(
         self,
@@ -570,9 +589,9 @@ class OpenRouterModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        merged_settings = cast(OpenRouterModelSettings, merged_settings or {})
-
-        new_settings = _openrouter_settings_to_openai_settings(merged_settings)
+        new_settings = _openrouter_settings_to_openai_settings(
+            cast(OpenRouterModelSettings, merged_settings or {}), model_request_parameters
+        )
         return new_settings, customized_parameters
 
     @override
@@ -583,11 +602,9 @@ class OpenRouterModel(OpenAIChatModel):
 
         result: OpenRouterReasoning = {}
 
-        # Map effort directly (OpenRouter uses same values)
         if resolved_thinking.effort:
             result['effort'] = resolved_thinking.effort
 
-        # If no specific settings, just enable
         if not result:
             result['enabled'] = True
 
@@ -638,6 +655,11 @@ class OpenRouterModel(OpenAIChatModel):
             model_settings = model_settings | {'extra_body': extra_body}
 
         return await super()._completions_create(messages, stream, model_settings, model_request_parameters)
+
+    @override
+    def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
+        """OpenRouter handles web search via plugins in extra_body, not via the OpenAI web_search_options parameter."""
+        return None
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:

@@ -111,7 +111,8 @@ class _StubBedrockProvider(Provider[Any]):
     def client(self) -> _StubBedrockClient:
         return self._client
 
-    def model_profile(self, model_name: str):
+    @staticmethod
+    def model_profile(model_name: str):
         return DEFAULT_PROFILE
 
 
@@ -2904,7 +2905,8 @@ async def test_bedrock_unified_thinking_config_in_request_params(bedrock_provide
         def client(self) -> _MockBedrockClient:
             return self._client
 
-        def model_profile(self, model_name: str):
+        @staticmethod
+        def model_profile(model_name: str):
             return thinking_profile  # pragma: no cover
 
     # Create the model with the mock provider
