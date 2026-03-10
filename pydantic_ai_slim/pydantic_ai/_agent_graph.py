@@ -92,8 +92,12 @@ class GraphAgentState:
     run_step: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
     metadata: dict[str, Any] | None = None
-    model_settings: ModelSettings | None = None
-    """Last-resolved model settings for the current step, used for error messages."""
+    model_settings: Any = None
+    """Last-resolved model settings for the current step, used for error messages.
+
+    Typed as `Any` because `ModelSettings` contains types like `httpx.Timeout` that
+    Pydantic cannot generate a schema for, and this dataclass is used as graph state.
+    """
 
     def increment_retries(
         self,
