@@ -200,9 +200,9 @@ dataset = Dataset(
 
 **Use Cases:**
 
-- Validating that specific facts exist in a long-form response.
 - Checking that a generated JSON object contains mandatory fields while ignoring optional ones.
 - Keyword verification against dynamic ground truth.
+- Checking must-have categories were generated in multi-label classification
 
 **Notes:**
 
