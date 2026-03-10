@@ -207,7 +207,6 @@ dataset = Dataset(
 **Notes:**
 
 - Skips evaluation if `expected_output` is `None` (returns empty dict `{}`)
-- Inherits all behavior from Contains, including the as_strings and case_sensitive toggles.
 - Useful for "partial match" scenarios where the model might return extra information that shouldn't cause a failure.
 
 ---

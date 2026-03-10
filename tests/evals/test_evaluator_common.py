@@ -219,7 +219,9 @@ async def test_contains_expected():
     evaluator = ContainsExpected()
 
     # Test string containment against expected output
-    assert evaluator.evaluate(MockContext(output='this is a test', expected_output='test')).value is True
+    assert evaluator.evaluate(MockContext(output='this is a test', expected_output='test')) == snapshot(
+        EvaluationReason(value=True)
+    )
 
     # Test string non-containment against expected output
     assert evaluator.evaluate(MockContext(output='no match', expected_output='test output')) == snapshot(
