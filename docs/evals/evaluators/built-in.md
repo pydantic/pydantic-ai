@@ -196,20 +196,6 @@ dataset = Dataset(
         # Compare to Contains(value='terms and conditions', case_sensitive=False)
     ],
 )
-
-dataset = Dataset(
-    cases=[
-        Case(
-            name='extract_entities',
-            inputs='The CEO of Acme Corp is Alice Smith.',
-            expected_output={'company': 'Acme Corp', 'role': 'CEO'},
-        ),
-    ],
-    evaluators=[
-        # Ensures the output dict contains at least the company and role keys
-        ContainsExpected()
-    ],
-)
 ```
 
 **Use Cases:**
