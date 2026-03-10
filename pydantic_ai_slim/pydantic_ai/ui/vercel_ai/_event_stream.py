@@ -79,10 +79,9 @@ def _json_dumps(obj: Any) -> str:
 
 def _tool_return_with_files(part: BaseToolReturnPart) -> Any:
     """Wrap tool_return_output with file descriptions for multimodal tool returns."""
-    output = tool_return_output(part)
     if file_descriptions := [describe_file(f) for f in part.files]:
         return [part.model_response_object(), *file_descriptions]
-    return output
+    return tool_return_output(part)
 
 
 @dataclass
