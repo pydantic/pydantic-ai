@@ -872,19 +872,16 @@ class Model(ABC):
             _profile = replace(_profile, supported_builtin_tools=effective_tools)
 
         if _profile.context_window is None:
-            # Try to resolve from genai-prices
-            for provider_id, provider_api_url in [(self.system, None), (None, self.base_url)]:
+            # Try to resolve from genai-prices, first by system, then by base_url
+            for provider_id, get_api_url in [(self.system, lambda: None), (None, lambda: self.base_url)]:
                 try:
-                    # TODO: (Aditya) -> We are introducing dependency on genai-prices in this module with this change
                     _, model_info = get_snapshot().find_provider_model(
-                        self.model_name, None, provider_id, provider_api_url
+                        self.model_name, None, provider_id, get_api_url()
                     )
                     if model_info.context_window is not None:
-                        # Got the model_info but context_window is None in genai-prices
                         _profile = replace(_profile, context_window=model_info.context_window)
                         break
-                except LookupError:
-                    # Could not find a context window through genai-prices
+                except (LookupError, UserError):
                     pass
 
         return _profile
