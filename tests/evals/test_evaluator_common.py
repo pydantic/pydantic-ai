@@ -250,6 +250,18 @@ async def test_contains_expected():
         MockContext(output=MockModel(key='value', extra='data'), expected_output={'key': 'value'})
     ) == snapshot(EvaluationReason(value=True))
 
+    # Test case insensitivity
+    evaluator_case_insensitive = ContainsExpected(case_sensitive=False)
+    assert evaluator_case_insensitive.evaluate(
+        MockContext(output='this is a test', expected_output='TEST')
+    ) == snapshot(EvaluationReason(value=True))
+
+    # Test as_strings conversion
+    evaluator_as_strings = ContainsExpected(as_strings=True)
+    assert evaluator_as_strings.evaluate(MockContext(output='The answer is 42', expected_output=42)) == snapshot(
+        EvaluationReason(value=True)
+    )
+
 
 async def test_is_instance():
     """Test IsInstance evaluator."""
