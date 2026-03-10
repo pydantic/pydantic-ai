@@ -189,11 +189,10 @@ from pydantic_evals.evaluators import ContainsExpected
 
 dataset = Dataset(
     # Define expected substring in `expected_output` rather than
-    # a value passed to Contains
+    # a value passed as Contains(value='terms and conditions')
     cases=[Case(inputs='test', expected_output='terms and conditions')],
     evaluators=[
         ContainsExpected(case_sensitive=False),
-        # Compare to Contains(value='terms and conditions', case_sensitive=False)
     ],
 )
 ```
