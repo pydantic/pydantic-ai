@@ -20,5 +20,9 @@ class Instructions(AbstractCapability[AgentDepsT]):
 
     @classmethod
     def from_spec(cls, instructions: TemplateStr[AgentDepsT] | str = '') -> Instructions[Any]:
-        """Create from spec. Accepts a string or TemplateStr instruction."""
+        """Create from spec.
+
+        Narrower than the full `Instructions` type alias (which also accepts callables
+        and sequences) because specs only support literal strings and template strings.
+        """
         return cls(instructions=instructions)

@@ -116,11 +116,13 @@ def validate_from_spec_args(
     kwargs: dict[str, Any],
     validation_context: dict[str, Any],
 ) -> tuple[tuple[Any, ...], dict[str, Any]]:
-    """Validate from_spec arguments, resolving TemplateStr types based on type hints.
+    """Validate from_spec arguments, resolving TemplateStr types via Pydantic.
 
     Inspects the ``from_spec`` method's type hints to find parameters that accept
-    TemplateStr. For those parameters, template strings (containing ``{{``) are
-    automatically compiled into TemplateStr instances.
+    TemplateStr. For those parameters, values are validated through Pydantic's
+    ``TypeAdapter``, which invokes ``TemplateStr.__get_pydantic_core_schema__``
+    to automatically compile template strings (containing ``{{``) into TemplateStr
+    instances using the deps_type/deps_schema from the validation context.
     """
     from pydantic._internal import _typing_extra
 
@@ -144,10 +146,11 @@ def validate_from_spec_args(
         if hint is None or not _hint_contains_template_str(hint):
             continue
 
+        ta = TypeAdapter(hint)
         if i < len(args):
-            new_args[i] = _resolve_templates(args[i], validation_context)
+            new_args[i] = ta.validate_python(args[i], context=validation_context)
         elif param.name in kwargs:
-            new_kwargs[param.name] = _resolve_templates(kwargs[param.name], validation_context)
+            new_kwargs[param.name] = ta.validate_python(kwargs[param.name], context=validation_context)
 
     return tuple(new_args), new_kwargs
 
@@ -163,19 +166,10 @@ def _hint_contains_template_str(hint: Any) -> bool:
     return False
 
 
-def _resolve_templates(value: Any, ctx: dict[str, Any]) -> Any:
-    """Resolve template strings in a value, converting ``{{``-containing strings to TemplateStr."""
-    if isinstance(value, str) and '{{' in value:
-        return TemplateStr(value, deps_type=ctx.get('deps_type'), deps_schema=ctx.get('deps_schema'))
-    if isinstance(value, list):
-        return [_resolve_templates(item, ctx) for item in cast(list[Any], value)]
-    return value
-
-
 def _import_pydantic_handlebars() -> Any:
     """Lazily import pydantic-handlebars with a helpful error message."""
     try:
-        import pydantic_handlebars  # pyright: ignore[reportMissingImports]
+        import pydantic_handlebars
 
         return pydantic_handlebars
     except ImportError as e:

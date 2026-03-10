@@ -103,6 +103,7 @@ __all__ = (
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
+    'Instructions',
 )
 
 
@@ -459,9 +460,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         cls,
         spec: dict[str, Any] | AgentSpec,
         *,
-        deps_type: type[AgentDepsT],
+        deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
-    ) -> Agent[AgentDepsT, str]: ...
+    ) -> Agent[T, str]: ...
 
     @classmethod
     def from_spec(
@@ -585,7 +586,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -605,7 +606,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -625,7 +626,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -990,7 +991,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-        instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        instructions: _instructions.Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
@@ -1627,6 +1628,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if isinstance(instruction, str):
                 literal_parts.append(instruction)
             else:
+                # TemplateStr instances land here too: they are callable with a
+                # RunContext parameter, so SystemPromptRunner handles them like
+                # any other system prompt function.
                 functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
 
         literal = '\n'.join(literal_parts).strip() or None
