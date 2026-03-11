@@ -42,16 +42,12 @@ def _extract_error(e: BadRequestError) -> tuple[str | None, str | None]:
     Parses the structured body rather than e.message, which includes
     SDK formatting that differs between live calls and VCR replay.
     """
-    body: dict[str, object] = e.body if isinstance(e.body, dict) else {}  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    error_obj = body.get('error') if body else None
-    if not isinstance(error_obj, dict):
-        return e.code, None
-    inner: dict[str, object] = error_obj  # pyright: ignore[reportUnknownVariableType]
-    code = inner.get('code')
-    message = inner.get('message')
+    error_obj: dict[str, object] = e.body  # pyright: ignore[reportAssignmentType]
+    code = error_obj.get('code')
+    message = error_obj.get('message')
     return (
-        str(code) if isinstance(code, str) else None,
-        str(message) if isinstance(message, str) else None,
+        code if isinstance(code, str) else None,
+        message if isinstance(message, str) else None,
     )
 
 
@@ -102,53 +98,127 @@ CASES = [
     # --- GPT-4.1 family (non-reasoning) ---
     CapabilityCase(
         model='gpt-4.1',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_parameter')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_parameter',
+                error_message="Unsupported parameter: 'reasoning.effort' is not supported with this model.",
+            )
+        ),
         temperature_result=snapshot(ProbeResult(status='success', reasoning_tokens=0)),
     ),
     CapabilityCase(
         model='gpt-4.1-mini',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_parameter')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_parameter',
+                error_message="Unsupported parameter: 'reasoning.effort' is not supported with this model.",
+            )
+        ),
         temperature_result=snapshot(ProbeResult(status='success', reasoning_tokens=0)),
     ),
     CapabilityCase(
         model='gpt-4.1-nano',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_parameter')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_parameter',
+                error_message="Unsupported parameter: 'reasoning.effort' is not supported with this model.",
+            )
+        ),
         temperature_result=snapshot(ProbeResult(status='success', reasoning_tokens=0)),
     ),
     # --- GPT-5 base (reasoning, no effort_none) ---
     CapabilityCase(
         model='gpt-5',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'gpt-5' model. Supported values are: 'minimal', 'low', 'medium', and 'high'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     CapabilityCase(
         model='gpt-5-chat-latest',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_parameter')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_parameter',
+                error_message="Unsupported parameter: 'reasoning.effort' is not supported with this model.",
+            )
+        ),
         temperature_result=snapshot(ProbeResult(status='success', reasoning_tokens=0)),
     ),
     CapabilityCase(
         model='gpt-5-codex',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'gpt-5-codex' model. Supported values are: 'low', 'medium', and 'high'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     CapabilityCase(
         model='gpt-5-mini',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'gpt-5-mini' model. Supported values are: 'minimal', 'low', 'medium', and 'high'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     CapabilityCase(
         model='gpt-5-nano',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'gpt-5-nano' model. Supported values are: 'minimal', 'low', 'medium', and 'high'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     CapabilityCase(
         model='gpt-5-pro',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'gpt-5-pro' model. Supported values are: 'high'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     # --- GPT-5.1 family ---
@@ -161,20 +231,50 @@ CASES = [
     ),
     CapabilityCase(
         model='gpt-5.1-chat-latest',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'gpt-5.1-chat-latest' model. Supported values are: 'medium'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     CapabilityCase(
         model='gpt-5.1-codex',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'gpt-5.1-codex' model. Supported values are: 'low', 'medium', and 'high'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     CapabilityCase(
         model='gpt-5.1-codex-max',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'gpt-5.1-codex-max' model. Supported values are: 'low', 'medium', 'high', and 'xhigh'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     # --- GPT-5.2 family ---
@@ -187,21 +287,51 @@ CASES = [
     ),
     CapabilityCase(
         model='gpt-5.2-chat-latest',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'gpt-5.2-chat-latest' model. Supported values are: 'medium'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     CapabilityCase(
         model='gpt-5.2-pro',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'gpt-5.2-pro' model. Supported values are: 'medium', 'high', and 'xhigh'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     # --- GPT-5.3 family ---
     CapabilityCase(
         model='gpt-5.3-chat-latest',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'gpt-5.3-chat-latest' model. Supported values are: 'medium'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     # --- GPT-5.4 ---
@@ -215,52 +345,132 @@ CASES = [
     # --- o1 family ---
     CapabilityCase(
         model='o1',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'o1' model. Supported values are: 'low', 'medium', and 'high'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     CapabilityCase(
         model='o1-pro',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'o1-pro' model. Supported values are: 'low', 'medium', and 'high'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     # --- o3 family ---
     CapabilityCase(
         model='o3',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'o3' model. Supported values are: 'low', 'medium', and 'high'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     CapabilityCase(
         model='o3-mini',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'o3-mini' model. Supported values are: 'low', 'medium', and 'high'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     CapabilityCase(
         model='o3-pro',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'o3-pro' model. Supported values are: 'low', 'medium', and 'high'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     CapabilityCase(
         model='o3-deep-research',
-        reasoning_none_result=snapshot(ProbeResult(status='error')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_message="Deep research models require at least one of 'web_search_preview', 'mcp', or 'file_search' tools.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_message="Deep research models require at least one of 'web_search_preview', 'mcp', or 'file_search' tools.",
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     # --- o4 family ---
     CapabilityCase(
         model='o4-mini',
-        reasoning_none_result=snapshot(ProbeResult(status='error', error_code='unsupported_value')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_code='unsupported_value',
+                error_message="Unsupported value: 'none' is not supported with the 'o4-mini' model. Supported values are: 'low', 'medium', and 'high'.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error', error_message="Unsupported parameter: 'temperature' is not supported with this model."
+            )
+        ),
         expected_supports_reasoning=True,
     ),
     CapabilityCase(
         model='o4-mini-deep-research',
-        reasoning_none_result=snapshot(ProbeResult(status='error')),
-        temperature_result=snapshot(ProbeResult(status='error')),
+        reasoning_none_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_message="Deep research models require at least one of 'web_search_preview', 'mcp', or 'file_search' tools.",
+            )
+        ),
+        temperature_result=snapshot(
+            ProbeResult(
+                status='error',
+                error_message="Deep research models require at least one of 'web_search_preview', 'mcp', or 'file_search' tools.",
+            )
+        ),
         expected_supports_reasoning=True,
     ),
 ]

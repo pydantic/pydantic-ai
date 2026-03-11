@@ -25,6 +25,8 @@ These parameters are not supported when reasoning is enabled (reasoning_effort !
 See https://platform.openai.com/docs/guides/reasoning for details.
 """
 
+_GPT_ALWAYS_REASONING_RE = re.compile(r'-(chat|codex|pro)')
+
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
@@ -147,7 +149,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 
     # gpt-5.x -chat, -codex, -codex-max and -pro variants accept reasoning
     # but reject effort=none and sampling params
-    is_gpt_always_reasoning = is_gpt_5_1_plus and re.search(r'-(chat|codex|pro)', model_name) is not None
+    is_gpt_always_reasoning = is_gpt_5_1_plus and _GPT_ALWAYS_REASONING_RE.search(model_name) is not None
 
     thinking_always_enabled = is_o_series or (is_gpt_5 and '-chat' not in model_name)
 
