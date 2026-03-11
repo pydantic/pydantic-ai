@@ -5,7 +5,7 @@
 This is the most common and rudimentary form of input for LLMs, and is supported by all models in Pydantic AI.
 The most direct use of text input is a single user message:
 
-```py {title="image_input.py" test="skip" lint="skip"}
+```py {title="text_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
 
 agent = Agent(model='openai:gpt-5.2')
@@ -16,7 +16,7 @@ print(result.output)
 
 Or a sequence of user messages:
 
-```py {title="image_input.py" test="skip" lint="skip"}
+```py {title="text_sequence_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
 
 agent = Agent(model='openai:gpt-5.2')
