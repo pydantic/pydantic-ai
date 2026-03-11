@@ -586,7 +586,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
 
     settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
 
-    events = [event async for event in agent.run_stream_events(prompt, model_settings=settings)]
+    async with agent.run_stream_events(prompt, model_settings=settings) as stream:
+        events = [event async for event in stream]
     annotation_event = next(
         event
         for event in events
@@ -611,7 +612,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
 
     model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent2 = Agent(model2, instructions=instructions, builtin_tools=[WebSearchTool()])
-    events2 = [event async for event in agent2.run_stream_events(prompt)]
+    async with agent2.run_stream_events(prompt) as stream2:
+        events2 = [event async for event in stream2]
     assert not any(
         (
             isinstance(event, PartDeltaEvent)
@@ -631,7 +633,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
     model3 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent3 = Agent(model3, instructions='Answer directly.')
     settings3 = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
-    events3 = [event async for event in agent3.run_stream_events('What is 2+2?', model_settings=settings3)]
+    async with agent3.run_stream_events('What is 2+2?', model_settings=settings3) as stream3:
+        events3 = [event async for event in stream3]
     assert not any(
         (
             isinstance(event, PartDeltaEvent)

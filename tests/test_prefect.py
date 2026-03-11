@@ -690,7 +690,8 @@ async def test_prefect_agent_run_stream(allow_model_requests: None):
 
 async def test_prefect_agent_run_stream_events(allow_model_requests: None):
     """Test that agent.run_stream_events() works."""
-    events = [event async for event in simple_prefect_agent.run_stream_events('What is the capital of Mexico?')]
+    async with simple_prefect_agent.run_stream_events('What is the capital of Mexico?') as stream:
+        events = [event async for event in stream]
     assert events == snapshot(
         [AgentRunResultEvent(result=AgentRunResult(output='The capital of Mexico is Mexico City.'))]
     )
@@ -754,7 +755,8 @@ async def test_run_stream_events_in_flow(allow_model_requests: None) -> None:
 
     @flow(name='test_run_stream_events_in_flow')
     async def run_stream_events_workflow():
-        return [event async for event in simple_prefect_agent.run_stream_events('What is the capital of Mexico?')]
+        async with simple_prefect_agent.run_stream_events('What is the capital of Mexico?') as stream:
+            return [event async for event in stream]
 
     with flow_raises(
         UserError,

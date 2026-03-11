@@ -781,8 +781,9 @@ async def test_dbos_agent_run_stream_events(allow_model_requests: None):
             '`agent.run_stream_events()` cannot be used with DBOS. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
         ),
     ):
-        async for _ in simple_dbos_agent.run_stream_events('What is the capital of Mexico?'):
-            pass
+        async with simple_dbos_agent.run_stream_events('What is the capital of Mexico?') as stream:
+            async for _ in stream:
+                pass
 
 
 async def test_dbos_agent_iter(allow_model_requests: None):
@@ -838,7 +839,8 @@ async def test_dbos_agent_run_stream_in_workflow(allow_model_requests: None, dbo
 async def test_dbos_agent_run_stream_events_in_workflow(allow_model_requests: None, dbos: DBOS):
     @DBOS.workflow()
     async def run_stream_events_workflow():
-        return [event async for event in simple_dbos_agent.run_stream_events('What is the capital of Mexico?')]
+        async with simple_dbos_agent.run_stream_events('What is the capital of Mexico?') as stream:
+            return [event async for event in stream]
 
     with workflow_raises(
         UserError,

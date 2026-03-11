@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import contextlib
 import logging
+import warnings
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -399,7 +400,7 @@ class StreamEventsResult(Generic[AgentDepsT, OutputDataT]):
 
     **Direct iteration (deprecated)** — cleanup via `break` is not guaranteed in all scenarios:
 
-    ```python
+    ```python {test="skip"}
     from pydantic_ai import Agent
 
     agent = Agent('openai:gpt-5.2')
@@ -435,6 +436,7 @@ class StreamEventsResult(Generic[AgentDepsT, OutputDataT]):
     )
     _managed: bool = field(default=False, init=False)
     _cleaned_up: bool = field(default=False, init=False)
+    _suppress_standalone_warning: bool = field(default=False, init=False)
 
     def __repr__(self) -> str:
         return f'StreamEventsResult(is_closed={self._cleaned_up})'
@@ -504,6 +506,14 @@ class StreamEventsResult(Generic[AgentDepsT, OutputDataT]):
             if self._managed:
                 self._active_iter = self._cm_iterate()
             else:
+                if not self._suppress_standalone_warning:
+                    warnings.warn(
+                        'Iterating `StreamEventsResult` directly is deprecated. '
+                        'Use `async with agent.run_stream_events(...) as stream:` instead '
+                        'to ensure proper cleanup.',
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
                 self._active_iter = self._standalone_iterate()
         return self._active_iter
 
@@ -551,7 +561,6 @@ class StreamEventsResult(Generic[AgentDepsT, OutputDataT]):
             raise
         finally:
             # Best-effort cleanup, but not guaranteed on break
-            # (same limitation as current async generator)
             await self._cleanup()
 
 

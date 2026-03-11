@@ -275,7 +275,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 stacklevel=2,
             )
 
-        return self.agent.run_stream_events(
+        result = self.agent.run_stream_events(
             output_type=output_type,
             message_history=message_history,
             deferred_tool_results=deferred_tool_results,
@@ -290,6 +290,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             toolsets=toolsets,
             builtin_tools=builtin_tools,
         )
+        # Suppress the standalone iteration deprecation warning — the adapter
+        # manages the stream lifecycle internally via the HTTP response.
+        result._suppress_standalone_warning = True  # pyright: ignore[reportPrivateUsage]
+        return result
 
     def run_stream(
         self,

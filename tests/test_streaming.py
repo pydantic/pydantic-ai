@@ -3232,7 +3232,8 @@ async def test_run_stream_events():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events = [event async for event in test_agent.run_stream_events('Hello')]
+    async with test_agent.run_stream_events('Hello') as stream:
+        events = [event async for event in stream]
     assert test_agent.name == 'test_agent'
 
     assert events == snapshot(
@@ -3398,8 +3399,9 @@ async def test_args_validator_failure_events():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as stream:
+        async for event in stream:
+            events.append(event)
 
     assert events == snapshot(
         [
@@ -3470,8 +3472,9 @@ async def test_args_validator_event_args_valid_field():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as stream:
+        async for event in stream:
+            events.append(event)
 
     assert events == snapshot(
         [
@@ -3524,8 +3527,9 @@ async def test_args_validator_event_args_valid_no_custom_validator():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as stream:
+        async for event in stream:
+            events.append(event)
 
     tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     assert len(tool_call_events) >= 1
@@ -3557,8 +3561,9 @@ async def test_schema_validation_failure_args_valid_false():
 
     events: list[Any] = []
     try:
-        async for event in agent.run_stream_events('call add_numbers', deps=42):  # pragma: no branch
-            events.append(event)
+        async with agent.run_stream_events('call add_numbers', deps=42) as stream:
+            async for event in stream:  # pragma: no branch
+                events.append(event)
     except UnexpectedModelBehavior:
         pass  # Expected when max retries exceeded
 
@@ -3615,8 +3620,9 @@ async def test_event_ordering_call_before_result():
         return x * 2
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('test'):
-        events.append(event)
+    async with agent.run_stream_events('test') as stream:
+        async for event in stream:
+            events.append(event)
 
     call_ids_seen: set[str] = set()
     result_ids_seen: set[str] = set()
@@ -3663,12 +3669,13 @@ async def test_args_valid_true_for_presupplied_tool_approved():
     # Second run with ToolApproved: collect events
     messages = result.all_messages()
     events: list[Any] = []
-    async for event in agent.run_stream_events(
+    async with agent.run_stream_events(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolApproved()}),
         deps=42,
-    ):
-        events.append(event)
+    ) as stream:
+        async for event in stream:
+            events.append(event)
 
     # The FunctionToolCallEvent for the pre-supplied result should have args_valid=True
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
@@ -3702,12 +3709,13 @@ async def test_args_valid_none_for_tool_denied():
     # Second run with ToolDenied
     messages = result.all_messages()
     events: list[Any] = []
-    async for event in agent.run_stream_events(
+    async with agent.run_stream_events(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolDenied('User denied this tool call')}),
         deps=42,
-    ):
-        events.append(event)
+    ) as stream:
+        async for event in stream:
+            events.append(event)
 
     # FunctionToolCallEvent should have args_valid=None (pre-supplied result, no upfront validation)
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
@@ -3736,8 +3744,9 @@ async def test_deferred_tool_validation_event_in_stream():
         raise ApprovalRequired()
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('test'):
-        events.append(event)
+    async with agent.run_stream_events('test') as stream:
+        async for event in stream:
+            events.append(event)
 
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
     assert tool_call_events
@@ -4831,11 +4840,11 @@ class TestRunStreamEventsCancellation:
         agent = Agent(FunctionModel(stream_function=stream_function))
 
         events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
-        # Direct iteration (legacy path):
-        async for event in agent.run_stream_events('test'):  # pragma: no branch
-            events.append(event)
-            if len(events) >= 3:
-                break
+        async with agent.run_stream_events('test') as stream:
+            async for event in stream:  # pragma: no branch
+                events.append(event)
+                if len(events) >= 3:
+                    break
 
         # Should have exactly 3 events (we broke at 3)
         assert len(events) == 3
@@ -4852,11 +4861,11 @@ class TestRunStreamEventsCancellation:
         agent = Agent(FunctionModel(stream_function=stream_function))
 
         events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
-        # Direct iteration (legacy path):
-        async for event in agent.run_stream_events('test'):  # pragma: no branch
-            events.append(event)
-            if len(events) >= 3:
-                break
+        async with agent.run_stream_events('test') as stream:
+            async for event in stream:  # pragma: no branch
+                events.append(event)
+                if len(events) >= 3:
+                    break
 
         # Should NOT have AgentRunResultEvent since we broke early
         assert not any(isinstance(e, AgentRunResultEvent) for e in events)
@@ -4866,9 +4875,9 @@ class TestRunStreamEventsCancellation:
         agent = Agent(TestModel())
 
         events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
-        # Direct iteration (legacy path):
-        async for event in agent.run_stream_events('Hello'):
-            events.append(event)
+        async with agent.run_stream_events('Hello') as stream:
+            async for event in stream:
+                events.append(event)
 
         # Last event should be AgentRunResultEvent
         assert len(events) > 0
@@ -4893,15 +4902,15 @@ class TestRunStreamEventsCancellation:
 
         events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
         saw_part_start = False
-        # Direct iteration (legacy path):
-        async for event in agent.run_stream_events('Call my_tool'):  # pragma: no branch
-            events.append(event)
-            # Break after seeing a PartStartEvent for the tool call
-            if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart):
-                saw_part_start = True
-            # Break after we've seen the first delta (partial args)
-            if saw_part_start and isinstance(event, PartDeltaEvent):
-                break
+        async with agent.run_stream_events('Call my_tool') as stream:
+            async for event in stream:  # pragma: no branch
+                events.append(event)
+                # Break after seeing a PartStartEvent for the tool call
+                if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart):
+                    saw_part_start = True
+                # Break after we've seen the first delta (partial args)
+                if saw_part_start and isinstance(event, PartDeltaEvent):
+                    break
 
         # Should NOT have AgentRunResultEvent since we broke early
         assert not any(isinstance(e, AgentRunResultEvent) for e in events)
@@ -4931,12 +4940,12 @@ class TestRunStreamEventsCancellation:
         agent = Agent(FunctionModel(stream_function=stream_function))
 
         events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
-        # Direct iteration (legacy path):
-        async for event in agent.run_stream_events('test'):  # pragma: no branch
-            events.append(event)
-            # Break after a few events
-            if len(events) >= 5:
-                break
+        async with agent.run_stream_events('test') as stream:
+            async for event in stream:  # pragma: no branch
+                events.append(event)
+                # Break after a few events
+                if len(events) >= 5:
+                    break
 
         # Should have events but not the final AgentRunResultEvent
         assert len(events) == 5
@@ -4979,10 +4988,10 @@ class TestRunStreamEventsCancellation:
 
         agent = Agent(FunctionModel(stream_function=stream_function))
 
-        # Direct iteration (legacy path):
-        async for event in agent.run_stream_events('test'):  # pragma: no branch
-            if isinstance(event, PartDeltaEvent):
-                break
+        async with agent.run_stream_events('test') as stream:
+            async for event in stream:  # pragma: no branch
+                if isinstance(event, PartDeltaEvent):
+                    break
 
         # Give a moment for the cancellation to propagate
         await asyncio.sleep(0.01)
@@ -5044,12 +5053,12 @@ class TestCoverageEdgeCases:
             return 'tool result'  # pragma: no cover
 
         events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
-        # Direct iteration (legacy path):
-        async for event in agent.run_stream_events('Call the tool'):  # pragma: no branch
-            events.append(event)
-            # Break when we see the tool call event (during tool streaming, not model streaming)
-            if isinstance(event, FunctionToolCallEvent):
-                break
+        async with agent.run_stream_events('Call the tool') as stream:
+            async for event in stream:  # pragma: no branch
+                events.append(event)
+                # Break when we see the tool call event (during tool streaming, not model streaming)
+                if isinstance(event, FunctionToolCallEvent):
+                    break
 
         # We should have seen the tool call event
         assert any(isinstance(e, FunctionToolCallEvent) for e in events)
@@ -5424,6 +5433,71 @@ class TestStreamEventsContextManager:
         with pytest.raises(RuntimeError, match='StreamEventsResult has been closed and cannot be reused'):
             async for _ in stream:
                 pass
+
+    async def test_standalone_iteration_works_with_deprecation_warning(self):
+        """Standalone iteration still works end-to-end but emits a DeprecationWarning."""
+
+        async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+            yield 'hello '
+            yield 'world'
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+        stream_result = agent.run_stream_events('test')
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        with pytest.warns(DeprecationWarning, match='Iterating `StreamEventsResult` directly is deprecated'):
+            async for event in stream_result:
+                events.append(event)
+
+        assert len(events) > 0
+        last_event = events[-1]
+        assert isinstance(last_event, AgentRunResultEvent)
+        assert last_event.result.output == snapshot('hello world')
+        assert stream_result.is_closed
+
+    async def test_standalone_iteration_break(self):
+        """Breaking out of standalone iteration performs best-effort cleanup."""
+
+        async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+            yield 'hello '
+            yield 'world'
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+        stream_result = agent.run_stream_events('test')
+
+        events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+        with pytest.warns(DeprecationWarning):
+            async for event in stream_result:  # pragma: no branch
+                events.append(event)
+                if len(events) >= 2:
+                    break
+
+        assert len(events) == 2
+        assert not any(isinstance(e, AgentRunResultEvent) for e in events)
+
+    async def test_standalone_iteration_cancelled(self):
+        """External cancellation during standalone iteration propagates CancelledError and cleans up."""
+
+        async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+            yield 'hello '
+            await asyncio.sleep(10)  # Block long enough to be cancelled
+            yield 'world'  # pragma: no cover
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+        stream_result = agent.run_stream_events('test')
+
+        async def iterate():
+            with pytest.warns(DeprecationWarning):
+                async for _ in stream_result:
+                    pass  # pragma: no cover
+
+        task = asyncio.create_task(iterate())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert stream_result.is_closed
 
     async def test_context_manager_with_tool_calls(self):
         """Context manager streams tool-related events correctly."""

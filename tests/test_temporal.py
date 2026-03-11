@@ -1413,7 +1413,8 @@ async def test_temporal_agent_run_stream(allow_model_requests: None):
 
 
 async def test_temporal_agent_run_stream_events(allow_model_requests: None):
-    events = [event async for event in simple_temporal_agent.run_stream_events('What is the capital of Mexico?')]
+    async with simple_temporal_agent.run_stream_events('What is the capital of Mexico?') as stream:
+        events = [event async for event in stream]
     assert events == snapshot(
         [
             PartStartEvent(index=0, part=TextPart(content='The')),
@@ -1599,7 +1600,8 @@ async def test_temporal_agent_run_stream_in_workflow(allow_model_requests: None,
 class SimpleAgentWorkflowWithRunStreamEvents:
     @workflow.run
     async def run(self, prompt: str) -> list[AgentStreamEvent | AgentRunResultEvent]:
-        return [event async for event in simple_temporal_agent.run_stream_events(prompt)]
+        async with simple_temporal_agent.run_stream_events(prompt) as stream:
+            return [event async for event in stream]
 
 
 async def test_temporal_agent_run_stream_events_in_workflow(allow_model_requests: None, client: Client):

@@ -1072,9 +1072,10 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
     agent = Agent(m)
 
     result: AgentRunResult | None = None
-    async for event in agent.run_stream_events(user_prompt='How do I cross the street?'):
-        if isinstance(event, AgentRunResultEvent):
-            result = event.result
+    async with agent.run_stream_events(user_prompt='How do I cross the street?') as stream:
+        async for event in stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
 
     assert result is not None
     assert result.all_messages() == snapshot(
