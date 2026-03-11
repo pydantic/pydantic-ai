@@ -19,6 +19,8 @@ from pydantic_ai import (
     ToolCallPart,
     ToolsetTool,
     WrapperToolset,
+    Agent,
+    output,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
@@ -865,7 +867,6 @@ def test_dynamic_toolset_id():
 
 def test_agent_toolset_decorator_id():
     """Test that @agent.toolset decorator requires explicit id or defaults to None."""
-    from pydantic_ai import Agent
     from pydantic_ai.models.test import TestModel
 
     agent = Agent(TestModel())
@@ -892,3 +893,12 @@ def test_agent_toolset_decorator_id():
     # Third toolset should have explicit id
     assert isinstance(toolsets[2], DynamicToolset)
     assert toolsets[2].id == 'custom_id'
+
+
+def test_tool_without_runctx_raises_warning():
+    toolset = FunctionToolset()
+    with pytest.warns(DeprecationWarning, match='Passing a plain function to FunctionToolset.tool'):
+
+        @toolset.tool
+        def add(x: int):
+            return x + 1
