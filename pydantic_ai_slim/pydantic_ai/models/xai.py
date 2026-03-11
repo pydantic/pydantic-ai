@@ -1080,6 +1080,12 @@ def _extract_usage(
         provider_fallback='x_ai',  # Pricing file is defined as x_ai.yml
         details=details or None,
     )
+    cache_read_tokens = extracted.details.pop('cache_read_tokens', 0)
+    if not extracted.cache_read_tokens:
+        extracted.cache_read_tokens = cache_read_tokens
+    cache_write_tokens = extracted.details.pop('cache_write_tokens', 0)
+    if not extracted.cache_write_tokens:
+        extracted.cache_write_tokens = cache_write_tokens
 
     # Ensure token counts are set even if genai-prices extraction failed
     if extracted.input_tokens == 0 and usage_data['prompt_tokens']:
