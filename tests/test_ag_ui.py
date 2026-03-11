@@ -1889,8 +1889,8 @@ async def test_builtin_tool_return_json_string_content_parsed() -> None:
     assert return_part.tool_name == 'web_fetch'
     assert return_part.tool_call_id == 'srvtoolu_abc123'
     assert return_part.provider_name == 'anthropic'
-    assert isinstance(return_part.content, dict)
-    assert return_part.content == {'type': 'web_fetch_result', 'url': 'https://example.com', 'page_content': 'hello'}
+    content = return_part.content
+    assert content == {'type': 'web_fetch_result', 'url': 'https://example.com', 'page_content': 'hello'}
 
 
 async def test_builtin_tool_return_plain_string_content_preserved() -> None:
