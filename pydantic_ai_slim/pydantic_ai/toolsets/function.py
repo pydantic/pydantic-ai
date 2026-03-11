@@ -8,7 +8,6 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
-from .._function_schema import _takes_ctx  # type:ignore
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, UserError
 from ..tools import (
@@ -228,26 +227,15 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         def tool_decorator(
             func_: ToolFuncContext[AgentDepsT, ToolParams],
         ) -> ToolFuncContext[AgentDepsT, ToolParams]:
-            # noinspection PyTypeChecker
-            takes_ctx = True
-
             # TODO(v2): Remove this deprecation fallback
             #  and let takes_ctx=True propagate, which will raise a runtime error
             #  in function_schema if the function doesn't accept RunContext.
 
             # Is the func actually taking RunContext or is it a plain function in disguise?
-            if not _takes_ctx(func_):
-                # User is using a plain function with tool
-                warnings.warn(
-                    'Passing a plain function to FunctionToolset.tool() is deprecated, use tool_plain() instead.',
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                takes_ctx = False
 
             self.add_function(
                 func=func_,
-                takes_ctx=takes_ctx,
+                takes_ctx=None,
                 name=name,
                 description=description,
                 retries=retries,
@@ -262,6 +250,14 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 metadata=metadata,
                 timeout=timeout,
             )
+            tool_name = name or func_.__name__
+            if not self.tools[tool_name].function_schema.takes_ctx:
+                warnings.warn(
+                    'Passing a plain function to FunctionToolset.tool() is deprecated, use tool_plain() instead.',
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+
             return func_
 
         return tool_decorator if func is None else tool_decorator(func)
