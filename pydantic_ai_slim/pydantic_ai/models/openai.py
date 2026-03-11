@@ -1739,15 +1739,17 @@ class OpenAIResponsesModel(Model):
                 return model_response
 
             # Retry once on invalid_encrypted_content by stripping signatures
+            body = e.body
             if (
                 e.status_code == 400
-                and isinstance(e.body, dict)
-                and e.body.get('error', {}).get('code') == 'invalid_encrypted_content'
+                and isinstance(body, dict)
+                and isinstance(body.get('error'), dict)
+                and body['error'].get('code') == 'invalid_encrypted_content'
             ):
                 # Strip encrypted_content from reasoning items and retry
                 for msg in openai_messages:
                     if isinstance(msg, dict) and msg.get('type') == 'reasoning':
-                        msg['encrypted_content'] = None
+                        msg.pop('encrypted_content', None)  # type: ignore[misc]
                 # Also remove reasoning.encrypted_content from include
                 include = [i for i in include if i != 'reasoning.encrypted_content']
                 try:

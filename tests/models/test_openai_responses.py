@@ -10273,7 +10273,11 @@ async def test_gateway_provider_skips_encrypted_content(allow_model_requests: No
 
     # Check that encrypted_content was NOT included in the request
     kwargs = get_mock_responses_kwargs(mock_client)
-    assert 'reasoning.encrypted_content' not in kwargs[0].get('include', [])
+    first_include = kwargs[0].get('include', [])
+    # include may be OMIT (not iterable) when empty — that's fine, it means nothing was included
+    if isinstance(first_include, list):
+        assert 'reasoning.encrypted_content' not in first_include
+    # If it's OMIT, encrypted_content was definitely not included
 
     # Second turn - should NOT send encrypted_content back
     result2 = await agent.run('Add 5 to that', message_history=result.all_messages())
@@ -10312,7 +10316,23 @@ async def test_invalid_encrypted_content_retry(allow_model_requests: None):
             ),
         ],
     )
-    mock_client = MockOpenAIResponses.create_mock([error, success])
+
+    # Use a custom mock that advances index even on exception, so the retry gets the success response
+    call_count = 0
+    responses_list: list[Any] = [error, success]
+
+    async def mock_create(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        idx = call_count
+        call_count += 1
+        item = responses_list[idx]
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    mock_client = MockOpenAIResponses.create_mock(success)  # placeholder
+    mock_client.responses.create = mock_create  # type: ignore[attr-defined]
+
     model = OpenAIResponsesModel(
         'gpt-5',
         provider=OpenAIProvider(openai_client=mock_client),
@@ -10322,3 +10342,4 @@ async def test_invalid_encrypted_content_retry(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'retried ok'
+    assert call_count == 2, 'Should have retried once'
