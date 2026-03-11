@@ -213,7 +213,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
                         _, provider_name, original_id = tool_call_id.split('|', 2)
                         content: Any = tool_msg.content
-                        if isinstance(content, str):
+                        if isinstance(content, str):  # pragma: no branch
                             try:
                                 content = json.loads(content)
                             except (json.JSONDecodeError, ValueError):
