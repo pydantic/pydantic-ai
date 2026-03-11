@@ -898,6 +898,10 @@ def test_tool_without_runctx_raises_warning():
     toolset = FunctionToolset()
     with pytest.warns(DeprecationWarning, match='Passing a plain function to FunctionToolset.tool'):
 
-        @toolset.tool
+        @toolset.tool  # pragma: no cover
         def add(x: int):
             return x + 1
+
+        @toolset.tool(retries=2)
+        def sub(x: int):
+            return x - 1
