@@ -1779,7 +1779,11 @@ class OpenAIResponsesModel(Model):
                     )
                 except APIStatusError as retry_e:
                     if (status_code := retry_e.status_code) >= 400:
-                        raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=retry_e.body) from retry_e
+                        raise ModelHTTPError(
+                            status_code=status_code,
+                            model_name=self.model_name,
+                            body=retry_e.body,
+                        ) from retry_e
                     raise  # pragma: lax no cover
 
             if (status_code := e.status_code) >= 400:

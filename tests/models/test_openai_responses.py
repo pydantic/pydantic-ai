@@ -10225,3 +10225,100 @@ async def test_openai_responses_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I can't help with that."
+
+
+async def test_gateway_provider_skips_encrypted_content(allow_model_requests: None):
+    """Test that gateway providers don't request or send encrypted_content."""
+    c1 = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_123',
+                summary=[Summary(text='thinking...', type='summary_text')],
+                type='reasoning',
+                encrypted_content='encrypted_sig',
+            ),
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    c2 = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_456',
+                content=cast(list[Content], [ResponseOutputText(text='9', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock([c1, c2])
+    provider = OpenAIProvider(openai_client=mock_client)
+    provider.is_gateway = True
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=provider,
+        profile=replace(openai_model_profile('gpt-5'), openai_supports_encrypted_reasoning_content=True),
+    )
+    agent = Agent(model=model)
+
+    # First turn
+    result = await agent.run('What is 2+2?')
+    assert result.output == '4'
+
+    # Check that encrypted_content was NOT included in the request
+    kwargs = get_mock_responses_kwargs(mock_client)
+    assert 'reasoning.encrypted_content' not in kwargs[0].get('include', [])
+
+    # Second turn - should NOT send encrypted_content back
+    result2 = await agent.run('Add 5 to that', message_history=result.all_messages())
+    assert result2.output == '9'
+
+    # Verify encrypted_content was stripped from the reasoning item in the second request
+    second_kwargs = kwargs[1]
+    openai_input = second_kwargs.get('input', [])
+    reasoning_items = [m for m in openai_input if isinstance(m, dict) and m.get('type') == 'reasoning']
+    for item in reasoning_items:
+        assert item.get('encrypted_content') is None, 'Gateway should not send encrypted_content'
+
+
+async def test_invalid_encrypted_content_retry(allow_model_requests: None):
+    """Test that invalid_encrypted_content errors trigger a retry with stripped signatures."""
+    import httpx
+    from openai import APIStatusError
+
+    error = APIStatusError(
+        'invalid encrypted content',
+        response=httpx.Response(
+            status_code=400,
+            request=httpx.Request('POST', 'https://api.openai.com/v1/responses'),
+            json={'error': {'code': 'invalid_encrypted_content', 'message': 'Encrypted content org mismatch'}},
+        ),
+        body={'error': {'code': 'invalid_encrypted_content', 'message': 'Encrypted content org mismatch'}},
+    )
+    success = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_789',
+                content=cast(list[Content], [ResponseOutputText(text='retried ok', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock([error, success])
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=replace(openai_model_profile('gpt-5'), openai_supports_encrypted_reasoning_content=True),
+    )
+    agent = Agent(model=model)
+
+    result = await agent.run('hello')
+    assert result.output == 'retried ok'

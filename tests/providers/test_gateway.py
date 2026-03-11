@@ -208,3 +208,16 @@ async def test_gateway_provider_routing_group(gateway_api_key: str):
 def test_infer_base_url(api_key: str, expected_base_url: str):
     provider = gateway_provider('openai', api_key=api_key)
     assert urlparse(provider.base_url).netloc == expected_base_url
+
+
+def test_gateway_openai_provider_has_is_gateway_flag(gateway_api_key: str):
+    """Test that OpenAI providers created via gateway_provider have is_gateway=True."""
+    provider = gateway_provider('openai', api_key=gateway_api_key)
+    assert hasattr(provider, 'is_gateway')
+    assert provider.is_gateway is True
+
+
+def test_direct_openai_provider_has_no_gateway_flag():
+    """Test that directly created OpenAI providers have is_gateway=False."""
+    provider = OpenAIProvider(api_key='test-key')
+    assert provider.is_gateway is False
