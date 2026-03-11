@@ -70,27 +70,68 @@ All items from PLAN.md §4 and §14 Phase 1 are implemented and verified.
 
 ---
 
-## Phase 2: Local Shell — NOT STARTED
+## Phase 2: Local Shell — COMPLETE
 
 > PLAN.md §5 and §14 Phase 2
 
-### Scope
+### Per-Phase Checklist
 
-1. `NativeToolDefinition` types (`ShellNativeDefinition`, `TextEditorNativeDefinition`, `ApplyPatchNativeDefinition`) + union
-2. `native_definition: NativeToolDefinition | None` field on `ToolDefinition`
-3. `ShellToolset` + `ShellExecutor` protocol + `_LocalShellExecutor` in `toolsets/shell.py`
-4. Anthropic adapter: `bash_20250124` emission for native shell ToolDefinition
-5. OpenAI adapter: `shell` with `environment: {type: "local"}` emission
-6. Profile flag: `supports_native_shell_tool`
-7. Fallback warning on unsupported providers
-8. Tests (VCR cassettes, fallback unit test) + docs (`native-tools.md`)
+- [x] `__all__` exports; public types re-exported from `pydantic_ai/__init__.py`
+- [x] Private helpers prefixed with `_` and excluded from `__all__`
+- [x] `make format` and `make typecheck` pass (0 errors)
+- [x] `make lint` passes (all checks passed)
+- [ ] `make testcov` passes with 100% coverage (not yet verified — new adapter code paths need cassette coverage)
+- [x] Docs updated (`docs/native-tools.md`, `docs/api/toolsets.md`, `mkdocs.yml`)
+- [x] Docstrings on all public types and methods
+- [ ] PR created with template and issue refs
+- [x] VCR cassettes recorded (4 cassettes: Anthropic + OpenAI, streaming + non-streaming)
+
+### Deliverables
+
+| Item | File(s) | Status |
+|------|---------|--------|
+| `ShellNativeDefinition` type | `tools.py` | Done |
+| `TextEditorNativeDefinition` type | `tools.py` | Done |
+| `ApplyPatchNativeDefinition` type | `tools.py` | Done |
+| `NativeToolDefinition` union | `tools.py` | Done |
+| `native_definition` field on `ToolDefinition` | `tools.py` | Done |
+| `ShellToolset` + `ShellExecutor` + `ShellOutput` | `toolsets/shell.py` | Done |
+| `_LocalShellExecutor` | `toolsets/shell.py` | Done |
+| `ShellToolset.local()` classmethod | `toolsets/shell.py` | Done |
+| `supports_native_shell_tool` profile flag | `profiles/__init__.py` | Done |
+| Anthropic profile flag set | `profiles/anthropic.py` | Done |
+| OpenAI profile flag set | `profiles/openai.py` | Done |
+| Anthropic adapter: `bash_20250124` emission | `models/anthropic.py` | Done |
+| Anthropic: native name mapping (outgoing + incoming) | `models/anthropic.py` | Done |
+| Anthropic: streaming native name mapping | `models/anthropic.py` | Done |
+| OpenAI adapter: `shell` with `local` env emission | `models/openai.py` | Done |
+| OpenAI: native name mapping (outgoing + incoming) | `models/openai.py` | Done |
+| OpenAI: streaming native name mapping | `models/openai.py` | Done |
+| OpenAI: `shell_call_output` round-trip for local shell | `models/openai.py` | Done |
+| Fallback warning on unsupported providers | Both adapters | Done |
+| Top-level exports | `__init__.py`, `toolsets/__init__.py` | Done |
+| Unit tests (types, toolset, fallback warning) | `tests/test_shell_toolset.py` | Done |
+| Snapshot tests updated for new `native_definition` field | Various test files | Done |
+| VCR cassettes (Anthropic local shell) | `tests/models/cassettes/test_anthropic/` | Done |
+| VCR cassettes (OpenAI local shell) | `tests/models/cassettes/test_openai/` | Done |
+| Docs: `native-tools.md` | `docs/native-tools.md` | Done |
+| Docs: API reference | `docs/api/toolsets.md` | Done |
+| Docs: mkdocs.yml nav entry | `mkdocs.yml` | Done |
+
+### Test Summary
+
+- 4286 tests pass (19 new: 15 unit + 4 integration)
+- Cassettes recorded with `claude-sonnet-4-6` (Anthropic) and `gpt-5.4` (OpenAI)
+- `make typecheck` passes (0 errors)
+- `make lint` passes (all checks passed)
 
 ### Key Architectural Note
 
 - Phase 1 `ShellTool` = **builtin** (remote, server-executed, `AbstractBuiltinTool`)
 - Phase 2 `ShellToolset` = **toolset** (local, client-executed, `AbstractToolset`)
 - OpenAI uses the same `shell` tool type for both — differentiated by `environment` type (`container_auto` vs `local`)
-- Streaming constructors need a native-name-to-toolset-name lookup dict passed through
+- Streaming constructors receive a native-name-to-toolset-name lookup dict
+- `ResponseFunctionShellToolCall` is discriminated by `environment` field: `ResponseLocalEnvironment` → Phase 2, otherwise → Phase 1
 
 ---
 

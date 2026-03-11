@@ -62,7 +62,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..tools import ToolDefinition
+from ..tools import ShellNativeDefinition, ToolDefinition
 from . import (
     Model,
     ModelRequestParameters,
@@ -110,6 +110,7 @@ try:
         WebSearchToolParam,
     )
     from openai.types.responses.container_reference_param import ContainerReferenceParam
+    from openai.types.responses.local_environment_param import LocalEnvironmentParam
     from openai.types.responses.response_container_reference import ResponseContainerReference
     from openai.types.responses.response_function_shell_call_output_content_param import (
         ResponseFunctionShellCallOutputContentParam,
@@ -146,6 +147,21 @@ __all__ = (
     'OpenAIResponsesModelSettings',
     'OpenAIModelName',
 )
+
+_NATIVE_TOOL_FALLBACK_WARNED: set[tuple[str, str]] = set()
+
+
+def _warn_native_tool_fallback(kind: str, provider: str) -> None:
+    """Emit a one-time warning when a native tool falls back to function tool format."""
+    key = (kind, provider)
+    if key not in _NATIVE_TOOL_FALLBACK_WARNED:
+        _NATIVE_TOOL_FALLBACK_WARNED.add(key)
+        warnings.warn(
+            f'Native `{kind}` tool: falling back to function tool format on {provider} — model performance may be degraded.',
+            UserWarning,
+            stacklevel=4,
+        )
+
 
 OpenAIModelName = str | AllModels
 """
@@ -1385,6 +1401,7 @@ class OpenAIResponsesModel(Model):
 
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
+    _native_tool_names: dict[str, str] = field(default_factory=lambda: dict[str, str](), repr=False)
 
     def __init__(
         self,
@@ -1408,6 +1425,7 @@ class OpenAIResponsesModel(Model):
             settings: Default model settings for this model instance.
         """
         self._model_name = model_name
+        self._native_tool_names: dict[str, str] = {}
 
         if isinstance(provider, str):
             provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
@@ -1568,9 +1586,22 @@ class OpenAIResponsesModel(Model):
                     items.append(file_part)
                 items.append(return_part)
             elif isinstance(item, ResponseFunctionShellToolCall):
-                call_part, return_part = _map_shell_tool_call(item, self.system)
-                items.append(call_part)
-                items.append(return_part)
+                if 'shell' in self._native_tool_names and not isinstance(item.environment, ResponseContainerReference):
+                    # Phase 2: Local shell — produce ToolCallPart for agent loop execution
+                    tool_name = self._native_tool_names['shell']
+                    items.append(
+                        ToolCallPart(
+                            tool_name=tool_name,
+                            args={'command': ' && '.join(item.action.commands)},
+                            tool_call_id=item.call_id,
+                            id=item.id,
+                        )
+                    )
+                else:
+                    # Phase 1: Hosted shell — produce BuiltinToolCallPart
+                    call_part, return_part = _map_shell_tool_call(item, self.system)
+                    items.append(call_part)
+                    items.append(return_part)
             elif isinstance(item, ResponseFunctionShellToolCallOutput):
                 items.append(_map_shell_tool_call_output(item, self.system))
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
@@ -1645,6 +1676,7 @@ class OpenAIResponsesModel(Model):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _native_tool_names=self._native_tool_names,
             _provider_timestamp=number_to_datetime(first_chunk.response.created_at)
             if first_chunk.response.created_at
             else None,
@@ -1675,10 +1707,11 @@ class OpenAIResponsesModel(Model):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
-        tools = (
+        native_tools, self._native_tool_names = self._get_tools(model_request_parameters)
+        tools: list[responses.ToolParam] = (
             self._get_builtin_tools(model_request_parameters, model_settings)
             + list(model_settings.get('openai_builtin_tools', []))
-            + self._get_tools(model_request_parameters)
+            + native_tools
         )
         profile = OpenAIModelProfile.from_profile(self.profile)
         if not tools:
@@ -1810,8 +1843,33 @@ class OpenAIResponsesModel(Model):
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+    def _get_tools(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> tuple[list[responses.ToolParam], dict[str, str]]:
+        """Build tool definitions and a mapping of native tool names back to toolset names."""
+        tools: list[responses.ToolParam] = []
+        native_tool_names: dict[str, str] = {}
+
+        for tool_def in model_request_parameters.tool_defs.values():
+            native_def = tool_def.native_definition
+            if (
+                native_def is not None
+                and isinstance(native_def, ShellNativeDefinition)
+                and self.profile.supports_native_shell_tool
+            ):
+                tool: responses.ToolParam = FunctionShellToolParam(
+                    type='shell',
+                    environment=LocalEnvironmentParam(type='local'),
+                )
+                tools.append(tool)
+                # For local shell, responses use shell_call with local env — map back by tool_name
+                native_tool_names['shell'] = tool_def.name
+            else:
+                if native_def is not None and not self.profile.supports_native_shell_tool:
+                    _warn_native_tool_fallback(native_def.kind, 'openai')
+                tools.append(self._map_tool_definition(tool_def))
+
+        return tools, native_tool_names
 
     def _get_builtin_tools(  # noqa: C901
         self,
@@ -1957,6 +2015,7 @@ class OpenAIResponsesModel(Model):
             'openai_send_reasoning_ids', profile.openai_supports_encrypted_reasoning_content
         )
         has_shell_tool = any(isinstance(t, ShellTool) for t in model_request_parameters.builtin_tools)
+        native_shell_tool_names = set(self._native_tool_names.values())
 
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
@@ -1969,12 +2028,29 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
-                        item = FunctionCallOutput(
-                            type='function_call_output',
-                            call_id=call_id,
-                            output=part.model_response_str(),
-                        )
-                        openai_messages.append(item)
+                        if part.tool_name and part.tool_name in native_shell_tool_names:
+                            # Native local shell tool — send as shell_call_output
+                            openai_messages.append(
+                                ShellCallOutput(
+                                    call_id=call_id,
+                                    output=[
+                                        ResponseFunctionShellCallOutputContentParam(
+                                            outcome={'type': 'exit', 'exit_code': 0},
+                                            stdout=part.model_response_str(),
+                                            stderr='',
+                                        )
+                                    ],
+                                    type='shell_call_output',
+                                    status='completed',
+                                )
+                            )
+                        else:
+                            item = FunctionCallOutput(
+                                type='function_call_output',
+                                call_id=call_id,
+                                output=part.model_response_str(),
+                            )
+                            openai_messages.append(item)
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             openai_messages.append(
@@ -2030,17 +2106,31 @@ class OpenAIResponsesModel(Model):
                         call_id, id = _split_combined_tool_call_id(call_id)
                         id = id or item.id
 
-                        param = responses.ResponseFunctionToolCallParam(
-                            name=item.tool_name,
-                            arguments=item.args_as_json_str(),
-                            call_id=call_id,
-                            type='function_call',
-                        )
-                        if profile.openai_responses_requires_function_call_status_none:
-                            param['status'] = None  # type: ignore[reportGeneralTypeIssues]
-                        if id and should_send_item_id:  # pragma: no branch
-                            param['id'] = id
-                        openai_messages.append(param)
+                        if item.tool_name in native_shell_tool_names:
+                            # Native local shell — round-trip as shell_call
+                            args = item.args_as_dict()
+                            command = args.get('command', '') if args else ''
+                            shell_call_item = ShellCall(
+                                action=ShellCallAction(commands=[command] if command else []),
+                                call_id=call_id,
+                                type='shell_call',
+                                id=id or call_id,
+                                status='completed',
+                            )
+                            shell_call_item['environment'] = LocalEnvironmentParam(type='local')
+                            openai_messages.append(shell_call_item)
+                        else:
+                            param = responses.ResponseFunctionToolCallParam(
+                                name=item.tool_name,
+                                arguments=item.args_as_json_str(),
+                                call_id=call_id,
+                                type='function_call',
+                            )
+                            if profile.openai_responses_requires_function_call_status_none:
+                                param['status'] = None  # type: ignore[reportGeneralTypeIssues]
+                            if id and should_send_item_id:  # pragma: no branch
+                                param['id'] = id
+                            openai_messages.append(param)
                     elif isinstance(item, BuiltinToolCallPart):
                         if should_send_item_id:  # pragma: no branch
                             if (
@@ -2549,6 +2639,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _provider_name: str
     _provider_url: str
+    _native_tool_names: dict[str, str] = field(default_factory=lambda: dict[str, str]())
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _has_refusal: bool = field(default=False, init=False)
@@ -2672,8 +2763,23 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
                 elif isinstance(chunk.item, ResponseFunctionShellToolCall):
-                    call_part, _ = _map_shell_tool_call(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
+                    if 'shell' in self._native_tool_names and not isinstance(
+                        chunk.item.environment, ResponseContainerReference
+                    ):
+                        # Phase 2: Local shell — produce ToolCallPart
+                        tool_name = self._native_tool_names['shell']
+                        local_call_part = ToolCallPart(
+                            tool_name=tool_name,
+                            args={'command': ' && '.join(chunk.item.action.commands)},
+                            tool_call_id=chunk.item.call_id,
+                            id=chunk.item.id,
+                        )
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-call', part=local_call_part
+                        )
+                    else:
+                        call_part, _ = _map_shell_tool_call(chunk.item, self.provider_name)
+                        yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
                 elif isinstance(chunk.item, ResponseFunctionShellToolCallOutput):
                     pass  # Handled in ResponseOutputItemDoneEvent
                 else:
@@ -2735,8 +2841,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     _, return_part = _map_mcp_list_tools(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
                 elif isinstance(chunk.item, ResponseFunctionShellToolCall):
-                    _, return_part = _map_shell_tool_call(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
+                    if not (
+                        'shell' in self._native_tool_names
+                        and not isinstance(chunk.item.environment, ResponseContainerReference)
+                    ):
+                        # Only emit return_part for hosted shell; local shell is handled by agent loop
+                        _, return_part = _map_shell_tool_call(chunk.item, self.provider_name)
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
+                        )
                 elif isinstance(chunk.item, ResponseFunctionShellToolCallOutput):
                     return_part = _map_shell_tool_call_output(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)

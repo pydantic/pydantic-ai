@@ -44,6 +44,7 @@ nav:
           - toolsets.md
           - deferred-tools.md
           - builtin-tools.md
+          - native-tools.md
           - common-tools.md
           - third-party-tools.md
       - Advanced Features:

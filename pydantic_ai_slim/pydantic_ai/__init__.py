@@ -116,7 +116,19 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
-from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
+from .tools import (
+    ApplyPatchNativeDefinition,
+    DeferredToolRequests,
+    DeferredToolResults,
+    NativeToolDefinition,
+    RunContext,
+    ShellNativeDefinition,
+    TextEditorNativeDefinition,
+    Tool,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from .toolsets import (
     AbstractToolset,
     ApprovalRequiredToolset,
@@ -127,6 +139,7 @@ from .toolsets import (
     PrefixedToolset,
     PreparedToolset,
     RenamedToolset,
+    ShellToolset,
     ToolsetFunc,
     ToolsetTool,
     WrapperToolset,
@@ -231,6 +244,10 @@ __all__ = (
     # tools
     'Tool',
     'ToolDefinition',
+    'ShellNativeDefinition',
+    'TextEditorNativeDefinition',
+    'ApplyPatchNativeDefinition',
+    'NativeToolDefinition',
     'RunContext',
     'DeferredToolRequests',
     'DeferredToolResults',
@@ -246,6 +263,7 @@ __all__ = (
     'PrefixedToolset',
     'PreparedToolset',
     'RenamedToolset',
+    'ShellToolset',
     'ToolsetFunc',
     'ToolsetTool',
     'WrapperToolset',

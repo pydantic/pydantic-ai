@@ -62,6 +62,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets.shell import ShellToolset
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
@@ -8742,3 +8743,40 @@ Instructions content\
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'
+
+
+async def test_anthropic_local_shell_toolset(allow_model_requests: None, anthropic_api_key: str):
+    """Test ShellToolset with Anthropic using native bash_20250124 format."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        toolsets=[ShellToolset.local()],
+        instructions='Always use the shell tool. Keep responses brief.',
+    )
+
+    result = await agent.run('What is 2 + 2? Use python to calculate it.')
+    assert '4' in result.output
+    messages = result.all_messages()
+    # Verify tool call used ToolCallPart (not BuiltinToolCallPart)
+    tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    # Verify tool return exists
+    tool_returns = [p for msg in messages for p in msg.parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) >= 1
+
+
+async def test_anthropic_local_shell_toolset_stream(allow_model_requests: None, anthropic_api_key: str):
+    """Test ShellToolset streaming with Anthropic using native bash_20250124 format."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        toolsets=[ShellToolset.local()],
+        instructions='Always use the shell tool. Keep responses brief.',
+    )
+
+    async with agent.run_stream('What is 2 + 2? Use python to calculate it.') as result:
+        output = await result.get_output()
+    assert '4' in output
+    messages = result.all_messages()
+    tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_calls) >= 1

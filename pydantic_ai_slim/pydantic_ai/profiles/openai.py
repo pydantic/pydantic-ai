@@ -172,6 +172,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         supports_json_object_output=True,
         supports_image_output=supports_image_output,
         supports_shell_network_policy=True,
+        supports_native_shell_tool=True,
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
         openai_supports_encrypted_reasoning_content=supports_reasoning,

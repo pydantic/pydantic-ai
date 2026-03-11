@@ -13,6 +13,13 @@
         - RenamedToolset
         - PreparedToolset
         - WrapperToolset
+        - ShellToolset
         - ToolsetFunc
+
+::: pydantic_ai.toolsets.shell
+    options:
+        members:
+        - ShellExecutor
+        - ShellOutput
 
 ::: pydantic_ai.toolsets.fastmcp
