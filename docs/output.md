@@ -677,7 +677,6 @@ You can allow this by including `None` in the `output_type` union:
 ```python {title="optional_output.py" test="skip"}
 from pydantic_ai import Agent
 
-
 agent = Agent('anthropic:claude-sonnet-4-20250514', output_type=str | None)
 
 
