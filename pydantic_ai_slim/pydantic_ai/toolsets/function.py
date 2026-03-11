@@ -231,6 +231,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             # noinspection PyTypeChecker
             takes_ctx = True
 
+            # TODO(v2): Remove this deprecation fallback
+            #  and let takes_ctx=True propagate, which will raise a runtime error
+            #  in function_schema if the function doesn't accept RunContext.
+
             # Is the func actually taking RunContext or is it a plain function in disguise?
             if not _takes_ctx(func_):
                 # User is using a plain function with tool

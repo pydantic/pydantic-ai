@@ -11,6 +11,7 @@ from typing_extensions import Self
 
 from pydantic_ai import (
     AbstractToolset,
+    Agent,
     CombinedToolset,
     FilteredToolset,
     FunctionToolset,
@@ -19,8 +20,6 @@ from pydantic_ai import (
     ToolCallPart,
     ToolsetTool,
     WrapperToolset,
-    Agent,
-    output,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
