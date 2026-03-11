@@ -10285,8 +10285,10 @@ async def test_gateway_provider_skips_encrypted_content(allow_model_requests: No
 
     # Verify encrypted_content was stripped from the reasoning item in the second request
     second_kwargs = kwargs[1]
-    openai_input = second_kwargs.get('input', [])
-    reasoning_items = [m for m in openai_input if isinstance(m, dict) and m.get('type') == 'reasoning']
+    openai_input: list[dict[str, Any]] = second_kwargs.get('input', [])
+    reasoning_items: list[dict[str, Any]] = [
+        m for m in openai_input if isinstance(m, dict) and m.get('type') == 'reasoning'
+    ]
     for item in reasoning_items:
         assert item.get('encrypted_content') is None, 'Gateway should not send encrypted_content'
 
@@ -10331,7 +10333,7 @@ async def test_invalid_encrypted_content_retry(allow_model_requests: None):
         return item
 
     mock_client = MockOpenAIResponses.create_mock(success)  # placeholder
-    mock_client.responses.create = mock_create  # type: ignore[attr-defined]
+    mock_client.responses.create = mock_create  # pyright: ignore[reportAttributeAccessIssue]
 
     model = OpenAIResponsesModel(
         'gpt-5',

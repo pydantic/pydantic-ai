@@ -213,7 +213,7 @@ def test_infer_base_url(api_key: str, expected_base_url: str):
 def test_gateway_openai_provider_has_is_gateway_flag(gateway_api_key: str):
     """Test that OpenAI providers created via gateway_provider have is_gateway=True."""
     provider = gateway_provider('openai', api_key=gateway_api_key)
-    assert hasattr(provider, 'is_gateway')
+    assert isinstance(provider, OpenAIProvider)
     assert provider.is_gateway is True
 
 

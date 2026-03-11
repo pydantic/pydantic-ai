@@ -1703,11 +1703,12 @@ class OpenAIResponsesModel(Model):
                 )
             )
 
+        extra_headers = model_settings.get('extra_headers', {})
+        extra_headers.setdefault('User-Agent', get_user_agent())
+        # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
+        prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+
         try:
-            extra_headers = model_settings.get('extra_headers', {})
-            extra_headers.setdefault('User-Agent', get_user_agent())
-            # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
-            prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
             return await self.client.responses.create(
                 input=openai_messages,
                 model=self.model_name,
@@ -1740,16 +1741,13 @@ class OpenAIResponsesModel(Model):
 
             # Retry once on invalid_encrypted_content by stripping signatures
             body = e.body
-            if (
-                e.status_code == 400
-                and isinstance(body, dict)
-                and isinstance(body.get('error'), dict)
-                and body['error'].get('code') == 'invalid_encrypted_content'
-            ):
+            error_info = body.get('error') if isinstance(body, dict) else None
+            error_code = error_info.get('code') if isinstance(error_info, dict) else None
+            if e.status_code == 400 and error_code == 'invalid_encrypted_content':
                 # Strip encrypted_content from reasoning items and retry
                 for msg in openai_messages:
                     if isinstance(msg, dict) and msg.get('type') == 'reasoning':
-                        msg.pop('encrypted_content', None)  # type: ignore[misc]
+                        msg.pop('encrypted_content', None)
                 # Also remove reasoning.encrypted_content from include
                 include = [i for i in include if i != 'reasoning.encrypted_content']
                 try:
