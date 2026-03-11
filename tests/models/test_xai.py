@@ -3313,6 +3313,41 @@ async def test_xai_usage_promotes_cache_read_tokens(allow_model_requests: None):
     assert result.usage() == snapshot(RunUsage(input_tokens=20, cache_read_tokens=12, output_tokens=10, requests=1))
 
 
+async def test_xai_usage_preserves_extracted_cache_tokens(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
+    response = create_response(
+        content='Simple answer',
+        usage=create_usage(prompt_tokens=20, completion_tokens=10, cached_prompt_text_tokens=12),
+    )
+
+    def fake_extract(*args: Any, **kwargs: Any) -> RequestUsage:
+        return RequestUsage(
+            input_tokens=20,
+            output_tokens=10,
+            cache_read_tokens=9,
+            cache_write_tokens=4,
+            details={'cache_read_tokens': 12, 'cache_write_tokens': 7, 'reasoning_tokens': 3},
+        )
+
+    monkeypatch.setattr(RequestUsage, 'extract', fake_extract)
+
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+    result = await agent.run('Simple question')
+
+    assert result.output == 'Simple answer'
+    assert result.usage() == snapshot(
+        RunUsage(
+            input_tokens=20,
+            output_tokens=10,
+            cache_read_tokens=9,
+            cache_write_tokens=4,
+            requests=1,
+            details={'reasoning_tokens': 3},
+        )
+    )
+
+
 async def test_xai_usage_without_details(allow_model_requests: None):
     """Test that xAI model handles usage without reasoning_tokens or cached tokens."""
     mock_usage = create_usage(prompt_tokens=20, completion_tokens=10)
