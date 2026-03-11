@@ -73,6 +73,15 @@ _mime_types.add_type('application/toml', '.toml')
 _mime_types.add_type('application/xml', '.xml')
 
 
+def infer_media_type_from_path(path: str | PathLike[str]) -> str | None:
+    """Infer a media type from a file path or URL path."""
+    path_str = os.fspath(path)
+    parsed = urlparse(path_str)
+    candidate = parsed.path if parsed.scheme and (parsed.netloc or path_str.startswith('file:')) else path_str
+    mime_type, _ = _mime_types.guess_type(candidate)
+    return mime_type
+
+
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 DocumentMediaType: TypeAlias = Literal[
@@ -290,7 +299,7 @@ class VideoUrl(FileUrl):
         if self.is_youtube:
             return 'video/mp4'
 
-        mime_type, _ = _mime_types.guess_type(self.url)
+        mime_type = infer_media_type_from_path(self.url)
         if mime_type is None:
             raise ValueError(
                 f'Could not infer media type from video URL: {self.url}. Explicitly provide a `media_type` instead.'
@@ -347,7 +356,7 @@ class AudioUrl(FileUrl):
         References:
         - Gemini: https://ai.google.dev/gemini-api/docs/audio#supported-formats
         """
-        mime_type, _ = _mime_types.guess_type(self.url)
+        mime_type = infer_media_type_from_path(self.url)
         if mime_type is None:
             raise ValueError(
                 f'Could not infer media type from audio URL: {self.url}. Explicitly provide a `media_type` instead.'
@@ -390,7 +399,7 @@ class ImageUrl(FileUrl):
 
     def _infer_media_type(self) -> str:
         """Return the media type of the image, based on the url."""
-        mime_type, _ = _mime_types.guess_type(self.url)
+        mime_type = infer_media_type_from_path(self.url)
         if mime_type is None:
             raise ValueError(
                 f'Could not infer media type from image URL: {self.url}. Explicitly provide a `media_type` instead.'
@@ -436,7 +445,7 @@ class DocumentUrl(FileUrl):
 
     def _infer_media_type(self) -> str:
         """Return the media type of the document, based on the url."""
-        mime_type, _ = _mime_types.guess_type(self.url)
+        mime_type = infer_media_type_from_path(self.url)
         if mime_type is None:
             raise ValueError(
                 f'Could not infer media type from document URL: {self.url}. Explicitly provide a `media_type` instead.'
@@ -542,7 +551,7 @@ class BinaryContent:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f'File not found: {path}')
-        media_type, _ = _mime_types.guess_type(path)
+        media_type = infer_media_type_from_path(path)
         if media_type is None:
             media_type = 'application/octet-stream'
 
@@ -750,8 +759,7 @@ class UploadedFile:
         """
         if self._media_type is not None:
             return self._media_type
-        parsed = urlparse(self.file_id)
-        mime_type, _ = _mime_types.guess_type(parsed.path)
+        mime_type = infer_media_type_from_path(self.file_id)
         return mime_type or 'application/octet-stream'
 
     @pydantic.computed_field
@@ -839,6 +847,7 @@ _document_format_lookup: dict[str, DocumentFormat] = {
     'application/msword': 'doc',
     'application/vnd.ms-excel': 'xls',
 }
+_text_document_media_types = frozenset({'text/plain', 'text/csv', 'text/html', 'text/markdown'})
 _audio_format_lookup: dict[str, AudioFormat] = {
     'audio/mpeg': 'mp3',
     'audio/wav': 'wav',
@@ -863,6 +872,22 @@ _video_format_lookup: dict[str, VideoFormat] = {
     'video/x-ms-wmv': 'wmv',
     'video/3gpp': 'three_gp',
 }
+
+_tool_binary_media_types = (
+    frozenset(_audio_format_lookup)
+    | frozenset(_image_format_lookup)
+    | frozenset(_video_format_lookup)
+    | (frozenset(_document_format_lookup) - _text_document_media_types)
+)
+
+
+def infer_binary_media_type_from_path(path: str | PathLike[str]) -> str | None:
+    """Infer a binary media type suitable for tool-returned `BinaryContent`."""
+    media_type = infer_media_type_from_path(path)
+    if media_type in _tool_binary_media_types:
+        return media_type
+    return None
+
 
 _kind_to_modality_lookup: dict[str, Literal['image', 'audio', 'video']] = {
     'image-url': 'image',
