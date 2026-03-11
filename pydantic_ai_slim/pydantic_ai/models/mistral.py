@@ -51,38 +51,39 @@ from . import (
 )
 
 try:
-    from mistralai import (
+    from mistralai.client import (
         UNSET,
+        Mistral,
+        OptionalNullable as MistralOptionalNullable,
+    )
+    from mistralai.client.errors.sdkerror import SDKError
+    from mistralai.client.models import (
+        AssistantMessage as MistralAssistantMessage,
+        ChatCompletionChoiceFinishReason as MistralFinishReason,
+        ChatCompletionResponse as MistralChatCompletionResponse,
         CompletionChunk as MistralCompletionChunk,
-        Content as MistralContent,
+        CompletionEvent as MistralCompletionEvent,
         ContentChunk as MistralContentChunk,
         DocumentURLChunk as MistralDocumentURLChunk,
+        Function as MistralFunction,
         FunctionCall as MistralFunctionCall,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
-        Mistral,
-        OptionalNullable as MistralOptionalNullable,
         ReferenceChunk as MistralReferenceChunk,
+        SystemMessage as MistralSystemMessage,
         TextChunk as MistralTextChunk,
         ThinkChunk as MistralThinkChunk,
-        ToolChoiceEnum as MistralToolChoiceEnum,
-    )
-    from mistralai.models import (
-        ChatCompletionResponse as MistralChatCompletionResponse,
-        CompletionEvent as MistralCompletionEvent,
-        FinishReason as MistralFinishReason,
-        Messages as MistralMessages,
-        SDKError,
         Tool as MistralTool,
         ToolCall as MistralToolCall,
+        ToolChoiceEnum as MistralToolChoiceEnum,
+        ToolMessage as MistralToolMessage,
+        UserMessage as MistralUserMessage,
     )
-    from mistralai.models.assistantmessage import AssistantMessage as MistralAssistantMessage
-    from mistralai.models.function import Function as MistralFunction
-    from mistralai.models.systemmessage import SystemMessage as MistralSystemMessage
-    from mistralai.models.toolmessage import ToolMessage as MistralToolMessage
-    from mistralai.models.usermessage import UserMessage as MistralUserMessage
-    from mistralai.types.basemodel import Unset as MistralUnset
-    from mistralai.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
+    from mistralai.client.models.assistantmessage import AssistantMessageContent as MistralContent
+    from mistralai.client.types.basemodel import Unset as MistralUnset
+    from mistralai.client.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
+
+    MistralMessages = MistralAssistantMessage | MistralSystemMessage | MistralToolMessage | MistralUserMessage
 except ImportError as e:  # pragma: lax no cover
     raise ImportError(
         'Please install `mistral` to use the Mistral model, '
