@@ -460,12 +460,12 @@ from pydantic_ai import Agent, FunctionToolset
 toolset = FunctionToolset()
 
 
-@toolset.tool
+@toolset.tool_plain
 def get_default_language():
     return 'en-US'
 
 
-@toolset.tool
+@toolset.tool_plain
 def get_user_name():
     return 'David'
 
