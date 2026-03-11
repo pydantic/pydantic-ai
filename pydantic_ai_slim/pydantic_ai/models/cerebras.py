@@ -117,8 +117,19 @@ class CerebrasModel(OpenAIChatModel):
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> ReasoningEffort | None:
-        del model_request_parameters
-        return model_settings.get('openai_reasoning_effort')
+        if 'openai_reasoning_effort' in model_settings:
+            return model_settings['openai_reasoning_effort']
+
+        if 'gpt-oss' not in self.model_name.lower():
+            return None
+
+        if resolved_thinking := model_request_parameters.resolved_thinking:
+            if not resolved_thinking.enabled:
+                return None
+
+            return resolved_thinking.effort
+
+        return None
 
     @overload
     async def _completions_create(

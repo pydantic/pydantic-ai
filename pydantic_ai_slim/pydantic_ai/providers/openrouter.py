@@ -138,6 +138,9 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             openai_chat_supports_file_urls=True,
             openai_chat_supports_web_search=True,
         ).update(profile)
+        # OpenRouter exposes its own normalized reasoning contract (`enabled` / `effort` / `effort: "none"`)
+        # across routed providers, so we intentionally opt all models into unified thinking and allow explicit
+        # disable even when the upstream provider marks reasoning as always-on.
         return replace(profile, supports_thinking=True, thinking_always_enabled=False)
 
     @overload

@@ -1356,6 +1356,34 @@ class TestCerebrasUnifiedThinking:
         # Enabled (None → don't set disable_reasoning), effort is dropped
         assert result is None
 
+    def test_gpt_oss_effort_maps_to_openai_reasoning_effort(self):
+        """GPT-OSS maps unified effort to the OpenAI-compatible reasoning_effort field."""
+        model = CerebrasModel.__new__(CerebrasModel)
+        model._model_name = 'gpt-oss-120b'
+        model._profile = ModelProfile(supports_thinking=True, thinking_always_enabled=True)
+        model._settings = None
+
+        merged, request_parameters = _prepared_request(model, CerebrasModelSettings(thinking_effort='high'))
+
+        assert merged is not None
+        assert 'openai_reasoning_effort' not in cast(dict[str, Any], merged)
+        assert model._get_reasoning_effort(cast(OpenAIChatModelSettings, merged), request_parameters) == 'high'
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort='high')
+
+    def test_gpt_oss_thinking_true_preserves_default_effort(self):
+        """GPT-OSS leaves provider-default effort unchanged when only thinking=True is set."""
+        model = CerebrasModel.__new__(CerebrasModel)
+        model._model_name = 'gpt-oss-120b'
+        model._profile = ModelProfile(supports_thinking=True, thinking_always_enabled=True)
+        model._settings = None
+
+        merged, request_parameters = _prepared_request(model, CerebrasModelSettings(thinking=True))
+
+        assert merged is not None
+        assert 'openai_reasoning_effort' not in cast(dict[str, Any], merged)
+        assert model._get_reasoning_effort(cast(OpenAIChatModelSettings, merged), request_parameters) is None
+        assert request_parameters.resolved_thinking == ResolvedThinkingConfig(enabled=True, effort=None)
+
     def test_silent_drop_unsupported_model(self, non_thinking_profile: ModelProfile):
         """thinking=True on unsupported model → None (silent drop)."""
         model = CerebrasModel.__new__(CerebrasModel)
