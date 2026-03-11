@@ -8,7 +8,7 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
-from .._function_schema import _takes_ctx
+from .._function_schema import _takes_ctx  # type:ignore[]
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, UserError
 from ..tools import (
