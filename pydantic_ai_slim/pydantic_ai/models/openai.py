@@ -291,13 +291,6 @@ def _drop_sampling_params_for_reasoning(profile: OpenAIModelProfile, model_setti
         model_settings.pop(k, None)
 
 
-def _translate_openai_reasoning_effort(resolved_thinking: ResolvedThinkingConfig) -> ReasoningEffort | None:
-    if not resolved_thinking.enabled:
-        return None
-
-    return resolved_thinking.effort or 'medium'
-
-
 def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
     """Drop unsupported parameters based on model profile.
 
@@ -601,7 +594,10 @@ class OpenAIChatModel(Model):
     @override
     def _translate_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> object | None:
         """Translate unified thinking settings to OpenAI `reasoning_effort`."""
-        return _translate_openai_reasoning_effort(resolved_thinking)
+        if not resolved_thinking.enabled:
+            return None
+
+        return resolved_thinking.effort or 'medium'
 
     def _get_reasoning_effort(
         self,
@@ -612,7 +608,10 @@ class OpenAIChatModel(Model):
             return model_settings['openai_reasoning_effort']
 
         if resolved_thinking := model_request_parameters.resolved_thinking:
-            return _translate_openai_reasoning_effort(resolved_thinking)
+            if not resolved_thinking.enabled:
+                return None
+
+            return resolved_thinking.effort or 'medium'
 
         return None
 
@@ -1775,7 +1774,10 @@ class OpenAIResponsesModel(Model):
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     def _translate_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> object | None:
-        return _translate_openai_reasoning_effort(resolved_thinking)
+        if not resolved_thinking.enabled:
+            return None
+
+        return resolved_thinking.effort or 'medium'
 
     def _get_reasoning(
         self,
@@ -1785,7 +1787,10 @@ class OpenAIResponsesModel(Model):
         if 'openai_reasoning_effort' in model_settings:
             reasoning_effort = model_settings['openai_reasoning_effort']
         elif resolved_thinking := model_request_parameters.resolved_thinking:
-            reasoning_effort = _translate_openai_reasoning_effort(resolved_thinking)
+            if not resolved_thinking.enabled:
+                reasoning_effort = None
+            else:
+                reasoning_effort = resolved_thinking.effort or 'medium'
         else:
             reasoning_effort = None
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)
