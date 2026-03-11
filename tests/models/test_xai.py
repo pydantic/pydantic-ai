@@ -619,7 +619,9 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                     ToolCallPart(tool_name='get_location', args='{"loc_name":"Lodon"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='get_location', args='{"loc_name":"London"}', tool_call_id=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=351, cache_read_tokens=148, output_tokens=53, details={'reasoning_tokens': 223}),
+                usage=RequestUsage(
+                    input_tokens=351, cache_read_tokens=148, output_tokens=53, details={'reasoning_tokens': 223}
+                ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -652,7 +654,9 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                         content='Lodon appears to be a misspelling or non-standard variant of "London," which doesn\'t correspond to a known location based on available data. London (the capital of England and the United Kingdom) is located at approximately 51° N latitude and 0° W longitude, in southeastern England along the River Thames.'
                     )
                 ],
-                usage=RequestUsage(input_tokens=670, cache_read_tokens=601, output_tokens=63, details={'reasoning_tokens': 83}),
+                usage=RequestUsage(
+                    input_tokens=670, cache_read_tokens=601, output_tokens=63, details={'reasoning_tokens': 83}
+                ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -2313,9 +2317,9 @@ Return just the final number with no other text.\
                 ],
                 usage=RequestUsage(
                     input_tokens=11140,
+                    cache_read_tokens=6347,
                     output_tokens=68,
                     details={
-                        'cache_read_tokens': 6347,
                         'server_side_tools_web_search': 1,
                         'server_side_tools_code_execution': 1,
                     },
@@ -2393,7 +2397,9 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                     ),
                     ToolCallPart(tool_name='guess_city', args='{}', tool_call_id=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=743, cache_read_tokens=170, output_tokens=15, details={'reasoning_tokens': 483}),
+                usage=RequestUsage(
+                    input_tokens=743, cache_read_tokens=170, output_tokens=15, details={'reasoning_tokens': 483}
+                ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
