@@ -10274,10 +10274,8 @@ async def test_gateway_provider_skips_encrypted_content(allow_model_requests: No
     # Check that encrypted_content was NOT included in the request
     kwargs = get_mock_responses_kwargs(mock_client)
     first_include = kwargs[0].get('include', [])
-    # include may be OMIT (not iterable) when empty — that's fine, it means nothing was included
-    if isinstance(first_include, list):
-        assert 'reasoning.encrypted_content' not in first_include
-    # If it's OMIT, encrypted_content was definitely not included
+    # Gateway should never request encrypted_content — include is either OMIT or a list without it
+    assert not isinstance(first_include, list) or 'reasoning.encrypted_content' not in first_include
 
     # Second turn - should NOT send encrypted_content back
     result2 = await agent.run('Add 5 to that', message_history=result.all_messages())
@@ -10311,7 +10309,9 @@ async def test_invalid_encrypted_content_retry(allow_model_requests: None):
         [
             ResponseOutputMessage(
                 id='msg_789',
-                content=cast(list[Content], [ResponseOutputText(text='retried ok', type='output_text', annotations=[])]),
+                content=cast(
+                    list[Content], [ResponseOutputText(text='retried ok', type='output_text', annotations=[])]
+                ),
                 role='assistant',
                 status='completed',
                 type='message',
@@ -10333,7 +10333,7 @@ async def test_invalid_encrypted_content_retry(allow_model_requests: None):
         return item
 
     mock_client = MockOpenAIResponses.create_mock(success)  # placeholder
-    mock_client.responses.create = mock_create  # pyright: ignore[reportAttributeAccessIssue]
+    mock_client.responses.create = mock_create
 
     model = OpenAIResponsesModel(
         'gpt-5',
@@ -10342,6 +10342,79 @@ async def test_invalid_encrypted_content_retry(allow_model_requests: None):
     )
     agent = Agent(model=model)
 
-    result = await agent.run('hello')
+    # Build message history with a reasoning item containing encrypted_content
+    # to exercise the msg.pop('encrypted_content') path
+    from pydantic_ai.messages import (
+        ModelRequest,
+        ModelResponse,
+        TextPart,
+        ThinkingPart,
+        UserPromptPart,
+    )
+
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='thinking...', signature='encrypted_sig'),
+                TextPart(content='hi'),
+            ],
+        ),
+    ]
+
+    result = await agent.run('hello again', message_history=history)
     assert result.output == 'retried ok'
     assert call_count == 2, 'Should have retried once'
+
+
+async def test_invalid_encrypted_content_retry_fails(allow_model_requests: None):
+    """Test that when the retry also fails, ModelHTTPError is raised."""
+    import httpx
+    from openai import APIStatusError
+
+    from pydantic_ai.exceptions import ModelHTTPError
+
+    error = APIStatusError(
+        'invalid encrypted content',
+        response=httpx.Response(
+            status_code=400,
+            request=httpx.Request('POST', 'https://api.openai.com/v1/responses'),
+            json={'error': {'code': 'invalid_encrypted_content', 'message': 'Encrypted content org mismatch'}},
+        ),
+        body={'error': {'code': 'invalid_encrypted_content', 'message': 'Encrypted content org mismatch'}},
+    )
+    retry_error = APIStatusError(
+        'still failing',
+        response=httpx.Response(
+            status_code=400,
+            request=httpx.Request('POST', 'https://api.openai.com/v1/responses'),
+            json={'error': {'code': 'some_other_error', 'message': 'Still broken'}},
+        ),
+        body={'error': {'code': 'some_other_error', 'message': 'Still broken'}},
+    )
+
+    call_count = 0
+    responses_list: list[Any] = [error, retry_error]
+
+    async def mock_create(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        idx = call_count
+        call_count += 1
+        item = responses_list[idx]
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    mock_client = MockOpenAIResponses.create_mock(error)  # placeholder
+    mock_client.responses.create = mock_create
+
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=replace(openai_model_profile('gpt-5'), openai_supports_encrypted_reasoning_content=True),
+    )
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelHTTPError):
+        await agent.run('hello')
+    assert call_count == 2, 'Should have retried once before failing'

@@ -1741,8 +1741,9 @@ class OpenAIResponsesModel(Model):
 
             # Retry once on invalid_encrypted_content by stripping signatures
             body = e.body
-            error_info = body.get('error') if isinstance(body, dict) else None
-            error_code = error_info.get('code') if isinstance(error_info, dict) else None
+            body_dict = cast(dict[str, Any], body) if isinstance(body, dict) else {}
+            error_info = body_dict.get('error')
+            error_code = cast(dict[str, Any], error_info).get('code') if isinstance(error_info, dict) else None
             if e.status_code == 400 and error_code == 'invalid_encrypted_content':
                 # Strip encrypted_content from reasoning items and retry
                 for msg in openai_messages:
