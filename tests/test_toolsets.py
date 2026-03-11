@@ -905,3 +905,6 @@ def test_tool_without_runctx_raises_warning():
         @toolset.tool(retries=2)  # type: ignore[arg-type]  # pragma: no cover
         def sub(x: int):
             return x - 1
+
+    assert 'add' in toolset.tools
+    assert 'sub' in toolset.tools
