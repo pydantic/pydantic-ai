@@ -34,7 +34,6 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from openai.types.chat import ChatCompletion
     from openai.types.chat.chat_completion import Choice
 
     from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
@@ -874,9 +873,6 @@ def test_openrouter_validate_completion_nested_response() -> None:
     model, object) are null but the real response is nested inside the 'provider' dict.
     Regression test for https://github.com/pydantic/pydantic-ai/issues/3994.
     """
-    from openai.types.chat import ChatCompletion
-
-    from pydantic_ai.models.openrouter import OpenRouterModel
 
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
@@ -910,7 +906,6 @@ def test_openrouter_validate_completion_nested_response() -> None:
     # Use _process_response (one level above _validate_completion) to test through
     # a higher-level entry point while still avoiding a full HTTP round-trip.
     model_response = model._process_response(nested_completion)  # type: ignore[reportPrivateUsage]
-    from pydantic_ai.messages import TextPart
 
     assert any(isinstance(part, TextPart) and part.content == 'Hello from nested!' for part in model_response.parts)
 
@@ -920,10 +915,6 @@ def test_openrouter_validate_completion_error_with_null_fields() -> None:
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/3994.
     """
-    from openai.types.chat import ChatCompletion
-
-    from pydantic_ai.exceptions import ModelHTTPError
-    from pydantic_ai.models.openrouter import OpenRouterModel
 
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
@@ -948,9 +939,6 @@ def test_openrouter_validate_completion_error_with_null_fields() -> None:
 
 def test_openrouter_normalize_null_metadata_fallbacks() -> None:
     """_normalize_openrouter_response fills in null id/model/object/provider fields."""
-    from openai.types.chat import ChatCompletion
-
-    from pydantic_ai.models.openrouter import OpenRouterModel
 
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
@@ -975,7 +963,6 @@ def test_openrouter_normalize_null_metadata_fallbacks() -> None:
     )
 
     model_response = model._process_response(completion)  # type: ignore[reportPrivateUsage]
-    from pydantic_ai.messages import TextPart
 
     assert any(isinstance(p, TextPart) and p.content == 'Hi' for p in model_response.parts)
 
@@ -986,9 +973,6 @@ def test_openrouter_provider_details_null_provider() -> None:
     The normalizer always sets a string provider fallback so Pydantic validation passes.
     _map_openrouter_provider_details then records downstream_provider='unknown'.
     """
-    from openai.types.chat import ChatCompletion
-
-    from pydantic_ai.models.openrouter import OpenRouterModel
 
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
@@ -1025,10 +1009,6 @@ def test_openrouter_validate_completion_malformed_error_fallthrough() -> None:
     which is caught; then _OpenRouterChatCompletion.model_validate() raises ValidationError
     which _process_response (in the parent openai.py) wraps as UnexpectedModelBehavior.
     """
-    from openai.types.chat import ChatCompletion
-
-    from pydantic_ai.exceptions import UnexpectedModelBehavior
-    from pydantic_ai.models.openrouter import OpenRouterModel
 
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
@@ -1051,93 +1031,57 @@ def test_openrouter_validate_completion_malformed_error_fallthrough() -> None:
         model._process_response(completion)  # type: ignore[reportPrivateUsage]
 
 
-def test_openrouter_map_provider_details_null_provider_skips_key() -> None:
-    """_map_openrouter_provider_details omits downstream_provider when provider is None.
+def test_openrouter_process_response_provider_dict_without_choices_raises() -> None:
+    """Provider is a dict with no 'choices' key: normalization skips nested unwrap.
 
-    This covers the if response.provider is not None: false branch (line 489→491).
+    The top-level choices remains None so _process_response raises UnexpectedModelBehavior.
+    Covers the false branch of 'if isinstance(provider_data.get(choices), list)'.
     """
-    from pydantic_ai.models.openrouter import (
-        _map_openrouter_provider_details,  # type: ignore[reportPrivateUsage]
-        _OpenRouterChatCompletion,  # type: ignore[reportPrivateUsage]
-        _OpenRouterChoice,  # type: ignore[reportPrivateUsage]
-    )
-
-    # Build a minimal _OpenRouterChatCompletion with provider=None.
-    # model_construct bypasses validation and does NOT coerce nested dicts into
-    # model instances, so choices must be proper _OpenRouterChoice objects.
-    resp = _OpenRouterChatCompletion.model_construct(
-        id='gen-direct',
-        choices=[
-            _OpenRouterChoice.model_construct(
-                index=0,
-                message={'role': 'assistant', 'content': 'Hi'},
-                finish_reason='stop',
-                native_finish_reason=None,
-                logprobs=None,
-            )
-        ],
-        model='openai/gpt-4.1-mini',
-        object='chat.completion',
-        provider=None,
+    provider_instance = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider_instance)
+    completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider={'some_key': 'some_value'},  # dict but no 'choices' → skip unwrap
         created=1234567890,
-        usage=None,
     )
-
-    details = _map_openrouter_provider_details(resp)
-    assert 'downstream_provider' not in details
-
-
-def test_openrouter_normalize_openrouter_response_module_function() -> None:
-    """_normalize_openrouter_response (module-level) is accessible and fills null metadata."""
-    from pydantic_ai.models.openrouter import _normalize_openrouter_response  # type: ignore[reportPrivateUsage]
-
-    result = _normalize_openrouter_response(
-        {'id': None, 'model': None, 'object': None, 'provider': None, 'choices': []},
-        model_name='openai/gpt-4.1-mini',
-        fallback_object_type='chat.completion',
-    )
-    assert result['id'] == 'openrouter-fallback-id'
-    assert result['model'] == 'openai/gpt-4.1-mini'
-    assert result['object'] == 'chat.completion'
-    assert result['provider'] == 'unknown'
+    with pytest.raises(UnexpectedModelBehavior):
+        model._process_response(completion)  # type: ignore[reportPrivateUsage]
 
 
-def test_openrouter_normalize_provider_dict_without_choices_skips_unwrap() -> None:
-    """When provider is a dict but has no 'choices' list, skip unwrapping (coverage for false branch)."""
-    from pydantic_ai.models.openrouter import _normalize_openrouter_response  # type: ignore[reportPrivateUsage]
+def test_openrouter_process_response_nested_provider_null_name_uses_unknown() -> None:
+    """Nested provider dict with provider=None: provider name falls back to 'unknown'.
 
-    # provider is a dict without a choices list — should NOT unwrap
-    d = {
-        'id': None,
-        'model': None,
-        'object': None,
-        'choices': None,
-        'provider': {'some_key': 'some_value'},  # dict but no 'choices'
-    }
-    result = _normalize_openrouter_response(d, 'openai/gpt-4.1-mini', 'chat.completion')
-    # Unwrap should NOT have happened; metadata fallbacks should still apply
-    assert result['id'] == 'openrouter-fallback-id'
-    assert result['model'] == 'openai/gpt-4.1-mini'
-    assert result['provider'] == 'unknown'  # dict → not str → falls back to 'unknown'
-    assert result['choices'] is None  # unchanged, no unwrap occurred
-
-
-def test_openrouter_normalize_provider_dict_with_null_provider_name() -> None:
-    """When nested provider dict has provider=None, fall back to 'unknown' (not None)."""
-    from pydantic_ai.models.openrouter import _normalize_openrouter_response  # type: ignore[reportPrivateUsage]
-
-    # nested provider dict has provider=None (key exists, value is None)
-    d = {
-        'id': 'orig-id',
-        'model': 'orig-model',
-        'object': 'chat.completion',
-        'choices': None,
-        'provider': {
-            'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': 'hi'}, 'finish_reason': 'stop'}],
-            'provider': None,  # key present but value is None
+    Covers the 'provider_data.pop(provider, None) or unknown' normalisation path.
+    """
+    provider_instance = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider_instance)
+    completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider={
+            'id': 'nested-gen-1',
+            'choices': [
+                {
+                    'index': 0,
+                    'message': {'role': 'assistant', 'content': 'Hi'},
+                    'finish_reason': 'stop',
+                    'native_finish_reason': 'STOP',
+                    'logprobs': None,
+                }
+            ],
+            'model': 'openai/gpt-4.1-mini',
+            'object': 'chat.completion',
+            'provider': None,  # key exists but value is None → normalised to 'unknown'
+            'created': 1234567890,
+            'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15},
         },
-    }
-    result = _normalize_openrouter_response(d, 'openai/gpt-4.1-mini', 'chat.completion')
-    # Unwrap happened; provider name should be 'unknown' not None
-    assert result['provider'] == 'unknown'
-    assert result['choices'] is not None
+        created=1234567890,
+    )
+    result = model._process_response(completion)  # type: ignore[reportPrivateUsage]
+    details = result.provider_details or {}
+    assert details.get('downstream_provider') == 'unknown'
