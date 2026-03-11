@@ -903,5 +903,5 @@ def test_tool_without_runctx_raises_warning():
             return x + 1
 
         @toolset.tool(retries=2)
-        def sub(x: int):
+        def sub(x: int):  # pragma: no cover
             return x - 1
