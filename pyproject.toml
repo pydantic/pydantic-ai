@@ -91,6 +91,12 @@ members = [
 
 [tool.uv]
 default-groups = ["dev", "lint", "docs"]
+conflicts = [
+    [
+        { package = "pydantic-ai-slim", extra = "huggingface" },
+        { package = "pydantic-ai-slim", extra = "outlines-vllm-offline" },
+    ],
+]
 
 [dependency-groups]
 dev = [
