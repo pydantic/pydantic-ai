@@ -335,7 +335,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         agent = Agent('test', toolsets=[toolset])
         result = agent.run_sync('foobar')
         print(result.output)
-        #> {"foobar":2,"spam":2.0}
+        #> {"foobar":1,"spam":0.0}
         ```
 
         Args:
