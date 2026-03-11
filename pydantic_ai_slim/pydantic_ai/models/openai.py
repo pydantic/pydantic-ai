@@ -597,7 +597,13 @@ class OpenAIChatModel(Model):
         if not resolved_thinking.enabled:
             return None
 
-        return resolved_thinking.effort or 'medium'
+        if resolved_thinking.effort:
+            return resolved_thinking.effort
+
+        if self.profile.thinking_always_enabled:
+            return None
+
+        return 'medium'
 
     def _get_reasoning_effort(
         self,
@@ -611,7 +617,13 @@ class OpenAIChatModel(Model):
             if not resolved_thinking.enabled:
                 return None
 
-            return resolved_thinking.effort or 'medium'
+            if resolved_thinking.effort:
+                return resolved_thinking.effort
+
+            if self.profile.thinking_always_enabled:
+                return None
+
+            return 'medium'
 
         return None
 
@@ -1679,6 +1691,8 @@ class OpenAIResponsesModel(Model):
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._get_reasoning(model_settings, model_request_parameters)
+        if not isinstance(reasoning, Omit) and (reasoning_effort := reasoning.get('effort')):
+            model_settings = model_settings | {'openai_reasoning_effort': reasoning_effort}
 
         text: responses.ResponseTextConfigParam | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1777,7 +1791,13 @@ class OpenAIResponsesModel(Model):
         if not resolved_thinking.enabled:
             return None
 
-        return resolved_thinking.effort or 'medium'
+        if resolved_thinking.effort:
+            return resolved_thinking.effort
+
+        if self.profile.thinking_always_enabled:
+            return None
+
+        return 'medium'
 
     def _get_reasoning(
         self,
@@ -1789,8 +1809,12 @@ class OpenAIResponsesModel(Model):
         elif resolved_thinking := model_request_parameters.resolved_thinking:
             if not resolved_thinking.enabled:
                 reasoning_effort = None
+            elif resolved_thinking.effort:
+                reasoning_effort = resolved_thinking.effort
+            elif self.profile.thinking_always_enabled:
+                reasoning_effort = None
             else:
-                reasoning_effort = resolved_thinking.effort or 'medium'
+                reasoning_effort = 'medium'
         else:
             reasoning_effort = None
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)

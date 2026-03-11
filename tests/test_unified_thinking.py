@@ -602,11 +602,22 @@ class TestOpenAIChatUnifiedThinking:
         """An OpenAI model profile that supports reasoning (like o3)."""
         return ModelProfile(supports_thinking=True, thinking_always_enabled=True)
 
-    def test_thinking_true_uses_medium(self, openai_reasoning_profile: ModelProfile):
-        """thinking=True → reasoning_effort: 'medium'."""
+    def test_thinking_true_uses_provider_default_on_always_on_model(self, openai_reasoning_profile: ModelProfile):
+        """thinking=True on always-on models should not override the provider default effort."""
         model = OpenAIChatModel.__new__(OpenAIChatModel)
         model._model_name = 'o3'
         model._profile = openai_reasoning_profile
+
+        settings: OpenAIChatModelSettings = {'thinking': True}
+        result = _translated_thinking(model, settings)
+
+        assert result is None
+
+    def test_thinking_true_uses_medium_on_opt_in_model(self):
+        """thinking=True on opt-in reasoning models enables medium effort."""
+        model = OpenAIChatModel.__new__(OpenAIChatModel)
+        model._model_name = 'gpt-5.1'
+        model._profile = ModelProfile(supports_thinking=True, thinking_always_enabled=False)
 
         settings: OpenAIChatModelSettings = {'thinking': True}
         result = _translated_thinking(model, settings)
@@ -685,13 +696,32 @@ class TestOpenAIResponsesUnifiedThinking:
         """An OpenAI Responses model profile that supports reasoning."""
         return ModelProfile(supports_thinking=True, thinking_always_enabled=True)
 
-    def test_thinking_true_uses_medium(self, openai_responses_reasoning_profile: ModelProfile):
-        """thinking=True → effort='medium'."""
+    def test_thinking_true_uses_provider_default_on_always_on_model(
+        self, openai_responses_reasoning_profile: ModelProfile
+    ):
+        """thinking=True on always-on models should not override the provider default effort."""
+        from openai import Omit
+
         from pydantic_ai.models.openai import OpenAIResponsesModel
 
         model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
         model._model_name = 'o3'
         model._profile = openai_responses_reasoning_profile
+        model._settings = None
+
+        settings: OpenAIResponsesModelSettings = {'thinking': True}
+        merged, request_parameters = _prepared_request(model, settings)
+
+        assert cast(OpenAIResponsesModelSettings, merged).get('openai_reasoning_effort') is None
+        assert isinstance(model._get_reasoning(cast(OpenAIResponsesModelSettings, merged), request_parameters), Omit)
+
+    def test_thinking_true_uses_medium_on_opt_in_model(self):
+        """thinking=True on opt-in reasoning models enables medium effort."""
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+
+        model = OpenAIResponsesModel.__new__(OpenAIResponsesModel)
+        model._model_name = 'gpt-5.1'
+        model._profile = ModelProfile(supports_thinking=True, thinking_always_enabled=False)
         model._settings = None
 
         settings: OpenAIResponsesModelSettings = {'thinking': True}
@@ -2271,8 +2301,31 @@ class TestOpenAIChatIntegration:
         assert kwargs['reasoning_effort'] == 'high'
 
     @pytest.mark.anyio
-    async def test_thinking_enabled_default_effort(self, allow_model_requests: None):
-        """thinking=True without effort → reasoning_effort='medium' (default)."""
+    async def test_thinking_enabled_default_effort_on_opt_in_model(self, allow_model_requests: None):
+        """thinking=True without effort on opt-in models → reasoning_effort='medium'."""
+        from tests.models.mock_openai import (
+            MockOpenAI,
+            completion_message as oai_completion,
+            get_mock_chat_completion_kwargs,
+        )
+
+        c = oai_completion(ChatCompletionMessage(content='default', role='assistant'))
+        mock_client = MockOpenAI.create_mock(c)
+        m = OpenAIChatModel('gpt-5.1', provider=OpenAIProvider(openai_client=mock_client))
+        agent = Agent(m)
+
+        result = await agent.run(
+            'hello',
+            model_settings=OpenAIChatModelSettings(thinking=True),
+        )
+        assert result.output == 'default'
+
+        kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+        assert kwargs['reasoning_effort'] == 'medium'
+
+    @pytest.mark.anyio
+    async def test_thinking_true_is_noop_on_always_on_chat_model(self, allow_model_requests: None):
+        """thinking=True without effort on always-on models should not send reasoning_effort."""
         from tests.models.mock_openai import (
             MockOpenAI,
             completion_message as oai_completion,
@@ -2291,7 +2344,7 @@ class TestOpenAIChatIntegration:
         assert result.output == 'default'
 
         kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-        assert kwargs['reasoning_effort'] == 'medium'
+        assert 'reasoning_effort' not in kwargs
 
     @pytest.mark.anyio
     @pytest.mark.filterwarnings('ignore:Sampling parameters.*not supported when reasoning is enabled:UserWarning')
@@ -2386,3 +2439,37 @@ class TestOpenAIResponsesIntegration:
 
         kwargs = get_mock_responses_kwargs(mock_client)[0]
         assert kwargs['reasoning'] == {'effort': 'low'}
+
+    @pytest.mark.anyio
+    @pytest.mark.filterwarnings('ignore:Sampling parameters.*not supported when reasoning is enabled:UserWarning')
+    async def test_thinking_true_drops_sampling_params_on_responses_opt_in_model(self, allow_model_requests: None):
+        """thinking=True on GPT-5.1 Responses should enable reasoning and drop sampling params."""
+        from pydantic_ai.models.openai import OMIT
+        from tests.models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
+
+        resp = response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg-1',
+                    content=cast(
+                        list[Content], [ResponseOutputText(text='reasoned', type='output_text', annotations=[])]
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+        mock_client = MockOpenAIResponses.create_mock(resp)
+        m = OpenAIResponsesModel('gpt-5.1', provider=OpenAIProvider(openai_client=mock_client))
+        agent = Agent(m)
+
+        result = await agent.run(
+            'hello',
+            model_settings=OpenAIResponsesModelSettings(thinking=True, temperature=0.5),
+        )
+        assert result.output == 'reasoned'
+
+        kwargs = get_mock_responses_kwargs(mock_client)[0]
+        assert kwargs['reasoning'] == {'effort': 'medium'}
+        assert kwargs['temperature'] is OMIT

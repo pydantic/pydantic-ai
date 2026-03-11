@@ -566,6 +566,7 @@ def test_logfire(
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'resolved_thinking': None,
                     }
                 )
             ),
@@ -1046,6 +1047,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                         'prompted_output_template': None,
                         'allow_text_output': False,
                         'allow_image_output': False,
+                        'resolved_thinking': None,
                     }
                 )
             ),
@@ -1204,6 +1206,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'prompted_output_template': None,
                         'allow_text_output': True,
                         'allow_image_output': False,
+                        'resolved_thinking': None,
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',

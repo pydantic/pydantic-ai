@@ -31,6 +31,8 @@ _THINKING_MODELS = (
     'claude-sonnet-4',
     'claude-opus-4',
     'claude-haiku-4-5',
+    'claude-4-sonnet',
+    'claude-4-opus',
 )
 
 # Models that support adaptive thinking (type: "adaptive" with output_config.effort).
@@ -50,6 +52,8 @@ def anthropic_model_profile(model_name: str) -> AnthropicModelProfile | None:
         'claude-opus-4-1',
         'claude-opus-4-5',
         'claude-opus-4-6',
+        'claude-4-sonnet',
+        'claude-4-opus',
     )
     """These models support both structured outputs and strict tool calling."""
     # TODO update when new models are released that support structured outputs
