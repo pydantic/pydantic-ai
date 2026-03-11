@@ -241,6 +241,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 warnings.warn(
                     'Passing a plain function to FunctionToolset.tool() is deprecated, use tool_plain() instead.',
                     DeprecationWarning,
+                    stacklevel=2,
                 )
                 takes_ctx = False
 
