@@ -259,4 +259,262 @@ interactions:
     status:
       code: 200
       message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '322'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is 2 + 2? Use python to calculate it.
+        role: user
+      instructions: Always use the shell tool. Keep responses brief.
+      model: gpt-5.4
+      stream: false
+      tool_choice: auto
+      tools:
+      - environment:
+          type: local
+        type: shell
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1426'
+      content-type:
+      - application/json
+      openai-organization:
+      - diligentiq
+      openai-processing-ms:
+      - '978'
+      openai-project:
+      - proj_kGBnNoxZLwrofr0DRC3DVVYV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1773332146
+      created_at: 1773332145
+      error: null
+      frequency_penalty: 0.0
+      id: resp_08214c9ca5640b910169b2e6b1bb84819a83acadfa612ce30c
+      incomplete_details: null
+      instructions: Always use the shell tool. Keep responses brief.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-2026-03-05
+      object: response
+      output:
+      - action:
+          commands:
+          - |-
+            python3 - <<'PY'
+            print(2+2)
+            PY
+          max_output_length: 2000
+          timeout_ms: 10000
+        call_id: call_Q9jd8vdjRJ5BOoBMkwxUv8VZ
+        environment: null
+        id: sh_08214c9ca5640b910169b2e6b2235c819a892b5e65067561bf
+        status: completed
+        type: shell_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: none
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - environment:
+          type: local
+        type: shell
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 271
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 45
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 316
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '797'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=MnG4a4XRmB_kHjBveqT9T0uRDYB.ytSf_y21R3Nh_pw-1773332145.6683195-1.0.1.1-hO7CDj94uepGmGUYELPXvbp9NZrM9.hOs3TWdqTwPQAgQXBOWinNaw3fBJe0m3xEyRj2WTuXDtC1WGTfHZpT7rPpOoL4oEAOgZBv5t2APAjvBLq5Qy_sUn9d4T0Kdx5x
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is 2 + 2? Use python to calculate it.
+        role: user
+      - action:
+          commands:
+          - |-
+            python3 - <<'PY'
+            print(2+2)
+            PY
+        call_id: call_Q9jd8vdjRJ5BOoBMkwxUv8VZ
+        environment:
+          type: local
+        id: sh_08214c9ca5640b910169b2e6b2235c819a892b5e65067561bf
+        status: completed
+        type: shell_call
+      - call_id: call_Q9jd8vdjRJ5BOoBMkwxUv8VZ
+        output:
+        - outcome:
+            exit_code: 0
+            type: exit
+          stderr: ''
+          stdout: '{"output": "4\n", "exit_code": 0}'
+        status: completed
+        type: shell_call_output
+      instructions: Always use the shell tool. Keep responses brief.
+      model: gpt-5.4
+      stream: false
+      tool_choice: auto
+      tools:
+      - environment:
+          type: local
+        type: shell
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1380'
+      content-type:
+      - application/json
+      openai-organization:
+      - diligentiq
+      openai-processing-ms:
+      - '506'
+      openai-project:
+      - proj_kGBnNoxZLwrofr0DRC3DVVYV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1773332147
+      created_at: 1773332147
+      error: null
+      frequency_penalty: 0.0
+      id: resp_08214c9ca5640b910169b2e6b3205c819aabd347189ac09d33
+      incomplete_details: null
+      instructions: Always use the shell tool. Keep responses brief.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-2026-03-05
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: '4'
+          type: output_text
+        id: msg_08214c9ca5640b910169b2e6b373a0819ab374fa4d3ebaa6b1
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: none
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - environment:
+          type: local
+        type: shell
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 343
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 348
+      user: null
+    status:
+      code: 200
+      message: OK
 version: 1

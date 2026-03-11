@@ -98,6 +98,66 @@ agent = Agent(
 )
 ```
 
+## TextEditorToolset
+
+[`TextEditorToolset`][pydantic_ai.toolsets.TextEditorToolset] lets models edit files locally using structured text editor commands (`view`, `str_replace`, `create`, `insert`). On Anthropic, it uses the native `text_editor_20250728` format for best performance. On other providers, it falls back to a standard function tool.
+
+### Basic Usage
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.toolsets import TextEditorToolset
+from pydantic_ai.toolsets.text_editor import TextEditorCommand, TextEditorOutput
+
+
+async def my_editor(cmd: TextEditorCommand) -> TextEditorOutput:
+    # Your file editing logic here
+    return TextEditorOutput(output='Done')
+
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    toolsets=[TextEditorToolset(execute=my_editor)],
+)
+```
+
+### Provider Support
+
+| Provider | Format | Notes |
+|----------|--------|-------|
+| Anthropic | `text_editor_20250728` | Native text editor tool format |
+| Others | Function tool fallback | Emits a warning; model performance may be degraded |
+
+## ApplyPatchToolset
+
+[`ApplyPatchToolset`][pydantic_ai.toolsets.ApplyPatchToolset] lets models create, update, and delete files using V4A-format diffs. On OpenAI, it uses the native `apply_patch` tool for best performance. On other providers, it falls back to a standard function tool.
+
+### Basic Usage
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.toolsets import ApplyPatchToolset
+from pydantic_ai.toolsets.apply_patch import ApplyPatchOperation, ApplyPatchOutput
+
+
+async def my_patcher(op: ApplyPatchOperation) -> ApplyPatchOutput:
+    # Your file patching logic here
+    return ApplyPatchOutput(status='completed')
+
+
+agent = Agent(
+    'openai:gpt-5.4',
+    toolsets=[ApplyPatchToolset(execute=my_patcher)],
+)
+```
+
+### Provider Support
+
+| Provider | Format | Notes |
+|----------|--------|-------|
+| OpenAI Responses | `apply_patch` | Native apply_patch tool format |
+| Others | Function tool fallback | Emits a warning; model performance may be degraded |
+
 ## How Native Tools Work
 
 When a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] has a [`native_definition`][pydantic_ai.tools.ToolDefinition.native_definition] set (e.g., [`ShellNativeDefinition`][pydantic_ai.tools.ShellNativeDefinition]), model adapters check the model profile's `supports_native_shell_tool` flag:

@@ -62,7 +62,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..tools import ShellNativeDefinition, ToolDefinition
+from ..tools import ApplyPatchNativeDefinition, ShellNativeDefinition, ToolDefinition
 from . import (
     Model,
     ModelRequestParameters,
@@ -102,9 +102,12 @@ try:
         WebSearchOptionsUserLocationApproximate,
     )
     from openai.types.responses import (
+        ApplyPatchToolParam,
         ComputerToolParam,
         FileSearchToolParam,
         FunctionShellToolParam,
+        ResponseApplyPatchToolCall,
+        ResponseApplyPatchToolCallOutput,
         ResponseFunctionShellToolCall,
         ResponseFunctionShellToolCallOutput,
         WebSearchToolParam,
@@ -116,6 +119,8 @@ try:
         ResponseFunctionShellCallOutputContentParam,
     )
     from openai.types.responses.response_input_item_param import (
+        ApplyPatchCall,
+        ApplyPatchCallOutput,
         ShellCall,
         ShellCallAction,
         ShellCallOutput,
@@ -1604,6 +1609,19 @@ class OpenAIResponsesModel(Model):
                     items.append(return_part)
             elif isinstance(item, ResponseFunctionShellToolCallOutput):
                 items.append(_map_shell_tool_call_output(item, self.system))
+            elif isinstance(item, ResponseApplyPatchToolCall):
+                if 'apply_patch' in self._native_tool_names:
+                    tool_name = self._native_tool_names['apply_patch']
+                    items.append(
+                        ToolCallPart(
+                            tool_name=tool_name,
+                            args=_map_apply_patch_operation(item.operation),
+                            tool_call_id=item.call_id,
+                            id=item.id,
+                        )
+                    )
+            elif isinstance(item, ResponseApplyPatchToolCallOutput):
+                pass  # Result of agent-submitted apply_patch_call_output; no action needed
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
@@ -1862,11 +1880,25 @@ class OpenAIResponsesModel(Model):
                     environment=LocalEnvironmentParam(type='local'),
                 )
                 tools.append(tool)
-                # For local shell, responses use shell_call with local env — map back by tool_name
                 native_tool_names['shell'] = tool_def.name
+            elif (
+                native_def is not None
+                and isinstance(native_def, ApplyPatchNativeDefinition)
+                and self.profile.supports_native_apply_patch_tool
+            ):
+                tools.append(ApplyPatchToolParam(type='apply_patch'))
+                native_tool_names['apply_patch'] = tool_def.name
             else:
-                if native_def is not None and not self.profile.supports_native_shell_tool:
-                    _warn_native_tool_fallback(native_def.kind, 'openai')
+                if native_def is not None:
+                    if isinstance(native_def, ShellNativeDefinition) and not self.profile.supports_native_shell_tool:
+                        _warn_native_tool_fallback(native_def.kind, 'openai')
+                    elif (
+                        isinstance(native_def, ApplyPatchNativeDefinition)
+                        and not self.profile.supports_native_apply_patch_tool
+                    ):
+                        _warn_native_tool_fallback(native_def.kind, 'openai')
+                    elif not isinstance(native_def, ShellNativeDefinition | ApplyPatchNativeDefinition):
+                        _warn_native_tool_fallback(native_def.kind, 'openai')
                 tools.append(self._map_tool_definition(tool_def))
 
         return tools, native_tool_names
@@ -2015,7 +2047,12 @@ class OpenAIResponsesModel(Model):
             'openai_send_reasoning_ids', profile.openai_supports_encrypted_reasoning_content
         )
         has_shell_tool = any(isinstance(t, ShellTool) for t in model_request_parameters.builtin_tools)
-        native_shell_tool_names = set(self._native_tool_names.values())
+        native_shell_tool_names: set[str] = (
+            {self._native_tool_names['shell']} if 'shell' in self._native_tool_names else set()
+        )
+        native_apply_patch_tool_names: set[str] = (
+            {self._native_tool_names['apply_patch']} if 'apply_patch' in self._native_tool_names else set()
+        )
 
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
@@ -2044,6 +2081,26 @@ class OpenAIResponsesModel(Model):
                                     status='completed',
                                 )
                             )
+                        elif part.tool_name and part.tool_name in native_apply_patch_tool_names:
+                            # Native apply_patch tool — send as apply_patch_call_output
+                            import json as _json
+
+                            response_str = part.model_response_str()
+                            try:
+                                parsed = _json.loads(response_str)
+                                status = parsed.get('status', 'completed')
+                                output = parsed.get('output')
+                            except (ValueError, AttributeError):
+                                status = 'completed'
+                                output = response_str
+                            apply_patch_output = ApplyPatchCallOutput(
+                                call_id=call_id,
+                                type='apply_patch_call_output',
+                                status=status,
+                            )
+                            if output is not None:
+                                apply_patch_output['output'] = output
+                            openai_messages.append(apply_patch_output)
                         else:
                             item = FunctionCallOutput(
                                 type='function_call_output',
@@ -2119,6 +2176,18 @@ class OpenAIResponsesModel(Model):
                             )
                             shell_call_item['environment'] = LocalEnvironmentParam(type='local')
                             openai_messages.append(shell_call_item)
+                        elif item.tool_name in native_apply_patch_tool_names:
+                            # Native apply_patch — round-trip as apply_patch_call
+                            args = item.args_as_dict()
+                            operation = _build_apply_patch_call_operation(args or {})
+                            apply_patch_call_item = ApplyPatchCall(
+                                call_id=call_id,
+                                operation=operation,
+                                type='apply_patch_call',
+                                id=id or call_id,
+                                status='completed',
+                            )
+                            openai_messages.append(apply_patch_call_item)
                         else:
                             param = responses.ResponseFunctionToolCallParam(
                                 name=item.tool_name,
@@ -2782,6 +2851,20 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
                 elif isinstance(chunk.item, ResponseFunctionShellToolCallOutput):
                     pass  # Handled in ResponseOutputItemDoneEvent
+                elif isinstance(chunk.item, ResponseApplyPatchToolCall):
+                    if 'apply_patch' in self._native_tool_names:
+                        tool_name = self._native_tool_names['apply_patch']
+                        apply_patch_part = ToolCallPart(
+                            tool_name=tool_name,
+                            args=_map_apply_patch_operation(chunk.item.operation),
+                            tool_call_id=chunk.item.call_id,
+                            id=chunk.item.id,
+                        )
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-call', part=apply_patch_part
+                        )
+                elif isinstance(chunk.item, ResponseApplyPatchToolCallOutput):
+                    pass  # Handled in ResponseOutputItemDoneEvent
                 else:
                     warnings.warn(  # pragma: no cover
                         f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -2853,6 +2936,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk.item, ResponseFunctionShellToolCallOutput):
                     return_part = _map_shell_tool_call_output(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
+                elif isinstance(chunk.item, ResponseApplyPatchToolCall):
+                    pass  # Already handled in ResponseOutputItemAddedEvent
+                elif isinstance(chunk.item, ResponseApplyPatchToolCallOutput):
+                    pass  # Result of agent-submitted apply_patch_call_output; no action needed
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
                 # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
@@ -3474,3 +3561,40 @@ def _map_shell_tool_call_output(item: ResponseFunctionShellToolCallOutput, provi
         content=result,
         provider_name=provider_name,
     )
+
+
+def _map_apply_patch_operation(operation: Any) -> dict[str, Any]:
+    """Map an OpenAI apply_patch ``operation`` to a dict for ``ToolCallPart.args``."""
+    from openai.types.responses.response_apply_patch_tool_call import (
+        OperationCreateFile,
+        OperationDeleteFile,
+        OperationUpdateFile,
+    )
+
+    if isinstance(operation, OperationCreateFile):
+        return {'operation_type': 'create_file', 'path': operation.path, 'diff': operation.diff}
+    elif isinstance(operation, OperationUpdateFile):
+        return {'operation_type': 'update_file', 'path': operation.path, 'diff': operation.diff}
+    elif isinstance(operation, OperationDeleteFile):
+        return {'operation_type': 'delete_file', 'path': operation.path}
+    else:
+        return {'operation_type': 'unknown', 'path': ''}
+
+
+def _build_apply_patch_call_operation(args: dict[str, Any]) -> Any:
+    """Build an ``ApplyPatchCallOperation`` TypedDict from a ``ToolCallPart.args`` dict for round-trip."""
+    from openai.types.responses.response_input_item_param import (
+        ApplyPatchCallOperationCreateFile,
+        ApplyPatchCallOperationDeleteFile,
+        ApplyPatchCallOperationUpdateFile,
+    )
+
+    op_type = args.get('operation_type', 'update_file')
+    path = args.get('path', '')
+    diff = args.get('diff', '')
+    if op_type == 'create_file':
+        return ApplyPatchCallOperationCreateFile(type='create_file', path=path, diff=diff)
+    elif op_type == 'delete_file':
+        return ApplyPatchCallOperationDeleteFile(type='delete_file', path=path)
+    else:
+        return ApplyPatchCallOperationUpdateFile(type='update_file', path=path, diff=diff)

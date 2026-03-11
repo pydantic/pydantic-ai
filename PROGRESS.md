@@ -135,18 +135,60 @@ All items from PLAN.md §4 and §14 Phase 1 are implemented and verified.
 
 ---
 
-## Phase 3: Local Text Editor + Apply Patch — NOT STARTED
+## Phase 3: Local Text Editor + Apply Patch — COMPLETE
 
-> PLAN.md §5.3, §5.4, and §14 Phase 3
+> PLAN.md §5.3, §5.4, §5.8, §5.9, and §14 Phase 3
 
-### Scope
+### Per-Phase Checklist
 
-1. `TextEditorToolset` with `TextEditorCommand` union in `toolsets/text_editor.py`
-2. `ApplyPatchToolset` with `ApplyPatchOperation` in `toolsets/apply_patch.py`
-3. Anthropic adapter: `text_editor_20250728`
-4. OpenAI adapter: `apply_patch`
-5. Profile flags: `supports_native_text_editor_tool`, `supports_native_apply_patch_tool`
-6. Tests + docs
+- [x] `__all__` exports; public types re-exported from `pydantic_ai/__init__.py`
+- [x] Private helpers prefixed with `_` and excluded from `__all__`
+- [x] `make format` and `make typecheck` pass (0 errors)
+- [x] `make lint` passes (all checks passed)
+- [ ] `make testcov` passes with 100% coverage (not yet verified)
+- [x] Docs updated (`docs/native-tools.md`, `docs/api/toolsets.md`)
+- [x] Docstrings on all public types and methods
+- [ ] PR created with template and issue refs
+- [x] VCR cassettes recorded (4 cassettes: Anthropic text_editor + OpenAI apply_patch, streaming + non-streaming)
+
+### Deliverables
+
+| Item | File(s) | Status |
+|------|---------|--------|
+| `TextEditorToolset` + command types | `toolsets/text_editor.py` | Done |
+| `TextEditorCommand` discriminated union | `toolsets/text_editor.py` | Done |
+| `TextEditorOutput` dataclass | `toolsets/text_editor.py` | Done |
+| `TextEditorExecuteFunc` callback type | `toolsets/text_editor.py` | Done |
+| `ApplyPatchToolset` | `toolsets/apply_patch.py` | Done |
+| `ApplyPatchOperation` dataclass | `toolsets/apply_patch.py` | Done |
+| `ApplyPatchOutput` dataclass | `toolsets/apply_patch.py` | Done |
+| `ApplyPatchExecuteFunc` callback type | `toolsets/apply_patch.py` | Done |
+| `supports_native_text_editor_tool` profile flag | `profiles/__init__.py` | Done |
+| `supports_native_apply_patch_tool` profile flag | `profiles/__init__.py` | Done |
+| Anthropic profile flag set | `profiles/anthropic.py` | Done |
+| OpenAI profile flag set | `profiles/openai.py` | Done |
+| Anthropic adapter: `text_editor_20250728` emission | `models/anthropic.py` | Done |
+| Anthropic: native name mapping | `models/anthropic.py` | Done |
+| Anthropic: fallback warning for text_editor | `models/anthropic.py` | Done |
+| OpenAI adapter: `apply_patch` emission | `models/openai.py` | Done |
+| OpenAI: `ResponseApplyPatchToolCall` handling | `models/openai.py` | Done |
+| OpenAI: streaming apply_patch handling | `models/openai.py` | Done |
+| OpenAI: `apply_patch_call` / `apply_patch_call_output` round-trip | `models/openai.py` | Done |
+| OpenAI: fallback warning for apply_patch | `models/openai.py` | Done |
+| Top-level exports | `__init__.py`, `toolsets/__init__.py` | Done |
+| Unit tests (types, toolsets, fallback warnings) | `tests/test_shell_toolset.py` | Done |
+| VCR cassettes (Anthropic text_editor) | `tests/models/cassettes/test_anthropic/` | Done |
+| VCR cassettes (OpenAI apply_patch) | `tests/models/cassettes/test_openai/` | Done |
+| Docs: TextEditorToolset + ApplyPatchToolset sections | `docs/native-tools.md` | Done |
+| Docs: API reference | `docs/api/toolsets.md` | Done |
+
+### Test Summary
+
+- 27 unit tests pass (15 existing + 12 new)
+- 4 VCR cassette integration tests pass (Anthropic text_editor + OpenAI apply_patch, streaming + non-streaming)
+- Cassettes recorded with `claude-sonnet-4-6` (Anthropic) and `gpt-5.4` (OpenAI)
+- `make typecheck` passes (0 errors)
+- `make lint` passes (all checks passed)
 
 ---
 

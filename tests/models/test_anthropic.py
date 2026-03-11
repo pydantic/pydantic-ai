@@ -63,6 +63,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets.shell import ShellToolset
+from pydantic_ai.toolsets.text_editor import TextEditorCommand, TextEditorOutput, TextEditorToolset
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
@@ -8777,6 +8778,57 @@ async def test_anthropic_local_shell_toolset_stream(allow_model_requests: None, 
     async with agent.run_stream('What is 2 + 2? Use python to calculate it.') as result:
         output = await result.get_output()
     assert '4' in output
+    messages = result.all_messages()
+    tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_calls) >= 1
+
+
+async def _text_editor_execute(cmd: TextEditorCommand) -> TextEditorOutput:
+    """Simple text editor executor for testing."""
+    command = cmd['command']
+    path = cmd['path']
+    if command == 'view':
+        return TextEditorOutput(output=f'Contents of {path}:\nprint("hello world")\n')
+    elif command == 'create':
+        return TextEditorOutput(output=f'File created: {path}')
+    elif command == 'str_replace':
+        return TextEditorOutput(output=f'Replacement performed in {path}')
+    elif command == 'insert':
+        return TextEditorOutput(output=f'Text inserted in {path}')
+    else:
+        return TextEditorOutput(output=f'Unknown command: {command}', success=False)
+
+
+async def test_anthropic_text_editor_toolset(allow_model_requests: None, anthropic_api_key: str):
+    """Test TextEditorToolset with Anthropic using native text_editor_20250728 format."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent: Agent[None, str] = Agent(
+        m,
+        toolsets=[TextEditorToolset(execute=_text_editor_execute)],
+        instructions='Always use the text editor tool. Keep responses brief.',
+    )
+
+    result = await agent.run('View the file /tmp/example.py')
+    assert 'hello world' in result.output.lower() or 'example.py' in result.output.lower()
+    messages = result.all_messages()
+    tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    tool_returns = [p for msg in messages for p in msg.parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) >= 1
+
+
+async def test_anthropic_text_editor_toolset_stream(allow_model_requests: None, anthropic_api_key: str):
+    """Test TextEditorToolset streaming with Anthropic using native text_editor_20250728 format."""
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent: Agent[None, str] = Agent(
+        m,
+        toolsets=[TextEditorToolset(execute=_text_editor_execute)],
+        instructions='Always use the text editor tool. Keep responses brief.',
+    )
+
+    async with agent.run_stream('View the file /tmp/example.py') as result:
+        output = await result.get_output()
+    assert 'hello world' in output.lower() or 'example.py' in output.lower()
     messages = result.all_messages()
     tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
     assert len(tool_calls) >= 1

@@ -52,7 +52,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
-from ..tools import ShellNativeDefinition, ToolDefinition
+from ..tools import ShellNativeDefinition, TextEditorNativeDefinition, ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
@@ -153,6 +153,7 @@ try:
         BetaToolChoiceParam,
         BetaToolParam,
         BetaToolResultBlockParam,
+        BetaToolTextEditor20250728Param,
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
@@ -700,9 +701,30 @@ class AnthropicModel(Model):
             ):
                 tools.append(BetaToolBash20250124Param(type='bash_20250124', name='bash'))
                 native_tool_names['bash'] = tool_def.name
+            elif (
+                native_def is not None
+                and isinstance(native_def, TextEditorNativeDefinition)
+                and self.profile.supports_native_text_editor_tool
+            ):
+                editor_param = BetaToolTextEditor20250728Param(
+                    type='text_editor_20250728',
+                    name='str_replace_based_edit_tool',
+                )
+                if native_def.max_characters is not None:
+                    editor_param['max_characters'] = native_def.max_characters
+                tools.append(editor_param)
+                native_tool_names['str_replace_based_edit_tool'] = tool_def.name
             else:
-                if native_def is not None and not self.profile.supports_native_shell_tool:
-                    _warn_native_tool_fallback(native_def.kind, 'anthropic')
+                if native_def is not None:
+                    if isinstance(native_def, ShellNativeDefinition) and not self.profile.supports_native_shell_tool:
+                        _warn_native_tool_fallback(native_def.kind, 'anthropic')
+                    elif (
+                        isinstance(native_def, TextEditorNativeDefinition)
+                        and not self.profile.supports_native_text_editor_tool
+                    ):
+                        _warn_native_tool_fallback(native_def.kind, 'anthropic')
+                    elif not isinstance(native_def, ShellNativeDefinition | TextEditorNativeDefinition):
+                        _warn_native_tool_fallback(native_def.kind, 'anthropic')
                 tools.append(self._map_tool_definition(tool_def))
 
         # Add cache_control to the last tool if enabled

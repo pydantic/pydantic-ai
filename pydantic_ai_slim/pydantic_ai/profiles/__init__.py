@@ -91,6 +91,20 @@ class ModelProfile:
     instead of a generic function tool.
     """
 
+    supports_native_text_editor_tool: bool = False
+    """Whether this model supports provider-native text editor tool format.
+
+    When ``True``, adapters emit the provider-specific text editor format
+    (e.g. Anthropic ``text_editor_20250728``) instead of a generic function tool.
+    """
+
+    supports_native_apply_patch_tool: bool = False
+    """Whether this model supports provider-native apply_patch tool format.
+
+    When ``True``, adapters emit the provider-specific apply_patch format
+    (e.g. OpenAI ``apply_patch``) instead of a generic function tool.
+    """
+
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:
         """Build a ModelProfile subclass instance from a ModelProfile instance."""

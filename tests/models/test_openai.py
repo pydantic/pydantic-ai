@@ -50,6 +50,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets.apply_patch import ApplyPatchOperation, ApplyPatchOutput, ApplyPatchToolset
 from pydantic_ai.toolsets.shell import ShellToolset
 from pydantic_ai.usage import RequestUsage
 
@@ -4721,6 +4722,51 @@ async def test_openai_responses_local_shell_toolset_stream(allow_model_requests:
     async with agent.run_stream('What is 2 + 2? Use python to calculate it.') as result:
         output = await result.get_output()
     assert '4' in output
+    messages = result.all_messages()
+    tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_calls) >= 1
+
+
+async def _apply_patch_execute(op: ApplyPatchOperation) -> ApplyPatchOutput:
+    """Simple apply_patch executor for testing."""
+    if op.operation_type == 'create_file':
+        return ApplyPatchOutput(status='completed', output=f'Created {op.path}')
+    elif op.operation_type == 'update_file':
+        return ApplyPatchOutput(status='completed', output=f'Updated {op.path}')
+    elif op.operation_type == 'delete_file':
+        return ApplyPatchOutput(status='completed', output=f'Deleted {op.path}')
+    else:
+        return ApplyPatchOutput(status='failed', output=f'Unknown operation: {op.operation_type}')
+
+
+async def test_openai_responses_apply_patch_toolset(allow_model_requests: None, openai_api_key: str):
+    """Test ApplyPatchToolset with OpenAI Responses using native apply_patch format."""
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(
+        m,
+        toolsets=[ApplyPatchToolset(execute=_apply_patch_execute)],
+        instructions='Always use the apply_patch tool. Keep responses brief.',
+    )
+
+    result = await agent.run('Create a file at /tmp/hello.py containing print("hello world")')
+    messages = result.all_messages()
+    tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    tool_returns = [p for msg in messages for p in msg.parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) >= 1
+
+
+async def test_openai_responses_apply_patch_toolset_stream(allow_model_requests: None, openai_api_key: str):
+    """Test ApplyPatchToolset streaming with OpenAI Responses using native apply_patch format."""
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(
+        m,
+        toolsets=[ApplyPatchToolset(execute=_apply_patch_execute)],
+        instructions='Always use the apply_patch tool. Keep responses brief.',
+    )
+
+    async with agent.run_stream('Create a file at /tmp/hello.py containing print("hello world")') as result:
+        await result.get_output()
     messages = result.all_messages()
     tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
     assert len(tool_calls) >= 1

@@ -1,9 +1,10 @@
-"""Tests for ShellToolset and NativeToolDefinition types."""
+"""Tests for ShellToolset, TextEditorToolset, ApplyPatchToolset, and NativeToolDefinition types."""
 
 from __future__ import annotations
 
 import json
 import warnings
+from typing import Any
 from unittest.mock import AsyncMock
 
 import anyio
@@ -17,12 +18,22 @@ from pydantic_ai.tools import (
     TextEditorNativeDefinition,
     ToolDefinition,
 )
+from pydantic_ai.toolsets.apply_patch import ApplyPatchOperation, ApplyPatchOutput, ApplyPatchToolset
 from pydantic_ai.toolsets.shell import (
     ShellExecutor,
     ShellOutput,
     ShellToolset,
     _LocalShellExecutor,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai.toolsets.text_editor import TextEditorOutput, TextEditorToolset
+
+from .conftest import try_import
+
+with try_import() as anthropic_installed:
+    import pydantic_ai.models.anthropic as anthropic_mod
+
+with try_import() as openai_installed:
+    import pydantic_ai.models.openai as openai_mod
 
 # === NativeToolDefinition types ===
 
@@ -234,27 +245,249 @@ class TestShellToolsetLocal:
             await executor.close()
 
 
+@pytest.mark.skipif(not anthropic_installed(), reason='anthropic not installed')
 class TestFallbackWarning:
     def test_native_tool_fallback_warns(self):
         """Native tool on unsupported provider emits a fallback warning."""
-        import pydantic_ai.models.anthropic as anthropic_mod
-
-        # Clear the warned set for this test
-        anthropic_mod._NATIVE_TOOL_FALLBACK_WARNED.clear()  # pyright: ignore[reportPrivateUsage]
+        # Use unique provider name to avoid parallel test interference
+        provider = 'test_fallback_shell'
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
-            anthropic_mod._warn_native_tool_fallback('shell', 'test_provider')  # pyright: ignore[reportPrivateUsage]
+            anthropic_mod._warn_native_tool_fallback('shell', provider)  # pyright: ignore[reportPrivateUsage]
 
         assert len(w) == 1
         assert 'falling back to function tool format' in str(w[0].message)
-        assert 'test_provider' in str(w[0].message)
+        assert provider in str(w[0].message)
 
         # Second call should not warn (once per kind+provider)
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
-            anthropic_mod._warn_native_tool_fallback('shell', 'test_provider')  # pyright: ignore[reportPrivateUsage]
+            anthropic_mod._warn_native_tool_fallback('shell', provider)  # pyright: ignore[reportPrivateUsage]
 
         assert len(w) == 0
 
-        anthropic_mod._NATIVE_TOOL_FALLBACK_WARNED.clear()  # pyright: ignore[reportPrivateUsage]
+
+# === TextEditorToolset ===
+
+
+def _make_run_context():
+    from pydantic_ai._run_context import RunContext
+
+    return RunContext[None](
+        deps=None,
+        model=None,  # type: ignore
+        usage=None,  # type: ignore
+        prompt='test',
+        retries={},
+    )
+
+
+class TestTextEditorToolsetGetTools:
+    async def test_get_tools_returns_correct_definition(self):
+        async def mock_execute(cmd: Any) -> TextEditorOutput:
+            return TextEditorOutput(output='OK')
+
+        toolset: TextEditorToolset[None] = TextEditorToolset(execute=mock_execute)
+        ctx = _make_run_context()
+        tools = await toolset.get_tools(ctx)
+
+        assert 'str_replace_based_edit_tool' in tools
+        tool_def = tools['str_replace_based_edit_tool'].tool_def
+        assert tool_def.name == 'str_replace_based_edit_tool'
+        assert isinstance(tool_def.native_definition, TextEditorNativeDefinition)
+        assert tool_def.native_definition.max_characters is None
+
+    async def test_get_tools_with_max_characters(self):
+        async def mock_execute(cmd: Any) -> TextEditorOutput:
+            return TextEditorOutput(output='OK')
+
+        toolset: TextEditorToolset[None] = TextEditorToolset(execute=mock_execute, max_characters=50000)
+        ctx = _make_run_context()
+        tools = await toolset.get_tools(ctx)
+
+        tool_def = tools['str_replace_based_edit_tool'].tool_def
+        assert isinstance(tool_def.native_definition, TextEditorNativeDefinition)
+        assert tool_def.native_definition.max_characters == 50000
+
+    async def test_get_tools_custom_name(self):
+        async def mock_execute(cmd: Any) -> TextEditorOutput:
+            return TextEditorOutput(output='OK')
+
+        toolset: TextEditorToolset[None] = TextEditorToolset(execute=mock_execute, tool_name='my_editor')
+        ctx = _make_run_context()
+        tools = await toolset.get_tools(ctx)
+        assert 'my_editor' in tools
+        assert tools['my_editor'].tool_def.name == 'my_editor'
+
+
+class TestTextEditorToolsetCallTool:
+    async def test_call_tool_dispatches_to_execute(self):
+        received_cmd: Any = None
+
+        async def mock_execute(cmd: Any) -> TextEditorOutput:
+            nonlocal received_cmd
+            received_cmd = cmd
+            return TextEditorOutput(output='file contents here')
+
+        toolset: TextEditorToolset[None] = TextEditorToolset(execute=mock_execute)
+        ctx = _make_run_context()
+        tools = await toolset.get_tools(ctx)
+        tool = tools['str_replace_based_edit_tool']
+
+        result = await toolset.call_tool(
+            'str_replace_based_edit_tool',
+            {'command': 'view', 'path': '/tmp/test.py'},
+            ctx,
+            tool,
+        )
+        parsed = json.loads(result)
+        assert parsed['output'] == 'file contents here'
+        assert parsed['success'] is True
+        assert received_cmd is not None
+        assert received_cmd['command'] == 'view'
+        assert received_cmd['path'] == '/tmp/test.py'
+
+    async def test_call_tool_failure(self):
+        async def mock_execute(cmd: Any) -> TextEditorOutput:
+            return TextEditorOutput(output='File not found', success=False)
+
+        toolset: TextEditorToolset[None] = TextEditorToolset(execute=mock_execute)
+        ctx = _make_run_context()
+        tools = await toolset.get_tools(ctx)
+        tool = tools['str_replace_based_edit_tool']
+
+        result = await toolset.call_tool(
+            'str_replace_based_edit_tool',
+            {'command': 'view', 'path': '/nonexistent'},
+            ctx,
+            tool,
+        )
+        parsed = json.loads(result)
+        assert parsed['output'] == 'File not found'
+        assert parsed['success'] is False
+
+
+# === ApplyPatchToolset ===
+
+
+class TestApplyPatchToolsetGetTools:
+    async def test_get_tools_returns_correct_definition(self):
+        async def mock_execute(op: Any) -> ApplyPatchOutput:
+            return ApplyPatchOutput(status='completed')
+
+        toolset: ApplyPatchToolset[None] = ApplyPatchToolset(execute=mock_execute)
+        ctx = _make_run_context()
+        tools = await toolset.get_tools(ctx)
+
+        assert 'apply_patch' in tools
+        tool_def = tools['apply_patch'].tool_def
+        assert tool_def.name == 'apply_patch'
+        assert isinstance(tool_def.native_definition, ApplyPatchNativeDefinition)
+
+    async def test_get_tools_custom_name(self):
+        async def mock_execute(op: Any) -> ApplyPatchOutput:
+            return ApplyPatchOutput(status='completed')
+
+        toolset: ApplyPatchToolset[None] = ApplyPatchToolset(execute=mock_execute, tool_name='my_patcher')
+        ctx = _make_run_context()
+        tools = await toolset.get_tools(ctx)
+        assert 'my_patcher' in tools
+        assert tools['my_patcher'].tool_def.name == 'my_patcher'
+
+
+class TestApplyPatchToolsetCallTool:
+    async def test_call_tool_dispatches_to_execute(self):
+        received_op: Any = None
+
+        async def mock_execute(op: Any) -> ApplyPatchOutput:
+            nonlocal received_op
+            received_op = op
+            return ApplyPatchOutput(status='completed', output='Patch applied')
+
+        toolset: ApplyPatchToolset[None] = ApplyPatchToolset(execute=mock_execute)
+        ctx = _make_run_context()
+        tools = await toolset.get_tools(ctx)
+        tool = tools['apply_patch']
+
+        result = await toolset.call_tool(
+            'apply_patch',
+            {'operation_type': 'update_file', 'path': '/tmp/test.py', 'diff': '--- a\n+++ b\n@@ ...\n-old\n+new'},
+            ctx,
+            tool,
+        )
+        parsed = json.loads(result)
+        assert parsed['status'] == 'completed'
+        assert parsed['output'] == 'Patch applied'
+        assert isinstance(received_op, ApplyPatchOperation)
+        assert received_op.operation_type == 'update_file'
+        assert received_op.path == '/tmp/test.py'
+        assert received_op.diff is not None
+
+    async def test_call_tool_create_file(self):
+        async def mock_execute(op: Any) -> ApplyPatchOutput:
+            return ApplyPatchOutput(status='completed')
+
+        toolset: ApplyPatchToolset[None] = ApplyPatchToolset(execute=mock_execute)
+        ctx = _make_run_context()
+        tools = await toolset.get_tools(ctx)
+        tool = tools['apply_patch']
+
+        result = await toolset.call_tool(
+            'apply_patch',
+            {'operation_type': 'create_file', 'path': '/tmp/new.py', 'content': 'print("hello")'},
+            ctx,
+            tool,
+        )
+        parsed = json.loads(result)
+        assert parsed['status'] == 'completed'
+
+    async def test_call_tool_failure(self):
+        async def mock_execute(op: Any) -> ApplyPatchOutput:
+            return ApplyPatchOutput(status='failed', output='Patch conflict')
+
+        toolset: ApplyPatchToolset[None] = ApplyPatchToolset(execute=mock_execute)
+        ctx = _make_run_context()
+        tools = await toolset.get_tools(ctx)
+        tool = tools['apply_patch']
+
+        result = await toolset.call_tool(
+            'apply_patch',
+            {'operation_type': 'delete_file', 'path': '/tmp/gone.py'},
+            ctx,
+            tool,
+        )
+        parsed = json.loads(result)
+        assert parsed['status'] == 'failed'
+        assert parsed['output'] == 'Patch conflict'
+
+
+# === Fallback warnings for new native tool types ===
+
+
+class TestFallbackWarningNewTypes:
+    @pytest.mark.skipif(not anthropic_installed(), reason='anthropic not installed')
+    def test_text_editor_fallback_warns(self):
+        """Text editor native tool on unsupported provider emits a fallback warning."""
+        provider = 'test_fallback_text_editor'
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            anthropic_mod._warn_native_tool_fallback('text_editor', provider)  # pyright: ignore[reportPrivateUsage]
+
+        assert len(w) == 1
+        assert 'text_editor' in str(w[0].message)
+        assert provider in str(w[0].message)
+
+    @pytest.mark.skipif(not openai_installed(), reason='openai not installed')
+    def test_apply_patch_fallback_warns(self):
+        """Apply patch native tool on unsupported provider emits a fallback warning."""
+        provider = 'test_fallback_apply_patch'
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            openai_mod._warn_native_tool_fallback('apply_patch', provider)  # pyright: ignore[reportPrivateUsage]
+
+        assert len(w) == 1
+        assert 'apply_patch' in str(w[0].message)
+        assert provider in str(w[0].message)
