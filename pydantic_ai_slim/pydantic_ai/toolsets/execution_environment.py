@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
-from typing_extensions import Self
+from typing_extensions import Protocol, Self
 
 from ..environments._base import (
     EnvCapability,
@@ -180,6 +180,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                 output = output[:max_output] + '\n... (truncated)'
             return (output + exit_line).strip()
 
+        _extend_docstring(shell, self.required_environment.capability_details().get('shell'))
+
         self.tool(requires_approval=self._require_shell_approval)(shell)
 
     def _register_read_file(self) -> None:
@@ -217,6 +219,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             except (FileNotFoundError, PermissionError, ValueError, OSError) as e:
                 return f'Error: {e}'
 
+        _extend_docstring(read_file, self.required_environment.capability_details().get('read_file'))
+
         self.tool(read_file)
 
     def _register_write_file(self) -> None:
@@ -234,6 +238,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                 return f'File written: {path}'
             except (PermissionError, OSError) as e:
                 return f'Error: {e}'
+
+        _extend_docstring(write_file, self.required_environment.capability_details().get('write_file'))
 
         self.tool(requires_approval=self._require_write_approval)(write_file)
 
@@ -256,6 +262,8 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                 return f'Replaced {count} occurrence{"s" if count != 1 else ""} in {path}.'
             except (FileNotFoundError, PermissionError, ValueError, OSError) as e:
                 raise ModelRetry(str(e))
+
+        _extend_docstring(replace_str, self.required_environment.capability_details().get('replace_str'))
 
         self.tool(requires_approval=self._require_write_approval)(replace_str)
 
@@ -395,3 +403,15 @@ def _format_lines(read_result: TextFileReadResult) -> str:
         result += f'... ({remaining} more lines. Use offset={next_offset} to continue reading.)\n'
 
     return result
+
+
+class _HasDocs(Protocol):
+    __doc__: str
+
+
+def _extend_docstring(fn: _HasDocs, details: str | None) -> None:
+    # Insert the details above the args
+    if details is not None:
+        docstring_parts = fn.__doc__.split('Args:')
+        docstring_parts[0] = docstring_parts[0] + f'{details}\n\n'
+        fn.__doc__ += 'Args:'.join(docstring_parts)

@@ -122,6 +122,14 @@ class ExecutionEnvironment(ABC):
     defaults built on `read_file` and `write_file`.
     """
 
+    # TODO: Move this to bottom?
+    def capability_details(self) -> dict[EnvCapability, str]:
+        """Return extra information about capabilities for automatic inclusion in tool descriptions.
+
+        For example, you can indicate whether the shell command flavor is macOS or Linux, etc.
+        """
+        return {}
+
     # --- Capability introspection ---
 
     @property
