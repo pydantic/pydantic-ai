@@ -20,6 +20,8 @@ from pydantic_ai import (
     Agent,
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
     ImageUrl,
@@ -39,7 +41,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
-from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
+from pydantic_ai.builtin_tools import ImageGenerationTool, ShellTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import SystemPromptPart, UploadedFile
 from pydantic_ai.models import ModelRequestParameters
@@ -3812,7 +3814,8 @@ async def test_cache_point_filtering_responses_model():
 
     # Test the instance method directly to ensure CachePoint filtering
     msg = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
-        UserPromptPart(content=['text before', CachePoint(), 'text after'])
+        UserPromptPart(content=['text before', CachePoint(), 'text after']),
+        has_shell_tool=False,
     )
 
     # CachePoint should be filtered out, only text content should remain
@@ -4555,3 +4558,133 @@ async def test_openai_chat_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I'm sorry, I can't help with that."
+
+
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_openai_responses_shell_tool(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[ShellTool()],
+        instructions='Always use the shell tool. Keep responses brief.',
+    )
+
+    result = await agent.run('What is 2 + 2? Use python to calculate it.')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2? Use python to calculate it.', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='shell',
+                        args={
+                            'commands': [
+                                """\
+python3 - <<'PY'
+print(2+2)
+PY\
+"""
+                            ],
+                            'container_id': 'cntr_69b114fb6b108190b8ba5d98d49508b60615b6d51b77bc58',
+                        },
+                        tool_call_id='call_T86WP7YSfjMG5EuLRXu392NC',
+                        id='sh_0e9f3e97bce0d13c0169b114ff980c819089563f2086370215',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='shell',
+                        content={'status': 'completed'},
+                        tool_call_id='call_T86WP7YSfjMG5EuLRXu392NC',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='Using Python, `2 + 2 = 4`.',
+                        id='msg_0e9f3e97bce0d13c0169b11503d268819087cf55e14b16a768',
+                        provider_name='openai',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=819, output_tokens=45, details={'reasoning_tokens': 29}),
+                model_name='gpt-5.4-2026-03-05',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_0e9f3e97bce0d13c0169b114f4ccc081909a37b78e8467ade0',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_openai_responses_shell_tool_stream(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[ShellTool()],
+        instructions='Always use the shell tool. Keep responses brief.',
+    )
+
+    async with agent.run_stream('What is 2 + 2? Use python to calculate it.') as result:
+        await result.get_output()
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2? Use python to calculate it.', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='shell',
+                        args={'commands': [], 'container_id': 'cntr_69b1150fe7d08198bcbee772d08ce2e202abcacf8b793b25'},
+                        tool_call_id='call_UJhs3tKkwVApGZxpFOWhtb1A',
+                        id='sh_01fef2178327e5240169b115112c4081988a00ee5464662502',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='shell',
+                        content={'status': 'completed'},
+                        tool_call_id='call_UJhs3tKkwVApGZxpFOWhtb1A',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='Python calculates `2 + 2` as **4**.',
+                        id='msg_01fef2178327e5240169b1151654988198bb4b2a3321ff27ad',
+                        provider_name='openai',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=824, output_tokens=46, details={'reasoning_tokens': 29}),
+                model_name='gpt-5.4-2026-03-05',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                provider_response_id='resp_01fef2178327e5240169b1150cdd6881989ce841174dea3d34',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )

@@ -44,7 +44,14 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from pydantic_ai.builtin_tools import (
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    ShellTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
@@ -6741,6 +6748,137 @@ Results match: True
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                 )
+            ),
+        ]
+    )
+
+
+async def test_anthropic_shell_tool(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[ShellTool()],
+        instructions='Always use the shell tool. Keep responses brief.',
+    )
+
+    result = await agent.run('What is 2 + 2? Use python to calculate it.')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2? Use python to calculate it.', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='shell',
+                        args={'command': 'python3 -c "print(2 + 2)"'},
+                        tool_call_id='srvtoolu_018J4uFgCiKo2YeDS8DmVJtE',
+                        provider_name='anthropic',
+                        provider_details={'server_tool_name': 'bash_code_execution'},
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='shell',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': '4\n',
+                            'type': 'bash_code_execution_result',
+                        },
+                        tool_call_id='srvtoolu_018J4uFgCiKo2YeDS8DmVJtE',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content='2 + 2 = **4**'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=4627,
+                    output_tokens=82,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 4627,
+                        'output_tokens': 82,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CYvsF3eEuthoNQYxnMMYa'},
+                provider_response_id='msg_01ADHu3dgMsjDVUWBzFpAfSV',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_anthropic_shell_tool_stream(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[ShellTool()],
+        instructions='Always use the shell tool. Keep responses brief.',
+    )
+
+    async with agent.run_stream('What is 2 + 2? Use python to calculate it.') as result:
+        await result.get_output()
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2? Use python to calculate it.', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='shell',
+                        args='{"command": "python3 -c \\"print(2 + 2)\\""}',
+                        tool_call_id='srvtoolu_01UxJPPkQp71eQ8WTmHrfXff',
+                        provider_name='anthropic',
+                        provider_details={'server_tool_name': 'bash_code_execution'},
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='shell',
+                        content={
+                            'content': [],
+                            'return_code': 0,
+                            'stderr': '',
+                            'stdout': '4\n',
+                            'type': 'bash_code_execution_result',
+                        },
+                        tool_call_id='srvtoolu_01UxJPPkQp71eQ8WTmHrfXff',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content='The result of **2 + 2 = 4**, as calculated by Python!'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=4627,
+                    output_tokens=91,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 4627,
+                        'output_tokens': 91,
+                    },
+                ),
+                model_name='claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_url='https://api.anthropic.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01CAcVpyAEzKZuodAeKRoBfp',
+                finish_reason='stop',
+                run_id=IsStr(),
             ),
         ]
     )

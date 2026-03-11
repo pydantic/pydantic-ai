@@ -27,6 +27,7 @@ from ..builtin_tools import (
     ImageAspectRatio,
     ImageGenerationTool,
     MCPServerTool,
+    ShellTool,
     WebSearchTool,
 )
 from ..exceptions import UserError
@@ -100,13 +101,31 @@ try:
         WebSearchOptionsUserLocation,
         WebSearchOptionsUserLocationApproximate,
     )
-    from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
+    from openai.types.responses import (
+        ComputerToolParam,
+        FileSearchToolParam,
+        FunctionShellToolParam,
+        ResponseFunctionShellToolCall,
+        ResponseFunctionShellToolCallOutput,
+        WebSearchToolParam,
+    )
+    from openai.types.responses.container_reference_param import ContainerReferenceParam
+    from openai.types.responses.response_container_reference import ResponseContainerReference
+    from openai.types.responses.response_function_shell_call_output_content_param import (
+        ResponseFunctionShellCallOutputContentParam,
+    )
+    from openai.types.responses.response_input_item_param import (
+        ShellCall,
+        ShellCallAction,
+        ShellCallOutput,
+    )
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.responses.response_reasoning_item_param import (
         Content as ReasoningContent,
         Summary as ReasoningSummary,
     )
     from openai.types.responses.response_status import ResponseStatus
+    from openai.types.responses.skill_reference_param import SkillReferenceParam
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 
@@ -463,6 +482,24 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     in the `provider_details['annotations']` field of text parts.
     This is opt-in since there may be overlap with native annotation support once
     added via https://github.com/pydantic/pydantic-ai/issues/3126.
+    """
+
+    openai_shell_uploaded_files: Sequence[UploadedFile]
+    """Files to mount into the OpenAI hosted shell container.
+
+    Requires a `ShellTool` in the request. File IDs are passed as ``file_ids``
+    in the ``container_auto`` environment.
+    """
+
+    openai_shell_container: str | Literal[False]
+    """Container configuration for the OpenAI shell tool.
+
+    - ``str`` (e.g. ``'cntr_xxx'``): reuse an existing container via ``container_reference``.
+      Cannot be combined with skills, network_policy, or file uploads.
+    - ``False``: force a fresh ``container_auto`` container, ignoring any container ID
+      extracted from message history.
+
+    Omit (default) to use a fresh ``container_auto`` each time.
     """
 
 
@@ -1396,7 +1433,9 @@ class OpenAIResponsesModel(Model):
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""
-        return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool})
+        return frozenset(
+            {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool, ShellTool}
+        )
 
     async def request(
         self,
@@ -1528,6 +1567,12 @@ class OpenAIResponsesModel(Model):
                 if file_part:  # pragma: no branch
                     items.append(file_part)
                 items.append(return_part)
+            elif isinstance(item, ResponseFunctionShellToolCall):
+                call_part, return_part = _map_shell_tool_call(item, self.system)
+                items.append(call_part)
+                items.append(return_part)
+            elif isinstance(item, ResponseFunctionShellToolCallOutput):
+                items.append(_map_shell_tool_call_output(item, self.system))
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
@@ -1631,7 +1676,7 @@ class OpenAIResponsesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
         tools = (
-            self._get_builtin_tools(model_request_parameters)
+            self._get_builtin_tools(model_request_parameters, model_settings)
             + list(model_settings.get('openai_builtin_tools', []))
             + self._get_tools(model_request_parameters)
         )
@@ -1768,9 +1813,15 @@ class OpenAIResponsesModel(Model):
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
-    def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
+    def _get_builtin_tools(  # noqa: C901
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: OpenAIResponsesModelSettings,
+    ) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
         has_image_generating_tool = False
+        has_shell = False
+        has_code_exec = False
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 web_search_tool = responses.WebSearchToolParam(
@@ -1792,8 +1843,12 @@ class OpenAIResponsesModel(Model):
                 )
                 tools.append(file_search_tool)
             elif isinstance(tool, CodeExecutionTool):
+                has_code_exec = True
                 has_image_generating_tool = True
                 tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
+            elif isinstance(tool, ShellTool):
+                has_shell = True
+                tools.append(_build_shell_tool_param(tool, model_settings))
             elif isinstance(tool, MCPServerTool):
                 mcp_tool = responses.tool_param.Mcp(
                     type='mcp',
@@ -1841,6 +1896,9 @@ class OpenAIResponsesModel(Model):
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
                 )
+
+        if has_shell and has_code_exec:
+            raise UserError('`ShellTool` and `CodeExecutionTool` are mutually exclusive — use one or the other')
 
         if model_request_parameters.allow_image_output and not has_image_generating_tool:
             tools.append({'type': 'image_generation'})
@@ -1898,6 +1956,7 @@ class OpenAIResponsesModel(Model):
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.openai_supports_encrypted_reasoning_content
         )
+        has_shell_tool = any(isinstance(t, ShellTool) for t in model_request_parameters.builtin_tools)
 
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
@@ -1906,7 +1965,7 @@ class OpenAIResponsesModel(Model):
                     if isinstance(part, SystemPromptPart):
                         openai_messages.append(responses.EasyInputMessageParam(role='system', content=part.content))
                     elif isinstance(part, UserPromptPart):
-                        openai_messages.append(await self._map_user_prompt(part))
+                        openai_messages.append(await self._map_user_prompt(part, has_shell_tool=has_shell_tool))
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
@@ -2038,6 +2097,22 @@ class OpenAIResponsesModel(Model):
                                     },
                                 )
                                 openai_messages.append(image_generation_item)
+                            elif (
+                                item.tool_name == ShellTool.kind and item.tool_call_id and (args := item.args_as_dict())
+                            ):
+                                shell_call_item = ShellCall(
+                                    action=ShellCallAction(commands=args.get('commands', [])),
+                                    call_id=item.tool_call_id,
+                                    type='shell_call',
+                                    id=item.id or item.tool_call_id,
+                                    status='completed',
+                                )
+                                if container_id := args.get('container_id'):
+                                    shell_call_item['environment'] = ContainerReferenceParam(
+                                        container_id=container_id,
+                                        type='container_reference',
+                                    )
+                                openai_messages.append(shell_call_item)
                             elif (  # pragma: no branch
                                 item.tool_name.startswith(MCPServerTool.kind)
                                 and item.tool_call_id
@@ -2073,7 +2148,7 @@ class OpenAIResponsesModel(Model):
                         if should_send_item_id:  # pragma: no branch
                             content_is_dict = isinstance(item.content, dict)
                             status = cast(dict[str, Any], item.content).get('status') if content_is_dict else None
-                            kind_to_item = {
+                            kind_to_item: dict[str, Any] = {
                                 CodeExecutionTool.kind: code_interpreter_item,
                                 WebSearchTool.kind: web_search_item,
                                 FileSearchTool.kind: file_search_item,
@@ -2083,6 +2158,27 @@ class OpenAIResponsesModel(Model):
                             elif item.tool_name == ImageGenerationTool.kind:
                                 # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
                                 pass
+                            elif item.tool_name == ShellTool.kind:
+                                # Shell call output: build ShellCallOutput for round-trip
+                                content = cast(dict[str, Any], item.content) if content_is_dict else {}
+                                outputs = content.get('outputs', [])
+                                shell_output_items: list[ResponseFunctionShellCallOutputContentParam] = []
+                                for output in outputs:
+                                    shell_output_items.append(
+                                        ResponseFunctionShellCallOutputContentParam(
+                                            outcome={'type': 'exit', 'exit_code': 0},
+                                            stdout=output.get('stdout', ''),
+                                            stderr=output.get('stderr', ''),
+                                        )
+                                    )
+                                openai_messages.append(
+                                    ShellCallOutput(
+                                        call_id=item.tool_call_id or '',
+                                        output=shell_output_items,
+                                        type='shell_call_output',
+                                        status='completed',
+                                    )
+                                )
                             elif item.tool_name.startswith(MCPServerTool.kind):  # pragma: no branch
                                 # MCP call result does not need to be sent back, just the fields off of `BuiltinToolCallPart`.
                                 pass
@@ -2157,7 +2253,7 @@ class OpenAIResponsesModel(Model):
             response_format_param['strict'] = o.strict
         return response_format_param
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> responses.EasyInputMessageParam:  # noqa: C901
+    async def _map_user_prompt(self, part: UserPromptPart, *, has_shell_tool: bool) -> responses.EasyInputMessageParam:  # noqa: C901
         content: str | list[responses.ResponseInputContentParam]
         if isinstance(part.content, str):
             content = part.content
@@ -2237,6 +2333,10 @@ class OpenAIResponsesModel(Model):
                         raise UserError(
                             f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIResponsesModel. '
                             f'Expected `provider_name` to be `{self.system!r}`.'
+                        )
+                    if item.target in ('container', 'both') and not has_shell_tool:
+                        raise UserError(
+                            f"`UploadedFile` with `target={item.target!r}` requires a `ShellTool` in the agent's builtin tools."
                         )
                     content.append(
                         responses.ResponseInputFileParam(
@@ -2571,6 +2671,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk.item, responses.response_output_item.McpListTools):
                     call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
+                elif isinstance(chunk.item, ResponseFunctionShellToolCall):
+                    call_part, _ = _map_shell_tool_call(chunk.item, self.provider_name)
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
+                elif isinstance(chunk.item, ResponseFunctionShellToolCallOutput):
+                    pass  # Handled in ResponseOutputItemDoneEvent
                 else:
                     warnings.warn(  # pragma: no cover
                         f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -2628,6 +2733,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
                 elif isinstance(chunk.item, responses.response_output_item.McpListTools):
                     _, return_part = _map_mcp_list_tools(chunk.item, self.provider_name)
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
+                elif isinstance(chunk.item, ResponseFunctionShellToolCall):
+                    _, return_part = _map_shell_tool_call(chunk.item, self.provider_name)
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
+                elif isinstance(chunk.item, ResponseFunctionShellToolCallOutput):
+                    return_part = _map_shell_tool_call_output(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
@@ -3154,4 +3265,99 @@ def _map_mcp_call(
             },
             provider_name=provider_name,
         ),
+    )
+
+
+def _build_shell_tool_param(
+    tool: ShellTool,
+    model_settings: OpenAIResponsesModelSettings,
+) -> FunctionShellToolParam:
+    """Build a ``FunctionShellToolParam`` from a ``ShellTool`` and model settings."""
+    container_setting = model_settings.get('openai_shell_container')
+
+    # When an explicit container ID is provided, use container_reference
+    if isinstance(container_setting, str):
+        return FunctionShellToolParam(
+            type='shell',
+            environment=ContainerReferenceParam(type='container_reference', container_id=container_setting),
+        )
+
+    # Otherwise build a container_auto environment
+    environment: dict[str, Any] = {'type': 'container_auto'}
+
+    if tool.skills:
+        skills_list: list[SkillReferenceParam] = []
+        for skill in tool.skills:
+            skill_param = SkillReferenceParam(skill_id=skill.skill_id, type='skill_reference')
+            if skill.version is not None:
+                skill_param['version'] = str(skill.version)
+            skills_list.append(skill_param)
+        environment['skills'] = skills_list
+
+    if tool.network_policy:
+        if tool.network_policy.mode == 'disabled':
+            environment['network_policy'] = {'type': 'disabled'}
+        else:
+            environment['network_policy'] = {
+                'type': 'allowlist',
+                'allowed_domains': list(tool.network_policy.allowed_domains),
+            }
+
+    if shell_files := model_settings.get('openai_shell_uploaded_files'):
+        environment['file_ids'] = [f.file_id for f in shell_files]
+
+    # Use cast because we build the ContainerAutoParam as a dict for flexibility
+    return cast(FunctionShellToolParam, {'type': 'shell', 'environment': environment})
+
+
+def _map_shell_tool_call(
+    item: ResponseFunctionShellToolCall, provider_name: str
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+    """Map an OpenAI ``shell_call`` response item to builtin tool parts."""
+    args: dict[str, Any] = {
+        'commands': item.action.commands,
+    }
+    if isinstance(item.environment, ResponseContainerReference):
+        args['container_id'] = item.environment.container_id
+
+    result: dict[str, Any] = {
+        'status': item.status,
+    }
+
+    return (
+        BuiltinToolCallPart(
+            tool_name=ShellTool.kind,
+            tool_call_id=item.call_id,
+            args=args,
+            provider_name=provider_name,
+            id=item.id,
+        ),
+        BuiltinToolReturnPart(
+            tool_name=ShellTool.kind,
+            tool_call_id=item.call_id,
+            content=result,
+            provider_name=provider_name,
+        ),
+    )
+
+
+def _map_shell_tool_call_output(item: ResponseFunctionShellToolCallOutput, provider_name: str) -> BuiltinToolReturnPart:
+    """Map an OpenAI ``shell_call_output`` response item to a builtin return part."""
+    result: dict[str, Any] = {'status': item.status}
+    if item.output:
+        outputs: list[dict[str, str]] = []
+        for output in item.output:
+            outputs.append(
+                {
+                    'stdout': output.stdout,
+                    'stderr': output.stderr,
+                }
+            )
+        result['outputs'] = outputs
+
+    return BuiltinToolReturnPart(
+        tool_name=ShellTool.kind,
+        tool_call_id=item.call_id,
+        content=result,
+        provider_name=provider_name,
     )

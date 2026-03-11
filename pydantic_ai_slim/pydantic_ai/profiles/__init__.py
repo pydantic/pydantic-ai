@@ -77,6 +77,12 @@ class ModelProfile:
     restrict this based on model capabilities.
     """
 
+    supports_shell_network_policy: bool = False
+    """Whether this model supports network policy on hosted shell containers.
+
+    True for OpenAI Responses.
+    """
+
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:
         """Build a ModelProfile subclass instance from a ModelProfile instance."""

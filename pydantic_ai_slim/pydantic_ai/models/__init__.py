@@ -24,7 +24,7 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from ..builtin_tools import AbstractBuiltinTool
+from ..builtin_tools import AbstractBuiltinTool, ShellTool
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -793,6 +793,15 @@ class Model(ABC):
                 raise UserError(
                     f'Builtin tool(s) {unsupported_names} not supported by this model. Supported: {supported_names}'
                 )
+
+            # Check if ShellTool.network_policy is supported by this model
+            if not self.profile.supports_shell_network_policy:
+                for tool in params.builtin_tools:
+                    if isinstance(tool, ShellTool) and tool.network_policy is not None:
+                        raise UserError(
+                            '`ShellTool.network_policy` is not supported by this model. '
+                            'Only OpenAI Responses models support network policies on hosted shell containers.'
+                        )
 
         return model_settings, params
 
