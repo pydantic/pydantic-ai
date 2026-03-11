@@ -952,9 +952,28 @@ class BedrockConverseModel(Model):
         return [{'role': 'user', 'content': content}]
 
     @staticmethod
+    def _sanitize_tool_name(name: str) -> str:
+        """Sanitize a tool name to satisfy Bedrock's [a-zA-Z0-9_-]+ constraint.
+
+        If the model hallucinates a tool name with invalid characters (e.g. dots,
+        spaces), passing it through as-is causes Bedrock to reject every subsequent
+        request in the same run (the invalid name is baked into the message history).
+        Replace any character outside [a-zA-Z0-9_-] with an underscore so that the
+        API call succeeds and the error surface area is a ToolNotFound instead of an
+        unrecoverable ValidationException.
+        """
+        import re as _re
+
+        return _re.sub(r'[^a-zA-Z0-9_\-]', '_', name)
+
+    @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
         return {
-            'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
+            'toolUse': {
+                'toolUseId': _utils.guard_tool_call_id(t=t),
+                'name': BedrockConverseModel._sanitize_tool_name(t.tool_name),
+                'input': t.args_as_dict(),
+            }
         }
 
     @staticmethod
