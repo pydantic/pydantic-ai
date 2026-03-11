@@ -4890,8 +4890,8 @@ class TestRunStreamEventsCancellation:
             # Stream a tool call with args in multiple chunks
             yield {0: DeltaToolCall(name='my_tool', json_args='{"arg1": ')}
             yield {0: DeltaToolCall(json_args='"value1", ')}
-            yield {0: DeltaToolCall(json_args='"arg2": ')}
             # These would complete the JSON but we'll cancel before reaching them
+            yield {0: DeltaToolCall(json_args='"arg2": ')}  # pragma: lax no cover
             yield {0: DeltaToolCall(json_args='"value2"}')}  # pragma: no cover
 
         agent = Agent(model=FunctionModel(stream_function=stream_function))
@@ -5489,7 +5489,7 @@ class TestStreamEventsContextManager:
         async def iterate():
             with pytest.warns(DeprecationWarning):
                 async for _ in stream_result:
-                    pass  # pragma: no cover
+                    pass
 
         task = asyncio.create_task(iterate())
         await asyncio.sleep(0.05)

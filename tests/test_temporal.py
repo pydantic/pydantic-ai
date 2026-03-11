@@ -1601,7 +1601,7 @@ class SimpleAgentWorkflowWithRunStreamEvents:
     @workflow.run
     async def run(self, prompt: str) -> list[AgentStreamEvent | AgentRunResultEvent]:
         async with simple_temporal_agent.run_stream_events(prompt) as stream:
-            return [event async for event in stream]
+            return [event async for event in stream]  # pragma: no cover
 
 
 async def test_temporal_agent_run_stream_events_in_workflow(allow_model_requests: None, client: Client):

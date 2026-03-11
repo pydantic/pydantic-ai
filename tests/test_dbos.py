@@ -840,7 +840,7 @@ async def test_dbos_agent_run_stream_events_in_workflow(allow_model_requests: No
     @DBOS.workflow()
     async def run_stream_events_workflow():
         async with simple_dbos_agent.run_stream_events('What is the capital of Mexico?') as stream:
-            return [event async for event in stream]
+            return [event async for event in stream]  # pragma: no cover
 
     with workflow_raises(
         UserError,
