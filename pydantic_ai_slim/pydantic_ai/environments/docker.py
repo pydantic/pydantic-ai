@@ -25,6 +25,8 @@ from ._base import (
     validate_text_read_range,
 )
 
+_UNSET = object()
+
 try:
     import docker
     from docker.errors import DockerException, NotFound
@@ -253,18 +255,24 @@ class DockerEnvironment(ExecutionEnvironment):
         env_vars: dict[str, str] | None = None,
         work_dir: str = '/workspace',
         volumes: dict[str, dict[str, str]] | None = None,
-        memory_limit: str | None = None,
-        cpu_limit: float | None = None,
-        pids_limit: int | None = None,
-        network_disabled: bool = False,
-        read_only: bool = False,
+        memory_limit: str | None = '512m',
+        cpu_limit: float | None = 1.0,
+        pids_limit: int | None = 256,
+        network_disabled: bool = True,
+        read_only: bool = True,
         cap_drop: list[str] | None = None,
         security_opt: list[str] | None = None,
-        user: str | None = None,
-        tmpfs: dict[str, str] | None = None,
-        init: bool = False,
+        user: str | None = 'nobody',
+        tmpfs: dict[str, str] | None | object = _UNSET,
+        init: bool = True,
     ) -> None:
         """Create a Docker environment.
+
+        By default the environment is hardened for running untrusted code:
+        network disabled, read-only root filesystem, all capabilities dropped,
+        no privilege escalation, runs as `nobody`, uses an init process, and
+        limits PIDs, memory, and CPU. Set any limit to `None` (or the
+        corresponding bool to `False`) to relax a specific restriction.
 
         Args:
             image: Docker image to use. Pre-build custom images with any
@@ -272,18 +280,25 @@ class DockerEnvironment(ExecutionEnvironment):
             env_vars: Baseline environment variables to set in the container.
             work_dir: Working directory inside the container.
             volumes: Volume mounts (Docker format).
-            memory_limit: Memory limit (e.g. '512m', '1g').
-            cpu_limit: CPU limit (e.g. 1.0 for one CPU).
+            memory_limit: Memory limit (e.g. '512m', '1g'). Set to `None` for no limit.
+            cpu_limit: CPU limit (e.g. 1.0 for one CPU). Set to `None` for no limit.
             pids_limit: Maximum number of PIDs in the container (e.g. 256).
-                Prevents fork bombs.
+                Prevents fork bombs. Set to `None` for no limit.
             network_disabled: Whether to disable network access.
             read_only: Whether to mount the root filesystem as read-only.
-                Use with `tmpfs` to provide writable scratch space.
-            cap_drop: Linux capabilities to drop (e.g. `['ALL']`).
-            security_opt: Security options (e.g. `['no-new-privileges']`).
+                When `True` (default), writable tmpfs mounts are automatically
+                provided at `/tmp` and the working directory.
+            cap_drop: Linux capabilities to drop. Defaults to `['ALL']`
+                when `None` and `read_only` is `True`, otherwise no capabilities
+                are dropped. Pass an explicit empty list to drop nothing.
+            security_opt: Security options. Defaults to `['no-new-privileges']`
+                when `None` and `read_only` is `True`, otherwise no options.
+                Pass an explicit empty list for no security options.
             user: User to run as inside the container (e.g. `'nobody'`).
-            tmpfs: tmpfs mounts as `{path: options}`
-                (e.g. `{'/tmp': 'noexec,nosuid,size=64m'}`).
+                Set to `None` to use the image default.
+            tmpfs: tmpfs mounts as `{path: options}`. When not set and
+                `read_only` is `True`, defaults to writable mounts at `/tmp`
+                and the working directory. Set to `None` for no tmpfs mounts.
             init: Whether to use `--init` to run an init process as PID 1.
                 Ensures proper signal handling and zombie reaping.
         """
@@ -296,58 +311,28 @@ class DockerEnvironment(ExecutionEnvironment):
         self._pids_limit = pids_limit
         self._network_disabled = network_disabled
         self._read_only = read_only
-        self._cap_drop = cap_drop
-        self._security_opt = security_opt
         self._user = user
-        self._tmpfs = tmpfs
         self._init = init
+
+        # Apply hardened defaults when read_only is True and no explicit value given
+        if cap_drop is None and read_only:
+            self._cap_drop: list[str] | None = ['ALL']
+        else:
+            self._cap_drop = cap_drop
+        if security_opt is None and read_only:
+            self._security_opt: list[str] | None = ['no-new-privileges']
+        else:
+            self._security_opt = security_opt
+        if tmpfs is _UNSET:
+            if read_only:
+                self._tmpfs: dict[str, str] | None = {'/tmp': 'noexec,nosuid,size=64m', work_dir: 'size=128m'}
+            else:
+                self._tmpfs = None
+        else:
+            self._tmpfs = tmpfs  # type: ignore[assignment]
 
         self._client: docker.DockerClient | None = None
         self._container: Container | None = None
-
-    @classmethod
-    def hardened(
-        cls,
-        *,
-        image: str,
-        env_vars: dict[str, str] | None = None,
-        work_dir: str = '/workspace',
-        memory_limit: str = '512m',
-        cpu_limit: float = 1.0,
-        pids_limit: int = 256,
-    ) -> DockerEnvironment:
-        """Create a hardened Docker environment with security best practices.
-
-        This is a convenience constructor that sets sensible security defaults:
-        network disabled, read-only root filesystem, all capabilities dropped,
-        no privilege escalation, runs as `nobody`, and uses an init process.
-
-        The root filesystem is read-only; writable tmpfs mounts are provided at
-        `/tmp` and the working directory.
-
-        Args:
-            image: Docker image to use.
-            env_vars: Baseline environment variables to set in the container.
-            work_dir: Working directory inside the container.
-            memory_limit: Memory limit (e.g. '512m', '1g').
-            cpu_limit: CPU limit (e.g. 1.0 for one CPU).
-            pids_limit: Maximum number of PIDs in the container.
-        """
-        return cls(
-            image=image,
-            env_vars=env_vars,
-            work_dir=work_dir,
-            network_disabled=True,
-            read_only=True,
-            cap_drop=['ALL'],
-            security_opt=['no-new-privileges'],
-            user='nobody',
-            pids_limit=pids_limit,
-            tmpfs={'/tmp': 'noexec,nosuid,size=64m', work_dir: 'size=128m'},
-            init=True,
-            memory_limit=memory_limit,
-            cpu_limit=cpu_limit,
-        )
 
     @property
     def capabilities(self) -> frozenset[EnvCapability]:  # pragma: lax no cover

@@ -74,17 +74,38 @@ File operations (read, write, edit) are confined to the root directory — path 
 
 Requires the `docker` package: `pip install pydantic-ai-slim[docker]`
 
-You must provide the image explicitly. The base constructor is intentionally flexible rather than hardened by default; for untrusted code, start with [`DockerEnvironment.hardened(...)`][pydantic_ai.environments.docker.DockerEnvironment.hardened] or configure the security options yourself.
+The environment is hardened by default: network disabled, read-only root filesystem, all capabilities dropped, no privilege escalation, runs as `nobody`, uses an init process, and limits PIDs, memory, and CPU. You only need to provide the image:
 
 ```python {title="environments_docker.py"}
+from pydantic_ai.environments.docker import DockerEnvironment
+
+env = DockerEnvironment(image='python:3.12-slim')
+```
+
+You can customize the resource limits:
+
+```python {title="environments_docker_custom_limits.py"}
 from pydantic_ai.environments.docker import DockerEnvironment
 
 env = DockerEnvironment(
     image='my-sandbox:latest',
     env_vars={'MPLBACKEND': 'Agg'},
-    memory_limit='512m',
-    cpu_limit=1.0,
-    network_disabled=True,
+    memory_limit='1g',
+    cpu_limit=2.0,
+    pids_limit=512,
+)
+```
+
+To relax a specific restriction, set the corresponding limit to `None` (or the bool to `False`):
+
+```python {title="environments_docker_relaxed.py"}
+from pydantic_ai.environments.docker import DockerEnvironment
+
+env = DockerEnvironment(
+    image='my-sandbox:latest',
+    network_disabled=False,
+    read_only=False,
+    memory_limit=None,
 )
 ```
 
@@ -136,26 +157,6 @@ env = DockerEnvironment(image='my-sandbox:latest')
         RUN npm install -g typescript ts-node express
         WORKDIR /workspace
         ```
-
-For running untrusted code, you can harden the container with Linux security options:
-
-```python {title="environments_docker_hardened.py"}
-from pydantic_ai.environments.docker import DockerEnvironment
-
-env = DockerEnvironment.hardened(image='python:3.12-slim')
-```
-
-This uses the [`hardened()`][pydantic_ai.environments.docker.DockerEnvironment.hardened] convenience constructor, which sets sensible security defaults: network disabled, read-only root filesystem, all capabilities dropped, no privilege escalation, runs as `nobody`, uses an init process, and limits PIDs, memory, and CPU. You can customize the resource limits:
-
-```python {title="environments_docker_hardened_custom.py"}
-from pydantic_ai.environments.docker import DockerEnvironment
-
-env = DockerEnvironment.hardened(
-    image='my-sandbox:latest',
-    memory_limit='1g',
-    cpu_limit=2.0,
-    pids_limit=512,
-)
 ```
 
 ## ExecutionEnvironmentToolset

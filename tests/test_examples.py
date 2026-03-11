@@ -78,10 +78,6 @@ class _MockDockerEnvironment(_LocalEnvironment):
         self._temp_path = Path(tempfile.mkdtemp())
         super().__init__(root_dir=self._temp_path)
 
-    @classmethod
-    def hardened(cls, **kwargs: Any) -> _MockDockerEnvironment:
-        return cls(**kwargs)
-
     async def __aexit__(self, *_args: Any) -> None:
         shutil.rmtree(self._temp_path, ignore_errors=True)
 

@@ -1429,17 +1429,46 @@ class TestDocker:
         assert stream_type == 0
         assert data == b''
 
-    def test_docker_hardened_constructor(
+    def test_docker_default_hardened_settings(
         self,
     ):
-        """DockerEnvironment.hardened() returns a properly configured instance."""
-        env = DockerEnvironment.hardened(image='python:3.12-slim', memory_limit='1g')
+        """DockerEnvironment uses hardened defaults out of the box."""
+        env = DockerEnvironment(image='python:3.12-slim', memory_limit='1g')
         assert env._network_disabled is True
         assert env._read_only is True
         assert env._cap_drop == ['ALL']
+        assert env._security_opt == ['no-new-privileges']
         assert env._memory_limit == '1g'
+        assert env._cpu_limit == 1.0
+        assert env._pids_limit == 256
         assert env._user == 'nobody'
         assert env._init is True
+        assert env._tmpfs == {'/tmp': 'noexec,nosuid,size=64m', '/workspace': 'size=128m'}
+
+    def test_docker_relaxed_settings(
+        self,
+    ):
+        """Setting read_only=False disables derived hardened defaults."""
+        env = DockerEnvironment(
+            image='python:3.12-slim',
+            read_only=False,
+            network_disabled=False,
+            memory_limit=None,
+            cpu_limit=None,
+            pids_limit=None,
+            user=None,
+            init=False,
+        )
+        assert env._network_disabled is False
+        assert env._read_only is False
+        assert env._cap_drop is None
+        assert env._security_opt is None
+        assert env._memory_limit is None
+        assert env._cpu_limit is None
+        assert env._pids_limit is None
+        assert env._user is None
+        assert env._init is False
+        assert env._tmpfs is None
 
     def test_docker_setup_early_return(
         self,
@@ -1997,31 +2026,31 @@ class TestDocker:
     ):
         """DockerEnvironment can be constructed without starting Docker."""
 
-        # Verify construction succeeds with default and custom settings
+        # Verify construction succeeds with defaults (hardened)
         sandbox = DockerEnvironment(image='python:3.12-slim')
         assert isinstance(sandbox, DockerEnvironment)
 
-        sandbox_with_opts = DockerEnvironment(
+        # Verify construction succeeds with relaxed settings
+        sandbox_relaxed = DockerEnvironment(
             image='node:20-slim',
-            memory_limit='512m',
-            cpu_limit=1.0,
-            network_disabled=True,
+            memory_limit=None,
+            cpu_limit=None,
+            pids_limit=None,
+            network_disabled=False,
+            read_only=False,
+            user=None,
+            init=False,
         )
-        assert isinstance(sandbox_with_opts, DockerEnvironment)
+        assert isinstance(sandbox_relaxed, DockerEnvironment)
 
-        # Verify security hardening parameters are accepted
-        sandbox_hardened = DockerEnvironment(
+        # Verify explicit security parameters are accepted
+        sandbox_explicit = DockerEnvironment(
             image='python:3.12-slim',
-            network_disabled=True,
-            read_only=True,
             cap_drop=['ALL'],
             security_opt=['no-new-privileges'],
-            user='nobody',
-            pids_limit=256,
             tmpfs={'/tmp': 'noexec,nosuid,size=64m'},
-            init=True,
         )
-        assert isinstance(sandbox_hardened, DockerEnvironment)
+        assert isinstance(sandbox_explicit, DockerEnvironment)
 
     def test_shell_escape(self):
         assert _shell_escape('hello') == "'hello'"
