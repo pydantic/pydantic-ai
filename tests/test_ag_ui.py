@@ -1809,7 +1809,11 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content='{"results": [{"title": "Hello, world!", "url": "https://en.wikipedia.org/wiki/Hello,_world!"}]}',
+                        content={
+                            'results': [
+                                {'title': 'Hello, world!', 'url': 'https://en.wikipedia.org/wiki/Hello,_world!'}
+                            ]
+                        },
                         tool_call_id='search_1',
                         timestamp=IsDatetime(),
                         provider_name='function',
