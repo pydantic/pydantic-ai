@@ -81,6 +81,7 @@ try:
         UserMessage as MistralUserMessage,
     )
     from mistralai.client.models.assistantmessage import AssistantMessageContent as MistralContent
+    from mistralai.client.models.thinkchunk import Thinking as MistralThinking
     from mistralai.client.types.basemodel import Unset as MistralUnset
     from mistralai.client.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
 
@@ -531,7 +532,7 @@ class MistralModel(Model):
                     mistral_messages.append(msg)
             elif isinstance(message, ModelResponse):
                 content_chunks: list[MistralContentChunk] = []
-                thinking_chunks: list[MistralTextChunk | MistralReferenceChunk] = []
+                thinking_chunks: list[MistralThinking] = []
                 tool_calls: list[MistralToolCall] = []
 
                 for part in message.parts:
