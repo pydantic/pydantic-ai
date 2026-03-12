@@ -122,8 +122,6 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             'moonshotai': moonshotai_model_profile,
         }
 
-        # openrouter:anthropic/claude-sonnet-5
-
         profile = None
 
         provider, model_name = model_name.split('/', 1)
