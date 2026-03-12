@@ -38,27 +38,25 @@ from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from mistralai import (
+    from mistralai.client import Mistral
+    from mistralai.client.errors.sdkerror import SDKError
+    from mistralai.client.models import (
         AssistantMessage as MistralAssistantMessage,
         ChatCompletionChoice as MistralChatCompletionChoice,
+        ChatCompletionResponse as MistralChatCompletionResponse,
         CompletionChunk as MistralCompletionChunk,
+        CompletionEvent as MistralCompletionEvent,
         CompletionResponseStreamChoice as MistralCompletionResponseStreamChoice,
         CompletionResponseStreamChoiceFinishReason as MistralCompletionResponseStreamChoiceFinishReason,
         ContentChunk as MistralContentChunk,
         DeltaMessage as MistralDeltaMessage,
         FunctionCall as MistralFunctionCall,
-        Mistral,
         ReferenceChunk as MistralReferenceChunk,
         TextChunk as MistralTextChunk,
+        ToolCall as MistralToolCall,
         UsageInfo as MistralUsageInfo,
     )
-    from mistralai.models import (
-        ChatCompletionResponse as MistralChatCompletionResponse,
-        CompletionEvent as MistralCompletionEvent,
-        SDKError,
-        ToolCall as MistralToolCall,
-    )
-    from mistralai.types.basemodel import Unset as MistralUnset
+    from mistralai.client.types.basemodel import Unset as MistralUnset
 
     from pydantic_ai.models.mistral import (
         MistralModel,
@@ -2050,14 +2048,14 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='FI5qQGzDE')],
-                usage=RequestUsage(input_tokens=65, output_tokens=16),
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='jCmzrytwr')],
+                usage=RequestUsage(input_tokens=65, output_tokens=6),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
-                provider_response_id='20c656d7c70e4362858160d9d241ce92',
+                provider_response_id='fca3166d00dd4ff89cd2de88256635c3',
                 finish_reason='tool_call',
                 run_id=IsStr(),
             ),
@@ -2066,7 +2064,7 @@ async def test_image_as_binary_content_tool_response(
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 241a70',
-                        tool_call_id='FI5qQGzDE',
+                        tool_call_id='jCmzrytwr',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
@@ -2077,16 +2075,16 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='The image shows a kiwi fruit that has been cut in half. Kiwis are small, oval-shaped fruits with a bright green flesh and tiny black seeds. They have a sweet and tangy flavor and are known for being rich in vitamin C and fiber.'
+                        content='The fruit in the image is a **kiwi**. Specifically, it appears to be the inside of a **green kiwi**, showing its distinctive black seeds and bright green flesh.'
                     )
                 ],
-                usage=RequestUsage(input_tokens=1540, output_tokens=54),
+                usage=RequestUsage(input_tokens=580, output_tokens=37),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
-                provider_response_id='b9df7d6167a74543aed6c27557ab0a29',
+                provider_response_id='3d023b4b1c0a4934b3cd0226136c12fd',
                 finish_reason='stop',
                 run_id=IsStr(),
             ),
