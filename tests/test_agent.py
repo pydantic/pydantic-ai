@@ -7973,7 +7973,7 @@ async def test_central_content_filter_with_partial_content():
 
 
 def test_context_window_used():
-    """ """
+    """context_window_used returns the fraction of the context window used after a model response."""
 
     count = 0
 
