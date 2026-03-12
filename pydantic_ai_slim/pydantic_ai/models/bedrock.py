@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import re
 import typing
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -86,6 +87,13 @@ if TYPE_CHECKING:
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
 _SUPPORTED_VIDEO_FORMATS = ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
 _SUPPORTED_DOCUMENT_FORMATS = ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
+_BEDROCK_TOOL_NAME_INVALID_CHAR_RE = re.compile(r'[^a-zA-Z0-9_-]')
+
+
+def _sanitize_bedrock_tool_name(name: str) -> str:
+    """Normalize tool names to match Bedrock's required ``[a-zA-Z0-9_-]+`` pattern."""
+    sanitized = _BEDROCK_TOOL_NAME_INVALID_CHAR_RE.sub('_', name)
+    return sanitized or '_'
 
 
 def _make_image_block(format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
@@ -388,12 +396,29 @@ class BedrockConverseModel(Model):
         """The set of builtin tool types this model can handle."""
         return frozenset({CodeExecutionTool})
 
+    def _build_sanitized_tool_name_map(self, model_request_parameters: ModelRequestParameters) -> dict[str, str]:
+        sanitized_tool_name_to_original_name: dict[str, str] = {}
+        for tool_def in model_request_parameters.tool_defs.values():
+            sanitized_name = _sanitize_bedrock_tool_name(tool_def.name)
+            existing_name = sanitized_tool_name_to_original_name.get(sanitized_name)
+            if existing_name is not None and existing_name != tool_def.name:
+                raise UserError(
+                    f'Bedrock tool-name sanitization collision: {tool_def.name!r} and {existing_name!r} both map to {sanitized_name!r}. '
+                    'Rename one of the tools to produce distinct Bedrock-compatible names.'
+                )
+            sanitized_tool_name_to_original_name[sanitized_name] = tool_def.name
+        return sanitized_tool_name_to_original_name
+
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+        self._build_sanitized_tool_name_map(model_request_parameters)
+        return [self._map_tool_definition(tool_def) for tool_def in model_request_parameters.tool_defs.values()]
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
-        tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
+        tool_spec: ToolSpecificationTypeDef = {
+            'name': _sanitize_bedrock_tool_name(f.name),
+            'inputSchema': {'json': f.parameters_json_schema},
+        }
 
         if f.description:  # pragma: no branch
             tool_spec['description'] = f.description
@@ -411,8 +436,9 @@ class BedrockConverseModel(Model):
             model_request_parameters,
         )
         settings = cast(BedrockModelSettings, model_settings or {})
+        sanitized_tool_name_to_original_name = self._build_sanitized_tool_name_map(model_request_parameters)
         response = await self._messages_create(messages, False, settings, model_request_parameters)
-        model_response = await self._process_response(response)
+        model_response = await self._process_response(response, sanitized_tool_name_to_original_name)
         return model_response
 
     async def count_tokens(
@@ -459,6 +485,7 @@ class BedrockConverseModel(Model):
             model_request_parameters,
         )
         settings = cast(BedrockModelSettings, model_settings or {})
+        sanitized_tool_name_to_original_name = self._build_sanitized_tool_name_map(model_request_parameters)
         response = await self._messages_create(messages, True, settings, model_request_parameters)
         yield BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
@@ -467,9 +494,12 @@ class BedrockConverseModel(Model):
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
+            _sanitized_tool_name_to_original_name=sanitized_tool_name_to_original_name,
         )
 
-    async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
+    async def _process_response(
+        self, response: ConverseResponseTypeDef, sanitized_tool_name_to_original_name: dict[str, str]
+    ) -> ModelResponse:
         items: list[ModelResponsePart] = []
         if message := response['output'].get('message'):  # pragma: no branch
             for item in message['content']:
@@ -508,7 +538,9 @@ class BedrockConverseModel(Model):
                     else:
                         items.append(
                             ToolCallPart(
-                                tool_name=tool_use['name'],
+                                tool_name=self._restore_tool_name(
+                                    tool_use['name'], sanitized_tool_name_to_original_name
+                                ),
                                 args=tool_use['input'],
                                 tool_call_id=tool_use['toolUseId'],
                             ),
@@ -954,8 +986,16 @@ class BedrockConverseModel(Model):
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
         return {
-            'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
+            'toolUse': {
+                'toolUseId': _utils.guard_tool_call_id(t=t),
+                'name': _sanitize_bedrock_tool_name(t.tool_name),
+                'input': t.args_as_dict(),
+            }
         }
+
+    @staticmethod
+    def _restore_tool_name(tool_name: str, sanitized_tool_name_to_original_name: dict[str, str]) -> str:
+        return sanitized_tool_name_to_original_name.get(tool_name, tool_name)
 
     @staticmethod
     def _limit_cache_points(
@@ -1032,8 +1072,12 @@ class BedrockStreamedResponse(StreamedResponse):
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _provider_name: str
     _provider_url: str
+    _sanitized_tool_name_to_original_name: dict[str, str] = field(default_factory=lambda: cast(dict[str, str], {}))
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
+
+    def _restore_tool_name(self, tool_name: str) -> str:
+        return self._sanitized_tool_name_to_original_name.get(tool_name, tool_name)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
@@ -1069,7 +1113,7 @@ class BedrockStreamedResponse(StreamedResponse):
                         tool_use_start = start['toolUse']
                         tool_id = tool_use_start['toolUseId']
                         tool_ids[index] = tool_id
-                        tool_name = tool_use_start['name']
+                        tool_name = self._restore_tool_name(tool_use_start['name'])
                         if tool_use_start.get('type') == 'server_tool_use':
                             if tool_name == 'nova_code_interpreter':  # pragma: no branch
                                 part = BuiltinToolCallPart(
@@ -1128,9 +1172,10 @@ class BedrockStreamedResponse(StreamedResponse):
                             yield event
                     if 'toolUse' in delta:
                         tool_use = delta['toolUse']
+                        tool_name = tool_use.get('name')
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=index,
-                            tool_name=tool_use.get('name'),
+                            tool_name=self._restore_tool_name(tool_name) if tool_name is not None else None,
                             args=tool_use.get('input'),
                             tool_call_id=tool_ids[index],
                         )

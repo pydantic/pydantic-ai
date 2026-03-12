@@ -1786,6 +1786,68 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
     )
 
 
+def test_bedrock_map_tool_call_sanitizes_invalid_tool_name(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    tool_use = model._map_tool_call(  # pyright: ignore[reportPrivateUsage]
+        ToolCallPart(tool_name='search.evidence invalid', args={'q': 'x'}, tool_call_id='tooluse_123')
+    )
+
+    assert tool_use == snapshot(
+        {
+            'toolUse': {
+                'toolUseId': 'tooluse_123',
+                'name': 'search_evidence_invalid',
+                'input': {'q': 'x'},
+            }
+        }
+    )
+
+
+def test_bedrock_map_tool_call_replaces_empty_tool_name(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    tool_use = model._map_tool_call(  # pyright: ignore[reportPrivateUsage]
+        ToolCallPart(tool_name='', args={'q': 'x'}, tool_call_id='tooluse_123')
+    )
+
+    assert 'toolUse' in tool_use
+    assert tool_use['toolUse']['name'] == '_'
+
+
+def test_bedrock_tool_definition_sanitizes_tool_name(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    tool = ToolDefinition(name='search.evidence invalid', parameters_json_schema={'type': 'object'})
+
+    mapped = model._map_tool_definition(tool)  # pyright: ignore[reportPrivateUsage]
+
+    assert 'toolSpec' in mapped
+    assert mapped['toolSpec']['name'] == 'search_evidence_invalid'
+
+
+def test_bedrock_restore_tool_name_after_sanitization(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    tool = ToolDefinition(name='search.evidence invalid', parameters_json_schema={'type': 'object'})
+    mrp = ModelRequestParameters(function_tools=[tool])
+
+    sanitized_tool_name_to_original_name = model._build_sanitized_tool_name_map(mrp)  # pyright: ignore[reportPrivateUsage]
+
+    assert (
+        model._restore_tool_name('search_evidence_invalid', sanitized_tool_name_to_original_name)  # pyright: ignore[reportPrivateUsage]
+        == 'search.evidence invalid'
+    )
+
+
+def test_bedrock_tool_name_sanitization_collision_raises_user_error(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    tool_a = ToolDefinition(name='search.foo', parameters_json_schema={'type': 'object'})
+    tool_b = ToolDefinition(name='search:foo', parameters_json_schema={'type': 'object'})
+    mrp = ModelRequestParameters(function_tools=[tool_a, tool_b])
+
+    with pytest.raises(UserError, match='sanitization collision'):
+        model._get_tools(mrp)  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel(model_name='openai.gpt-oss-120b-1:0', provider=bedrock_provider)
     agent = Agent(model)
