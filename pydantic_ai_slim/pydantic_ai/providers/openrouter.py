@@ -131,13 +131,14 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(
+        result = OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_send_back_thinking_parts='field',
             openai_chat_thinking_field='reasoning',
             openai_chat_supports_file_urls=True,
             openai_chat_supports_web_search=True,
         ).update(profile)
+        return result.with_upstream(provider, model_name)
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

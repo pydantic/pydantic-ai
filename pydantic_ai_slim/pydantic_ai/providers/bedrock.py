@@ -152,7 +152,10 @@ class BedrockProvider(Provider[BaseClient]):
             model_name = model_name_with_version
 
         if provider in provider_to_profile:
-            return provider_to_profile[provider](model_name)
+            profile = provider_to_profile[provider](model_name)
+            if profile is not None:
+                return profile.with_upstream(provider, model_name)
+            return None
 
         return None
 

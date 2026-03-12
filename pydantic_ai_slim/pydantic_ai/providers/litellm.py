@@ -80,7 +80,8 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
 
         # As LiteLLMProvider is used with OpenAIModel, which uses OpenAIJsonSchemaTransformer,
         # we maintain that behavior
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        result = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        return result.with_upstream(provider_prefix, model_suffix)
 
     @overload
     def __init__(

@@ -82,6 +82,29 @@ class ModelProfile:
     restrict this based on model capabilities.
     """
 
+    upstream_provider_id: str | None = None
+    """The upstream provider identifier for models accessed through proxy providers.
+
+    Set by proxy providers (e.g. OpenRouter, Bedrock, LiteLLM) to record the original
+    provider of the model (e.g. 'anthropic', 'openai') so that context window and pricing
+    lookups via genai-prices can find the correct entry.
+    """
+
+    upstream_model_name: str | None = None
+    """The upstream model name for models accessed through proxy providers.
+
+    Set by proxy providers to record the canonical model name stripped of provider-specific
+    formatting.
+    """
+
+    def with_upstream(self, provider_id: str, model_name: str) -> Self:
+        """Return a copy of this profile with upstream provider identity set.
+
+        Used by proxy providers to record the original provider and model name
+        for context window and pricing lookups.
+        """
+        return replace(self, upstream_provider_id=provider_id, upstream_model_name=model_name)
+
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:
         """Build a ModelProfile subclass instance from a ModelProfile instance."""
