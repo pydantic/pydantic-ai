@@ -252,7 +252,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             )
             if not tool.function_schema.takes_ctx:
                 warnings.warn(
-                    'Passing a plain function to FunctionToolset.tool() is deprecated, use tool_plain() instead.',
+                    'Passing a function without `RunContext` to `FunctionToolset.tool()` is deprecated, use `tool_plain()` instead.',
                     DeprecationWarning,
                     stacklevel=2,
                 )
