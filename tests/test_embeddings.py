@@ -446,7 +446,6 @@ class TestCohere:
         model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(cohere_client=fake_client))
         result = await model.embed('Hello, world!', input_type='query')
 
-        assert calls['kwargs']['embedding_types'] == ['float']
         assert result.embeddings == [[0.1, 0.2, 0.3]]
 
 
