@@ -878,13 +878,15 @@ class Model(ABC):
                 provider_url = self.base_url
             except UserError:
                 provider_url = None
-            for provider_id, provider_api_url in [(self.system, None), (None, provider_url)]:
+            for model_ref, provider_id, provider_api_url in [
+                (self.model_name, self.system, None),
+                (self.model_name, None, provider_url),
+                (_profile.upstream_model_name, _profile.upstream_provider_id, None),
+            ]:
                 if provider_id is None and provider_api_url is None:
                     continue
                 try:
-                    _, model_info = get_snapshot().find_provider_model(
-                        self.model_name, None, provider_id, provider_api_url
-                    )
+                    _, model_info = get_snapshot().find_provider_model(model_ref, None, provider_id, provider_api_url)
                     if model_info.context_window is not None:
                         _profile = replace(_profile, context_window=model_info.context_window)
                         break
