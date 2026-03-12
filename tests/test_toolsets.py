@@ -896,7 +896,9 @@ def test_agent_toolset_decorator_id():
 
 def test_tool_without_runctx_raises_warning():
     toolset = FunctionToolset()
-    with pytest.warns(DeprecationWarning, match='Passing a function without `RunContext` to `FunctionToolset.tool\\(\\)`'):
+    with pytest.warns(
+        DeprecationWarning, match='Passing a function without `RunContext` to `FunctionToolset.tool\\(\\)`'
+    ):
 
         @toolset.tool  # type: ignore[arg-type]  # pragma: no cover
         def add(x: int):
