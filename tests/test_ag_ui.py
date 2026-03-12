@@ -1924,6 +1924,48 @@ async def test_builtin_tool_return_plain_string_content_preserved() -> None:
     assert return_part.content == 'just a plain string, not JSON'
 
 
+async def test_builtin_tool_return_non_string_content_passthrough() -> None:
+    """When ToolMessage.content is already a non-string (e.g. dict), it passes through without JSON parsing."""
+    tool_msg = ToolMessage.model_construct(
+        id='msg_2',
+        content={'type': 'web_fetch_result', 'url': 'https://example.com'},
+        tool_call_id='pyd_ai_builtin|anthropic|srvtoolu_abc789',
+    )
+    messages: list[Message] = [
+        AssistantMessage(
+            id='msg_1',
+            tool_calls=[
+                ToolCall(
+                    id='pyd_ai_builtin|anthropic|srvtoolu_abc789',
+                    function=FunctionCall(
+                        name='web_fetch',
+                        arguments='{"url": "https://example.com"}',
+                    ),
+                ),
+            ],
+        ),
+        tool_msg,
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    response = result[0]
+    assert isinstance(response, ModelResponse)
+
+    return_part = response.parts[1]
+    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert return_part.content == {'type': 'web_fetch_result', 'url': 'https://example.com'}
+
+
+async def test_user_message_empty_content_list_skipped() -> None:
+    """A UserMessage with an empty content list produces no UserPromptPart."""
+    messages: list[Message] = [
+        UserMessage(id='msg_1', content=[]),
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    assert result == []
+
+
 async def test_builtin_tool_call() -> None:
     """Test back-to-back builtin tool calls share the same parent_message_id.
 
