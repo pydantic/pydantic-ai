@@ -224,7 +224,7 @@ class CohereEmbeddingModel(EmbeddingModel):
 def _map_usage(response: EmbedByTypeResponse, provider: str, provider_url: str, model: str) -> RequestUsage:
     u = response.meta
     if u is None or u.billed_units is None:
-        return RequestUsage()  # pragma: no cover
+        return RequestUsage()
     usage_data = {
         k: int(v)
         for k, v in u.billed_units.model_dump(exclude_none=True).items()

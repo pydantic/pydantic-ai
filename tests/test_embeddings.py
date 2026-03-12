@@ -443,7 +443,7 @@ class TestCohere:
                 return _Response()
 
         fake_client = _FakeClient()
-        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(cohere_client=fake_client))
+        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(cohere_client=fake_client))  # type: ignore[arg-type]
         result = await model.embed('Hello, world!', input_type='query')
 
         assert result.embeddings == [[0.1, 0.2, 0.3]]
@@ -1326,9 +1326,7 @@ class TestGoogle:
             )
         )
 
-    @pytest.mark.skipif(
-        not os.getenv('CI'), reason='Requires properly configured local google vertex config to pass'
-    )
+    @pytest.mark.skipif(not os.getenv('CI'), reason='Requires properly configured local google vertex config to pass')
     @pytest.mark.vcr()
     async def test_vertex_query(
         self, allow_model_requests: None, vertex_provider: GoogleProvider
