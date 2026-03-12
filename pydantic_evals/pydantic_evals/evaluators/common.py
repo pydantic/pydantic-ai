@@ -19,6 +19,7 @@ __all__ = (
     'Equals',
     'EqualsExpected',
     'Contains',
+    'ContainsExpected',
     'IsInstance',
     'MaxDuration',
     'LLMJudge',
@@ -61,13 +62,78 @@ def _truncated_repr(value: Any, max_length: int = 100) -> str:
     return repr_value
 
 
+def _check_containment(
+    ctx: EvaluatorContext[object, object, object],
+    target_value: Any,
+    as_strings: bool,
+    case_sensitive: bool,
+) -> EvaluationReason:
+    # Convert objects to strings if requested
+    failure_reason: str | None = None
+    as_strings = as_strings or (isinstance(target_value, str) and isinstance(ctx.output, str))
+    if as_strings:
+        output_str = str(ctx.output)
+        expected_str = str(target_value)
+
+        if not case_sensitive:
+            output_str = output_str.lower()
+            expected_str = expected_str.lower()
+
+        failure_reason: str | None = None
+        if expected_str not in output_str:
+            output_trunc = _truncated_repr(output_str, max_length=100)
+            expected_trunc = _truncated_repr(expected_str, max_length=100)
+            failure_reason = f'Output string {output_trunc} does not contain expected string {expected_trunc}'
+        return EvaluationReason(value=failure_reason is None, reason=failure_reason)
+
+    try:
+        # Handle different collection types
+        output_type = type(ctx.output)
+        output_is_model_like = is_model_like(output_type)
+        if isinstance(ctx.output, dict) or output_is_model_like:
+            if output_is_model_like:
+                adapter: TypeAdapter[Any] = TypeAdapter(output_type)
+                output_dict = adapter.dump_python(ctx.output)  # pyright: ignore[reportUnknownMemberType]
+            else:
+                # Cast to Any to avoid type checking issues
+                output_dict = cast(dict[Any, Any], ctx.output)  # pyright: ignore[reportUnknownMemberType]
+
+            if isinstance(target_value, dict):
+                # Cast to Any to avoid type checking issues
+                expected_dict = cast(dict[Any, Any], target_value)
+                for k in expected_dict:
+                    if k not in output_dict:
+                        k_trunc = _truncated_repr(k, max_length=30)
+                        failure_reason = f'Output does not contain expected key {k_trunc}'
+                        break
+                    elif output_dict[k] != expected_dict[k]:
+                        k_trunc = _truncated_repr(k, max_length=30)
+                        output_v_trunc = _truncated_repr(output_dict[k], max_length=100)
+                        expected_v_trunc = _truncated_repr(expected_dict[k], max_length=100)
+                        failure_reason = (
+                            f'Output has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
+                        )
+                        break
+            else:
+                if target_value not in output_dict:
+                    output_trunc = _truncated_repr(output_dict, max_length=200)
+                    failure_reason = f'Output {output_trunc} does not contain provided value as a key'
+        elif target_value not in ctx.output:  # pyright: ignore[reportOperatorIssue]  # will be handled by except block
+            output_trunc = _truncated_repr(ctx.output, max_length=200)
+            failure_reason = f'Output {output_trunc} does not contain provided value'
+    except (TypeError, ValueError) as e:
+        failure_reason = f'Containment check failed: {e}'
+
+    return EvaluationReason(value=failure_reason is None, reason=failure_reason)
+
+
 @dataclass(repr=False)
 class Contains(Evaluator[object, object, object]):
-    """Check if the output contains the expected output.
+    """Check if the output contains the provided value.
 
-    For strings, checks if expected_output is a substring of output.
-    For lists/tuples, checks if expected_output is in output.
-    For dicts, checks if all key-value pairs in expected_output are in output.
+    For strings, checks if provided value is a substring of output.
+    For lists/tuples, checks if provided value is in output.
+    For dicts, checks if all key-value pairs in provided value are in output.
     For model-like types (BaseModel, dataclasses), converts to a dict and checks key-value pairs.
 
     Note: case_sensitive only applies when both the value and output are strings.
@@ -82,63 +148,46 @@ class Contains(Evaluator[object, object, object]):
         self,
         ctx: EvaluatorContext[object, object, object],
     ) -> EvaluationReason:
-        # Convert objects to strings if requested
-        failure_reason: str | None = None
-        as_strings = self.as_strings or (isinstance(self.value, str) and isinstance(ctx.output, str))
-        if as_strings:
-            output_str = str(ctx.output)
-            expected_str = str(self.value)
+        return _check_containment(
+            ctx,
+            self.value,
+            as_strings=self.as_strings,
+            case_sensitive=self.case_sensitive,
+        )
 
-            if not self.case_sensitive:
-                output_str = output_str.lower()
-                expected_str = expected_str.lower()
 
-            failure_reason: str | None = None
-            if expected_str not in output_str:
-                output_trunc = _truncated_repr(output_str, max_length=100)
-                expected_trunc = _truncated_repr(expected_str, max_length=100)
-                failure_reason = f'Output string {output_trunc} does not contain expected string {expected_trunc}'
-            return EvaluationReason(value=failure_reason is None, reason=failure_reason)
+@dataclass(repr=False)
+class ContainsExpected(Evaluator[object, object, object]):
+    """Check if the output contains the expected output.
 
-        try:
-            # Handle different collection types
-            output_type = type(ctx.output)
-            output_is_model_like = is_model_like(output_type)
-            if isinstance(ctx.output, dict) or output_is_model_like:
-                if output_is_model_like:
-                    adapter: TypeAdapter[Any] = TypeAdapter(output_type)
-                    output_dict = adapter.dump_python(ctx.output)  # pyright: ignore[reportUnknownMemberType]
-                else:
-                    # Cast to Any to avoid type checking issues
-                    output_dict = cast(dict[Any, Any], ctx.output)  # pyright: ignore[reportUnknownMemberType]
+    For strings, checks if expected_output is a substring of output.
+    For lists/tuples, checks if expected_output is in output.
+    For dicts, checks if all key-value pairs in expected_output are in output.
+    For model-like types (BaseModel, dataclasses), converts to a dict and checks key-value pairs.
 
-                if isinstance(self.value, dict):
-                    # Cast to Any to avoid type checking issues
-                    expected_dict = cast(dict[Any, Any], self.value)  # pyright: ignore[reportUnknownMemberType]
-                    for k in expected_dict:
-                        if k not in output_dict:
-                            k_trunc = _truncated_repr(k, max_length=30)
-                            failure_reason = f'Output does not contain expected key {k_trunc}'
-                            break
-                        elif output_dict[k] != expected_dict[k]:
-                            k_trunc = _truncated_repr(k, max_length=30)
-                            output_v_trunc = _truncated_repr(output_dict[k], max_length=100)
-                            expected_v_trunc = _truncated_repr(expected_dict[k], max_length=100)
-                            failure_reason = (
-                                f'Output has different value for key {k_trunc}: {output_v_trunc} != {expected_v_trunc}'
-                            )
-                            break
-                else:
-                    if self.value not in output_dict:
-                        output_trunc = _truncated_repr(output_dict, max_length=200)
-                        failure_reason = f'Output {output_trunc} does not contain provided value as a key'
-            elif self.value not in ctx.output:  # pyright: ignore[reportOperatorIssue]  # will be handled by except block
-                output_trunc = _truncated_repr(ctx.output, max_length=200)
-                failure_reason = f'Output {output_trunc} does not contain provided value'
-        except (TypeError, ValueError) as e:
-            failure_reason = f'Containment check failed: {e}'
+    Note: case_sensitive only applies when both the value and output are strings.
 
-        return EvaluationReason(value=failure_reason is None, reason=failure_reason)
+    This uses the same logic as `Contains`, but compares against
+    `ctx.expected_output` instead of a fixed value.
+    """
+
+    case_sensitive: bool = True
+    as_strings: bool = False
+    evaluation_name: str | None = field(default=None)
+
+    def evaluate(
+        self,
+        ctx: EvaluatorContext[object, object, object],
+    ) -> EvaluationReason | dict[str, bool]:
+        if ctx.expected_output is None:
+            return {}  # Only compare if expected output is provided
+
+        return _check_containment(
+            ctx,
+            ctx.expected_output,
+            as_strings=self.as_strings,
+            case_sensitive=self.case_sensitive,
+        )
 
 
 @dataclass(repr=False)
@@ -284,6 +333,7 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     Equals,
     EqualsExpected,
     Contains,
+    ContainsExpected,
     IsInstance,
     MaxDuration,
     LLMJudge,
