@@ -429,5 +429,3 @@ def test_provider_fallback(mock_env_vars: dict[str, str], model_id: str, expecte
             warnings.simplefilter('ignore', DeprecationWarning)
             model = infer_model(model_id)
         assert model.provider_fallback == expected_fallback
-
-
