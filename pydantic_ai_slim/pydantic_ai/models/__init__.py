@@ -878,14 +878,7 @@ class Model(ABC):
                 provider_url = self.base_url
             except UserError:
                 provider_url = None
-            for provider_id, provider_api_url in [
-                (self.system, None),
-                (None, provider_url),
-                (
-                    self.provider_fallback,  # -> Do not need it maybe
-                    None,
-                ),  #
-            ]:
+            for provider_id, provider_api_url in [(self.system, None), (None, provider_url)]:
                 if provider_id is None and provider_api_url is None:
                     continue
                 try:
@@ -911,17 +904,6 @@ class Model(ABC):
         when applicable.
         """
         raise NotImplementedError()
-
-    @property
-    def provider_fallback(self) -> str | None:
-        """The fallback provider ID to use for genai-prices lookups.
-
-        Subclasses should override this to return the canonical provider ID
-        (e.g. 'openai' for OpenAI-compatible models, 'anthropic' for Anthropic models).
-        This is used when self.system doesn't match a genai-prices provider ID,
-        such as when using Azure, Bedrock, or other proxy providers.
-        """
-        return None
 
     @property
     def base_url(self) -> str | None:

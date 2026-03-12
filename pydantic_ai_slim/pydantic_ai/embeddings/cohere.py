@@ -195,7 +195,7 @@ class CohereEmbeddingModel(EmbeddingModel):
             embeddings=embeddings,
             inputs=inputs,
             input_type=input_type,
-            usage=_map_usage(response, self.system, self.base_url, self.model_name, self.provider_fallback),
+            usage=_map_usage(response, self.system, self.base_url, self.model_name),
             model_name=self.model_name,
             provider_name=self.system,
             provider_response_id=response.id,
@@ -221,9 +221,7 @@ class CohereEmbeddingModel(EmbeddingModel):
         return len(result.tokens)
 
 
-def _map_usage(
-    response: EmbedByTypeResponse, provider: str, provider_url: str, model: str, provider_fallback: str
-) -> RequestUsage:
+def _map_usage(response: EmbedByTypeResponse, provider: str, provider_url: str, model: str) -> RequestUsage:
     u = response.meta
     if u is None or u.billed_units is None:
         return RequestUsage()  # pragma: no cover
@@ -239,7 +237,6 @@ def _map_usage(
         response_data,
         provider=provider,
         provider_url=provider_url,
-        # provider_fallback=provider_fallback,
         provider_fallback='cohere',
         api_flavor='embeddings',
         details=details,

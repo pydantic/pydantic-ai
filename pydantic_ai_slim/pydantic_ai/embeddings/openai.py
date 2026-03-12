@@ -142,7 +142,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
             embeddings=embeddings,
             inputs=inputs,
             input_type=input_type,
-            usage=_map_usage(response.usage, self.system, self.base_url, response.model, self.provider_fallback),
+            usage=_map_usage(response.usage, self.system, self.base_url, response.model),
             model_name=response.model,
             provider_name=self.system,
         )
@@ -168,9 +168,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         return len(encoding.encode(text))
 
 
-def _map_usage(
-    usage: Usage | None, provider: str, provider_url: str, model: str, provider_fallback: str
-) -> RequestUsage:
+def _map_usage(usage: Usage | None, provider: str, provider_url: str, model: str) -> RequestUsage:
     # OpenAI SDK types say CreateEmbeddingResponse.usage will always be set, in reality some OpenAI-compatible APIs omit it.
     if usage is None:
         return RequestUsage()
@@ -183,7 +181,7 @@ def _map_usage(
         response_data,
         provider=provider,
         provider_url=provider_url,
-        provider_fallback=provider_fallback,
+        provider_fallback='openai',
         api_flavor='embeddings',
         details=details,
     )

@@ -407,25 +407,3 @@ def test_context_window_provided_in_profile():
         'gpt-4o', provider=openai.OpenAIProvider(api_key='test'), profile=ModelProfile(context_window=50000)
     )
     assert m.profile.context_window == 50000
-
-
-@pytest.mark.parametrize(
-    ('mock_env_vars', 'model_id', 'expected_fallback'),
-    [
-        pytest.param({'OPENAI_API_KEY': 'test'}, 'openai:gpt-5', 'openai', id='openai'),
-        pytest.param({'ANTHROPIC_API_KEY': 'test'}, 'anthropic:claude-sonnet-4-5', 'anthropic', id='anthropic'),
-        pytest.param({'GEMINI_API_KEY': 'test'}, 'google-gla:gemini-1.5-flash', 'google', id='google'),
-        pytest.param({'GROK_API_KEY': 'test'}, 'grok:grok-3', 'openai', id='grok-uses-openai-chat'),
-        pytest.param({'XAI_API_KEY': 'test'}, 'xai:grok-3', 'x_ai', id='xai'),
-        pytest.param({'AWS_DEFAULT_REGION': 'us-east-1'}, 'bedrock:amazon.nova-micro-v1:0', 'aws', id='bedrock'),
-        pytest.param({'GROQ_API_KEY': 'test'}, 'groq:llama-3.3-70b-versatile', 'groq', id='groq'),
-        pytest.param({'CO_API_KEY': 'test'}, 'cohere:command', 'cohere', id='cohere'),
-        pytest.param({'MISTRAL_API_KEY': 'test'}, 'mistral:mistral-small-latest', 'mistral', id='mistral'),
-    ],
-)
-def test_provider_fallback(mock_env_vars: dict[str, str], model_id: str, expected_fallback: str):
-    with patch.dict(os.environ, mock_env_vars):
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', DeprecationWarning)
-            model = infer_model(model_id)
-        assert model.provider_fallback == expected_fallback
