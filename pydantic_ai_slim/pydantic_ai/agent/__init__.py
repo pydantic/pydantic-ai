@@ -654,12 +654,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instructions_literal, instructions_functions = self._get_instructions(additional_instructions=instructions)
 
         async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            parts = [
-                instructions_literal,
-                *[await func.run(run_context) for func in instructions_functions],
-            ]
+            parts: list[str] = []
+            if instructions_literal:
+                parts.append(instructions_literal)
+            for func in instructions_functions:
+                result = await func.run(run_context)
+                if result:
+                    parts.append(result)
 
-            parts = [p for p in parts if p]
+            toolset_result = await toolset.get_description(run_context)
+            if toolset_result:
+                if isinstance(toolset_result, list):
+                    parts.extend(toolset_result)
+                else:  # pragma: no cover
+                    parts.append(toolset_result)
+
             if not parts:
                 return None
             return '\n\n'.join(parts).strip()
@@ -1514,6 +1523,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         additional_instructions: Instructions[AgentDepsT] = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
+        """Prepare agent-level instructions, splitting them into literal strings and functions.
+
+        Toolset instructions are collected separately during run execution.
+
+        Args:
+            additional_instructions: Additional instructions to include for this run.
+
+        Returns:
+            A tuple of (literal_instructions, instruction_functions) where:
+            - literal_instructions: Combined literal string instructions or None
+            - instruction_functions: List of instruction functions that need to be evaluated at runtime
+        """
         override_instructions = self._override_instructions.get()
         if override_instructions:
             instructions = override_instructions.value

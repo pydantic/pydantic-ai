@@ -2544,7 +2544,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
 
     @my_agent.instructions
     def instructions(ctx: RunContext[None]):
-        return f'This is step {ctx.run_step + 1}'
+        return f'This is step {ctx.run_step}'
 
     @my_agent.tool_plain
     def my_tool() -> str:
