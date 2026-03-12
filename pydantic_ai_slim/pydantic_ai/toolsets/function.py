@@ -233,7 +233,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
             # Is the func actually taking RunContext or is it a plain function in disguise?
 
-            self.add_function(
+            tool = self.add_function(
                 func=func_,
                 takes_ctx=None,
                 name=name,
@@ -250,8 +250,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 metadata=metadata,
                 timeout=timeout,
             )
-            tool_name = name or func_.__name__
-            if not self.tools[tool_name].function_schema.takes_ctx:
+            if not tool.function_schema.takes_ctx:
                 warnings.warn(
                     'Passing a plain function to FunctionToolset.tool() is deprecated, use tool_plain() instead.',
                     DeprecationWarning,
@@ -412,7 +411,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
-    ) -> None:
+    ) -> Tool[AgentDepsT]:
         """Add a function as a tool to the toolset.
 
         Can take a sync or async function.
@@ -486,6 +485,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             timeout=timeout,
         )
         self.add_tool(tool)
+        return tool
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
