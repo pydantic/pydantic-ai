@@ -25,6 +25,11 @@ class ModelProfile:
 
     supports_tools: bool = True
     """Whether the model supports tools."""
+    context_window: int | None = None
+    """The model's maximum context window size in tokens, if known.
+
+    Auto-populated from genai-prices when not set explicitly.
+    """
     supports_json_schema_output: bool = False
     """Whether the model supports JSON schema output.
 
@@ -76,9 +81,6 @@ class ModelProfile:
     Defaults to ALL builtin tools. Profile functions should explicitly
     restrict this based on model capabilities.
     """
-
-    context_window: int | None = None
-    """The model's maximum context window size in tokens, if known. Auto-populated from genai-prices when not set explicitly."""
 
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:
