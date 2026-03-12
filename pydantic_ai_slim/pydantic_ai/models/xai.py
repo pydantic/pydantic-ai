@@ -199,6 +199,10 @@ class XaiModel(Model):
         """The model provider."""
         return 'xai'
 
+    @property
+    def provider_fallback(self) -> str:
+        return 'x_ai'
+
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type]:
         """Return the set of builtin tool types this model can handle."""

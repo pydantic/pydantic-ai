@@ -296,6 +296,10 @@ class AnthropicModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @property
+    def provider_fallback(self) -> str:
+        return 'anthropic'
+
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """The set of builtin tool types this model can handle."""
@@ -603,7 +607,9 @@ class AnthropicModel(Model):
 
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
+            usage=_map_usage(
+                response, self._provider.name, self._provider.base_url, self._model_name, self.provider_fallback
+            ),
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
@@ -628,6 +634,7 @@ class AnthropicModel(Model):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
+            _provider_fallback=self.provider_fallback,
         )
 
     def _get_tools(
@@ -1211,6 +1218,7 @@ def _map_usage(
     provider: str,
     provider_url: str,
     model: str,
+    provider_fallback: str,
     existing_usage: usage.RequestUsage | None = None,
 ) -> usage.RequestUsage:
     if isinstance(message, BetaMessage):
@@ -1234,7 +1242,7 @@ def _map_usage(
         dict(model=model, usage=details),
         provider=provider,
         provider_url=provider_url,
-        provider_fallback='anthropic',
+        provider_fallback=provider_fallback,
         details=details,
     )
 
@@ -1247,6 +1255,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _response: AsyncIterable[BetaRawMessageStreamEvent]
     _provider_name: str
     _provider_url: str
+    _provider_fallback: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
@@ -1255,7 +1264,9 @@ class AnthropicStreamedResponse(StreamedResponse):
         builtin_tool_calls: dict[str, BuiltinToolCallPart] = {}
         async for event in self._response:
             if isinstance(event, BetaRawMessageStartEvent):
-                self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name)
+                self._usage = _map_usage(
+                    event, self._provider_name, self._provider_url, self._model_name, self.provider_fallback
+                )
                 self.provider_response_id = event.message.id
                 if event.message.container:
                     self.provider_details = self.provider_details or {}
@@ -1374,7 +1385,14 @@ class AnthropicStreamedResponse(StreamedResponse):
                     pass
 
             elif isinstance(event, BetaRawMessageDeltaEvent):
-                self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name, self._usage)
+                self._usage = _map_usage(
+                    event,
+                    self._provider_name,
+                    self._provider_url,
+                    self._model_name,
+                    self.provider_fallback,
+                    self._usage,
+                )
                 if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
                     self.provider_details = self.provider_details or {}
                     self.provider_details['finish_reason'] = raw_finish_reason
@@ -1411,6 +1429,10 @@ class AnthropicStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+    @property
+    def provider_fallback(self) -> str:
+        return self._provider_fallback
 
 
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
