@@ -417,6 +417,37 @@ class TestCohere:
             )
         )
 
+    async def test_embed_uses_float_embedding_type(self):
+        calls: dict[str, Any] = {}
+
+        class _ClientWrapper:
+            def get_base_url(self) -> str:
+                return 'https://api.cohere.com'
+
+        class _FakeClient:
+            def __init__(self) -> None:
+                self._client_wrapper = _ClientWrapper()
+
+            async def embed(self, **kwargs: Any):
+                calls['kwargs'] = kwargs
+
+                class _Embeddings:
+                    float_ = [[0.1, 0.2, 0.3]]
+
+                class _Response:
+                    embeddings = _Embeddings()
+                    meta = None
+                    id = 'test-id'
+
+                return _Response()
+
+        fake_client = _FakeClient()
+        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(cohere_client=fake_client))
+        result = await model.embed('Hello, world!', input_type='query')
+
+        assert calls['kwargs']['embedding_types'] == ['float']
+        assert result.embeddings == [[0.1, 0.2, 0.3]]
+
 
 @pytest.mark.skipif(not voyageai_imports_successful(), reason='VoyageAI not installed')
 @pytest.mark.vcr
