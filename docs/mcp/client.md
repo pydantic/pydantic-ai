@@ -469,7 +469,7 @@ async def main():
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
 
-1. When you supply `http_client`, Pydantic AI re-uses this client for every
+1. When you supply `http_client`, Pydantic AI reuses this client for every
    request. Anything supported by **httpx** (`verify`, `cert`, custom
    proxies, timeouts, etc.) therefore applies to all MCP traffic.
 
