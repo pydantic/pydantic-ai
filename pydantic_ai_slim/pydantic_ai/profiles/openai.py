@@ -25,6 +25,8 @@ These parameters are not supported when reasoning is enabled (reasoning_effort !
 See https://platform.openai.com/docs/guides/reasoning for details.
 """
 
+_GPT_ALWAYS_REASONING_RE = re.compile(r'-(chat|codex|pro)')
+
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
@@ -145,12 +147,13 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # always reasoning
     is_o_series = model_name.startswith('o')
 
-    # gpt-5.3-chat-latest is non-reasoning unlike other 5.1+ chat variants
-    is_gpt_5_3_chat = model_name.startswith('gpt-5.3-chat')
+    # gpt-5.x -chat, -codex, -codex-max and -pro variants accept reasoning
+    # but reject effort=none and sampling params
+    is_gpt_always_reasoning = is_gpt_5_1_plus and _GPT_ALWAYS_REASONING_RE.search(model_name) is not None
 
     thinking_always_enabled = is_o_series or (is_gpt_5 and '-chat' not in model_name)
 
-    supports_reasoning = (thinking_always_enabled or is_gpt_5_1_plus) and not is_gpt_5_3_chat
+    supports_reasoning = thinking_always_enabled or is_gpt_5_1_plus
 
     # The o1-mini model doesn't support the `system` role, so we default to `user`.
     # See https://github.com/pydantic/pydantic-ai/issues/974 for more details.
@@ -166,6 +169,8 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
     # the `NativeOutput` marker, so an error from the API is acceptable.
+    # These flags are validated by tests/profiles/test_openai_capabilities_vcr.py
+    # against live API probes — update that test when adding or deprecating models.
     return OpenAIModelProfile(
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
@@ -175,7 +180,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_chat_supports_web_search=supports_web_search,
         openai_supports_encrypted_reasoning_content=supports_reasoning,
         openai_supports_reasoning=supports_reasoning,
-        openai_supports_reasoning_effort_none=is_gpt_5_1_plus and not is_gpt_5_3_chat,
+        openai_supports_reasoning_effort_none=is_gpt_5_1_plus and not is_gpt_always_reasoning,
     )
 
 
