@@ -646,6 +646,47 @@ class OpenAIChatModel(Model):
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters, model_settings_cast)
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.RequestUsage:
+        """Count the number of tokens in the messages using tiktoken.
+
+        This uses the tiktoken library to count tokens locally, following the algorithm
+        described in the [OpenAI cookbook](https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken).
+
+        Note: the exact token count may vary slightly from the API's count, especially
+        for messages with non-text content (images, etc.) which are skipped in counting.
+        """
+        import tiktoken
+
+        check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+        openai_messages = await self._map_messages(messages, model_request_parameters)
+
+        try:
+            encoding = tiktoken.encoding_for_model(self._model_name)
+        except KeyError:
+            encoding = tiktoken.get_encoding('o200k_base')
+
+        tokens_per_message = 3
+        tokens_per_name = 1
+        num_tokens = 0
+        for message in openai_messages:
+            num_tokens += tokens_per_message
+            for key, value in message.items():
+                if isinstance(value, str):
+                    num_tokens += len(encoding.encode(value))
+                    if key == 'name':
+                        num_tokens += tokens_per_name
+        num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
+        return usage.RequestUsage(input_tokens=num_tokens)
+
     @overload
     async def _completions_create(
         self,

@@ -4555,3 +4555,60 @@ async def test_openai_chat_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I'm sorry, I can't help with that."
+
+
+
+async def test_openai_count_tokens(allow_model_requests: None):
+    """Test that count_tokens returns a valid RequestUsage with input_tokens > 0."""
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    # Mock tiktoken to avoid network calls for encoding download
+    mock_encoding = AsyncMock()
+    mock_encoding.encode = lambda text: list(range(len(text.split())))
+
+    with patch('tiktoken.encoding_for_model', return_value=mock_encoding):
+        result = await m.count_tokens(
+            [ModelRequest.user_text_prompt('hello')],
+            None,
+            ModelRequestParameters(),
+        )
+
+    # tiktoken should count some tokens for the message
+    assert result.input_tokens > 0
+
+
+async def test_openai_count_tokens_with_usage_limits(allow_model_requests: None):
+    """Test that count_tokens_before_request works end-to-end with OpenAI model."""
+    from pydantic_ai.exceptions import UsageLimitExceeded
+    from pydantic_ai.usage import UsageLimits
+
+    c = completion_message(
+        ChatCompletionMessage(content='world', role='assistant'),
+        usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    # Mock tiktoken to avoid network calls for encoding download
+    mock_encoding = AsyncMock()
+    mock_encoding.encode = lambda text: list(range(len(text.split())))
+
+    with patch('tiktoken.encoding_for_model', return_value=mock_encoding):
+        # With a very low limit, it should raise UsageLimitExceeded
+        with pytest.raises(UsageLimitExceeded):
+            await agent.run(
+                'The quick brown fox jumps over the lazy dog.',
+                usage_limits=UsageLimits(input_tokens_limit=1, count_tokens_before_request=True),
+            )
+
+        # With a generous limit, it should succeed
+        mock_client.index = 0  # type: ignore
+        result = await agent.run(
+            'hello',
+            usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True),
+        )
+        assert result.output == 'world'
+
