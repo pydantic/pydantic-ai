@@ -240,7 +240,7 @@ jobs:
             If the PR has high level problems that will likely require significant changes at lower levels, hold off on looking for or commenting on lower level problems until the higher level problems are addressed, so that the PR author (and your context window) don't get overwhelmed.
 
             Note that while another agent (Devin) is responsible for thoroughly reviewing the implementation for bugs, security issues, and edge cases,
-            _you_ are responsible for catching every violation of the repository's standards and guidelines listed in the `AGENTS.md` files.
+            _you_ are responsible for catching every violation of the repository's standards and guidelines listed in the `AGENTS.md` and `agent_docs/*.md` files.
             Do not focus exclusively on high-level concerns: by the time the author has addressed every comment you've left over multiple rounds of review, the PR should be ready to merge.
 
             # Gathering context
@@ -252,6 +252,7 @@ jobs:
             - `.github/.review-context/related-issues.txt` — linked issues and their comments
             - `.github/.review-context/changed-files.txt` — changed files with per-file addition/deletion counts (tab-separated; non-generated files include a third column with the path to their per-file diff)
             - `.github/.review-context/agents-md.txt` — directory-specific `AGENTS.md` files for changed directories
+            - `agent_docs/index.md` - repo-wide coding guidelines
 
             The diff is split into per-file diffs under `.github/.review-context/diff/` (excluding `uv.lock` and cassettes), that you can read on demand and in parallel.
             The diffs include function-level context (`git diff -W`), so you can see the full function/method being modified without needing to read the source file separately.
