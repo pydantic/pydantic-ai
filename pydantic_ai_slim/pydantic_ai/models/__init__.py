@@ -884,7 +884,7 @@ class Model(ABC):
                 (
                     self.provider_fallback,
                     None,
-                ),  # Got this finally, added a new propety on the model which the extract_usage can use as well
+                ),  # Got this finally, added a new property on the model which the extract_usage can use as well
             ]:
                 if provider_id is None and provider_api_url is None:
                     continue
