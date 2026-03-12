@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import warnings
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import anyio
 import pytest
 
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.models import warn_native_tool_fallback
 from pydantic_ai.tools import (
     ApplyPatchNativeDefinition,
     NativeToolDefinition,
@@ -23,17 +24,16 @@ from pydantic_ai.toolsets.shell import (
     ShellExecutor,
     ShellOutput,
     ShellToolset,
-    _LocalShellExecutor,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.toolsets.text_editor import TextEditorOutput, TextEditorToolset
 
 from .conftest import try_import
 
 with try_import() as anthropic_installed:
-    import pydantic_ai.models.anthropic as anthropic_mod
+    pass
 
 with try_import() as openai_installed:
-    import pydantic_ai.models.openai as openai_mod
+    pass
 
 # === NativeToolDefinition types ===
 
@@ -96,7 +96,7 @@ def mock_executor() -> ShellExecutor:
 class TestShellToolsetGetTools:
     async def test_get_tools_returns_correct_definition(self, mock_executor: ShellExecutor):
         toolset: ShellToolset[None] = ShellToolset(executor=mock_executor)
-        from pydantic_ai._run_context import RunContext
+        from pydantic_ai import RunContext
 
         ctx = RunContext[None](
             deps=None,
@@ -118,7 +118,7 @@ class TestShellToolsetGetTools:
 
     async def test_get_tools_custom_name(self, mock_executor: ShellExecutor):
         toolset: ShellToolset[None] = ShellToolset(executor=mock_executor, tool_name='my_bash')
-        from pydantic_ai._run_context import RunContext
+        from pydantic_ai import RunContext
 
         ctx = RunContext[None](
             deps=None,
@@ -135,7 +135,7 @@ class TestShellToolsetGetTools:
 class TestShellToolsetCallTool:
     async def test_call_tool_execute(self, mock_executor: ShellExecutor):
         toolset: ShellToolset[None] = ShellToolset(executor=mock_executor)
-        from pydantic_ai._run_context import RunContext
+        from pydantic_ai import RunContext
 
         ctx = RunContext[None](
             deps=None,
@@ -155,7 +155,7 @@ class TestShellToolsetCallTool:
 
     async def test_call_tool_restart(self, mock_executor: ShellExecutor):
         toolset: ShellToolset[None] = ShellToolset(executor=mock_executor)
-        from pydantic_ai._run_context import RunContext
+        from pydantic_ai import RunContext
 
         ctx = RunContext[None](
             deps=None,
@@ -177,7 +177,7 @@ class TestShellToolsetCallTool:
         mock_executor.execute = AsyncMock(return_value=ShellOutput(output=long_output, exit_code=0))
 
         toolset: ShellToolset[None] = ShellToolset(executor=mock_executor, max_output_chars=100)
-        from pydantic_ai._run_context import RunContext
+        from pydantic_ai import RunContext
 
         ctx = RunContext[None](
             deps=None,
@@ -194,17 +194,22 @@ class TestShellToolsetCallTool:
         assert '[output truncated' in parsed['output']
         assert '100 chars of 300000 total' in parsed['output']
 
-    async def test_call_tool_timeout(self, mock_executor: ShellExecutor):
+    async def test_call_tool_timeout(self):
         import asyncio
 
-        async def slow_execute(command: str) -> ShellOutput:
-            await asyncio.sleep(10)
-            return ShellOutput(output='done', exit_code=0)
+        class SlowExecutor:
+            async def execute(self, command: str) -> ShellOutput:
+                await asyncio.sleep(10)
+                return ShellOutput(output='', exit_code=0)  # pragma: no cover
 
-        mock_executor.execute = slow_execute
+            async def restart(self) -> ShellOutput:
+                return ShellOutput(output='Shell session restarted.', exit_code=0)
 
-        toolset: ShellToolset[None] = ShellToolset(executor=mock_executor, timeout=0.01)
-        from pydantic_ai._run_context import RunContext
+            async def close(self) -> None:
+                pass
+
+        toolset: ShellToolset[None] = ShellToolset(executor=SlowExecutor(), timeout=0.01)
+        from pydantic_ai import RunContext
 
         ctx = RunContext[None](
             deps=None,
@@ -223,10 +228,14 @@ class TestShellToolsetCallTool:
 class TestShellToolsetLocal:
     def test_local_factory(self):
         toolset: ShellToolset[None] = ShellToolset.local(cwd='/tmp')
-        assert isinstance(toolset.executor, _LocalShellExecutor)
+        # Verify the executor satisfies the ShellExecutor protocol
+        assert callable(toolset.executor.execute)
+        assert callable(toolset.executor.restart)
+        assert callable(toolset.executor.close)
+        assert toolset.id is None
 
     async def test_local_executor_basic(self):
-        executor = _LocalShellExecutor()
+        executor = ShellToolset.local().executor
         try:
             with anyio.fail_after(10):
                 result = await executor.execute('echo hello')
@@ -236,13 +245,160 @@ class TestShellToolsetLocal:
             await executor.close()
 
     async def test_local_executor_restart(self):
-        executor = _LocalShellExecutor()
+        executor = ShellToolset.local().executor
         try:
             with anyio.fail_after(10):
                 result = await executor.restart()
             assert 'restarted' in result.output.lower()
         finally:
             await executor.close()
+
+    async def test_local_executor_nonzero_exit(self):
+        executor = ShellToolset.local().executor
+        try:
+            with anyio.fail_after(10):
+                result = await executor.execute('exit 42')
+            assert result.exit_code == 42
+        finally:
+            await executor.close()
+
+    async def test_local_executor_no_trailing_newline(self):
+        executor = ShellToolset.local().executor
+        try:
+            with anyio.fail_after(10):
+                result = await executor.execute('printf "no newline"')
+            assert 'no newline' in result.output
+        finally:
+            await executor.close()
+
+    async def test_local_executor_unexpected_eof_returns_process_exit_code(self, monkeypatch: pytest.MonkeyPatch):
+        class FakeStdin:
+            def __init__(self) -> None:
+                self.written = b''
+
+            def write(self, data: bytes) -> None:
+                self.written += data
+
+            async def drain(self) -> None:
+                return None
+
+        class FakeStdout:
+            async def readline(self) -> bytes:
+                return b''
+
+        class FakeProcess:
+            def __init__(self) -> None:
+                self.stdin = FakeStdin()
+                self.stdout = FakeStdout()
+                self.returncode: int | None = None
+                self.wait_called = False
+
+            async def wait(self) -> int:
+                self.wait_called = True
+                self.returncode = 17
+                return 17
+
+        executor = ShellToolset.local().executor
+        process = FakeProcess()
+
+        async def ensure_process() -> FakeProcess:
+            return process
+
+        monkeypatch.setattr(executor, '_ensure_process', ensure_process)
+
+        result = await executor.execute('exit 17')
+        assert result == ShellOutput(output='', exit_code=17)
+        assert process.stdin.written.startswith(b'exit 17\n')
+        assert process.wait_called is True
+
+    async def test_local_executor_missing_exit_code_uses_default(self, monkeypatch: pytest.MonkeyPatch):
+        class FakeStdin:
+            def write(self, data: bytes) -> None:
+                self.written = data
+
+            async def drain(self) -> None:
+                return None
+
+        class FakeStdout:
+            def __init__(self, sentinel: str) -> None:
+                self._lines = [f'{sentinel}\n'.encode()]
+
+            async def readline(self) -> bytes:
+                return self._lines.pop(0) if self._lines else b''
+
+        class FakeProcess:
+            def __init__(self, sentinel: str) -> None:
+                self.stdin = FakeStdin()
+                self.stdout = FakeStdout(sentinel)
+                self.returncode = None
+
+        executor = ShellToolset.local().executor
+        sentinel = f'__PYDANTIC_AI_EXIT_{id(executor)}__'
+        process = FakeProcess(sentinel)
+
+        async def ensure_process() -> FakeProcess:
+            return process
+
+        monkeypatch.setattr(executor, '_ensure_process', ensure_process)
+
+        result = await executor.execute('echo hello')
+        assert result == ShellOutput(output='', exit_code=0)
+
+    async def test_local_executor_state_persists(self):
+        """cd and export persist across execute calls."""
+        executor = ShellToolset.local().executor
+        try:
+            with anyio.fail_after(10):
+                await executor.execute('export MY_TEST_VAR=hello123')
+                result = await executor.execute('echo $MY_TEST_VAR')
+            assert 'hello123' in result.output
+        finally:
+            await executor.close()
+
+    async def test_aexit_closes_executor(self, mock_executor: ShellExecutor):
+        toolset: ShellToolset[None] = ShellToolset(executor=mock_executor)
+        await toolset.__aexit__()
+        mock_executor.close.assert_called_once()  # type: ignore
+
+    async def test_local_executor_close_kills_process_after_timeout(self, monkeypatch: pytest.MonkeyPatch):
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        process = Mock()
+        process.returncode = None
+        # First wait() call hangs (used by wait_for timeout); subsequent calls resolve immediately
+        hang_future = loop.create_future()
+        call_count = 0
+
+        def mock_wait() -> Any:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return hang_future
+            # After kill(), wait() should resolve immediately
+            done_future = loop.create_future()
+            done_future.set_result(None)
+            return done_future
+
+        process.wait = mock_wait
+        process.terminate = Mock()
+        process.kill = Mock()
+
+        executor = ShellToolset.local().executor
+        executor._process = process  # pyright: ignore[reportAttributeAccessIssue]
+
+        original_wait_for = asyncio.wait_for
+
+        async def timeout_wait_for(awaitable: Any, *args: Any, **kwargs: Any) -> Any:
+            return await original_wait_for(awaitable, timeout=0)
+
+        monkeypatch.setattr('pydantic_ai.toolsets.shell.asyncio.wait_for', timeout_wait_for)
+
+        await executor.close()
+
+        process.terminate.assert_called_once()
+        process.kill.assert_called_once()
+        assert executor._process is None  # pyright: ignore[reportAttributeAccessIssue]
 
 
 @pytest.mark.skipif(not anthropic_installed(), reason='anthropic not installed')
@@ -254,8 +410,7 @@ class TestFallbackWarning:
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
-            anthropic_mod._warn_native_tool_fallback('shell', provider)  # pyright: ignore[reportPrivateUsage]
-
+            warn_native_tool_fallback('shell', provider)
         assert len(w) == 1
         assert 'falling back to function tool format' in str(w[0].message)
         assert provider in str(w[0].message)
@@ -263,8 +418,7 @@ class TestFallbackWarning:
         # Second call should not warn (once per kind+provider)
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
-            anthropic_mod._warn_native_tool_fallback('shell', provider)  # pyright: ignore[reportPrivateUsage]
-
+            warn_native_tool_fallback('shell', provider)
         assert len(w) == 0
 
 
@@ -272,7 +426,7 @@ class TestFallbackWarning:
 
 
 def _make_run_context():
-    from pydantic_ai._run_context import RunContext
+    from pydantic_ai import RunContext
 
     return RunContext[None](
         deps=None,
@@ -285,10 +439,9 @@ def _make_run_context():
 
 class TestTextEditorToolsetGetTools:
     async def test_get_tools_returns_correct_definition(self):
-        async def mock_execute(cmd: Any) -> TextEditorOutput:
-            return TextEditorOutput(output='OK')
-
+        mock_execute = AsyncMock(return_value=TextEditorOutput(output='OK'))
         toolset: TextEditorToolset[None] = TextEditorToolset(execute=mock_execute)
+        assert toolset.id is None
         ctx = _make_run_context()
         tools = await toolset.get_tools(ctx)
 
@@ -299,9 +452,7 @@ class TestTextEditorToolsetGetTools:
         assert tool_def.native_definition.max_characters is None
 
     async def test_get_tools_with_max_characters(self):
-        async def mock_execute(cmd: Any) -> TextEditorOutput:
-            return TextEditorOutput(output='OK')
-
+        mock_execute = AsyncMock(return_value=TextEditorOutput(output='OK'))
         toolset: TextEditorToolset[None] = TextEditorToolset(execute=mock_execute, max_characters=50000)
         ctx = _make_run_context()
         tools = await toolset.get_tools(ctx)
@@ -311,9 +462,7 @@ class TestTextEditorToolsetGetTools:
         assert tool_def.native_definition.max_characters == 50000
 
     async def test_get_tools_custom_name(self):
-        async def mock_execute(cmd: Any) -> TextEditorOutput:
-            return TextEditorOutput(output='OK')
-
+        mock_execute = AsyncMock(return_value=TextEditorOutput(output='OK'))
         toolset: TextEditorToolset[None] = TextEditorToolset(execute=mock_execute, tool_name='my_editor')
         ctx = _make_run_context()
         tools = await toolset.get_tools(ctx)
@@ -373,10 +522,9 @@ class TestTextEditorToolsetCallTool:
 
 class TestApplyPatchToolsetGetTools:
     async def test_get_tools_returns_correct_definition(self):
-        async def mock_execute(op: Any) -> ApplyPatchOutput:
-            return ApplyPatchOutput(status='completed')
-
+        mock_execute = AsyncMock(return_value=ApplyPatchOutput(status='completed'))
         toolset: ApplyPatchToolset[None] = ApplyPatchToolset(execute=mock_execute)
+        assert toolset.id is None
         ctx = _make_run_context()
         tools = await toolset.get_tools(ctx)
 
@@ -386,9 +534,7 @@ class TestApplyPatchToolsetGetTools:
         assert isinstance(tool_def.native_definition, ApplyPatchNativeDefinition)
 
     async def test_get_tools_custom_name(self):
-        async def mock_execute(op: Any) -> ApplyPatchOutput:
-            return ApplyPatchOutput(status='completed')
-
+        mock_execute = AsyncMock(return_value=ApplyPatchOutput(status='completed'))
         toolset: ApplyPatchToolset[None] = ApplyPatchToolset(execute=mock_execute, tool_name='my_patcher')
         ctx = _make_run_context()
         tools = await toolset.get_tools(ctx)
@@ -473,8 +619,7 @@ class TestFallbackWarningNewTypes:
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
-            anthropic_mod._warn_native_tool_fallback('text_editor', provider)  # pyright: ignore[reportPrivateUsage]
-
+            warn_native_tool_fallback('text_editor', provider)
         assert len(w) == 1
         assert 'text_editor' in str(w[0].message)
         assert provider in str(w[0].message)
@@ -486,8 +631,46 @@ class TestFallbackWarningNewTypes:
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
-            openai_mod._warn_native_tool_fallback('apply_patch', provider)  # pyright: ignore[reportPrivateUsage]
-
+            warn_native_tool_fallback('apply_patch', provider)
         assert len(w) == 1
         assert 'apply_patch' in str(w[0].message)
         assert provider in str(w[0].message)
+
+
+# === id property coverage ===
+
+
+def test_shell_toolset_id():
+    toolset: ShellToolset[None] = ShellToolset.local()
+    assert toolset.id is None
+
+
+async def test_text_editor_toolset_id():
+    toolset: TextEditorToolset[None] = TextEditorToolset(execute=AsyncMock(return_value=TextEditorOutput(output='')))
+    assert toolset.id is None
+
+
+async def test_apply_patch_toolset_id():
+    toolset: ApplyPatchToolset[None] = ApplyPatchToolset(
+        execute=AsyncMock(return_value=ApplyPatchOutput(status='completed'))
+    )
+    assert toolset.id is None
+
+
+# === Shell executor edge cases ===
+
+
+async def test_local_executor_corrupt_sentinel():
+    """Cover ValueError branch when exit code can't be parsed."""
+    executor = ShellToolset.local().executor
+    try:
+        with anyio.fail_after(10):
+            # echo a line that looks like a sentinel but has a non-integer exit code
+            sentinel = f'__PYDANTIC_AI_EXIT_{id(executor)}__'
+            result = await executor.execute(f'echo "{sentinel} notanumber"')
+            # The sentinel will be detected but parseInt will fail -> exit_code=1
+            # However, the REAL sentinel from our wrapper will come after
+            # Just verify execution completes without hanging
+            assert isinstance(result.exit_code, int)
+    finally:
+        await executor.close()

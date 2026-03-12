@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import io
-import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -52,8 +51,16 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings, merge_model_settings
-from ..tools import ShellNativeDefinition, TextEditorNativeDefinition, ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
+from ..tools import ApplyPatchNativeDefinition, ShellNativeDefinition, TextEditorNativeDefinition, ToolDefinition
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    check_allow_model_requests,
+    download_item,
+    get_user_agent,
+    warn_native_tool_fallback,
+)
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'compaction': 'stop',
@@ -65,21 +72,6 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
     'pause_turn': 'stop',
     'refusal': 'content_filter',
 }
-
-_NATIVE_TOOL_FALLBACK_WARNED: set[tuple[str, str]] = set()
-
-
-def _warn_native_tool_fallback(kind: str, provider: str) -> None:
-    """Emit a one-time warning when a native tool falls back to function tool format."""
-    key = (kind, provider)
-    if key not in _NATIVE_TOOL_FALLBACK_WARNED:
-        _NATIVE_TOOL_FALLBACK_WARNED.add(key)
-        warnings.warn(
-            f'Native `{kind}` tool: falling back to function tool format on {provider} — model performance may be degraded.',
-            UserWarning,
-            stacklevel=4,
-        )
-
 
 try:
     from anthropic import (
@@ -716,15 +708,12 @@ class AnthropicModel(Model):
                 native_tool_names['str_replace_based_edit_tool'] = tool_def.name
             else:
                 if native_def is not None:
-                    if isinstance(native_def, ShellNativeDefinition) and not self.profile.supports_native_shell_tool:
-                        _warn_native_tool_fallback(native_def.kind, 'anthropic')
-                    elif (
-                        isinstance(native_def, TextEditorNativeDefinition)
-                        and not self.profile.supports_native_text_editor_tool
+                    if isinstance(
+                        native_def, ShellNativeDefinition | TextEditorNativeDefinition | ApplyPatchNativeDefinition
                     ):
-                        _warn_native_tool_fallback(native_def.kind, 'anthropic')
-                    elif not isinstance(native_def, ShellNativeDefinition | TextEditorNativeDefinition):
-                        _warn_native_tool_fallback(native_def.kind, 'anthropic')
+                        warn_native_tool_fallback(native_def.kind, 'anthropic')
+                    else:
+                        assert_never(native_def)
                 tools.append(self._map_tool_definition(tool_def))
 
         # Add cache_control to the last tool if enabled
@@ -877,6 +866,8 @@ class AnthropicModel(Model):
                 if len(user_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
             elif isinstance(m, ModelResponse):
+                # Reverse mapping: user-facing tool name -> native provider name
+                _reverse_native_names = {v: k for k, v in self._native_tool_names.items()}
                 assistant_content_params: list[
                     BetaTextBlockParam
                     | BetaToolUseBlockParam
@@ -899,7 +890,7 @@ class AnthropicModel(Model):
                         tool_use_block_param = BetaToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),
                             type='tool_use',
-                            name=response_part.tool_name,
+                            name=_reverse_native_names.get(response_part.tool_name, response_part.tool_name),
                             input=response_part.args_as_dict(),
                         )
                         assistant_content_params.append(tool_use_block_param)

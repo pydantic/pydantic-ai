@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -32,13 +33,13 @@ _SHELL_TOOL_SCHEMA: dict[str, Any] = {
         'command': {'type': 'string', 'description': 'The shell command to execute.'},
         'restart': {'type': 'boolean', 'description': 'Restart the shell session.', 'default': False},
     },
-    'required': ['command'],
+    'required': [],
 }
 
 _SHELL_ARGS_VALIDATOR = SchemaValidator(
     core_schema.typed_dict_schema(
         {
-            'command': core_schema.typed_dict_field(core_schema.str_schema()),
+            'command': core_schema.typed_dict_field(core_schema.str_schema(), required=False),
             'restart': core_schema.typed_dict_field(
                 core_schema.with_default_schema(core_schema.bool_schema(), default=False),
                 required=False,
@@ -117,6 +118,8 @@ class _LocalShellExecutor:
             line_bytes = await process.stdout.readline()
             if not line_bytes:
                 # Process ended unexpectedly
+                if process.returncode is None:
+                    await process.wait()
                 exit_code = process.returncode or 1
                 break
             line = line_bytes.decode(errors='replace')
@@ -146,8 +149,9 @@ class _LocalShellExecutor:
             self._process.terminate()
             try:
                 await asyncio.wait_for(self._process.wait(), timeout=5.0)
-            except TimeoutError:
-                self._process.kill()  # pragma: no cover
+            except (TimeoutError, asyncio.TimeoutError):
+                self._process.kill()
+                await self._process.wait()
             self._process = None
 
 
@@ -235,12 +239,14 @@ class ShellToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> str:
         restart = tool_args.get('restart', False)
-        command = tool_args.get('command', '')
+        command = tool_args.get('command')
 
         if restart:
             result = await self._run_with_timeout(self.executor.restart)
-        else:
+        elif command:
             result = await self._run_with_timeout(lambda: self.executor.execute(command))
+        else:
+            raise ModelRetry('Either `command` or `restart` must be provided.')
 
         output = result.output
         if len(output) > self.max_output_chars:
@@ -251,12 +257,14 @@ class ShellToolset(AbstractToolset[AgentDepsT]):
         # Format output for the model
         return json.dumps({'output': output, 'exit_code': result.exit_code})
 
-    async def _run_with_timeout(self, func: Any) -> ShellOutput:
+    async def _run_with_timeout(self, func: Callable[[], Awaitable[ShellOutput]]) -> ShellOutput:
         if self.timeout is not None:
             try:
                 with anyio.fail_after(self.timeout):
                     return await func()
             except TimeoutError:
+                # Restart the shell session to flush stale output from the timed-out command
+                await self.executor.restart()
                 raise ModelRetry(f'Command timed out after {self.timeout}s.') from None
         else:
             return await func()

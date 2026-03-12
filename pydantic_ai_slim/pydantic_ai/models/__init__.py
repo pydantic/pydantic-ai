@@ -59,6 +59,22 @@ This matches the default timeout used by OpenAI's Python client.
 See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
 """
 
+NATIVE_TOOL_FALLBACK_WARNED: set[tuple[str, str]] = set()
+
+
+def warn_native_tool_fallback(kind: str, provider: str) -> None:
+    """Emit a one-time warning when a native tool falls back to function tool format."""
+    key = (kind, provider)
+    if key not in NATIVE_TOOL_FALLBACK_WARNED:
+        NATIVE_TOOL_FALLBACK_WARNED.add(key)
+        warnings.warn(
+            f'Native `{kind}` tool: falling back to function tool format on {provider}'
+            ' — model performance may be degraded.',
+            UserWarning,
+            stacklevel=4,
+        )
+
+
 KnownModelName = TypeAliasType(
     'KnownModelName',
     Literal[

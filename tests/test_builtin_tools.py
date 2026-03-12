@@ -18,7 +18,7 @@ from pydantic_ai.builtin_tools import (
     WebSearchTool,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, ModelRequestParameters
 
 
 @pytest.mark.parametrize('model', ('bedrock', 'mistral', 'cohere', 'huggingface', 'test', 'outlines'), indirect=True)
@@ -223,6 +223,17 @@ def test_code_execution_network_policy_disabled():
 
 
 @pytest.mark.parametrize('model', ('anthropic',), indirect=True)
+async def test_shell_tool_network_policy_not_supported(model: Model):
+    with pytest.raises(UserError, match='`ShellTool.network_policy` is not supported by this model'):
+        model.prepare_request(
+            None,
+            ModelRequestParameters(
+                builtin_tools=[ShellTool(network_policy=CodeExecutionNetworkPolicy(mode='disabled'))],
+            ),
+        )
+
+
+@pytest.mark.parametrize('model', ('anthropic',), indirect=True)
 async def test_shell_tool_and_code_execution_tool_mutual_exclusion(model: Model, allow_model_requests: None):
     agent = Agent(model=model, builtin_tools=[ShellTool(), CodeExecutionTool()])
 
@@ -239,16 +250,13 @@ async def test_shell_tool_and_code_execution_tool_mutual_exclusion_stream(model:
             ...  # pragma: no cover
 
 
-async def test_shell_tool_and_code_execution_tool_mutual_exclusion_openai_responses(
-    openai_api_key: str, allow_model_requests: None
-):
-    try:
-        from pydantic_ai.models.openai import OpenAIResponsesModel
-        from pydantic_ai.providers.openai import OpenAIProvider
-    except ImportError:
-        pytest.skip('openai not installed')
+async def test_shell_tool_and_code_execution_tool_mutual_exclusion_openai_responses(allow_model_requests: None):
+    pytest.importorskip('openai')
 
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='api-key'))
     agent = Agent(model=model, builtin_tools=[ShellTool(), CodeExecutionTool()])
 
     with pytest.raises(UserError, match='`ShellTool` and `CodeExecutionTool` are mutually exclusive'):

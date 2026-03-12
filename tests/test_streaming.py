@@ -3363,7 +3363,7 @@ async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float |
     agent = Agent(FunctionModel(stream_function=sf))
 
     async with agent.run_stream('test') as result:
-        async for _text in result.stream_text(delta=delta, debounce_by=debounce_by):
+        async for _text in result.stream_text(delta=delta, debounce_by=debounce_by):  # pragma: no branch
             break
 
     assert cleanup_called, 'stream function cleanup should have been called by aclosing propagation'

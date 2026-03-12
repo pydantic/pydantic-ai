@@ -62,7 +62,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
-from ..tools import ApplyPatchNativeDefinition, ShellNativeDefinition, ToolDefinition
+from ..tools import ApplyPatchNativeDefinition, ShellNativeDefinition, TextEditorNativeDefinition, ToolDefinition
 from . import (
     Model,
     ModelRequestParameters,
@@ -72,6 +72,7 @@ from . import (
     check_allow_model_requests,
     download_item,
     get_user_agent,
+    warn_native_tool_fallback,
 )
 
 try:
@@ -114,12 +115,20 @@ try:
     )
     from openai.types.responses.container_reference_param import ContainerReferenceParam
     from openai.types.responses.local_environment_param import LocalEnvironmentParam
+    from openai.types.responses.response_apply_patch_tool_call import (
+        OperationCreateFile,
+        OperationDeleteFile,
+        OperationUpdateFile,
+    )
     from openai.types.responses.response_container_reference import ResponseContainerReference
     from openai.types.responses.response_function_shell_call_output_content_param import (
         ResponseFunctionShellCallOutputContentParam,
     )
     from openai.types.responses.response_input_item_param import (
         ApplyPatchCall,
+        ApplyPatchCallOperationCreateFile,
+        ApplyPatchCallOperationDeleteFile,
+        ApplyPatchCallOperationUpdateFile,
         ApplyPatchCallOutput,
         ShellCall,
         ShellCallAction,
@@ -152,21 +161,6 @@ __all__ = (
     'OpenAIResponsesModelSettings',
     'OpenAIModelName',
 )
-
-_NATIVE_TOOL_FALLBACK_WARNED: set[tuple[str, str]] = set()
-
-
-def _warn_native_tool_fallback(kind: str, provider: str) -> None:
-    """Emit a one-time warning when a native tool falls back to function tool format."""
-    key = (kind, provider)
-    if key not in _NATIVE_TOOL_FALLBACK_WARNED:
-        _NATIVE_TOOL_FALLBACK_WARNED.add(key)
-        warnings.warn(
-            f'Native `{kind}` tool: falling back to function tool format on {provider} — model performance may be degraded.',
-            UserWarning,
-            stacklevel=4,
-        )
-
 
 OpenAIModelName = str | AllModels
 """
@@ -1621,7 +1615,7 @@ class OpenAIResponsesModel(Model):
                         )
                     )
             elif isinstance(item, ResponseApplyPatchToolCallOutput):
-                pass  # Result of agent-submitted apply_patch_call_output; no action needed
+                pass  # pragma: no cover — Result of agent-submitted apply_patch_call_output; no action needed
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
@@ -1890,15 +1884,12 @@ class OpenAIResponsesModel(Model):
                 native_tool_names['apply_patch'] = tool_def.name
             else:
                 if native_def is not None:
-                    if isinstance(native_def, ShellNativeDefinition) and not self.profile.supports_native_shell_tool:
-                        _warn_native_tool_fallback(native_def.kind, 'openai')
-                    elif (
-                        isinstance(native_def, ApplyPatchNativeDefinition)
-                        and not self.profile.supports_native_apply_patch_tool
+                    if isinstance(
+                        native_def, ShellNativeDefinition | TextEditorNativeDefinition | ApplyPatchNativeDefinition
                     ):
-                        _warn_native_tool_fallback(native_def.kind, 'openai')
-                    elif not isinstance(native_def, ShellNativeDefinition | ApplyPatchNativeDefinition):
-                        _warn_native_tool_fallback(native_def.kind, 'openai')
+                        warn_native_tool_fallback(native_def.kind, 'openai')
+                    else:
+                        assert_never(native_def)
                 tools.append(self._map_tool_definition(tool_def))
 
         return tools, native_tool_names
@@ -2066,14 +2057,22 @@ class OpenAIResponsesModel(Model):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
                         if part.tool_name and part.tool_name in native_shell_tool_names:
-                            # Native local shell tool — send as shell_call_output
+                            # Native local shell tool — parse JSON result and send as shell_call_output
+                            response_str = part.model_response_str()
+                            try:
+                                parsed_shell = json.loads(response_str)
+                                shell_stdout = parsed_shell.get('output', response_str)
+                                shell_exit_code = parsed_shell.get('exit_code', 0)
+                            except (ValueError, TypeError):
+                                shell_stdout = response_str
+                                shell_exit_code = 0
                             openai_messages.append(
                                 ShellCallOutput(
                                     call_id=call_id,
                                     output=[
                                         ResponseFunctionShellCallOutputContentParam(
-                                            outcome={'type': 'exit', 'exit_code': 0},
-                                            stdout=part.model_response_str(),
+                                            outcome={'type': 'exit', 'exit_code': shell_exit_code},
+                                            stdout=shell_stdout,
                                             stderr='',
                                         )
                                     ],
@@ -2090,7 +2089,7 @@ class OpenAIResponsesModel(Model):
                                 parsed = _json.loads(response_str)
                                 status = parsed.get('status', 'completed')
                                 output = parsed.get('output')
-                            except (ValueError, AttributeError):
+                            except (ValueError, AttributeError):  # pragma: no cover
                                 status = 'completed'
                                 output = response_str
                             apply_patch_output = ApplyPatchCallOutput(
@@ -2321,11 +2320,13 @@ class OpenAIResponsesModel(Model):
                                 # Shell call output: build ShellCallOutput for round-trip
                                 content = cast(dict[str, Any], item.content) if content_is_dict else {}
                                 outputs = content.get('outputs', [])
+                                shell_status = content.get('status', 'completed')
                                 shell_output_items: list[ResponseFunctionShellCallOutputContentParam] = []
                                 for output in outputs:
+                                    outcome = output.get('outcome', {'type': 'exit', 'exit_code': 0})
                                     shell_output_items.append(
                                         ResponseFunctionShellCallOutputContentParam(
-                                            outcome={'type': 'exit', 'exit_code': 0},
+                                            outcome=outcome,
                                             stdout=output.get('stdout', ''),
                                             stderr=output.get('stderr', ''),
                                         )
@@ -2335,7 +2336,7 @@ class OpenAIResponsesModel(Model):
                                         call_id=item.tool_call_id or '',
                                         output=shell_output_items,
                                         type='shell_call_output',
-                                        status='completed',
+                                        status=shell_status,
                                     )
                                 )
                             elif item.tool_name.startswith(MCPServerTool.kind):  # pragma: no branch
@@ -2497,12 +2498,14 @@ class OpenAIResponsesModel(Model):
                         raise UserError(
                             f"`UploadedFile` with `target={item.target!r}` requires a `ShellTool` in the agent's builtin tools."
                         )
-                    content.append(
-                        responses.ResponseInputFileParam(
-                            type='input_file',
-                            file_id=item.file_id,
+                    # Only add as input_file for message-visible targets
+                    if item.target != 'container':
+                        content.append(
+                            responses.ResponseInputFileParam(
+                                type='input_file',
+                                file_id=item.file_id,
+                            )
                         )
-                    )
                 elif isinstance(item, CachePoint):
                     # OpenAI doesn't support prompt caching via CachePoint, so we filter it out
                     pass
@@ -2863,8 +2866,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-call', part=apply_patch_part
                         )
-                elif isinstance(chunk.item, ResponseApplyPatchToolCallOutput):
-                    pass  # Handled in ResponseOutputItemDoneEvent
+                elif isinstance(chunk.item, ResponseApplyPatchToolCallOutput):  # pragma: no cover
+                    pass  # handled in ResponseOutputItemDoneEvent
                 else:
                     warnings.warn(  # pragma: no cover
                         f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -2937,9 +2940,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     return_part = _map_shell_tool_call_output(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-return', part=return_part)
                 elif isinstance(chunk.item, ResponseApplyPatchToolCall):
-                    pass  # Already handled in ResponseOutputItemAddedEvent
+                    pass  # already handled in ResponseOutputItemAddedEvent
                 elif isinstance(chunk.item, ResponseApplyPatchToolCallOutput):
-                    pass  # Result of agent-submitted apply_patch_call_output; no action needed
+                    pass  # pragma: no cover — no action needed in Done event
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
                 # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
@@ -3545,14 +3548,18 @@ def _map_shell_tool_call_output(item: ResponseFunctionShellToolCallOutput, provi
     """Map an OpenAI ``shell_call_output`` response item to a builtin return part."""
     result: dict[str, Any] = {'status': item.status}
     if item.output:
-        outputs: list[dict[str, str]] = []
+        outputs: list[dict[str, Any]] = []
         for output in item.output:
-            outputs.append(
-                {
-                    'stdout': output.stdout,
-                    'stderr': output.stderr,
-                }
-            )
+            entry: dict[str, Any] = {
+                'stdout': output.stdout,
+                'stderr': output.stderr,
+            }
+            if output.outcome:  # pragma: no branch — SDK requires outcome
+                outcome_dict: dict[str, Any] = {'type': output.outcome.type}
+                if output.outcome.type == 'exit':  # pragma: no branch
+                    outcome_dict['exit_code'] = getattr(output.outcome, 'exit_code', 0)
+                entry['outcome'] = outcome_dict
+            outputs.append(entry)
         result['outputs'] = outputs
 
     return BuiltinToolReturnPart(
@@ -3563,14 +3570,10 @@ def _map_shell_tool_call_output(item: ResponseFunctionShellToolCallOutput, provi
     )
 
 
-def _map_apply_patch_operation(operation: Any) -> dict[str, Any]:
+def _map_apply_patch_operation(
+    operation: OperationCreateFile | OperationUpdateFile | OperationDeleteFile,
+) -> dict[str, Any]:
     """Map an OpenAI apply_patch ``operation`` to a dict for ``ToolCallPart.args``."""
-    from openai.types.responses.response_apply_patch_tool_call import (
-        OperationCreateFile,
-        OperationDeleteFile,
-        OperationUpdateFile,
-    )
-
     if isinstance(operation, OperationCreateFile):
         return {'operation_type': 'create_file', 'path': operation.path, 'diff': operation.diff}
     elif isinstance(operation, OperationUpdateFile):
@@ -3578,17 +3581,13 @@ def _map_apply_patch_operation(operation: Any) -> dict[str, Any]:
     elif isinstance(operation, OperationDeleteFile):
         return {'operation_type': 'delete_file', 'path': operation.path}
     else:
-        return {'operation_type': 'unknown', 'path': ''}
+        assert_never(operation)
 
 
-def _build_apply_patch_call_operation(args: dict[str, Any]) -> Any:
+def _build_apply_patch_call_operation(
+    args: dict[str, Any],
+) -> ApplyPatchCallOperationCreateFile | ApplyPatchCallOperationUpdateFile | ApplyPatchCallOperationDeleteFile:
     """Build an ``ApplyPatchCallOperation`` TypedDict from a ``ToolCallPart.args`` dict for round-trip."""
-    from openai.types.responses.response_input_item_param import (
-        ApplyPatchCallOperationCreateFile,
-        ApplyPatchCallOperationDeleteFile,
-        ApplyPatchCallOperationUpdateFile,
-    )
-
     op_type = args.get('operation_type', 'update_file')
     path = args.get('path', '')
     diff = args.get('diff', '')

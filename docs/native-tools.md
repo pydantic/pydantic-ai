@@ -93,7 +93,7 @@ class DockerExecutor:
 
 
 agent = Agent(
-    'openai:gpt-5.4',
+    'openai:gpt-5.2',
     toolsets=[ShellToolset(executor=DockerExecutor())],
 )
 ```
@@ -146,7 +146,7 @@ async def my_patcher(op: ApplyPatchOperation) -> ApplyPatchOutput:
 
 
 agent = Agent(
-    'openai:gpt-5.4',
+    'openai:gpt-5.2',
     toolsets=[ApplyPatchToolset(execute=my_patcher)],
 )
 ```
