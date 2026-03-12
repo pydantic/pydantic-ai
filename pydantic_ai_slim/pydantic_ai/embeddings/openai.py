@@ -115,10 +115,6 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         """The embedding model provider."""
         return self._provider.name
 
-    @property
-    def provider_fallback(self) -> str:
-        return 'openai'
-
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:

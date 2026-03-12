@@ -8014,7 +8014,7 @@ def test_context_window_used():
                 parts=[
                     ToolReturnPart(
                         tool_name='my_tool',
-                        content=0.5,
+                        content=0.75,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )

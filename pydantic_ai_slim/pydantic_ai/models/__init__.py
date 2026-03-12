@@ -882,9 +882,9 @@ class Model(ABC):
                 (self.system, None),
                 (None, provider_url),
                 (
-                    self.provider_fallback,
+                    self.provider_fallback,  # -> Do not need it maybe
                     None,
-                ),
+                ),  #
             ]:
                 if provider_id is None and provider_api_url is None:
                     continue

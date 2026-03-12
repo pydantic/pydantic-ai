@@ -296,10 +296,6 @@ class AnthropicModel(Model):
         """The model provider."""
         return self._provider.name
 
-    @property
-    def provider_fallback(self) -> str:
-        return 'anthropic'
-
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """The set of builtin tool types this model can handle."""
@@ -1429,10 +1425,6 @@ class AnthropicStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
-
-    @property
-    def provider_fallback(self) -> str:
-        return self._provider_fallback
 
 
 def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
