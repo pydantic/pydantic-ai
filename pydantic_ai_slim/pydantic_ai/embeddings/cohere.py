@@ -177,6 +177,7 @@ class CohereEmbeddingModel(EmbeddingModel):
                 input_type=cohere_input_type,
                 max_tokens=settings.get('cohere_max_tokens'),
                 truncate=truncate,
+                embedding_types=['float'],
                 request_options=request_options,
             )
         except ApiError as e:
