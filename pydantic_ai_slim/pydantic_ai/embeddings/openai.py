@@ -115,6 +115,10 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         """The embedding model provider."""
         return self._provider.name
 
+    @property
+    def provider_fallback(self) -> str:
+        return 'openai'
+
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
@@ -142,7 +146,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
             embeddings=embeddings,
             inputs=inputs,
             input_type=input_type,
-            usage=_map_usage(response.usage, self.system, self.base_url, response.model),
+            usage=_map_usage(response.usage, self.system, self.base_url, response.model, self.provider_fallback),
             model_name=response.model,
             provider_name=self.system,
         )
@@ -169,10 +173,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
 
 
 def _map_usage(
-    usage: Usage | None,
-    provider: str,
-    provider_url: str,
-    model: str,
+    usage: Usage | None, provider: str, provider_url: str, model: str, provider_fallback: str
 ) -> RequestUsage:
     # OpenAI SDK types say CreateEmbeddingResponse.usage will always be set, in reality some OpenAI-compatible APIs omit it.
     if usage is None:
@@ -186,7 +187,7 @@ def _map_usage(
         response_data,
         provider=provider,
         provider_url=provider_url,
-        provider_fallback='openai',
+        provider_fallback=provider_fallback,
         api_flavor='embeddings',
         details=details,
     )
