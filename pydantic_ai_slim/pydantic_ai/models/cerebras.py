@@ -3,17 +3,22 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, overload
 
 from typing_extensions import override
 
+from ..messages import ModelMessage, ModelResponse
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
+from ..thinking import ResolvedThinkingConfig
 from . import ModelRequestParameters
 
 try:
-    from openai import AsyncOpenAI
+    from openai import AsyncOpenAI, AsyncStream
+    from openai.types import chat
+    from openai.types.chat import ChatCompletionChunk
+    from openai.types.shared import ReasoningEffort
 
     from .openai import OpenAIChatModel, OpenAIChatModelSettings
 except ImportError as _import_error:
@@ -92,8 +97,76 @@ class CerebrasModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        new_settings = _cerebras_settings_to_openai_settings(cast(CerebrasModelSettings, merged_settings or {}))
+        merged_settings = cast(CerebrasModelSettings, merged_settings or {})
+
+        new_settings = _cerebras_settings_to_openai_settings(merged_settings)
         return new_settings, customized_parameters
+
+    @override
+    def _translate_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> bool | None:
+        """Translate unified thinking settings to Cerebras `disable_reasoning`."""
+        if not resolved_thinking.enabled:
+            return True  # disable_reasoning=True
+
+        # Effort is silently ignored (Cerebras only supports enable/disable)
+        return None  # Don't set disable_reasoning (use default enabled behavior)
+
+    @override
+    def _get_reasoning_effort(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ReasoningEffort | None:
+        if 'openai_reasoning_effort' in model_settings:
+            return model_settings['openai_reasoning_effort']
+
+        if 'gpt-oss' not in self.model_name.lower():
+            return None
+
+        if resolved_thinking := model_request_parameters.resolved_thinking:
+            if not resolved_thinking.enabled:
+                return None
+
+            return resolved_thinking.effort
+
+        return None
+
+    @overload
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[True],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncStream[ChatCompletionChunk]: ...
+
+    @overload
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[False],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> chat.ChatCompletion | ModelResponse: ...
+
+    @override
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: bool,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk] | ModelResponse:
+        extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
+        if (
+            'disable_reasoning' not in extra_body
+            and (resolved_thinking := model_request_parameters.resolved_thinking)
+            and (disable_reasoning := self._translate_thinking(resolved_thinking)) is not None
+        ):
+            extra_body['disable_reasoning'] = disable_reasoning
+            model_settings = model_settings | {'extra_body': extra_body}
+
+        return await super()._completions_create(messages, stream, model_settings, model_request_parameters)
 
 
 def _cerebras_settings_to_openai_settings(model_settings: CerebrasModelSettings) -> OpenAIChatModelSettings:

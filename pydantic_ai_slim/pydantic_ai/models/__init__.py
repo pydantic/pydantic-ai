@@ -49,6 +49,7 @@ from ..output import OutputMode
 from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, merge_model_settings
+from ..thinking import ResolvedThinkingConfig, resolve_thinking_config
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 
@@ -629,6 +630,7 @@ class ModelRequestParameters:
     prompted_output_template: str | Literal[False] | None = None
     allow_text_output: bool = True
     allow_image_output: bool = False
+    resolved_thinking: ResolvedThinkingConfig | None = None
 
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
@@ -728,6 +730,15 @@ class Model(ABC):
 
         return model_request_parameters
 
+    def _translate_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> object | None:
+        """Translate resolved thinking config to the provider's native format.
+
+        Models that support unified thinking settings can override this hook to map
+        [`ResolvedThinkingConfig`][pydantic_ai.thinking.ResolvedThinkingConfig] to the
+        provider-native request payload.
+        """
+        return None
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -774,6 +785,11 @@ class Model(ABC):
             or (params.output_mode == 'native' and self.profile.native_output_requires_schema_in_instructions)
         ) and params.prompted_output_template is None:
             params = replace(params, prompted_output_template=self.profile.prompted_output_template)
+
+        params = replace(
+            params,
+            resolved_thinking=resolve_thinking_config(model_settings, self.profile) if model_settings else None,
+        )
 
         # Check if output mode is supported
         if params.output_mode == 'native' and not self.profile.supports_json_schema_output:

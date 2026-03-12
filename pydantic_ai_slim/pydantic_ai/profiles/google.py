@@ -22,6 +22,13 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
     is_3_or_newer = 'gemini-3' in model_name
+    # Gemini 2.5 models have thinking capabilities (dynamic thinking enabled by default)
+    is_2_5_or_newer = 'gemini-2.5' in model_name or is_3_or_newer
+    supports_thinking = is_2_5_or_newer and not is_image_model
+    # Pro models can't disable thinking (Gemini 2.5 Pro min budget=128, Gemini 3 Pro min level=MINIMAL)
+    is_pro = '-pro' in model_name
+    thinking_always_enabled = supports_thinking and is_pro
+
     return GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,
@@ -29,6 +36,8 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_object_output=is_3_or_newer or not is_image_model,
         supports_tools=not is_image_model,
         google_supports_native_output_with_builtin_tools=is_3_or_newer,
+        supports_thinking=supports_thinking,
+        thinking_always_enabled=thinking_always_enabled,
     )
 
 

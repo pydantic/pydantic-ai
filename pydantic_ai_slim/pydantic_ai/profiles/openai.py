@@ -176,6 +176,9 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_encrypted_reasoning_content=supports_reasoning,
         openai_supports_reasoning=supports_reasoning,
         openai_supports_reasoning_effort_none=is_gpt_5_1_plus and not is_gpt_5_3_chat,
+        # Thinking capabilities for reasoning models (unified thinking settings)
+        supports_thinking=supports_reasoning,
+        thinking_always_enabled=thinking_always_enabled,
     )
 
 

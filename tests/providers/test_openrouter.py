@@ -175,6 +175,20 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
 
+def test_openrouter_provider_uses_openrouter_reasoning_contract():
+    provider = OpenRouterProvider(api_key='api-key')
+
+    generic_profile = provider.model_profile('openai/gpt-4.1-mini')
+    assert generic_profile is not None
+    assert generic_profile.supports_thinking is True
+    assert generic_profile.thinking_always_enabled is False
+
+    o_series_profile = provider.model_profile('openai/o3')
+    assert o_series_profile is not None
+    assert o_series_profile.supports_thinking is True
+    assert o_series_profile.thinking_always_enabled is False
+
+
 def test_openrouter_google_json_schema_transformer():
     """Test _OpenRouterGoogleJsonSchemaTransformer covers all transformation cases."""
     schema = {

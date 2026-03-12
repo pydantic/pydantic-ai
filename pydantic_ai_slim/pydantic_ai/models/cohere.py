@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
-from typing_extensions import assert_never
+from typing_extensions import assert_never, override
 
 from pydantic_ai.exceptions import ModelAPIError
 
@@ -30,6 +30,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
+from ..thinking import ResolvedThinkingConfig
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, check_allow_model_requests
 
@@ -41,6 +42,7 @@ try:
         ChatMessageV2,
         SystemChatMessageV2,
         TextAssistantMessageV2ContentOneItem,
+        Thinking,
         ThinkingAssistantMessageV2ContentOneItem,
         ToolCallV2,
         ToolCallV2Function,
@@ -90,7 +92,11 @@ class CohereModelSettings(ModelSettings, total=False):
 
     # ALL FIELDS MUST BE `cohere_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
-    # This class is a placeholder for any future cohere-specific settings
+    cohere_thinking: Thinking
+    """Thinking configuration for Cohere reasoning models.
+
+    See [the Cohere docs](https://docs.cohere.com/docs/thinking) for more details.
+    """
 
 
 @dataclass(init=False)
@@ -166,6 +172,15 @@ class CohereModel(Model):
         model_response = self._process_response(response)
         return model_response
 
+    @override
+    def _translate_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> Thinking | None:
+        """Translate unified thinking settings to Cohere `thinking` config."""
+        if not resolved_thinking.enabled:
+            return Thinking(type='disabled')
+
+        # Effort is silently ignored (Cohere has no effort/level control)
+        return Thinking(type='enabled')
+
     async def _chat(
         self,
         messages: list[ModelMessage],
@@ -175,11 +190,18 @@ class CohereModel(Model):
         tools = self._get_tools(model_request_parameters)
 
         cohere_messages = self._map_messages(messages, model_request_parameters)
+        if 'cohere_thinking' in model_settings:
+            thinking_config = model_settings['cohere_thinking']
+        elif resolved_thinking := model_request_parameters.resolved_thinking:
+            thinking_config = self._translate_thinking(resolved_thinking)
+        else:
+            thinking_config = None
         try:
             return await self.client.chat(
                 model=self._model_name,
                 messages=cohere_messages,
                 tools=tools or OMIT,
+                thinking=thinking_config or OMIT,
                 max_tokens=model_settings.get('max_tokens', OMIT),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),

@@ -13,7 +13,7 @@ from typing import Any, Literal, cast, overload
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import assert_never, deprecated
+from typing_extensions import assert_never, deprecated, override
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
@@ -61,6 +61,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
+from ..thinking import ResolvedThinkingConfig
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -590,6 +591,42 @@ class OpenAIChatModel(Model):
     def system_prompt_role(self) -> OpenAISystemPromptRole | None:
         return OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
 
+    @override
+    def _translate_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> object | None:
+        """Translate unified thinking settings to OpenAI `reasoning_effort`."""
+        if not resolved_thinking.enabled:
+            return None
+
+        if resolved_thinking.effort:
+            return resolved_thinking.effort
+
+        if self.profile.thinking_always_enabled:
+            return None
+
+        return 'medium'
+
+    def _get_reasoning_effort(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ReasoningEffort | None:
+        if 'openai_reasoning_effort' in model_settings:
+            return model_settings['openai_reasoning_effort']
+
+        if resolved_thinking := model_request_parameters.resolved_thinking:
+            if not resolved_thinking.enabled:
+                return None
+
+            if resolved_thinking.effort:
+                return resolved_thinking.effort
+
+            if self.profile.thinking_always_enabled:
+                return None
+
+            return 'medium'
+
+        return None
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -694,6 +731,11 @@ class OpenAIChatModel(Model):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
+        reasoning_effort = self._get_reasoning_effort(model_settings, model_request_parameters)
+
+        if reasoning_effort is not None:
+            model_settings = model_settings | {'openai_reasoning_effort': reasoning_effort}
+
         _drop_sampling_params_for_reasoning(profile, model_settings)
 
         _drop_unsupported_params(profile, model_settings)
@@ -717,7 +759,7 @@ class OpenAIChatModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 response_format=response_format or OMIT,
                 seed=model_settings.get('seed', OMIT),
-                reasoning_effort=model_settings.get('openai_reasoning_effort', OMIT),
+                reasoning_effort=reasoning_effort if reasoning_effort is not None else OMIT,
                 user=model_settings.get('openai_user', OMIT),
                 web_search_options=web_search_options or OMIT,
                 service_tier=model_settings.get('openai_service_tier', OMIT),
@@ -1648,7 +1690,9 @@ class OpenAIResponsesModel(Model):
             previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
-        reasoning = self._get_reasoning(model_settings)
+        reasoning = self._get_reasoning(model_settings, model_request_parameters)
+        if not isinstance(reasoning, Omit) and (reasoning_effort := reasoning.get('effort')):
+            model_settings = model_settings | {'openai_reasoning_effort': reasoning_effort}
 
         text: responses.ResponseTextConfigParam | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1743,8 +1787,36 @@ class OpenAIResponsesModel(Model):
         except APIConnectionError as e:
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-    def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | Omit:
-        reasoning_effort = model_settings.get('openai_reasoning_effort', None)
+    def _translate_thinking(self, resolved_thinking: ResolvedThinkingConfig) -> object | None:
+        if not resolved_thinking.enabled:
+            return None
+
+        if resolved_thinking.effort:
+            return resolved_thinking.effort
+
+        if self.profile.thinking_always_enabled:
+            return None
+
+        return 'medium'
+
+    def _get_reasoning(
+        self,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Reasoning | Omit:
+        if 'openai_reasoning_effort' in model_settings:
+            reasoning_effort = model_settings['openai_reasoning_effort']
+        elif resolved_thinking := model_request_parameters.resolved_thinking:
+            if not resolved_thinking.enabled:
+                reasoning_effort = None
+            elif resolved_thinking.effort:
+                reasoning_effort = resolved_thinking.effort
+            elif self.profile.thinking_always_enabled:
+                reasoning_effort = None
+            else:
+                reasoning_effort = 'medium'
+        else:
+            reasoning_effort = None
         reasoning_summary = model_settings.get('openai_reasoning_summary', None)
         reasoning_generate_summary = model_settings.get('openai_reasoning_generate_summary', None)
 

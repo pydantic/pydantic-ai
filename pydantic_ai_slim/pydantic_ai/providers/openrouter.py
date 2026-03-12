@@ -131,13 +131,17 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(
+        profile = OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_send_back_thinking_parts='field',
             openai_chat_thinking_field='reasoning',
             openai_chat_supports_file_urls=True,
             openai_chat_supports_web_search=True,
         ).update(profile)
+        # OpenRouter exposes its own normalized reasoning contract (`enabled` / `effort` / `effort: "none"`)
+        # across routed providers, so we intentionally opt all models into unified thinking and allow explicit
+        # disable even when the upstream provider marks reasoning as always-on.
+        return replace(profile, supports_thinking=True, thinking_always_enabled=False)
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

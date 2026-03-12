@@ -233,3 +233,17 @@ def test_model_profile_opus():
     profile = anthropic_model_profile('claude-opus-4-1')
     assert profile is not None
     assert profile.supports_json_schema_output is True
+
+
+def test_model_profile_old_format_reasoning_model():
+    """Old-format Claude 4 model names still detect thinking support."""
+    profile = anthropic_model_profile('claude-4-opus-20250514')
+    assert profile is not None
+    assert profile.supports_thinking is True
+
+
+def test_model_profile_old_format_structured_output_model():
+    """Old-format Claude 4 model names still detect structured output support."""
+    profile = anthropic_model_profile('claude-4-opus-20250514')
+    assert profile is not None
+    assert profile.supports_json_schema_output is True

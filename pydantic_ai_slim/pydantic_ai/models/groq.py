@@ -8,7 +8,7 @@ from typing import Any, Literal, cast, overload
 
 from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
-from typing_extensions import assert_never
+from typing_extensions import assert_never, override
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
@@ -43,6 +43,7 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
+from ..thinking import ResolvedThinkingConfig
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -158,6 +159,20 @@ class GroqModel(Model):
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @override
+    def _translate_thinking(
+        self, resolved_thinking: ResolvedThinkingConfig
+    ) -> Literal['hidden', 'raw', 'parsed'] | None:
+        """Translate unified thinking settings to Groq `reasoning_format`."""
+        # Always-on models (DeepSeek R1, QwQ) are handled by resolve_thinking_config's
+        # thinking_always_enabled guard, which returns None for thinking=False.
+        # So 'hidden' only applies to models where thinking can actually be toggled.
+        if not resolved_thinking.enabled:
+            return 'hidden'
+
+        # Effort is silently ignored (Groq SDK lacks reasoning_effort support)
+        return 'parsed'
 
     @property
     def base_url(self) -> str:
@@ -288,6 +303,12 @@ class GroqModel(Model):
             response_format = {'type': 'json_object'}
 
         try:
+            if 'groq_reasoning_format' in model_settings:
+                reasoning_format = model_settings['groq_reasoning_format']
+            elif resolved_thinking := model_request_parameters.resolved_thinking:
+                reasoning_format = self._translate_thinking(resolved_thinking)
+            else:
+                reasoning_format = None
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.chat.completions.create(
@@ -306,7 +327,7 @@ class GroqModel(Model):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 seed=model_settings.get('seed', NOT_GIVEN),
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
-                reasoning_format=model_settings.get('groq_reasoning_format', NOT_GIVEN),
+                reasoning_format=reasoning_format if reasoning_format is not None else NOT_GIVEN,
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers=extra_headers,

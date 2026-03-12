@@ -97,6 +97,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
     assert isinstance(anthropic_profile, BedrockModelProfile)
+    assert anthropic_profile.supports_thinking is True
     # Anthropic's direct API supports native structured output for this family,
     # but Bedrock support is not implemented yet and must stay disabled.
     assert anthropic_profile.supports_json_schema_output is False
