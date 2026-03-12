@@ -19,7 +19,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 
     supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
     return ModelProfile(
-        # TODO: Store the model provider and the model name on the profile which can be used to look up context window later on when needed
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
     )

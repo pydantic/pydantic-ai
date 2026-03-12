@@ -25,11 +25,6 @@ class ModelProfile:
 
     supports_tools: bool = True
     """Whether the model supports tools."""
-    context_window: int | None = None
-    """The model's maximum context window size in tokens, if known.
-
-    Auto-populated from genai-prices when not set explicitly.
-    """
     supports_json_schema_output: bool = False
     """Whether the model supports JSON schema output.
 
@@ -44,6 +39,11 @@ class ModelProfile:
     """
     supports_image_output: bool = False
     """Whether the model supports image output."""
+    context_window: int | None = None
+    """The model's maximum context window size in tokens, if known.
+
+    Auto-populated from genai-prices when not set explicitly.
+    """
     default_structured_output_mode: StructuredOutputMode = 'tool'
     """The default structured output mode to use for the model."""
     prompted_output_template: str = dedent(
