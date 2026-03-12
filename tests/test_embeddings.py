@@ -4,17 +4,17 @@ import os
 import sys
 from collections.abc import Iterator
 from decimal import Decimal
-from typing import Any, get_args
+from typing import Any, ClassVar, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from ._inline_snapshot import snapshot
 
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
+if sys.version_info >= (3, 11):
+    pass  # pragma: lax no cover
 else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
+    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
 
 from pydantic_ai.embeddings import (
     Embedder,
@@ -433,7 +433,7 @@ class TestCohere:
                 calls['kwargs'] = kwargs
 
                 class _Embeddings:
-                    float_ = [[0.1, 0.2, 0.3]]
+                    float_: ClassVar[list[list[float]]] = [[0.1, 0.2, 0.3]]
 
                 class _Response:
                     embeddings = _Embeddings()
@@ -1327,7 +1327,7 @@ class TestGoogle:
         )
 
     @pytest.mark.skipif(
-        not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+        not os.getenv('CI'), reason='Requires properly configured local google vertex config to pass'
     )
     @pytest.mark.vcr()
     async def test_vertex_query(
