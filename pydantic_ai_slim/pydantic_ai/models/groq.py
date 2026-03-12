@@ -173,6 +173,10 @@ class GroqModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @property
+    def provider_fallback(self) -> str:
+        return 'groq'
+
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""

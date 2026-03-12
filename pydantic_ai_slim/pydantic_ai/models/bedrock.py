@@ -383,6 +383,10 @@ class BedrockConverseModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @property
+    def provider_fallback(self) -> str:
+        return 'aws'
+
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """The set of builtin tool types this model can handle."""

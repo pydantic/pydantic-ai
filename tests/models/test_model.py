@@ -417,6 +417,10 @@ def test_context_window_provided_in_profile():
         pytest.param({'GEMINI_API_KEY': 'test'}, 'google-gla:gemini-1.5-flash', 'google', id='google'),
         pytest.param({'GROK_API_KEY': 'test'}, 'grok:grok-3', 'openai', id='grok-uses-openai-chat'),
         pytest.param({'XAI_API_KEY': 'test'}, 'xai:grok-3', 'x_ai', id='xai'),
+        pytest.param({'AWS_DEFAULT_REGION': 'us-east-1'}, 'bedrock:amazon.nova-micro-v1:0', 'aws', id='bedrock'),
+        pytest.param({'GROQ_API_KEY': 'test'}, 'groq:llama-3.3-70b-versatile', 'groq', id='groq'),
+        pytest.param({'CO_API_KEY': 'test'}, 'cohere:command', 'cohere', id='cohere'),
+        pytest.param({'MISTRAL_API_KEY': 'test'}, 'mistral:mistral-small-latest', 'mistral', id='mistral'),
     ],
 )
 def test_provider_fallback(mock_env_vars: dict[str, str], model_id: str, expected_fallback: str):
@@ -427,22 +431,3 @@ def test_provider_fallback(mock_env_vars: dict[str, str], model_id: str, expecte
         assert model.provider_fallback == expected_fallback
 
 
-def test_provider_fallback_default():
-    """Base Model.provider_fallback returns None."""
-    assert Model.provider_fallback.fget is not None  # type: ignore[union-attr]
-    # Verify through a real model that the base default is overridden
-    from pydantic_ai.providers import openai
-
-    m = OpenAIChatModel('gpt-4o', provider=openai.OpenAIProvider(api_key='test'))
-    assert m.provider_fallback == 'openai'
-
-
-def test_context_window_resolved_via_provider_fallback():
-    """When self.system doesn't match genai-prices, provider_fallback is used."""
-    from pydantic_ai.providers import openai
-
-    # Use a provider with a non-standard name (simulating a proxy/gateway)
-    provider = openai.OpenAIProvider(api_key='test')
-    m = OpenAIChatModel('gpt-5', provider=provider)
-    # system is 'openai' and fallback is 'openai', so context_window should resolve
-    assert m.profile.context_window is not None

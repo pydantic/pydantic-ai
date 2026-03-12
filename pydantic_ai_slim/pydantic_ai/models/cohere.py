@@ -151,6 +151,10 @@ class CohereModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @property
+    def provider_fallback(self) -> str:
+        return 'cohere'
+
     async def request(
         self,
         messages: list[ModelMessage],
