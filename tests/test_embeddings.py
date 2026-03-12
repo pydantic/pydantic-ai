@@ -4,17 +4,17 @@ import os
 import sys
 from collections.abc import Iterator
 from decimal import Decimal
-from typing import Any, get_args
+from typing import Any, ClassVar, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from ._inline_snapshot import snapshot
 
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
+if sys.version_info >= (3, 11):
+    pass  # pragma: lax no cover
 else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
+    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
 
 from pydantic_ai.embeddings import (
     Embedder,
@@ -24,6 +24,7 @@ from pydantic_ai.embeddings import (
     KnownEmbeddingModelName,
     TestEmbeddingModel,
     infer_embedding_model,
+    merge_embedding_settings,
 )
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -416,6 +417,36 @@ class TestCohere:
                 provider_response_id=IsStr(),
             )
         )
+
+    async def test_embed_uses_float_embedding_type(self):
+        calls: dict[str, Any] = {}
+
+        class _ClientWrapper:
+            def get_base_url(self) -> str:
+                return 'https://api.cohere.com'
+
+        class _FakeClient:
+            def __init__(self) -> None:
+                self._client_wrapper = _ClientWrapper()
+
+            async def embed(self, **kwargs: Any):
+                calls['kwargs'] = kwargs
+
+                class _Embeddings:
+                    float_: ClassVar[list[list[float]]] = [[0.1, 0.2, 0.3]]
+
+                class _Response:
+                    embeddings = _Embeddings()
+                    meta = None
+                    id = 'test-id'
+
+                return _Response()
+
+        fake_client = _FakeClient()
+        model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(cohere_client=fake_client))  # type: ignore[arg-type]
+        result = await model.embed('Hello, world!', input_type='query')
+
+        assert result.embeddings == [[0.1, 0.2, 0.3]]
 
 
 @pytest.mark.skipif(not voyageai_imports_successful(), reason='VoyageAI not installed')
@@ -1295,9 +1326,7 @@ class TestGoogle:
             )
         )
 
-    @pytest.mark.skipif(
-        not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
-    )
+    @pytest.mark.skipif(not os.getenv('CI'), reason='Requires properly configured local google vertex config to pass')
     @pytest.mark.vcr()
     async def test_vertex_query(
         self, allow_model_requests: None, vertex_provider: GoogleProvider
@@ -1551,6 +1580,33 @@ async def test_settings():
     assert model.last_settings == snapshot(
         {'dimensions': 512, 'from_model': True, 'from_embedder': True, 'from_embed': True}
     )
+
+
+def test_merge_embedding_settings_both_none():
+    assert merge_embedding_settings(None, None) is None
+
+
+def test_merge_embedding_settings_only_base():
+    base: EmbeddingSettings = {'dimensions': 128}
+    merged = merge_embedding_settings(base, None)
+    assert merged == {'dimensions': 128}
+
+
+def test_merge_embedding_settings_only_overrides():
+    overrides: EmbeddingSettings = {'dimensions': 256}
+    merged = merge_embedding_settings(None, overrides)
+    assert merged == {'dimensions': 256}
+
+
+def test_merge_embedding_settings_merges_and_overrides():
+    base: EmbeddingSettings = {'dimensions': 128, 'from_model': True}  # pyright: ignore[reportAssignmentType]
+    overrides: EmbeddingSettings = {'dimensions': 256, 'from_embed': True}  # pyright: ignore[reportAssignmentType]
+    merged = merge_embedding_settings(base, overrides)
+    assert merged == {
+        'dimensions': 256,
+        'from_model': True,
+        'from_embed': True,
+    }
 
 
 def test_result():
