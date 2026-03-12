@@ -76,9 +76,10 @@ async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepse
     agent = Agent(model=deepseek_model)
 
     result: AgentRunResult | None = None
-    async for event in agent.run_stream_events(user_prompt='How do I cross the street?'):
-        if isinstance(event, AgentRunResultEvent):
-            result = event.result
+    async with agent.run_stream_events(user_prompt='How do I cross the street?') as stream:
+        async for event in stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
 
     assert result is not None
     assert result.all_messages() == snapshot(

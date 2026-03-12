@@ -1792,11 +1792,12 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
 
     result: AgentRunResult | None = None
     events: list[AgentStreamEvent] = []
-    async for event in agent.run_stream_events('Hi'):
-        if isinstance(event, AgentRunResultEvent):
-            result = event.result
-        else:
-            events.append(event)
+    async with agent.run_stream_events('Hi') as stream:
+        async for event in stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
+            else:
+                events.append(event)
 
     assert result is not None
     # The response stream contains `{'contentBlockDelta': {'delta': {'text': ''}, 'contentBlockIndex': 0}}`, but our response should not have any empty text parts.
@@ -3534,3 +3535,28 @@ async def test_uploaded_file_audio_not_supported(allow_model_requests: None, bed
                 UploadedFile(file_id='s3://bucket/audio.wav', provider_name='bedrock', media_type='audio/wav'),
             ]
         )
+
+
+async def test_bedrock_streamed_response_cancel():
+    """Test that BedrockStreamedResponse.cancel() closes the underlying event stream."""
+    from mypy_boto3_bedrock_runtime.type_defs import ConverseStreamOutputTypeDef
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.bedrock import BedrockStreamedResponse
+
+    from .mock_async_stream import MockEventStream
+
+    mock_event_stream: MockEventStream[ConverseStreamOutputTypeDef] = MockEventStream(iter([]))
+
+    response = BedrockStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+        _event_stream=mock_event_stream,  # type: ignore[arg-type]
+        _provider_name='bedrock',
+        _provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+    )
+
+    assert mock_event_stream._closed is False  # pyright: ignore[reportPrivateUsage]
+    await response.cancel()
+    assert mock_event_stream._closed is True  # pyright: ignore[reportPrivateUsage]
+    assert response.is_cancelled is True

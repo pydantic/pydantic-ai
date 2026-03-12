@@ -4183,6 +4183,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'finish_reason': 'content_filter',
                 'run_id': IsStr(),
                 'metadata': None,
+                'interrupted': False,
             }
         ]
     )
@@ -4555,3 +4556,105 @@ async def test_openai_chat_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I'm sorry, I can't help with that."
+
+
+async def test_openai_streamed_response_cancel():
+    """Test that OpenAIStreamedResponse.cancel() closes the underlying stream."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.openai import OpenAIStreamedResponse
+    from pydantic_ai.profiles.openai import openai_model_profile
+
+    from .mock_async_stream import MockAsyncStream
+
+    mock_stream: MockAsyncStream[chat.ChatCompletionChunk] = MockAsyncStream(iter([]))
+
+    response = OpenAIStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gpt-4o',
+        _model_profile=openai_model_profile('gpt-4o'),
+        _response=mock_stream,
+        _provider_name='openai',
+        _provider_url='https://api.openai.com',
+        _stream_to_close=mock_stream,  # pyright: ignore[reportArgumentType]
+    )
+
+    assert mock_stream._closed is False  # pyright: ignore[reportPrivateUsage]
+    await response.cancel()
+    assert mock_stream._closed is True  # pyright: ignore[reportPrivateUsage]
+    assert response.is_cancelled is True
+
+
+async def test_openai_responses_streamed_response_cancel():
+    """Test that OpenAIResponsesStreamedResponse.cancel() closes the underlying stream."""
+    from openai.types import responses
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.openai import OpenAIResponsesStreamedResponse
+
+    from .mock_async_stream import MockAsyncStream
+
+    mock_stream: MockAsyncStream[responses.ResponseStreamEvent] = MockAsyncStream(iter([]))
+
+    response = OpenAIResponsesStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gpt-4o',
+        _model_settings=OpenAIResponsesModelSettings(),
+        _response=mock_stream,
+        _provider_name='openai',
+        _provider_url='https://api.openai.com',
+        _stream_to_close=mock_stream,  # pyright: ignore[reportArgumentType]
+    )
+
+    assert mock_stream._closed is False  # pyright: ignore[reportPrivateUsage]
+    await response.cancel()
+    assert mock_stream._closed is True  # pyright: ignore[reportPrivateUsage]
+    assert response.is_cancelled is True
+
+
+async def test_openai_streamed_response_cancel_without_stream():
+    """Test that OpenAIStreamedResponse.cancel() works when _stream_to_close is None."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.openai import OpenAIStreamedResponse
+    from pydantic_ai.profiles.openai import openai_model_profile
+
+    from .mock_async_stream import MockAsyncStream
+
+    mock_stream: MockAsyncStream[chat.ChatCompletionChunk] = MockAsyncStream(iter([]))
+
+    response = OpenAIStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gpt-4o',
+        _model_profile=openai_model_profile('gpt-4o'),
+        _response=mock_stream,
+        _provider_name='openai',
+        _provider_url='https://api.openai.com',
+        # _stream_to_close is None by default
+    )
+
+    await response.cancel()
+    assert response.is_cancelled is True
+
+
+async def test_openai_responses_streamed_response_cancel_without_stream():
+    """Test that OpenAIResponsesStreamedResponse.cancel() works when _stream_to_close is None."""
+    from openai.types import responses
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.openai import OpenAIResponsesStreamedResponse
+
+    from .mock_async_stream import MockAsyncStream
+
+    mock_stream: MockAsyncStream[responses.ResponseStreamEvent] = MockAsyncStream(iter([]))
+
+    response = OpenAIResponsesStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gpt-4o',
+        _model_settings=OpenAIResponsesModelSettings(),
+        _response=mock_stream,
+        _provider_name='openai',
+        _provider_url='https://api.openai.com',
+        # _stream_to_close is None by default
+    )
+
+    await response.cancel()
+    assert response.is_cancelled is True

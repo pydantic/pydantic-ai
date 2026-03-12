@@ -5163,6 +5163,7 @@ def test_binary_content_serializable():
                 'finish_reason': None,
                 'run_id': IsStr(),
                 'metadata': None,
+                'interrupted': False,
             },
         ]
     )
@@ -5233,6 +5234,7 @@ def test_image_url_serializable_missing_media_type():
                 'finish_reason': None,
                 'run_id': IsStr(),
                 'metadata': None,
+                'interrupted': False,
             },
         ]
     )
@@ -5310,6 +5312,7 @@ def test_image_url_serializable():
                 'finish_reason': None,
                 'run_id': IsStr(),
                 'metadata': None,
+                'interrupted': False,
             },
         ]
     )

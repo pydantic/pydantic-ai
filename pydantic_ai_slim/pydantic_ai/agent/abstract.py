@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
@@ -8,7 +7,6 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
-import anyio
 from pydantic import TypeAdapter
 from typing_extensions import Self, TypeIs, TypeVar, deprecated
 
@@ -30,8 +28,8 @@ from .._output import types_from_output_spec
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
-from ..result import AgentStream, FinalResult, StreamedRunResult
-from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
+from ..result import AgentStream, FinalResult, StreamedRunResult, StreamEventsResult
+from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings
 from ..tools import (
     AgentDepsT,
@@ -799,7 +797,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]: ...
+    ) -> StreamEventsResult[AgentDepsT, OutputDataT]: ...
 
     @overload
     def run_stream_events(
@@ -819,7 +817,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]: ...
+    ) -> StreamEventsResult[AgentDepsT, RunOutputDataT]: ...
 
     def run_stream_events(
         self,
@@ -838,36 +836,36 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+    ) -> StreamEventsResult[AgentDepsT, Any]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
         uses the `event_stream_handler` kwarg to get a stream of events from the run.
 
-        Example:
+        Returns a [`StreamEventsResult`][pydantic_ai.result.StreamEventsResult] that can be
+        used as a context manager or iterated directly:
+
+        Context manager (recommended):
         ```python
-        from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-4o')
+
+        async def main():
+            async with agent.run_stream_events('What is the capital of France?') as events:
+                async for event in events:
+                    ...
+        ```
+
+        Direct iteration (deprecated):
+        ```python {test="skip"}
+        from pydantic_ai import Agent
 
         agent = Agent('openai:gpt-5.2')
 
         async def main():
-            events: list[AgentStreamEvent | AgentRunResultEvent] = []
             async for event in agent.run_stream_events('What is the capital of France?'):
-                events.append(event)
-            print(events)
-            '''
-            [
-                PartStartEvent(index=0, part=TextPart(content='The capital of ')),
-                FinalResultEvent(tool_name=None, tool_call_id=None),
-                PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='France is Paris. ')),
-                PartEndEvent(
-                    index=0, part=TextPart(content='The capital of France is Paris. ')
-                ),
-                AgentRunResultEvent(
-                    result=AgentRunResult(output='The capital of France is Paris. ')
-                ),
-            ]
-            '''
+                ...
         ```
 
         Arguments are the same as for [`self.run`][pydantic_ai.agent.AbstractAgent.run],
@@ -892,92 +890,28 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             builtin_tools: Optional additional builtin tools for this run.
 
         Returns:
-            An async iterable of stream events `AgentStreamEvent` and finally a `AgentRunResultEvent` with the final
-            run result.
+            A [`StreamEventsResult`][pydantic_ai.result.StreamEventsResult] that yields
+            `AgentStreamEvent` items and finally an `AgentRunResultEvent` with the run result.
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        # unfortunately this hack of returning a generator rather than defining it right here is
-        # required to allow overloads of this method to work in python's typing system, or at least with pyright
-        # or at least I couldn't make it work without
-        return self._run_stream_events(
-            user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            model=model,
-            instructions=instructions,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            metadata=metadata,
-            toolsets=toolsets,
-            builtin_tools=builtin_tools,
+        return StreamEventsResult(
+            _agent=self,
+            _user_prompt=user_prompt,
+            _output_type=output_type,
+            _message_history=message_history,
+            _deferred_tool_results=deferred_tool_results,
+            _model=model,
+            _instructions=instructions,
+            _deps=deps,
+            _model_settings=model_settings,
+            _usage_limits=usage_limits,
+            _usage=usage,
+            _metadata=metadata,
+            _toolsets=toolsets,
+            _builtin_tools=builtin_tools,
         )
-
-    async def _run_stream_events(
-        self,
-        user_prompt: str | Sequence[_messages.UserContent] | None = None,
-        *,
-        output_type: OutputSpec[RunOutputDataT] | None = None,
-        message_history: Sequence[_messages.ModelMessage] | None = None,
-        deferred_tool_results: DeferredToolResults | None = None,
-        model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
-        deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
-        usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.RunUsage | None = None,
-        metadata: AgentMetadata[AgentDepsT] | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
-    ) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
-        send_stream, receive_stream = anyio.create_memory_object_stream[
-            _messages.AgentStreamEvent | AgentRunResultEvent[Any]
-        ]()
-
-        async def event_stream_handler(
-            _: RunContext[AgentDepsT], events: AsyncIterable[_messages.AgentStreamEvent]
-        ) -> None:
-            async for event in events:
-                await send_stream.send(event)
-
-        async def run_agent() -> AgentRunResult[Any]:
-            async with send_stream:
-                return await self.run(
-                    user_prompt,
-                    output_type=output_type,
-                    message_history=message_history,
-                    deferred_tool_results=deferred_tool_results,
-                    model=model,
-                    instructions=instructions,
-                    deps=deps,
-                    model_settings=model_settings,
-                    usage_limits=usage_limits,
-                    usage=usage,
-                    metadata=metadata,
-                    infer_name=False,
-                    toolsets=toolsets,
-                    builtin_tools=builtin_tools,
-                    event_stream_handler=event_stream_handler,
-                )
-
-        task = asyncio.create_task(run_agent())
-
-        try:
-            async with receive_stream:
-                async for message in receive_stream:
-                    yield message
-
-            result = await task
-
-        except asyncio.CancelledError as e:
-            task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
-            raise
-
-        yield AgentRunResultEvent(result)
 
     @overload
     def iter(

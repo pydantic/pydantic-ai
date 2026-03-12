@@ -1113,6 +1113,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'finish_reason': 'content_filter',
                 'run_id': IsStr(),
                 'metadata': None,
+                'interrupted': False,
             }
         ]
     )
@@ -5543,11 +5544,12 @@ async def test_google_streaming_tool_call_thought_signature(
 
     events: list[AgentStreamEvent] = []
     result: AgentRunResult | None = None
-    async for event in agent.run_stream_events('What is the capital of the user country? Call the tool'):
-        if isinstance(event, AgentRunResultEvent):
-            result = event.result
-        else:
-            events.append(event)
+    async with agent.run_stream_events('What is the capital of the user country? Call the tool') as stream:
+        async for event in stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
+            else:
+                events.append(event)
 
     assert result is not None
     assert result.all_messages() == snapshot(
@@ -6255,3 +6257,51 @@ async def test_google_prompt_feedback_streaming(
         assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
         assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
         assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True
+
+
+async def test_gemini_streamed_response_cancel():
+    """Test that GeminiStreamedResponse.cancel() closes the underlying stream."""
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.google import GeminiStreamedResponse
+
+    from .mock_async_stream import MockAsyncStream
+
+    mock_stream: MockAsyncStream[GenerateContentResponse] = MockAsyncStream(iter([]))
+
+    response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-2.0-flash',
+        _response=mock_stream,
+        _provider_name='google',
+        _provider_url='https://generativelanguage.googleapis.com',
+        _stream_to_close=mock_stream,
+    )
+
+    assert mock_stream._closed is False  # pyright: ignore[reportPrivateUsage]
+    await response.cancel()
+    assert mock_stream._closed is True  # pyright: ignore[reportPrivateUsage]
+    assert response.is_cancelled is True
+
+
+async def test_gemini_streamed_response_cancel_without_stream():
+    """Test that GeminiStreamedResponse.cancel() works when _stream_to_close is None."""
+
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.google import GeminiStreamedResponse
+
+    from .mock_async_stream import MockAsyncStream
+
+    mock_stream: MockAsyncStream[GenerateContentResponse] = MockAsyncStream(iter([]))
+
+    response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-2.0-flash',
+        _response=mock_stream,
+        _provider_name='google',
+        _provider_url='https://generativelanguage.googleapis.com',
+        # _stream_to_close is None by default
+    )
+
+    await response.cancel()
+    assert response.is_cancelled is True
