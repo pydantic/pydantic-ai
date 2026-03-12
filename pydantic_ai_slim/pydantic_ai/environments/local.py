@@ -1,0 +1,283 @@
+"""Local subprocess-based execution environment for development and testing.
+
+Runs commands directly on the host machine within a specified root directory.
+**No isolation** — use `DockerEnvironment` for untrusted code.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+from pathlib import Path
+from typing import Any
+
+import anyio
+import anyio.abc
+import anyio.to_thread
+from typing_extensions import Self
+
+from ._base import (
+    EnvCapability,
+    ExecutionEnvironment,
+    ExecutionProcess,
+    ExecutionResult,
+    TextFileReadResult,
+    validate_text_read_range,
+)
+
+
+class _LocalEnvironmentProcess(ExecutionProcess):
+    """Interactive process backed by `anyio.abc.Process`."""
+
+    def __init__(self, proc: anyio.abc.Process) -> None:
+        self._proc = proc
+
+    async def send(self, data: bytes) -> None:
+        stdin = self._proc.stdin
+        if stdin is None:
+            raise RuntimeError('Process stdin is not available.')
+        await stdin.send(data)
+
+    async def recv(self, timeout: float | None = None) -> bytes:
+        stdout = self._proc.stdout
+        if stdout is None:
+            raise RuntimeError('Process stdout is not available.')
+        try:
+            if timeout is not None:
+                with anyio.fail_after(timeout):
+                    return await stdout.receive(8192)
+            return await stdout.receive(8192)
+        except anyio.EndOfStream:
+            return b''
+
+    async def recv_stderr(self, timeout: float | None = None) -> bytes:
+        stderr = self._proc.stderr
+        if stderr is None:
+            raise RuntimeError('Process stderr is not available.')
+        try:
+            if timeout is not None:
+                with anyio.fail_after(timeout):
+                    return await stderr.receive(8192)
+            return await stderr.receive(8192)
+        except anyio.EndOfStream:
+            return b''
+
+    @property
+    def returncode(self) -> int | None:
+        return self._proc.returncode
+
+    async def wait(self, timeout: float | None = None) -> int:
+        if timeout is not None:
+            with anyio.fail_after(timeout):
+                return await self._proc.wait()
+        return await self._proc.wait()
+
+    async def kill(self) -> None:
+        try:
+            self._proc.kill()
+        except ProcessLookupError:
+            pass
+        await self._proc.aclose()
+        _close_subprocess_transport(self._proc)
+
+
+def _close_subprocess_transport(proc: anyio.abc.Process) -> None:
+    """Close the underlying asyncio subprocess transport to prevent ResourceWarning on Python 3.10.
+
+    On Python 3.10, asyncio subprocess transports are not closed by
+    `Process.wait()` or `Process.aclose()` and their `__del__`
+    emits `ResourceWarning: unclosed transport`.  Python 3.11+ fixed
+    this, but we still support 3.10.
+    """
+    inner = getattr(proc, '_process', None)  # anyio wraps asyncio.subprocess.Process
+    transport = getattr(inner, '_transport', None)
+    if transport is not None:  # pragma: no branch
+        transport.close()
+
+
+class LocalEnvironment(ExecutionEnvironment):
+    """Local subprocess-based execution environment for development and testing.
+
+    Runs commands directly on the host machine within a specified root
+    directory. Provides no isolation — use `DockerEnvironment` for untrusted code.
+
+    Usage:
+        ```python {test="skip" lint="skip"}
+        async with LocalEnvironment(root_dir='/tmp/workspace') as env:
+            result = await env.shell('python script.py')
+            print(result.output)
+        ```
+    """
+
+    def __init__(
+        self,
+        root_dir: str | Path = '.',
+        *,
+        env_vars: dict[str, str] | None = None,
+        inherit_env: bool = True,
+    ) -> None:
+        """Create a local execution environment.
+
+        Args:
+            root_dir: The working directory for all operations.
+                Defaults to the current directory.
+            env_vars: Baseline environment variables for all commands.
+            inherit_env: Whether to inherit the host's environment variables.
+                When True (default), `env_vars` and per-call `env` are merged
+                on top of `os.environ`. When False, only `env_vars` and per-call
+                `env` are used (useful for reproducibility and testing).
+        """
+        self._root_dir = Path(root_dir).resolve()
+        self._env_vars = env_vars or {}
+        self._inherit_env = inherit_env
+
+    @property
+    def capabilities(self) -> frozenset[EnvCapability]:
+        return frozenset({'shell', 'read_file', 'write_file', 'replace_str', 'create_process'})
+
+    async def __aenter__(self) -> Self:
+        await anyio.to_thread.run_sync(lambda: self._root_dir.mkdir(parents=True, exist_ok=True))
+        return self
+
+    async def __aexit__(self, *_args: Any) -> None:
+        pass
+
+    def _resolve_path(self, path: str) -> Path:
+        """Resolve a path relative to root_dir, preventing traversal."""
+        resolved = (self._root_dir / path).resolve()
+        if not resolved.is_relative_to(self._root_dir):
+            raise PermissionError(f'Path {path!r} resolves outside the environment root.')
+        return resolved
+
+    def _build_env(self, env: dict[str, str] | None) -> dict[str, str] | None:
+        """Merge baseline env vars with per-call overrides."""
+        if not self._env_vars and not env and self._inherit_env:
+            return None  # subprocess inherits naturally
+        merged = {**os.environ} if self._inherit_env else {}
+        merged.update(self._env_vars)
+        if env:
+            merged.update(env)
+        return merged
+
+    async def create_process(
+        self,
+        command: str,
+        *,
+        env: dict[str, str] | None = None,
+    ) -> ExecutionProcess:
+        """Create an interactive local process.
+
+        Use the returned process as an async context manager.
+        """
+        proc = await anyio.open_process(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=self._root_dir,
+            env=self._build_env(env),
+        )
+        return _LocalEnvironmentProcess(proc)
+
+    async def shell(
+        self,
+        command: str,
+        *,
+        timeout: float | None = 120,
+        env: dict[str, str] | None = None,
+    ) -> ExecutionResult:
+        """Execute a command using subprocess for simplicity and reliability."""
+        if timeout is not None and timeout <= 0:
+            raise ValueError(f'timeout must be positive or None, got {timeout}')
+        proc = await anyio.open_process(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=self._root_dir,
+            env=self._build_env(env),
+        )
+        try:
+            assert proc.stdout is not None
+            chunks: list[bytes] = []
+            if timeout is not None:
+                with anyio.fail_after(timeout):
+                    async for chunk in proc.stdout:
+                        chunks.append(chunk)
+                    await proc.wait()
+            else:
+                async for chunk in proc.stdout:
+                    chunks.append(chunk)
+                await proc.wait()
+        except TimeoutError:
+            proc.kill()
+            with anyio.CancelScope(shield=True):
+                await proc.wait()
+            _close_subprocess_transport(proc)
+            return ExecutionResult(output='[Command timed out]', exit_code=-1)
+
+        _close_subprocess_transport(proc)
+        stdout = b''.join(chunks)
+        output = stdout.decode('utf-8', errors='replace')
+        return ExecutionResult(
+            output=output,
+            exit_code=proc.returncode if proc.returncode is not None else 0,
+        )
+
+    async def read_file(self, path: str) -> bytes:
+        resolved = self._resolve_path(path)
+
+        def _read() -> bytes:
+            if not resolved.is_file():
+                if resolved.is_dir():
+                    raise FileNotFoundError(f"'{path}' is a directory, not a file.")
+                raise FileNotFoundError(f'File not found: {path}')
+            return resolved.read_bytes()
+
+        return await anyio.to_thread.run_sync(_read)
+
+    async def read_text_file(
+        self,
+        path: str,
+        *,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> TextFileReadResult:
+        """Read a UTF-8 text file without loading the whole file into the toolset."""
+        resolved = self._resolve_path(path)
+
+        def _read() -> TextFileReadResult:
+            if not resolved.is_file():
+                if resolved.is_dir():
+                    raise FileNotFoundError(f"'{path}' is a directory, not a file.")
+                raise FileNotFoundError(f'File not found: {path}')
+
+            lines: list[str] = []
+            total_lines = 0
+            with resolved.open(encoding='utf-8') as file:
+                for line_number, line in enumerate(file):
+                    total_lines = line_number + 1
+                    if line_number < offset:
+                        continue
+                    if len(lines) < limit:
+                        lines.append(line)
+
+            validate_text_read_range(offset=offset, limit=limit, total_lines=total_lines)
+            return TextFileReadResult(
+                text=''.join(lines),
+                offset=offset,
+                total_lines=total_lines,
+            )
+
+        return await anyio.to_thread.run_sync(_read)
+
+    async def write_file(self, path: str, content: str | bytes) -> None:
+        resolved = self._resolve_path(path)
+
+        def _write() -> None:
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(content, bytes):
+                resolved.write_bytes(content)
+            else:
+                resolved.write_text(content, encoding='utf-8')
+
+        await anyio.to_thread.run_sync(_write)
