@@ -77,6 +77,9 @@ class ModelProfile:
     restrict this based on model capabilities.
     """
 
+    supports_shell_network_policy: bool = False
+    """Whether the model supports `ShellTool.network_policy`."""
+
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:
         """Build a ModelProfile subclass instance from a ModelProfile instance."""

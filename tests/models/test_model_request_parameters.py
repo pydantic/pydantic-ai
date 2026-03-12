@@ -1,10 +1,13 @@
 from pydantic import TypeAdapter
 
 from pydantic_ai.builtin_tools import (
+    CodeExecutionNetworkPolicy,
     CodeExecutionTool,
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
+    ShellTool,
+    SkillReference,
     WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
@@ -81,7 +84,9 @@ def test_model_request_parameters_are_serializable():
                     'allowed_domains': None,
                     'max_uses': None,
                 },
-                {'kind': 'code_execution'},
+                {
+                    'kind': 'code_execution',
+                },
                 {
                     'kind': 'web_fetch',
                     'max_uses': None,
@@ -143,3 +148,95 @@ def test_model_request_parameters_are_serializable():
         }
     )
     assert ta.validate_python(dumped) == params
+
+    params = ModelRequestParameters(
+        function_tools=[],
+        builtin_tools=[
+            ShellTool(
+                network_policy=CodeExecutionNetworkPolicy(mode='allowlist', allowed_domains=['example.com'])
+            )
+        ],
+        output_mode='text',
+        allow_text_output=True,
+        output_tools=[],
+        output_object=None,
+    )
+    dumped = ta.dump_python(params)
+    assert dumped == snapshot(
+        {
+            'function_tools': [],
+            'builtin_tools': [
+                {
+                    'kind': 'shell',
+                    'skills': (),
+                    'network_policy': {
+                        'mode': 'allowlist',
+                        'allowed_domains': ['example.com'],
+                    },
+                }
+            ],
+            'output_mode': 'text',
+            'output_object': None,
+            'output_tools': [],
+            'prompted_output_template': None,
+            'allow_text_output': True,
+            'allow_image_output': False,
+        }
+    )
+    assert ta.validate_python(dumped) == params
+
+    params_with_skills = ModelRequestParameters(
+        builtin_tools=[
+            ShellTool(
+                skills=[
+                    SkillReference(skill_id='skill_custom', version=2),
+                    SkillReference(skill_id='skill_provider', version='2026-01-01', source='provider'),
+                ]
+            )
+        ]
+    )
+    dumped_with_skills = ta.dump_python(params_with_skills)
+    assert dumped_with_skills == snapshot(
+        {
+            'function_tools': [],
+            'builtin_tools': [
+                {
+                    'kind': 'shell',
+                    'skills': [
+                        {'skill_id': 'skill_custom', 'version': 2, 'source': 'custom'},
+                        {'skill_id': 'skill_provider', 'version': '2026-01-01', 'source': 'provider'},
+                    ],
+                    'network_policy': None,
+                }
+            ],
+            'output_mode': 'text',
+            'output_object': None,
+            'output_tools': [],
+            'prompted_output_template': None,
+            'allow_text_output': True,
+            'allow_image_output': False,
+        }
+    )
+    assert ta.validate_python(dumped_with_skills) == params_with_skills
+
+    params_with_shell = ModelRequestParameters(builtin_tools=[ShellTool()])
+    dumped_with_shell = ta.dump_python(params_with_shell)
+    assert dumped_with_shell == snapshot(
+        {
+            'function_tools': [],
+            'builtin_tools': [
+                {
+                    'kind': 'shell',
+                    'skills': (),
+                    'network_policy': None,
+                }
+            ],
+            'output_mode': 'text',
+            'output_object': None,
+            'output_tools': [],
+            'prompted_output_template': None,
+            'allow_text_output': True,
+            'allow_image_output': False,
+        }
+    )
+    assert ta.validate_python(dumped_with_shell) == params_with_shell

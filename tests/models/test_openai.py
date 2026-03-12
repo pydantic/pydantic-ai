@@ -84,6 +84,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         OpenAISystemPromptRole,
+        _get_openai_code_execution_context,  # pyright: ignore[reportPrivateUsage]
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
@@ -1141,7 +1142,16 @@ async def test_document_url_force_download_responses() -> None:
             )
         ]
 
-        await m._map_messages(messages, {}, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+        await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+            messages,
+            {},
+            ModelRequestParameters(),
+            code_execution_context=_get_openai_code_execution_context(
+                messages=messages,
+                model_request_parameters=ModelRequestParameters(),
+                provider_name=m.system,
+            ),
+        )
 
         mock_download.assert_called_once()
         assert mock_download.call_args[0][0].url == 'https://example.com/doc.pdf'
@@ -1169,7 +1179,16 @@ async def test_document_url_no_force_download_responses() -> None:
             )
         ]
 
-        await m._map_messages(messages, {}, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+        await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+            messages,
+            {},
+            ModelRequestParameters(),
+            code_execution_context=_get_openai_code_execution_context(
+                messages=messages,
+                model_request_parameters=ModelRequestParameters(),
+                provider_name=m.system,
+            ),
+        )
 
         mock_download.assert_not_called()
 
@@ -1201,7 +1220,16 @@ async def test_audio_url_force_download_responses() -> None:
             )
         ]
 
-        await m._map_messages(messages, {}, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+        await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+            messages,
+            {},
+            ModelRequestParameters(),
+            code_execution_context=_get_openai_code_execution_context(
+                messages=messages,
+                model_request_parameters=ModelRequestParameters(),
+                provider_name=m.system,
+            ),
+        )
 
         mock_download.assert_called_once()
         assert mock_download.call_args[0][0].url == 'https://example.com/audio.mp3'
@@ -3704,6 +3732,11 @@ async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> 
         stream=False,
         model_settings={},
         model_request_parameters=params,
+        code_execution_context=_get_openai_code_execution_context(
+            messages=[],
+            model_request_parameters=params,
+            provider_name=model.system,
+        ),
     )
 
     assert get_mock_responses_kwargs(mock_client)[0]['tool_choice'] == 'auto'
@@ -3812,14 +3845,16 @@ async def test_cache_point_filtering_responses_model():
 
     # Test the instance method directly to ensure CachePoint filtering
     msg = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
-        UserPromptPart(content=['text before', CachePoint(), 'text after'])
+        UserPromptPart(content=['text before', CachePoint(), 'text after']),
+        has_shell_tool=False,
     )
 
     # CachePoint should be filtered out, only text content should remain
     assert msg['role'] == 'user'
-    assert len(msg['content']) == 2
-    assert msg['content'][0]['text'] == 'text before'  # type: ignore[reportUnknownArgumentType]
-    assert msg['content'][1]['text'] == 'text after'  # type: ignore[reportUnknownArgumentType]
+    content = cast(list[dict[str, Any]], msg['content'])
+    assert len(content) == 2
+    assert content[0]['text'] == 'text before'
+    assert content[1]['text'] == 'text after'
 
 
 async def test_openai_custom_reasoning_field_sending_back_in_thinking_tags(allow_model_requests: None):

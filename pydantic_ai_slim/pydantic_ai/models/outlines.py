@@ -486,6 +486,8 @@ class OutlinesModel(Model):
                             raise UserError(
                                 'File parts other than `BinaryImage` are not supported for Outlines models yet.'
                             )
+                    elif isinstance(part, UploadedFile):
+                        raise NotImplementedError('UploadedFile is not supported by Outlines.')
                     else:
                         assert_never(part)
                 if len(text_parts) == 1 and len(image_parts) == 0:

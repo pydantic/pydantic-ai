@@ -1,0 +1,552 @@
+interactions:
+- request:
+    body: "--dc5e67c0a5709179677ca09a0efd0ef3\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nuser_data\r\n--dc5e67c0a5709179677ca09a0efd0ef3\r\nContent-Disposition:
+      form-data; name=\"file\"; filename=\"report.csv\"\r\nContent-Type: text/csv\r\n\r\ncity,population\nParis,2148000\nLondon,8982000\n\r\n--dc5e67c0a5709179677ca09a0efd0ef3--\r\n"
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '312'
+      content-type:
+      - multipart/form-data; boundary=dc5e67c0a5709179677ca09a0efd0ef3
+      host:
+      - api.openai.com
+    method: POST
+    uri: https://api.openai.com/v1/files
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '211'
+      content-type:
+      - application/json
+      openai-organization:
+      - diligentiq
+      openai-processing-ms:
+      - '386'
+      openai-project:
+      - proj_kGBnNoxZLwrofr0DRC3DVVYV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      bytes: 45
+      created_at: 1772985188
+      expires_at: null
+      filename: report.csv
+      id: file-Kef7WASTZXWQai3TTSjUWZ
+      object: file
+      purpose: user_data
+      status: processed
+      status_details: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '354'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=CBLHNbIevOpmBdgu_eJC7gpiMSM3h_z1cBL.2TOl1Kg-1772985188.1227655-1.0.1.1-WJ.RT1p6cSLd6KZUR0FPnS99ZZHF_Gbs7DpS07stJt7i4hGIZ_P6V1GXPwEBg5oSQfvH3wppwImopWQQlNCfNXujd8uw5_rNrzR31_PvssAi.YpLbYooFv75LeL_y30U
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use the hosted shell to inspect the mounted CSV and return only the number of data rows.
+        role: user
+      model: gpt-5.2
+      stream: false
+      tool_choice: auto
+      tools:
+      - environment:
+          file_ids:
+          - file-Kef7WASTZXWQai3TTSjUWZ
+          type: container_auto
+        type: shell
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2348'
+      content-type:
+      - application/json
+      openai-organization:
+      - diligentiq
+      openai-processing-ms:
+      - '17527'
+      openai-project:
+      - proj_kGBnNoxZLwrofr0DRC3DVVYV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1772985206
+      created_at: 1772985188
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0d66f6a1627a2ba90169ad9b64f5d4819ab423cf0479c91a34
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.2-2025-12-11
+      object: response
+      output:
+      - action:
+          commands:
+          - ls -l /mnt/data
+          - |-
+            python - <<'PY'
+            import csv
+            path='/mnt/data/file-Kef7WASTZXWQai3TTSjUWZ-report.csv'
+            with open(path,newline='',encoding='utf-8') as f:
+                r=csv.reader(f)
+                header=next(r,None)
+                n=sum(1 for _ in r)
+            print(n)
+            PY
+          max_output_length: null
+          timeout_ms: null
+        call_id: call_LLTmZCt0MSFJPP6a1fwmjcPv
+        environment:
+          container_id: cntr_69ad9b6b67b081988faeac9ccd1f89980b63242b06aab4d9
+          type: container_reference
+        id: sh_0d66f6a1627a2ba90169ad9b718d80819abbdddc6131a7c5d9
+        status: completed
+        type: shell_call
+      - call_id: call_LLTmZCt0MSFJPP6a1fwmjcPv
+        id: sho_0d66f6a1627a2ba90169ad9b75e29c819a8d00de4654860e51
+        max_output_length: null
+        output:
+        - outcome:
+            exit_code: 0
+            type: exit
+          stderr: ''
+          stdout: ''
+        - outcome:
+            exit_code: 0
+            type: exit
+          stderr: ''
+          stdout: |
+            2
+        status: in_progress
+        type: shell_call_output
+      - content:
+        - annotations: []
+          logprobs: []
+          text: '2'
+          type: output_text
+        id: msg_0d66f6a1627a2ba90169ad9b76226c819a8297634a9109350a
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: none
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - environment:
+          container_id: cntr_69ad9b6b67b081988faeac9ccd1f89980b63242b06aab4d9
+          type: container_reference
+        type: shell
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 963
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 108
+        output_tokens_details:
+          reasoning_tokens: 103
+        total_tokens: 1071
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=CBLHNbIevOpmBdgu_eJC7gpiMSM3h_z1cBL.2TOl1Kg-1772985188.1227655-1.0.1.1-WJ.RT1p6cSLd6KZUR0FPnS99ZZHF_Gbs7DpS07stJt7i4hGIZ_P6V1GXPwEBg5oSQfvH3wppwImopWQQlNCfNXujd8uw5_rNrzR31_PvssAi.YpLbYooFv75LeL_y30U
+      host:
+      - api.openai.com
+    method: DELETE
+    uri: https://api.openai.com/v1/files/file-Kef7WASTZXWQai3TTSjUWZ
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '72'
+      content-type:
+      - application/json
+      openai-organization:
+      - diligentiq
+      openai-processing-ms:
+      - '593'
+      openai-project:
+      - proj_kGBnNoxZLwrofr0DRC3DVVYV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      deleted: true
+      id: file-Kef7WASTZXWQai3TTSjUWZ
+      object: file
+    status:
+      code: 200
+      message: OK
+- request:
+    body: "--eb4c9ce9c60fa4aff8fa1e16ecab4fb5\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nuser_data\r\n--eb4c9ce9c60fa4aff8fa1e16ecab4fb5\r\nContent-Disposition:
+      form-data; name=\"file\"; filename=\"report.csv\"\r\nContent-Type: text/csv\r\n\r\ncity,population\nParis,2148000\nLondon,8982000\n\r\n--eb4c9ce9c60fa4aff8fa1e16ecab4fb5--\r\n"
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '312'
+      content-type:
+      - multipart/form-data; boundary=eb4c9ce9c60fa4aff8fa1e16ecab4fb5
+      host:
+      - api.openai.com
+    method: POST
+    uri: https://api.openai.com/v1/files
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '211'
+      content-type:
+      - application/json
+      openai-organization:
+      - diligentiq
+      openai-processing-ms:
+      - '307'
+      openai-project:
+      - proj_kGBnNoxZLwrofr0DRC3DVVYV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      bytes: 45
+      created_at: 1772985405
+      expires_at: null
+      filename: report.csv
+      id: file-YDB14zk7AXqV3YAqWuH2K8
+      object: file
+      purpose: user_data
+      status: processed
+      status_details: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '354'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=.J0S3QHrl2EMSWo0VmnScUy9w3zv7_hEuv1aGS8AqVY-1772985405.567424-1.0.1.1-k4QA5cje5MKHWwF9NEWt5nZZt2agwsLbKQEXjaihNMSY5AST.lDZFIX47ADkXcK90ATq0ZoF5e3TFrz6PiNa8HcOz2c1Yb7VLY4saM_B3y4IcklRBuml96rZxJDm09hn
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use the hosted shell to inspect the mounted CSV and return only the number of data rows.
+        role: user
+      model: gpt-5.2
+      stream: false
+      tool_choice: auto
+      tools:
+      - environment:
+          file_ids:
+          - file-YDB14zk7AXqV3YAqWuH2K8
+          type: container_auto
+        type: shell
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3307'
+      content-type:
+      - application/json
+      openai-organization:
+      - diligentiq
+      openai-processing-ms:
+      - '24804'
+      openai-project:
+      - proj_kGBnNoxZLwrofr0DRC3DVVYV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1772985431
+      created_at: 1772985406
+      error: null
+      frequency_penalty: 0.0
+      id: resp_09deed77059b4a340169ad9c3e4f188198a85f9ec53e205567
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.2-2025-12-11
+      object: response
+      output:
+      - action:
+          commands:
+          - ls -l /mnt/data
+          - |-
+            python - <<'PY'
+            import csv
+            path='/mnt/data/file-YDB14zk7AXqV3YAqWuH2K8-report.csv'
+            with open(path,newline='',encoding='utf-8') as f:
+                reader=csv.reader(f)
+                rows=list(reader)
+            print(len(rows)-1)
+            PY
+          max_output_length: null
+          timeout_ms: null
+        call_id: call_P1yxURIMqR18D2CVAvYx5mra
+        environment:
+          container_id: cntr_69ad9c43999881989f58769ca29c4a160623211883d9ed68
+          type: container_reference
+        id: sh_09deed77059b4a340169ad9c452be481989c2b962fbff3381e
+        status: completed
+        type: shell_call
+      - action:
+          commands:
+          - |-
+            python - <<'PY'
+            import csv
+            path='/mnt/data/file-YDB14zk7AXqV3YAqWuH2K8-report.csv'
+            with open(path,newline='',encoding='utf-8') as f:
+                reader=csv.reader(f)
+                n=-1
+                for n,_ in enumerate(reader):
+                    pass
+            print(n)
+            PY
+          max_output_length: null
+          timeout_ms: null
+        call_id: call_0Y6AE280sUq0YAxMRNPmayme
+        environment:
+          container_id: cntr_69ad9c43999881989f58769ca29c4a160623211883d9ed68
+          type: container_reference
+        id: sh_09deed77059b4a340169ad9c4b7fd881989ae07bfcc0d33d95
+        status: completed
+        type: shell_call
+      - action:
+          commands:
+          - wc -l /mnt/data/file-YDB14zk7AXqV3YAqWuH2K8-report.csv | cat
+          max_output_length: null
+          timeout_ms: null
+        call_id: call_iYgA5JT3DNGeCVeQ2jrk8y55
+        environment:
+          container_id: cntr_69ad9c43999881989f58769ca29c4a160623211883d9ed68
+          type: container_reference
+        id: sh_09deed77059b4a340169ad9c51f9808198957cfc88cdbb28bb
+        status: completed
+        type: shell_call
+      - call_id: call_iYgA5JT3DNGeCVeQ2jrk8y55
+        id: sho_09deed77059b4a340169ad9c558e0481989b9e403e2a642ec3
+        max_output_length: null
+        output:
+        - outcome:
+            exit_code: 0
+            type: exit
+          stderr: ''
+          stdout: |
+            3 /mnt/data/file-YDB14zk7AXqV3YAqWuH2K8-report.csv
+        status: completed
+        type: shell_call_output
+      - content:
+        - annotations: []
+          logprobs: []
+          text: '2'
+          type: output_text
+        id: msg_09deed77059b4a340169ad9c55f12081989fa9b0ff14e423d9
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: none
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - environment:
+          container_id: cntr_69ad9c43999881989f58769ca29c4a160623211883d9ed68
+          type: container_reference
+        type: shell
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 1314
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 234
+        output_tokens_details:
+          reasoning_tokens: 229
+        total_tokens: 1548
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=.J0S3QHrl2EMSWo0VmnScUy9w3zv7_hEuv1aGS8AqVY-1772985405.567424-1.0.1.1-k4QA5cje5MKHWwF9NEWt5nZZt2agwsLbKQEXjaihNMSY5AST.lDZFIX47ADkXcK90ATq0ZoF5e3TFrz6PiNa8HcOz2c1Yb7VLY4saM_B3y4IcklRBuml96rZxJDm09hn
+      host:
+      - api.openai.com
+    method: DELETE
+    uri: https://api.openai.com/v1/files/file-YDB14zk7AXqV3YAqWuH2K8
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '72'
+      content-type:
+      - application/json
+      openai-organization:
+      - diligentiq
+      openai-processing-ms:
+      - '139'
+      openai-project:
+      - proj_kGBnNoxZLwrofr0DRC3DVVYV
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      deleted: true
+      id: file-YDB14zk7AXqV3YAqWuH2K8
+      object: file
+    status:
+      code: 200
+      message: OK
+version: 1

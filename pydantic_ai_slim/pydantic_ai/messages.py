@@ -669,6 +669,9 @@ class CachePoint:
 UploadedFileProviderName: TypeAlias = Literal['anthropic', 'openai', 'google-gla', 'google-vertex', 'bedrock', 'xai']
 """Provider names supported by [`UploadedFile`][pydantic_ai.messages.UploadedFile]."""
 
+UploadedFileTarget: TypeAlias = Literal['message', 'container', 'both']
+"""Where an [`UploadedFile`][pydantic_ai.messages.UploadedFile] should be sent."""
+
 
 @pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class UploadedFile:
@@ -718,8 +721,19 @@ class UploadedFile:
         compare=False, default=None
     )
 
+    target: UploadedFileTarget = 'message'
+    """Where this file should be sent.
+
+    - `'message'`: send as model-visible message content.
+    - `'container'`: send as code execution container upload.
+    - `'both'`: send both message content and container upload.
+    """
+
     kind: Literal['uploaded-file'] = 'uploaded-file'
     """Type identifier, this is available on all parts as a discriminator."""
+
+    part_kind: Literal['uploaded-file'] = 'uploaded-file'
+    """Part type identifier when an uploaded file appears in a model response."""
 
     # `pydantic_dataclass` replaces `__init__` so this method is never used.
     # The signature is kept so that pyright/IDE hints recognize the `media_type` and `identifier` aliases.
@@ -731,7 +745,9 @@ class UploadedFile:
         media_type: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         identifier: str | None = None,
+        target: UploadedFileTarget = 'message',
         kind: Literal['uploaded-file'] = 'uploaded-file',
+        part_kind: Literal['uploaded-file'] = 'uploaded-file',
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
         _identifier: str | None = None,
@@ -1470,7 +1486,7 @@ class BuiltinToolCallPart(BaseToolCallPart):
 
 
 ModelResponsePart = Annotated[
-    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart | UploadedFile,
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""
@@ -2084,7 +2100,8 @@ class PartStartEvent:
     """The newly started `ModelResponsePart`."""
 
     previous_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file', 'uploaded-file']
+        | None
     ) = None
     """The kind of the previous part, if any.
 
@@ -2124,7 +2141,8 @@ class PartEndEvent:
     """The complete `ModelResponsePart`."""
 
     next_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file', 'uploaded-file']
+        | None
     ) = None
     """The kind of the next part, if any.
 

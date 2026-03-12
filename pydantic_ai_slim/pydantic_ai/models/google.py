@@ -1033,7 +1033,7 @@ class GeminiStreamedResponse(StreamedResponse):
         assert self._code_execution_tool_call_id is not None
         return _map_code_execution_result(code_execution_result, self.provider_name, self._code_execution_tool_call_id)
 
-    def _handle_executable_code_streaming(self, executable_code: ExecutableCode) -> ModelResponsePart:
+    def _handle_executable_code_streaming(self, executable_code: ExecutableCode) -> BuiltinToolCallPart:
         """Handle executable code for streaming responses.
 
         Returns a BuiltinToolCallPart for file search or code execution.
@@ -1098,9 +1098,12 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
     function_call_requires_signature: bool = True
     for item in m.parts:
         part: PartDict = {}
+        item_provider_details: dict[str, Any] | None = None
+        if isinstance(item, TextPart | ThinkingPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | FilePart):
+            item_provider_details = item.provider_details
         if (
-            item.provider_details
-            and (thought_signature := item.provider_details.get('thought_signature'))
+            item_provider_details
+            and (thought_signature := item_provider_details.get('thought_signature'))
             and (m.provider_name == provider_name or item.provider_name == provider_name)
         ):
             part['thought_signature'] = base64.b64decode(thought_signature)
@@ -1149,6 +1152,16 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
             content = item.content
             inline_data_dict: BlobDict = {'data': content.data, 'mime_type': content.media_type}
             part['inline_data'] = inline_data_dict
+        elif isinstance(item, UploadedFile):
+            if item.provider_name != provider_name:
+                raise UserError(
+                    f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with GoogleModel. '
+                    f'Expected `provider_name` to be `{provider_name!r}`.'
+                )
+            file_data_dict: FileDataDict = {'file_uri': item.file_id, 'mime_type': item.media_type}
+            part['file_data'] = file_data_dict
+            if item.vendor_metadata:
+                part['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
         else:
             assert_never(item)
 

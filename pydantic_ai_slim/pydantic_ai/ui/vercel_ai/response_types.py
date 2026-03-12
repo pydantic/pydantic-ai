@@ -203,6 +203,7 @@ class FileChunk(BaseChunk):
     type: Literal['file'] = 'file'
     url: str
     media_type: str
+    provider_metadata: ProviderMetadata | None = None
 
 
 class DataChunk(BaseChunk):

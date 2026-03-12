@@ -29,6 +29,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
 )
 from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
@@ -340,6 +341,9 @@ class TestStreamedResponse(StreamedResponse):
             elif isinstance(part, FilePart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate FilePart on TestModel.
                 assert False, "This should be unreachable — we don't generate FilePart on TestModel."
+            elif isinstance(part, UploadedFile):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since we don't generate UploadedFile on TestModel.
+                assert False, "This should be unreachable — we don't generate UploadedFile on TestModel."
             else:
                 assert_never(part)
 

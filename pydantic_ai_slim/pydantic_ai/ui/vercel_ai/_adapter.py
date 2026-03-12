@@ -247,6 +247,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 file = UploadedFile(
                                     file_id=uploaded_file_id,
                                     provider_name=cast(UploadedFileProviderName, uploaded_file_provider),
+                                    target=provider_meta.get('target', 'message'),
                                     media_type=part.media_type,
                                     vendor_metadata=provider_meta.get('vendor_metadata'),
                                     identifier=provider_meta.get('identifier'),
@@ -295,22 +296,33 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
                     elif isinstance(part, FileUIPart):
-                        try:
-                            file = BinaryContent.from_data_uri(part.url)
-                        except ValueError as e:  # pragma: no cover
-                            # We don't yet handle non-data-URI file URLs returned by assistants, as no Pydantic AI models do this.
-                            raise ValueError(
-                                'Vercel AI integration can currently only handle assistant file parts with data URIs.'
-                            ) from e
                         provider_meta = load_provider_metadata(part.provider_metadata)
-                        builder.add(
-                            FilePart(
-                                content=file,
-                                id=provider_meta.get('id'),
-                                provider_name=provider_meta.get('provider_name'),
-                                provider_details=provider_meta.get('provider_details'),
+                        uploaded_file_id = provider_meta.get('file_id')
+                        uploaded_file_provider = provider_meta.get('provider_name')
+                        if uploaded_file_id and uploaded_file_provider:
+                            builder.add(
+                                UploadedFile(
+                                    file_id=uploaded_file_id,
+                                    provider_name=cast(UploadedFileProviderName, uploaded_file_provider),
+                                    target=provider_meta.get('target', 'message'),
+                                    media_type=part.media_type,
+                                )
                             )
-                        )
+                        else:
+                            try:
+                                file = BinaryContent.from_data_uri(part.url)
+                            except ValueError as e:  # pragma: no cover
+                                raise ValueError(
+                                    'Vercel AI integration can currently only handle assistant file parts with data URIs or UploadedFile metadata.'
+                                ) from e
+                            builder.add(
+                                FilePart(
+                                    content=file,
+                                    id=provider_meta.get('id'),
+                                    provider_name=provider_meta.get('provider_name'),
+                                    provider_details=provider_meta.get('provider_details'),
+                                )
+                            )
                     elif isinstance(part, ToolUIPart | DynamicToolUIPart):
                         if isinstance(part, DynamicToolUIPart):
                             tool_name = part.tool_name
@@ -598,6 +610,19 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             call_provider_metadata=call_provider_metadata,
                         )
                     )
+            elif isinstance(part, UploadedFile):
+                if part.target == 'container':
+                    # Container-only file references are informational; skip in UI rendering.
+                    continue
+                media_type = part.media_type or 'application/octet-stream'
+                provider_metadata = dump_provider_metadata(
+                    file_id=part.file_id,
+                    provider_name=part.provider_name,
+                    target=part.target,
+                )
+                ui_parts.append(
+                    FileUIPart(url=part.file_id, media_type=media_type, provider_metadata=provider_metadata)
+                )
             elif isinstance(part, ToolCallPart):
                 ui_parts.extend(cls._dump_tool_call_part(part, tool_results))
             else:
@@ -765,6 +790,7 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                 provider_metadata = dump_provider_metadata(
                     file_id=item.file_id,
                     provider_name=item.provider_name,
+                    target=item.target,
                     vendor_metadata=item.vendor_metadata,
                     identifier=item._identifier,  # pyright: ignore[reportPrivateUsage]
                 )
@@ -820,7 +846,7 @@ def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePar
                 )
             )
         elif isinstance(chunk, FileChunk):
-            parts.append(FileUIPart(url=chunk.url, media_type=chunk.media_type))
+            parts.append(FileUIPart(url=chunk.url, media_type=chunk.media_type, provider_metadata=chunk.provider_metadata))
         else:
             assert_never(chunk)
     return parts

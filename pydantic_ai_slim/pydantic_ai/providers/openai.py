@@ -36,7 +36,9 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        return openai_model_profile(model_name)
+        return ModelProfile(
+            supports_shell_network_policy=True,
+        ).update(openai_model_profile(model_name))
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

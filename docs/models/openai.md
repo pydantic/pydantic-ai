@@ -132,11 +132,124 @@ The Responses API has built-in tools that you can use instead of building your o
 - [Code interpreter](https://platform.openai.com/docs/guides/tools-code-interpreter): allow models to write and run Python code in a sandboxed environment before generating a response.
 - [Image generation](https://platform.openai.com/docs/guides/tools-image-generation): allow models to generate images based on a text prompt.
 - [File search](https://platform.openai.com/docs/guides/tools-file-search): allow models to search your files for relevant information before generating a response.
+- Hosted shell: allow models to run shell commands in an OpenAI-managed container before generating a response.
 - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use): allow models to use a computer to perform tasks on your behalf.
 
 Web search, Code interpreter, Image generation, and File search are natively supported through the [Built-in tools](../builtin-tools.md) feature.
 
-Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_builtin_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. It doesn't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this built-in tool.
+Hosted shell and computer use can be enabled by passing OpenAI builtin tool params in [`OpenAIResponsesModelSettings.openai_builtin_tools`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_builtin_tools].
+
+#### Hosted shell
+
+OpenAI's hosted shell tool can be used in three ways:
+
+- Directly, by passing a raw `shell` tool in [`OpenAIResponsesModelSettings.openai_builtin_tools`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_builtin_tools].
+- Through [`ShellTool`][pydantic_ai.builtin_tools.ShellTool], which provides the workspace-style interface with skills, network policy, and multi-language support. Shell tool calls and results appear as `shell`-named [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] and [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] in message history.
+
+When you include a `shell` tool in [`OpenAIResponsesModelSettings.openai_builtin_tools`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_builtin_tools], Pydantic AI maps hosted shell calls into [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] and [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts, including streaming responses and replayed message history.
+
+If the shell tool omits `environment`, Pydantic AI defaults it to `{'type': 'container_auto'}`.
+
+[`ShellTool.network_policy`][pydantic_ai.builtin_tools.ShellTool.network_policy] maps to OpenAI container network controls, configuring the synthesized hosted shell `environment.network_policy`.
+
+```python {title="shell_tool_skills_openai.py" test="skip"}
+from pydantic_ai import Agent, CodeExecutionNetworkPolicy, ShellTool, SkillReference
+
+agent = Agent(
+    'openai-responses:gpt-5.2',
+    builtin_tools=[
+        ShellTool(
+            skills=[
+                SkillReference(skill_id='skill_custom', version=2),
+            ],
+            network_policy=CodeExecutionNetworkPolicy(
+                mode='allowlist',
+                allowed_domains=['api.github.com', 'raw.githubusercontent.com'],
+            ),
+        )
+    ],
+)
+```
+
+```python {title="hosted_shell_uploaded_file.py" test="skip"}
+import asyncio
+
+from pydantic_ai import Agent, CodeExecutionTool, UploadedFile
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+
+async def main():
+    provider = OpenAIProvider()
+    model = OpenAIResponsesModel('gpt-5.2', provider=provider)
+
+    # Upload a file using the provider's client (OpenAI client)
+    with open('report.csv', 'rb') as f:
+        uploaded_file = await provider.client.files.create(file=f, purpose='user_data')
+
+    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()])
+    result = await agent.run(
+        [
+            'Inspect the mounted CSV in code execution and tell me how many data rows it contains.',
+            UploadedFile(file_id=uploaded_file.id, provider_name=model.system, target='container'),
+        ]
+    )
+    print(result.output)
+    #> The CSV has 42 data rows.
+
+
+asyncio.run(main())
+```
+
+!!! note
+
+    [`UploadedFile(target='container')`][pydantic_ai.messages.UploadedFile] only mounts the file into hosted shell. If you also want the model to inspect the file as message input, use [`UploadedFile(target='both')`][pydantic_ai.messages.UploadedFile].
+
+!!! note
+
+    Mounted files must be [`UploadedFile`][pydantic_ai.messages.UploadedFile] instances with `provider_name='openai'`. Container-target uploads require [`ShellTool`][pydantic_ai.builtin_tools.ShellTool] (OpenAI's `code_interpreter` container does not support mounted `file_ids`). The OpenAI-specific [`OpenAIResponsesModelSettings.openai_shell_uploaded_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_uploaded_files] helper works with either a raw hosted `shell` tool or [`ShellTool`][pydantic_ai.builtin_tools.ShellTool], and only supports the hosted `container_auto` environment, not `local` or `container_reference`.
+
+#### Container reuse
+
+By default, each request creates a fresh `container_auto` environment. To reuse an existing container across turns, set [`OpenAIResponsesModelSettings.openai_shell_container`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_container] to the container ID:
+
+```python {title="shell_container_reuse.py" test="skip"}
+from pydantic_ai import Agent, ShellTool
+from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
+agent = Agent('openai-responses:gpt-5.2', builtin_tools=[ShellTool()])
+
+# First turn — let OpenAI create a container
+result1 = agent.run_sync('Create a file called hello.txt with "Hello, world!" in it.')
+
+# Extract the container ID from the shell call in the response
+container_id = None
+for call, ret in result1.response.builtin_tool_calls:
+    if (env := call.args_as_dict().get('environment')) and env.get('type') == 'container_reference':
+        container_id = env['container_id']
+        break
+
+# Second turn — reuse the same container
+result2 = agent.run_sync(
+    'Read hello.txt and tell me its contents.',
+    model_settings=OpenAIResponsesModelSettings(openai_shell_container=container_id),
+)
+print(result2.output)
+#> The file contains: Hello, world!
+```
+
+!!! note
+
+    An explicit container ID (`openai_shell_container='cntr_xxx'`) cannot be combined with
+    [`ShellTool.skills`][pydantic_ai.builtin_tools.ShellTool.skills],
+    [`ShellTool.network_policy`][pydantic_ai.builtin_tools.ShellTool.network_policy],
+    [`UploadedFile(target='container')`][pydantic_ai.messages.UploadedFile], or
+    [`openai_shell_uploaded_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_uploaded_files],
+    as these require a `container_auto` environment.
+
+#### Computer use
+
+Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in [`OpenAIResponsesModelSettings.openai_builtin_tools`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_builtin_tools]. It doesn't currently generate [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this built-in tool.
 
 ```python {title="computer_use_tool.py" test="skip"}
 from openai.types.responses import ComputerToolParam

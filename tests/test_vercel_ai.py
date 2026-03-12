@@ -1969,6 +1969,82 @@ async def test_event_stream_file():
     )
 
 
+async def test_event_stream_uploaded_file():
+    async def event_generator():
+        yield PartStartEvent(
+            index=0,
+            part=UploadedFile(file_id='file-abc123', provider_name='openai', media_type='application/pdf'),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'file',
+                'url': 'file-abc123',
+                'mediaType': 'application/pdf',
+                'providerMetadata': {
+                    'pydantic_ai': {'file_id': 'file-abc123', 'provider_name': 'openai', 'target': 'message'}
+                },
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_uploaded_file_container_target_is_skipped():
+    async def event_generator():
+        yield PartStartEvent(
+            index=0,
+            part=UploadedFile(file_id='file-container-123', provider_name='anthropic', target='container'),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 async def test_run_stream_output_tool():
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -3928,6 +4004,54 @@ async def test_adapter_dump_messages_with_files():
     )
 
 
+async def test_adapter_dump_messages_with_uploaded_file_response():
+    """Test dumping messages with UploadedFile in the response."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Here is a file')]),
+        ModelResponse(
+            parts=[
+                UploadedFile(file_id='file-abc123', provider_name='openai', media_type='application/pdf'),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_message_dicts = [msg.model_dump() for msg in ui_messages]
+
+    assert ui_message_dicts == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'user',
+                'metadata': None,
+                'parts': [
+                    {'type': 'text', 'text': 'Here is a file', 'state': 'done', 'provider_metadata': None},
+                ],
+            },
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': None,
+                'parts': [
+                    {
+                        'type': 'file',
+                        'media_type': 'application/pdf',
+                        'filename': None,
+                        'url': 'file-abc123',
+                        'provider_metadata': {
+                            'pydantic_ai': {
+                                'file_id': 'file-abc123',
+                                'provider_name': 'openai',
+                                'target': 'message',
+                            }
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+
+
 async def test_adapter_dump_messages_with_retry():
     """Test dumping messages with retry prompts."""
     messages = [
@@ -4566,7 +4690,9 @@ async def test_convert_user_prompt_part_uploaded_file():
             FileUIPart(
                 media_type='application/pdf',
                 url='file-abc123',
-                provider_metadata={'pydantic_ai': {'file_id': 'file-abc123', 'provider_name': 'openai'}},
+                provider_metadata={
+                    'pydantic_ai': {'file_id': 'file-abc123', 'provider_name': 'openai', 'target': 'message'}
+                },
             ),
         ]
     )
@@ -4610,6 +4736,36 @@ async def test_adapter_load_messages_uploaded_file():
     )
 
 
+async def test_adapter_round_trip_user_uploaded_file_target():
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        UploadedFile(
+                            file_id='file-both-123',
+                            provider_name='openai',
+                            media_type='application/pdf',
+                            target='both',
+                        )
+                    ]
+                )
+            ]
+        )
+    ]
+
+    round_tripped = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+
+    loaded_request = round_tripped[0]
+    assert isinstance(loaded_request, ModelRequest)
+    loaded_part = loaded_request.parts[0]
+    assert isinstance(loaded_part, UserPromptPart)
+    uploaded_file = loaded_part.content[0]
+    assert isinstance(uploaded_file, UploadedFile)
+    assert uploaded_file.file_id == 'file-both-123'
+    assert uploaded_file.target == 'both'
+
+
 async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
     """Test converting a user prompt with UploadedFile that has vendor_metadata and custom identifier."""
     from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
@@ -4635,6 +4791,7 @@ async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
                     'pydantic_ai': {
                         'file_id': 'files/video123',
                         'provider_name': 'google-gla',
+                        'target': 'message',
                         'vendor_metadata': {'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
                         'identifier': 'my-custom-id',
                     }
@@ -4693,6 +4850,30 @@ async def test_adapter_load_messages_uploaded_file_with_vendor_metadata():
             )
         ]
     )
+
+
+async def test_adapter_round_trip_assistant_uploaded_file_target():
+    messages = [
+        ModelResponse(
+            parts=[
+                UploadedFile(
+                    file_id='file-assistant-123',
+                    provider_name='openai',
+                    media_type='application/pdf',
+                    target='both',
+                )
+            ]
+        )
+    ]
+
+    round_tripped = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+
+    loaded_response = round_tripped[0]
+    assert isinstance(loaded_response, ModelResponse)
+    uploaded_file = loaded_response.parts[0]
+    assert isinstance(uploaded_file, UploadedFile)
+    assert uploaded_file.file_id == 'file-assistant-123'
+    assert uploaded_file.target == 'both'
 
 
 async def test_adapter_load_messages_file_url_without_metadata():

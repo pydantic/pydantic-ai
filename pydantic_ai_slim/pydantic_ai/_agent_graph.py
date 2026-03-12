@@ -716,6 +716,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
                         pass
+                    elif isinstance(part, _messages.UploadedFile):
+                        # File references are exposed in history/streams, but final result handling only knows
+                        # how to work with inline binary files.
+                        pass
                     else:
                         assert_never(part)
 

@@ -11,9 +11,12 @@ from typing_extensions import TypedDict, deprecated
 
 __all__ = (
     'AbstractBuiltinTool',
+    'CodeExecutionNetworkPolicy',
+    'SkillReference',
     'WebSearchTool',
     'WebSearchUserLocation',
     'CodeExecutionTool',
+    'ShellTool',
     'WebFetchTool',
     'UrlContextTool',
     'ImageGenerationTool',
@@ -33,6 +36,41 @@ This dict is populated automatically via `__init_subclass__` when tool classes a
 
 ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
 """Supported aspect ratios for image generation tools."""
+
+
+@dataclass(kw_only=True)
+class SkillReference:
+    """Reference to a provider-hosted skill used by a builtin tool."""
+
+    skill_id: str
+    """The provider skill identifier."""
+
+    version: str | int | None = None
+    """The optional provider skill version."""
+
+    source: Literal['custom', 'provider'] = 'custom'
+    """Whether the skill is a custom/user-managed skill or a provider-managed skill."""
+
+
+@dataclass(kw_only=True)
+class CodeExecutionNetworkPolicy:
+    """Network access policy for provider-hosted code execution environments."""
+
+    mode: Literal['disabled', 'allowlist']
+    """How outbound network access should be handled.
+
+    Supported by:
+
+    * OpenAI Responses
+    """
+
+    allowed_domains: Sequence[str] = ()
+    """Explicit domain allowlist when `mode='allowlist'`.
+
+    Supported by:
+
+    * OpenAI Responses
+    """
 
 
 @dataclass(kw_only=True)
@@ -179,7 +217,7 @@ class WebSearchUserLocation(TypedDict, total=False):
 
 @dataclass(kw_only=True)
 class CodeExecutionTool(AbstractBuiltinTool):
-    """A builtin tool that allows your agent to execute code.
+    """A builtin tool that provides a simple Python code execution sandbox.
 
     Supported by:
 
@@ -191,6 +229,40 @@ class CodeExecutionTool(AbstractBuiltinTool):
     """
 
     kind: str = 'code_execution'
+    """The kind of tool."""
+
+
+@dataclass(kw_only=True)
+class ShellTool(AbstractBuiltinTool):
+    """A builtin tool that provides a full workspace execution environment.
+
+    Provides multi-language support, provider-hosted skills,
+    and network policy configuration.
+
+    Supported by:
+
+    * Anthropic
+    * OpenAI Responses
+    """
+
+    skills: Sequence[SkillReference] = ()
+    """Provider-hosted skill references to mount in the execution environment.
+
+    Supported by:
+
+    * Anthropic
+    * OpenAI Responses
+    """
+
+    network_policy: CodeExecutionNetworkPolicy | None = None
+    """Network access policy for provider-hosted execution environments.
+
+    Supported by:
+
+    * OpenAI Responses
+    """
+
+    kind: str = 'shell'
     """The kind of tool."""
 
 
