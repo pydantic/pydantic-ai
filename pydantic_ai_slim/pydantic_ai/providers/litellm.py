@@ -67,6 +67,8 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         }
 
         profile = None
+        provider_prefix: str | None = None
+        model_suffix: str = model_name
 
         # Check if model name contains a provider prefix (e.g., "anthropic/claude-3")
         if '/' in model_name:
@@ -81,7 +83,9 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         # As LiteLLMProvider is used with OpenAIModel, which uses OpenAIJsonSchemaTransformer,
         # we maintain that behavior
         result = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
-        return result.with_upstream(provider_prefix, model_suffix)
+        if provider_prefix:
+            return result.with_upstream(provider_prefix, model_suffix)
+        return result
 
     @overload
     def __init__(
