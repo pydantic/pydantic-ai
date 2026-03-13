@@ -642,9 +642,24 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     if output_schema.allows_none:
                         result_data = cast(NodeRunEndT, None)
                         run_context = build_run_context(ctx)
-                        for validator in ctx.deps.output_validators:
-                            result_data = await validator.validate(result_data, run_context)
-                        self._next_node = self._handle_final_result(ctx, result.FinalResult(result_data), [])
+                        run_context = replace(
+                            run_context,
+                            retry=ctx.state.retries,
+                            max_retries=ctx.deps.max_result_retries,
+                        )
+                        try:
+                            for validator in ctx.deps.output_validators:
+                                result_data = await validator.validate(result_data, run_context)
+                            self._next_node = self._handle_final_result(ctx, result.FinalResult(result_data), [])
+                        except ToolRetryError as e:
+                            ctx.state.increment_retries(
+                                ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                            )
+                            run_context = build_run_context(ctx)
+                            instructions = await ctx.deps.get_instructions(run_context)
+                            self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                                _messages.ModelRequest(parts=[e.tool_retry], instructions=instructions)
+                            )
                         return
 
                     if text_processor := output_schema.text_processor:  # pragma: no branch

@@ -674,7 +674,7 @@ In some cases, you may want the agent to complete a run without producing any te
 
 You can allow this by including `None` in the `output_type` union:
 
-```python {title="optional_output.py" test="skip"}
+```python {title="optional_output.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
 
 agent = Agent('anthropic:claude-sonnet-4-20250514', output_type=str | None)

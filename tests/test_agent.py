@@ -8376,6 +8376,31 @@ async def test_agent_allows_none_output_validator_called():
     )
 
 
+async def test_agent_allows_none_output_validator_retry():
+    """Test that output validator raising ModelRetry triggers a retry when output is None."""
+    call_count = 0
+
+    async def model_then_text(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[])
+        return ModelResponse(parts=[TextPart(content='hello')])
+
+    model = FunctionModel(function=model_then_text)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.output_validator
+    async def reject_none(ctx: RunContext[None], output: str | None) -> str | None:
+        if output is None:
+            raise ModelRetry('None not acceptable, please respond')
+        return output
+
+    result = await agent.run('hello')
+    assert result.output == 'hello'
+    assert call_count == 2
+
+
 async def test_agent_still_fails_if_none_not_allowed():
     """Test that Agent(output_type=str) still fails on empty response."""
 
