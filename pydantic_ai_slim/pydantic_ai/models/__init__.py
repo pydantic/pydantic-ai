@@ -877,6 +877,8 @@ class Model(ABC):
                 (self.model_name, None),
                 (_profile.upstream_model_name, _profile.upstream_provider_id),
             ]:
+                if model_ref is None:  # model_ref is required
+                    continue
                 try:
                     _, model_info = get_snapshot().find_provider_model(model_ref, None, provider_id, None)
                     if model_info.context_window is not None:
