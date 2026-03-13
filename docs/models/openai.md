@@ -208,6 +208,48 @@ print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
 
+### OpenAI compaction
+
+The Responses API supports [compaction](https://platform.openai.com/docs/guides/conversation-state#compaction-advanced) to reduce the size of message history sent in requests.
+You can use this with a `history_processor`. The last message should always be ModelRequest.
+
+It is recommended to use compaction together with [Referencing earlier responses](#referencing-earlier-responses) so compaction has access to full conversation state, including reasoning items.
+
+```python
+from pydantic_ai import (
+    Agent,
+    HistoryProcessorContext,
+    ModelMessage,
+    ModelRequest,
+    RequestUsage,
+    RunUsage,
+)
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+
+async def context_aware_processor(ctx: HistoryProcessorContext[None], messages: list[ModelMessage]) -> tuple[list[ModelMessage], RequestUsage | RunUsage | None]:
+    if len(messages) > 4:
+        assert isinstance(ctx.model, OpenAIResponsesModel)
+        assert isinstance(ctx.model_request_parameters, ModelRequestParameters)
+        compacted_messages = await ctx.model.compact_messages(
+            messages[:-1],
+            model_settings=ctx.model_settings,
+            model_request_parameters=ctx.model_request_parameters
+        )
+        assert isinstance(messages[-1], ModelRequest)
+        return [compacted_messages, messages[-1]], compacted_messages.usage
+
+    return messages, None
+
+# Create agent with history processor
+model_settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+model = OpenAIResponsesModel('gpt-5')
+agent = Agent(model=model, history_processors=[context_aware_processor], model_settings=model_settings)
+```
+
+
+
 ## OpenAI-compatible Models
 
 Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI.

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
-from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
+from pydantic_ai._function_schema import _takes_history_processor_ctx as is_takes_history_processor_ctx  # type: ignore
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager, ValidatedToolCall
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
@@ -35,6 +35,7 @@ from .tools import (
     DeferredToolCallResult,
     DeferredToolResult,
     DeferredToolResults,
+    HistoryProcessorContext,
     RunContext,
     ToolApproved,
     ToolDefinition,
@@ -64,11 +65,16 @@ EndStrategy = Literal['early', 'exhaustive']
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
-_HistoryProcessorSync = Callable[[list[_messages.ModelMessage]], list[_messages.ModelMessage]]
-_HistoryProcessorAsync = Callable[[list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]]
-_HistoryProcessorSyncWithCtx = Callable[[RunContext[DepsT], list[_messages.ModelMessage]], list[_messages.ModelMessage]]
+_HistoryProcessorResult = (
+    list[_messages.ModelMessage] | tuple[list[_messages.ModelMessage], _usage.RequestUsage | _usage.RunUsage | None]
+)
+_HistoryProcessorSync = Callable[[list[_messages.ModelMessage]], _HistoryProcessorResult]
+_HistoryProcessorAsync = Callable[[list[_messages.ModelMessage]], Awaitable[_HistoryProcessorResult]]
+_HistoryProcessorSyncWithCtx = Callable[
+    [HistoryProcessorContext[DepsT], list[_messages.ModelMessage]], _HistoryProcessorResult
+]
 _HistoryProcessorAsyncWithCtx = Callable[
-    [RunContext[DepsT], list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]
+    [HistoryProcessorContext[DepsT], list[_messages.ModelMessage]], Awaitable[_HistoryProcessorResult]
 ]
 HistoryProcessor = (
     _HistoryProcessorSync
@@ -78,7 +84,12 @@ HistoryProcessor = (
 )
 """A function that processes a list of model messages and returns a list of model messages.
 
-Can optionally accept a `RunContext` as a parameter.
+Can return:
+- `list[ModelMessage]` — updated message history
+- `tuple[list[ModelMessage], RunUsage]` — updated history plus usage to accumulate
+- `tuple[list[ModelMessage], None]` — updated history with no usage
+
+Can optionally accept a `HistoryProcessorContext` as a parameter.
 """
 
 
@@ -528,9 +539,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        message_history = await _process_message_history(
-            ctx.state.message_history[:], ctx.deps.history_processors, run_context
+        # Add model_settings and model_request_parameters to history_processor_context
+        model_settings = ctx.deps.model_settings
+        model_request_parameters = await _prepare_request_parameters(ctx)
+
+        history_processor_context = build_history_processor_context(
+            run_context, model_settings, model_request_parameters
         )
+
+        message_history, processor_usage = await _process_message_history(
+            ctx.state.message_history[:], ctx.deps.history_processors, history_processor_context
+        )
+        # Add usage from history processors to the total usage
+        ctx.state.usage.incr(processor_usage)
+
         if message_history and message_history[-1].run_id is None:
             message_history[-1].run_id = ctx.state.run_id
 
@@ -548,9 +570,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
         message_history = _clean_message_history(message_history)
 
-        model_request_parameters = await _prepare_request_parameters(ctx)
-
-        model_settings = ctx.deps.model_settings
         usage = ctx.state.usage
         if ctx.deps.usage_limits.count_tokens_before_request:
             # Copy to avoid modifying the original usage object with the counted usage
@@ -715,6 +734,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.BuiltinToolReturnPart):
                         yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
+                        pass
+                    elif isinstance(part, _messages.CompactionPart):
                         pass
                     else:
                         assert_never(part)
@@ -918,6 +939,21 @@ def _emit_skipped_output_tool(
     )
     output_parts.append(part)
     yield _messages.FunctionToolResultEvent(part)
+
+
+def build_history_processor_context(
+    run_context: RunContext[DepsT],
+    model_settings: ModelSettings | None,
+    model_request_parameters: models.ModelRequestParameters,
+) -> HistoryProcessorContext[DepsT]:
+    """Build a HistoryProcessorContext from an existing RunContext."""
+    context_kwargs = {f.name: getattr(run_context, f.name) for f in dataclasses.fields(run_context)}
+
+    return HistoryProcessorContext(
+        **context_kwargs,
+        model_settings=model_settings,
+        model_request_parameters=model_request_parameters,
+    )
 
 
 async def process_tool_calls(  # noqa: C901
@@ -1484,24 +1520,34 @@ def build_agent_graph(
 async def _process_message_history(
     messages: list[_messages.ModelMessage],
     processors: Sequence[HistoryProcessor[DepsT]],
-    run_context: RunContext[DepsT],
-) -> list[_messages.ModelMessage]:
+    history_processor_context: HistoryProcessorContext[DepsT],
+) -> tuple[list[_messages.ModelMessage], _usage.RunUsage]:
     """Process message history through a sequence of processors."""
+    total_processor_usage = _usage.RunUsage()
+
     for processor in processors:
-        takes_ctx = is_takes_ctx(processor)
+        takes_ctx = is_takes_history_processor_ctx(processor)
 
         if is_async_callable(processor):
             if takes_ctx:
-                messages = await processor(run_context, messages)
+                raw_result = await processor(history_processor_context, messages)
             else:
-                messages = await processor(messages)
+                raw_result = await processor(messages)
         else:
             if takes_ctx:
                 sync_processor_with_ctx = cast(_HistoryProcessorSyncWithCtx[DepsT], processor)
-                messages = await run_in_executor(sync_processor_with_ctx, run_context, messages)
+                raw_result = await run_in_executor(sync_processor_with_ctx, history_processor_context, messages)
             else:
                 sync_processor = cast(_HistoryProcessorSync, processor)
-                messages = await run_in_executor(sync_processor, messages)
+                raw_result = await run_in_executor(sync_processor, messages)
+
+        if isinstance(raw_result, tuple):
+            messages, processor_usage = raw_result
+            if processor_usage:
+                total_processor_usage.incr(processor_usage)
+
+        else:
+            messages = raw_result
 
     if len(messages) == 0:
         raise exceptions.UserError('Processed history cannot be empty.')
@@ -1513,7 +1559,7 @@ async def _process_message_history(
     if messages[-1].timestamp is None:
         messages[-1].timestamp = now_utc()
 
-    return messages
+    return messages, total_processor_usage
 
 
 def _first_run_id_index(messages: list[_messages.ModelMessage], run_id: str) -> int:

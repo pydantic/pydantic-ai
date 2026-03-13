@@ -10,7 +10,7 @@ from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
-from ._run_context import AgentDepsT, RunContext
+from ._run_context import AgentDepsT, HistoryProcessorContext, RunContext
 from .builtin_tools import AbstractBuiltinTool
 from .exceptions import ModelRetry
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn
@@ -20,6 +20,7 @@ __all__ = (
     'ArgsValidatorFunc',
     'DocstringFormat',
     'RunContext',
+    'HistoryProcessorContext',
     'SystemPromptFunc',
     'ToolFuncContext',
     'ToolFuncPlain',

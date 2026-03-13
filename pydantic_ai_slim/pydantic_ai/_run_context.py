@@ -15,7 +15,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
-    from .models import Model
+    from .models import Model, ModelRequestParameters, ModelSettings
     from .result import RunUsage
 
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
@@ -118,3 +118,13 @@ def set_current_run_context(run_context: RunContext[Any]) -> Iterator[None]:
         yield
     finally:
         _CURRENT_RUN_CONTEXT.reset(token)
+
+
+@dataclasses.dataclass(repr=False, kw_only=True)
+class HistoryProcessorContext(RunContext[RunContextAgentDepsT]):
+    """Information about the current call, specific to history processing."""
+
+    model_settings: ModelSettings | None = None
+    """The model settings used for this run."""
+    model_request_parameters: ModelRequestParameters | None = None
+    """The model request parameters used for this run."""

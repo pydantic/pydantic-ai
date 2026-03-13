@@ -1339,6 +1339,45 @@ class ThinkingPart:
 
 
 @dataclass(repr=False)
+class CompactionPart:
+    """A compaction part that summarizes previous conversation history."""
+
+    content: str | None = None
+    """The compaction content, if available. """
+
+    _: KW_ONLY
+
+    id: str | None = None
+    """The identifier of the compaction part.
+
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    provider_name: str | None = None
+    """The name of the provider that generated the compaction.
+
+    Compaction data is only sent back to the same provider.
+    Required to be set when `provider_details` or `id` is set.
+    """
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    part_kind: Literal['compaction'] = 'compaction'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def has_content(self) -> bool:
+        """Return `True` if the compaction content is non-empty."""
+        return bool(self.content)  # pragma: no cover
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class FilePart:
     """A file response from a model."""
 
@@ -1470,7 +1509,7 @@ class BuiltinToolCallPart(BaseToolCallPart):
 
 
 ModelResponsePart = Annotated[
-    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
+    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart | CompactionPart,
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""
@@ -2084,7 +2123,8 @@ class PartStartEvent:
     """The newly started `ModelResponsePart`."""
 
     previous_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file', 'compaction']
+        | None
     ) = None
     """The kind of the previous part, if any.
 
@@ -2124,7 +2164,8 @@ class PartEndEvent:
     """The complete `ModelResponsePart`."""
 
     next_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file'] | None
+        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'file', 'compaction']
+        | None
     ) = None
     """The kind of the next part, if any.
 
