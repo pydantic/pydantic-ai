@@ -130,8 +130,9 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         async with self:
-            return {
-                mcp_tool.name: self.tool_for_tool_def(
+            result: dict[str, ToolsetTool[AgentDepsT]] = {}
+            for mcp_tool in await self.client.list_tools():
+                result[mcp_tool.name] = self.tool_for_tool_def(
                     ToolDefinition(
                         name=mcp_tool.name,
                         description=mcp_tool.description,
@@ -143,8 +144,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
                         },
                     )
                 )
-                for mcp_tool in await self.client.list_tools()
-            }
+            return result
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

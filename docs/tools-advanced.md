@@ -461,6 +461,35 @@ The `'exhaustive'` strategy ensures all tools are executed even after a final re
 
 For more information of how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
 
+## Tool Search
+
+Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can suffer from context bloat and degraded tool selection. Marking tools for deferred loading hides them from the model's initial context; a `search_tools` tool is automatically injected so the model can discover hidden tools by keyword when it needs them. This is inspired by Anthropic's [Tool Search Tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool#limits-and-best-practices) for managing large tool collections.
+
+For individual tools, set `defer_loading=True` on [`Tool`][pydantic_ai.tools.Tool], [`@agent.tool`][pydantic_ai.agent.Agent.tool], or [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain]. For entire toolsets (including [MCP servers](mcp/client.md) and [`FastMCPToolset`][pydantic_ai.toolsets.FastMCPToolset]), use the [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] method — pass a list of tool names to hide only specific tools, or `None` to hide all.
+
+```python {title="tool_search.py"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+
+@agent.tool_plain
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return f'Sunny in {city}'
+
+
+@agent.tool_plain(defer_loading=True)
+def mortgage_calculator(principal: float, rate: float, years: int) -> str:
+    """Calculate monthly mortgage payment for a home loan."""
+    monthly_rate = rate / 100 / 12
+    n_payments = years * 12
+    payment = principal * (monthly_rate * (1 + monthly_rate) ** n_payments) / ((1 + monthly_rate) ** n_payments - 1)
+    return f'${payment:.2f}/month'
+```
+
+See [`ToolDefinition.defer_loading`][pydantic_ai.tools.ToolDefinition.defer_loading] and [Deferred Loading](toolsets.md#deferred-loading) for more details.
+
 ## See Also
 
 - [Function Tools](tools.md) - Basic tool concepts and registration

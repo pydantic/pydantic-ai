@@ -1,0 +1,412 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '940'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Use search_tools to search for "mortgage", then use the mortgage_calculator tool to calculate the monthly
+          payment for a $400,000 loan at 6.5% interest for 30 years.
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Search for available tools by keyword. Returns matching tool names and descriptions.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              query:
+                description: The search query to match against tool names and descriptions.
+                type: string
+            required:
+            - query
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '780'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '70663'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"query":"mortgage"}'
+              name: search_tools
+            id: call_4qTzKoBFyIEh8eM6Cm5YlTHt
+            type: function
+      created: 1770154033
+      id: chatcmpl-D5IDRKQ3h87v1Fe2ltl0w6Fs1d1cD
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 4568
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 4544
+          rejected_prediction_tokens: 0
+        prompt_tokens: 207
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 4775
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1803'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=H6U6g7EPY5qMs6eb5ahAIexV7RZ8FSIqi4Kxiq23y8c-1770154103-1.0.1.1-XZxpwhYJLe_IekPCkKjLERwddKhWDXUYkFXpnYyY63sZ3J6tqtEn6JSMvmPJNW2j.sVUl_n5Pyxg10Erwkwc6SmVs6qpVfyR7uIGMMA4L2w;
+        _cfuvid=CJZ.PABW0aRZ7Om3O8hrMXW8Ny2sfi9V0lwDjckoD78-1770154103852-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Use search_tools to search for "mortgage", then use the mortgage_calculator tool to calculate the monthly
+          payment for a $400,000 loan at 6.5% interest for 30 years.
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"query":"mortgage"}'
+            name: search_tools
+          id: call_4qTzKoBFyIEh8eM6Cm5YlTHt
+          type: function
+      - content: '{"message":"Found 1 tool(s) matching ''mortgage''","tools":[{"name":"mortgage_calculator","description":"Mortgage
+          calculator - calculate monthly mortgage payment for a home loan."}]}'
+        role: tool
+        tool_call_id: call_4qTzKoBFyIEh8eM6Cm5YlTHt
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Search for available tools by keyword. Returns matching tool names and descriptions.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              query:
+                description: The search query to match against tool names and descriptions.
+                type: string
+            required:
+            - query
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Mortgage calculator - calculate monthly mortgage payment for a home loan.
+          name: mortgage_calculator
+          parameters:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '810'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '1398'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"principal": 400000, "rate": 6.5, "years": 30}'
+              name: mortgage_calculator
+            id: call_siNBe7oBVGCsxzVBNFUr1Q2H
+            type: function
+      created: 1770154105
+      id: chatcmpl-D5IEbR8BvP13cPXL7tiRlDogb3PbB
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 47
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 312
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 359
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2142'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=H6U6g7EPY5qMs6eb5ahAIexV7RZ8FSIqi4Kxiq23y8c-1770154103-1.0.1.1-XZxpwhYJLe_IekPCkKjLERwddKhWDXUYkFXpnYyY63sZ3J6tqtEn6JSMvmPJNW2j.sVUl_n5Pyxg10Erwkwc6SmVs6qpVfyR7uIGMMA4L2w;
+        _cfuvid=CJZ.PABW0aRZ7Om3O8hrMXW8Ny2sfi9V0lwDjckoD78-1770154103852-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Use search_tools to search for "mortgage", then use the mortgage_calculator tool to calculate the monthly
+          payment for a $400,000 loan at 6.5% interest for 30 years.
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"query":"mortgage"}'
+            name: search_tools
+          id: call_4qTzKoBFyIEh8eM6Cm5YlTHt
+          type: function
+      - content: '{"message":"Found 1 tool(s) matching ''mortgage''","tools":[{"name":"mortgage_calculator","description":"Mortgage
+          calculator - calculate monthly mortgage payment for a home loan."}]}'
+        role: tool
+        tool_call_id: call_4qTzKoBFyIEh8eM6Cm5YlTHt
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"principal": 400000, "rate": 6.5, "years": 30}'
+            name: mortgage_calculator
+          id: call_siNBe7oBVGCsxzVBNFUr1Q2H
+          type: function
+      - content: 'Monthly payment: $2528.27'
+        role: tool
+        tool_call_id: call_siNBe7oBVGCsxzVBNFUr1Q2H
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Search for available tools by keyword. Returns matching tool names and descriptions.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              query:
+                description: The search query to match against tool names and descriptions.
+                type: string
+            required:
+            - query
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Mortgage calculator - calculate monthly mortgage payment for a home loan.
+          name: mortgage_calculator
+          parameters:
+            additionalProperties: false
+            properties:
+              principal:
+                type: number
+              rate:
+                type: number
+              years:
+                type: integer
+            required:
+            - principal
+            - rate
+            - years
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '775'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '1350'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: I searched for "mortgage" and found the mortgage_calculator tool. Using it for a $400,000 loan at 6.5%
+            interest over 30 years gives a monthly payment of $2,528.27.
+          refusal: null
+          role: assistant
+      created: 1770154107
+      id: chatcmpl-D5IEdtTpnb3VvZhumYgCQKWTMSBJq
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 50
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 364
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 414
+    status:
+      code: 200
+      message: OK
+version: 1
