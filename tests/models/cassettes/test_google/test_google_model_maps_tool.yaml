@@ -1,0 +1,75 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '268'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What are some highly rated coffee shops near Union Square in San Francisco?
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: You are a helpful assistant.
+        role: user
+      tools:
+      - googleMaps: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      content-length:
+      - '1842'
+      content-type:
+      - application/json; charset=UTF-8
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |-
+              Here are some highly rated coffee shops near Union Square in San Francisco:
+
+              1. **Sightglass Coffee** - Known for their carefully sourced beans and excellent espresso drinks. A local favourite.
+              2. **Blue Bottle Coffee** - A Bay Area staple offering high-quality pour-overs and lattes.
+              3. **Equator Coffees** - Organic and fair-trade coffee with a relaxed atmosphere.
+              4. **Peet's Coffee** - A classic California coffee chain with strong espresso options.
+
+              All of these are within easy walking distance of Union Square and are highly reviewed!
+          role: model
+        finishReason: STOP
+        groundingMetadata:
+          groundingChunks:
+          - maps:
+              placeId: ChIJIQBpAG2ahYAR_6128GcTUEo
+              title: Sightglass Coffee
+              uri: https://maps.google.com/?cid=12345678901234567
+          - maps:
+              placeId: ChIJ4zGFAZpYwokRGUGph3Mf37k
+              title: Blue Bottle Coffee
+              uri: https://maps.google.com/?cid=98765432109876543
+          index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: mapstest001abc
+      usageMetadata:
+        candidatesTokenCount: 105
+        promptTokenCount: 18
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 18
+        thoughtsTokenCount: 42
+        totalTokenCount: 165
+    status:
+      code: 200
+      message: OK
+version: 1

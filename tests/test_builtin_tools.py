@@ -8,6 +8,7 @@ from pydantic_ai.builtin_tools import (
     AbstractBuiltinTool,
     CodeExecutionTool,
     FileSearchTool,
+    GoogleMapsTool,
     UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
     WebSearchTool,
@@ -146,3 +147,53 @@ def test_url_context_discriminated_union():
     assert isinstance(results[1], WebFetchTool)
     assert results[1].kind == 'web_fetch'
     assert results[1].max_uses == 2
+
+
+@pytest.mark.parametrize(
+    'model',
+    ('bedrock', 'mistral', 'cohere', 'huggingface', 'groq', 'anthropic', 'test', 'outlines'),
+    indirect=True,
+)
+async def test_builtin_tools_not_supported_google_maps(model: Model, allow_model_requests: None):
+    agent = Agent(model=model, builtin_tools=[GoogleMapsTool()])
+
+    with pytest.raises(UserError):
+        await agent.run('Find coffee shops near me')
+
+
+def test_google_maps_tool_serialization_round_trip():
+    """Test that GoogleMapsTool serializes and deserializes correctly."""
+    adapter = TypeAdapter(AbstractBuiltinTool)
+
+    # Default instance
+    tool = GoogleMapsTool()
+    serialized = adapter.dump_python(tool)
+    assert serialized['kind'] == 'google_maps'
+    assert serialized['enable_widget'] is False
+    assert serialized['latitude'] is None
+    assert serialized['longitude'] is None
+
+    restored = adapter.validate_python(serialized)
+    assert isinstance(restored, GoogleMapsTool)
+    assert restored.kind == 'google_maps'
+    assert restored.enable_widget is False
+    assert restored.latitude is None
+    assert restored.longitude is None
+
+
+def test_google_maps_tool_serialization_with_options():
+    """Test that GoogleMapsTool with all options serializes and deserializes correctly."""
+    adapter = TypeAdapter(AbstractBuiltinTool)
+
+    tool = GoogleMapsTool(latitude=37.7749, longitude=-122.4194, enable_widget=True)
+    serialized = adapter.dump_python(tool)
+    assert serialized['kind'] == 'google_maps'
+    assert serialized['latitude'] == 37.7749
+    assert serialized['longitude'] == -122.4194
+    assert serialized['enable_widget'] is True
+
+    restored = adapter.validate_python(serialized)
+    assert isinstance(restored, GoogleMapsTool)
+    assert restored.latitude == 37.7749
+    assert restored.longitude == -122.4194
+    assert restored.enable_widget is True

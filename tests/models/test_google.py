@@ -54,6 +54,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import (
     CodeExecutionTool,
     FileSearchTool,
+    GoogleMapsTool,
     ImageGenerationTool,
     UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
@@ -85,6 +86,7 @@ with try_import() as imports_successful:
     from google.genai.types import (
         BlockedReason,
         FinishReason as GoogleFinishReason,
+        FunctionDeclarationDict,
         GenerateContentResponse,
         GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
@@ -97,6 +99,7 @@ with try_import() as imports_successful:
         MediaModality,
         ModalityTokenCount,
         SafetyRating,
+        ToolDict,
     )
 
     from pydantic_ai.models.google import (
@@ -1282,6 +1285,109 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
             ),
         ]
     )
+
+
+@pytest.mark.vcr
+async def test_google_model_maps_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[GoogleMapsTool()])
+
+    result = await agent.run('What are some highly rated coffee shops near Union Square in San Francisco?')
+    messages = result.all_messages()
+
+    # With VCR cassette, the response is deterministic - assert maps grounding parts are always present
+    model_response = next(msg for msg in messages if isinstance(msg, ModelResponse))
+    maps_call = next(
+        (p for p in model_response.parts if isinstance(p, BuiltinToolCallPart) and p.tool_name == 'google_maps'),
+        None,
+    )
+    maps_return = next(
+        (p for p in model_response.parts if isinstance(p, BuiltinToolReturnPart) and p.tool_name == 'google_maps'),
+        None,
+    )
+    # VCR cassette guarantees deterministic response — maps grounding parts must be present
+    assert maps_call is not None, 'Expected BuiltinToolCallPart for google_maps in VCR response'
+    assert maps_return is not None, 'Expected BuiltinToolReturnPart for google_maps in VCR response'
+    assert maps_call.tool_call_id == maps_return.tool_call_id
+    assert isinstance(result.output, str)
+
+
+@pytest.mark.vcr
+async def test_google_model_maps_tool_with_location(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(
+        m,
+        builtin_tools=[GoogleMapsTool(latitude=37.7879, longitude=-122.4075)],
+    )
+
+    result = await agent.run('Find me a good pizza place near here.')
+    messages = result.all_messages()
+
+    # With VCR cassette, the response is deterministic — assert maps grounding is present
+    model_response = next(msg for msg in messages if isinstance(msg, ModelResponse))
+    maps_call = next(
+        (p for p in model_response.parts if isinstance(p, BuiltinToolCallPart) and p.tool_name == 'google_maps'),
+        None,
+    )
+    maps_return = next(
+        (p for p in model_response.parts if isinstance(p, BuiltinToolReturnPart) and p.tool_name == 'google_maps'),
+        None,
+    )
+    # VCR cassette guarantees deterministic response — maps grounding parts must be present
+    assert maps_call is not None, 'Expected BuiltinToolCallPart for google_maps in VCR response'
+    assert maps_return is not None, 'Expected BuiltinToolReturnPart for google_maps in VCR response'
+    assert maps_call.tool_call_id == maps_return.tool_call_id
+    assert isinstance(result.output, str)
+
+
+def test_google_maps_tool_partial_location_raises(google_provider: GoogleProvider) -> None:
+    """GoogleMapsTool must raise UserError when only one of latitude/longitude is set."""
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    # Only latitude provided (no longitude) — should raise UserError
+    partial_params = ModelRequestParameters(
+        builtin_tools=[GoogleMapsTool(latitude=37.0)],
+    )
+    with pytest.raises(UserError, match='requires both .latitude. and .longitude. to be set'):
+        model._get_tool_config(partial_params, None)  # pyright: ignore[reportPrivateUsage]
+
+    # Only longitude provided (no latitude) — should also raise UserError
+    partial_params2 = ModelRequestParameters(
+        builtin_tools=[GoogleMapsTool(longitude=-122.4)],
+    )
+    with pytest.raises(UserError, match='requires both .latitude. and .longitude. to be set'):
+        model._get_tool_config(partial_params2, None)  # pyright: ignore[reportPrivateUsage]
+
+    # Both provided — should NOT raise
+    full_params = ModelRequestParameters(
+        builtin_tools=[GoogleMapsTool(latitude=37.0, longitude=-122.4)],
+    )
+    model._get_tool_config(full_params, None)  # pyright: ignore[reportPrivateUsage]
+
+    # Neither provided — should NOT raise
+    no_loc_params = ModelRequestParameters(
+        builtin_tools=[GoogleMapsTool()],
+    )
+    model._get_tool_config(no_loc_params, None)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_google_maps_tool_retrieval_config_merges_into_existing_tool_config(google_provider: GoogleProvider) -> None:
+    """Cover the else branch: retrieval_config is merged into a pre-existing tool_config.
+
+    When allow_text_output=False and function tools are present, _get_tool_config first sets
+    tool_config via _tool_config(names). If GoogleMapsTool also has lat/lng, the retrieval_config
+    must be merged into the already-populated ToolConfigDict rather than creating a new one.
+    """
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    params = ModelRequestParameters(
+        allow_text_output=False,
+        builtin_tools=[GoogleMapsTool(latitude=37.7749, longitude=-122.4194)],
+    )
+    tools = [ToolDict(function_declarations=[FunctionDeclarationDict(name='my_tool')])]
+    result = model._get_tool_config(params, tools)  # pyright: ignore[reportPrivateUsage]
+    assert result is not None
+    assert result.get('function_calling_config') is not None
+    assert result.get('retrieval_config') is not None
 
 
 async def test_google_model_web_search_tool_stream(allow_model_requests: None, google_provider: GoogleProvider):

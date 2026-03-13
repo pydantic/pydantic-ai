@@ -12,6 +12,7 @@ from .agent import (
 from .builtin_tools import (
     CodeExecutionTool,
     FileSearchTool,
+    GoogleMapsTool,
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
@@ -247,6 +248,7 @@ __all__ = (
     # builtin_tools
     'CodeExecutionTool',
     'FileSearchTool',
+    'GoogleMapsTool',
     'ImageGenerationTool',
     'MCPServerTool',
     'MemoryTool',
