@@ -48,7 +48,7 @@ from ..usage import RunUsage, UsageLimits
 if TYPE_CHECKING:
     from fasta2a.applications import FastA2A
     from fasta2a.broker import Broker
-    from fasta2a.schema import AgentProvider, Skill
+    from fasta2a.schema import AgentProvider, Skill, TaskSendParams
     from fasta2a.storage import Storage
     from starlette.middleware import Middleware
     from starlette.routing import BaseRoute, Route
@@ -1475,6 +1475,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         storage: Storage | None = None,
         broker: Broker | None = None,
+        deps_factory: Callable[[TaskSendParams], AgentDepsT]
+        | Callable[[TaskSendParams], Awaitable[AgentDepsT]]
+        | None = None,
         # Agent card
         name: str | None = None,
         url: str = 'http://localhost:8000',
@@ -1490,6 +1493,26 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         lifespan: Lifespan[FastA2A] | None = None,
     ) -> FastA2A:
         """Convert the agent to a FastA2A application.
+
+        Args:
+            storage: Storage backend for tasks and conversation context. Defaults to [`InMemoryStorage`][fasta2a.InMemoryStorage].
+            broker: Broker for scheduling tasks. Defaults to [`InMemoryBroker`][fasta2a.InMemoryBroker].
+            deps_factory: Optional callable invoked once per incoming task to produce the agent's dependencies.
+                Receives the [`TaskSendParams`][fasta2a.schema.TaskSendParams] (which includes the incoming message
+                and any caller-supplied metadata) and returns the deps for that request. Both sync and async
+                callables are supported. Use this for per-request context such as auth tokens, user identity,
+                or database sessions. If omitted, `deps=None` is passed to [`agent.run()`][pydantic_ai.Agent.run].
+            name: Agent name for the A2A agent card. Defaults to the agent's name.
+            url: Public URL of the A2A server. Defaults to `'http://localhost:8000'`.
+            version: Agent version for the A2A agent card. Defaults to `'1.0.0'`.
+            description: Agent description for the A2A agent card.
+            provider: Agent provider for the A2A agent card.
+            skills: Agent skills for the A2A agent card.
+            debug: Enable Starlette debug mode.
+            routes: Additional Starlette routes.
+            middleware: Additional Starlette middleware.
+            exception_handlers: Custom exception handlers.
+            lifespan: Custom ASGI lifespan. Defaults to a lifespan that starts the worker.
 
         Example:
         ```python
@@ -1513,6 +1536,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             self,
             storage=storage,
             broker=broker,
+            deps_factory=deps_factory,
             name=name,
             url=url,
             version=version,
