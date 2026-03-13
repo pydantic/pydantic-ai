@@ -116,6 +116,7 @@ nav:
       - Conversational Agents:
           - examples/chat-app.md
           - examples/bank-support.md
+          - examples/persistent-memory.md
       - Data & Analytics:
           - examples/sql-gen.md
           - examples/data-analyst.md
