@@ -91,6 +91,7 @@ members = [
 
 [tool.uv]
 default-groups = ["dev", "lint", "docs"]
+constraint-dependencies = ["ray>=2.54.0", "authlib>=1.6.7"]
 
 [dependency-groups]
 dev = [
@@ -101,6 +102,7 @@ dev = [
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
     "exa-py>=2.0.0",
+    "tavily-python>=0.5.0",
     "inline-snapshot>=0.19.3",
     "pytest>=9.0.0",
     "pytest-examples>=0.0.18",
@@ -349,4 +351,4 @@ skip = '.git*,*.svg,*.lock,*.css,*.yaml'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
-ignore-words-list = 'asend,aci,fpr,couldn'
+ignore-words-list = 'asend,aci,fpr,couldn,assertio'

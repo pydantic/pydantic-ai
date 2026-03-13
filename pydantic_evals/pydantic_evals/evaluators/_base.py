@@ -15,6 +15,19 @@ from pydantic_ai import _utils
 from .spec import EvaluatorSpec
 
 
+def _serializes_as_string_keyed_dict(value: Any) -> bool:
+    """Check if a value would serialize to a dict with all string keys.
+
+    When as_spec() uses the compact tuple form (arguments = (value,)), the serialized
+    output becomes {EvaluatorName: value}. On deserialization, _SerializedEvaluatorSpec._args
+    treats any dict with all-string keys as kwargs. This means a single positional argument
+    that is itself a dict (like a SpanQuery TypedDict) would be incorrectly unpacked as kwargs
+    on the round-trip. We avoid the compact form in this case.
+    """
+    jsonable = to_jsonable_python(value, serialize_unknown=True)
+    return isinstance(jsonable, dict) and all(isinstance(k, str) for k in jsonable)  # pyright: ignore[reportUnknownVariableType]
+
+
 class _StrictABCMeta(ABCMeta):
     """An ABC-like metaclass that disallows defining subclasses with unimplemented inherited abstract methods.
 
@@ -77,8 +90,9 @@ class BaseEvaluator(metaclass=_StrictABCMeta):
             # dataclass field, since the tuple form passes the value as the first positional arg.
             first_field_name = fields(self)[0].name
             key = next(iter(raw_arguments))
-            if key == first_field_name:
-                arguments = (raw_arguments[key],)
+            value = raw_arguments[key]
+            if key == first_field_name and not _serializes_as_string_keyed_dict(value):
+                arguments = (value,)
             else:
                 arguments = raw_arguments
         else:
