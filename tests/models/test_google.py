@@ -5522,10 +5522,10 @@ def test_google_missing_tool_call_thought_signature():
             'role': 'model',
             'parts': [
                 {
-                    'function_call': {'name': 'tool', 'args': {}, 'id': 'tool_call_id'},
+                    'function_call': {'name': 'tool', 'args': {}},
                     'thought_signature': b'skip_thought_signature_validator',
                 },
-                {'function_call': {'name': 'tool2', 'args': {}, 'id': 'tool_call_id2'}},
+                {'function_call': {'name': 'tool2', 'args': {}}},
             ],
         }
     )
@@ -5801,7 +5801,6 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
                         'function_response': {
                             'name': 'final_result',
                             'response': {'return_value': 'Final result processed.'},
-                            'id': 'test_id',
                         }
                     }
                 ],
@@ -5840,14 +5839,12 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
                         'function_response': {
                             'name': 'final_result',
                             'response': {'return_value': 'Final result processed.'},
-                            'id': 'test_id_1',
                         }
                     },
                     {
                         'function_response': {
                             'name': 'another_tool',
                             'response': {'error': 'Tool error occurred\n\nFix the errors and try again.'},
-                            'id': 'test_id_2',
                         }
                     },
                 ],
@@ -5886,7 +5883,6 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
                         'function_response': {
                             'name': 'final_result',
                             'response': {'return_value': 'Final result processed.'},
-                            'id': 'test_id',
                         }
                     },
                 ],
@@ -5928,7 +5924,7 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
                 'role': 'model',
                 'parts': [
                     {
-                        'function_call': {'name': 'generate_topic', 'args': {}, 'id': 'test_id'},
+                        'function_call': {'name': 'generate_topic', 'args': {}},
                         'thought_signature': b'skip_thought_signature_validator',
                     }
                 ],
@@ -5940,7 +5936,6 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
                         'function_response': {
                             'name': 'generate_topic',
                             'response': {'return_value': 'penguins'},
-                            'id': 'test_id',
                         }
                     },
                 ],

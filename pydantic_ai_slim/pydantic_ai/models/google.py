@@ -687,7 +687,6 @@ class GoogleModel(Model):
                                 'function_response': {
                                     'name': part.tool_name,
                                     'response': part.model_response_object(),
-                                    'id': part.tool_call_id,
                                 }
                             }
                         )
@@ -700,7 +699,6 @@ class GoogleModel(Model):
                                     'function_response': {
                                         'name': part.tool_name,
                                         'response': {'error': part.model_response()},
-                                        'id': part.tool_call_id,
                                     }
                                 }
                             )
@@ -1109,7 +1107,7 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
         thinking_part_signature = None
 
         if isinstance(item, ToolCallPart):
-            function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
+            function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict())
             part['function_call'] = function_call
             if function_call_requires_signature and not part.get('thought_signature'):
                 # Per https://ai.google.dev/gemini-api/docs/thought-signatures#faqs:
