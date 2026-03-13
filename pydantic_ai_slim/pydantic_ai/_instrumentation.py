@@ -7,7 +7,15 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
 DEFAULT_INSTRUMENTATION_VERSION = 2
-"""Default instrumentation version for `InstrumentationSettings`."""
+"""Default instrumentation version for `InstrumentationSettings`.
+
+Versions:
+- 1: Original span/attribute names (e.g. 'agent run', 'tool_arguments').
+- 2: Same names as v1 but with additional attributes.
+- 3: GenAI semantic convention names (e.g. 'invoke_agent', 'gen_ai.tool.call.arguments').
+- 4: Like v3 but with GenAI semantic conventions for multimodal content (URI/blob parts, modality fields).
+- 5: Like v4 but CallDeferred/ApprovalRequired no longer produce ERROR spans (opt-in).
+"""
 
 
 @dataclass(frozen=True)
@@ -26,12 +34,16 @@ class InstrumentationNames:
     # Output Tool execution span configuration
     output_tool_span_name: str
 
+    # Deferral span attributes (CallDeferred / ApprovalRequired)
+    tool_deferral_name_attr: str
+    tool_deferral_metadata_attr: str
+
     @classmethod
     def for_version(cls, version: int) -> Self:
         """Create instrumentation configuration for a specific version.
 
         Args:
-            version: The instrumentation version (1, 2, or 3+)
+            version: The instrumentation version (1, 2, 3, or 4+)
 
         Returns:
             InstrumentationConfig instance with version-appropriate settings
@@ -44,8 +56,13 @@ class InstrumentationNames:
                 tool_arguments_attr='tool_arguments',
                 tool_result_attr='tool_response',
                 output_tool_span_name='running output function',
+                tool_deferral_name_attr='pydantic_ai.tool.deferral.name',
+                tool_deferral_metadata_attr='pydantic_ai.tool.deferral.metadata',
             )
         else:
+            # Version 3, 4, and 5 share the same span/attribute names.
+            # The only difference is behavioral (gated in _tool_manager.py):
+            # v5+ suppresses ERROR status for CallDeferred/ApprovalRequired.
             return cls(
                 agent_run_span_name='invoke_agent',
                 agent_name_attr='gen_ai.agent.name',
@@ -53,6 +70,8 @@ class InstrumentationNames:
                 tool_arguments_attr='gen_ai.tool.call.arguments',
                 tool_result_attr='gen_ai.tool.call.result',
                 output_tool_span_name='execute_tool',
+                tool_deferral_name_attr='pydantic_ai.tool.deferral.name',
+                tool_deferral_metadata_attr='pydantic_ai.tool.deferral.metadata',
             )
 
     def get_agent_run_span_name(self, agent_name: str) -> str:
