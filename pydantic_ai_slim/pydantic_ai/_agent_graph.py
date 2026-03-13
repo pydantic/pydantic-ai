@@ -457,6 +457,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert not self._did_stream, 'stream() should only be called once per node'
 
         model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
+
         with set_current_run_context(run_context):
             async with ctx.deps.model.request_stream(
                 message_history, model_settings, model_request_parameters, run_context
@@ -481,7 +482,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_response = streamed_response.get()
 
-        await self._finish_handling(ctx, model_response)
+        await self._finish_handling(
+            ctx,
+            model_response,
+            messages=message_history,
+            model_settings=model_settings or ModelSettings(),
+            model_request_parameters=model_request_parameters,
+        )
         assert self._result is not None  # this should be set by the previous line
 
     async def _make_request(
@@ -490,12 +497,38 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._result is not None:
             return self._result  # pragma: no cover
 
-        model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
-        with set_current_run_context(run_context):
-            model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
+        try:
+            model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
+        except exceptions.SkipModelRequest as e:
+            ctx.state.usage.requests += 1
+            return await self._finish_handling(ctx, e.response)
+
+        effective_model_settings = model_settings or ModelSettings()
+
+        async def model_handler(
+            messages: list[_messages.ModelMessage],
+            ms: ModelSettings,
+            mrp: models.ModelRequestParameters,
+        ) -> _messages.ModelResponse:
+            with set_current_run_context(run_context):
+                return await ctx.deps.model.request(messages, ms or model_settings, mrp)
+
+        model_response = await ctx.deps.root_capability.wrap_model_request(
+            run_context,
+            messages=message_history,
+            model_settings=effective_model_settings,
+            model_request_parameters=model_request_parameters,
+            handler=model_handler,
+        )
         ctx.state.usage.requests += 1
 
-        return await self._finish_handling(ctx, model_response)
+        return await self._finish_handling(
+            ctx,
+            model_response,
+            messages=message_history,
+            model_settings=effective_model_settings,
+            model_request_parameters=model_request_parameters,
+        )
 
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -561,11 +594,21 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
+        *,
+        messages: list[_messages.ModelMessage] | None = None,
+        model_settings: ModelSettings | None = None,
+        model_request_parameters: models.ModelRequestParameters | None = None,
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
         response.run_id = response.run_id or ctx.state.run_id
 
         run_context = build_run_context(ctx)
-        response = await ctx.deps.root_capability.after_model_request(run_context, response=response)
+        response = await ctx.deps.root_capability.after_model_request(
+            run_context,
+            messages=messages or ctx.state.message_history[:],
+            model_settings=model_settings or ctx.deps.model_settings or ModelSettings(),
+            model_request_parameters=model_request_parameters or await _prepare_request_parameters(ctx),
+            response=response,
+        )
 
         # Update usage
         ctx.state.usage.incr(response.usage)

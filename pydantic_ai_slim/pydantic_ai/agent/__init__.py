@@ -539,6 +539,67 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def __repr__(self) -> str:
         return f'{type(self).__name__}(model={self.model!r}, name={self.name!r}, end_strategy={self.end_strategy!r}, model_settings={self.model_settings!r}, output_type={self.output_type!r}, instrument={self.instrument!r})'
 
+    async def run(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: Any | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: _instructions.Instructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        metadata: Any | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
+        event_stream_handler: Any | None = None,
+    ) -> AgentRunResult[Any]:
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+
+        root_cap = self.root_capability
+
+        async def do_run() -> AgentRunResult[Any]:
+            result = await super(Agent, self).run(
+                user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                model=model,
+                instructions=instructions,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                metadata=metadata,
+                infer_name=False,
+                toolsets=toolsets,
+                builtin_tools=builtin_tools,
+                event_stream_handler=event_stream_handler,
+            )
+            return result
+
+        # Build a minimal RunContext for run-level hooks
+        model_used = self._get_model(model)
+        run_ctx = RunContext[AgentDepsT](
+            deps=self._get_deps(deps),
+            model=model_used,
+            usage=usage or _usage.RunUsage(),
+            prompt=user_prompt,
+        )
+
+        # Apply wrap_run
+        agent_result = await root_cap.wrap_run(run_ctx, handler=do_run)
+
+        # Apply after_run
+        agent_result = await root_cap.after_run(run_ctx, result=agent_result)
+
+        return agent_result
+
     @overload
     def iter(
         self,
@@ -703,7 +764,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
-        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
+        tool_manager = ToolManager[AgentDepsT](
+            toolset, root_capability=self.root_capability, default_max_retries=self._max_tool_retries
+        )
 
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
@@ -803,6 +866,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 async with toolset:
                     agent_run = AgentRun(graph_run)
                     run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
+
+                    # Build RunContext for run lifecycle hooks
+                    run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+
+                    # Call before_run hook
+                    await self.root_capability.before_run(run_ctx)
 
                     try:
                         yield agent_run
