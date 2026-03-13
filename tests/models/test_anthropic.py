@@ -8604,3 +8604,89 @@ Instructions content\
     # Verify user message is in anthropic_messages
     assert len(anthropic_messages) == 1
     assert anthropic_messages[0]['role'] == 'user'
+
+
+async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None):
+    """Test that malformed JSON tool args don't crash the Anthropic retry path.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4430.
+
+    When a tool call has malformed JSON arguments, a RetryPromptPart is correctly
+    created. But when the message history is re-sent to Anthropic, the previous
+    tool call's args are parsed via args_as_dict() which raises ValueError on
+    invalid JSON, crashing the retry flow before the model can self-correct.
+    """
+    BAD_ARGS = '{"query": "bad query", "file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
+
+    # First response: the model "fixes" the tool call and returns text
+    fixed_response = completion_message(
+        [BetaTextBlock(text='Here is the corrected result.', type='text')],
+        BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(fixed_response)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # Construct message_history with a malformed tool call + retry prompt
+    # exactly as described in the issue
+    message_history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='search_knowledge',
+                    tool_call_id='toolu_123',
+                    args=BAD_ARGS,
+                ),
+            ],
+            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='search_knowledge',
+                    tool_call_id='toolu_123',
+                    content='Invalid JSON: expected `,` or `}` at line 1 column 99',
+                ),
+            ],
+        ),
+    ]
+
+    # This should NOT raise ValueError — args_as_dict() now gracefully handles
+    # malformed JSON by returning {'INVALID_JSON': ...}, allowing the retry to proceed.
+    result = await agent.run(
+        'Please fix the tool call and try again.',
+        message_history=message_history,
+    )
+    assert result.output == 'Here is the corrected result.'
+
+    # Verify the INVALID_JSON wrapper was actually sent to the Anthropic API
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['messages'] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'id': 'toolu_123',
+                        'type': 'tool_use',
+                        'name': 'search_knowledge',
+                        'input': {
+                            'INVALID_JSON': '{"query": "bad query", "file_ids":[4556]</parameter>\n<parameter name="limit": 8}',
+                        },
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'tool_use_id': 'toolu_123',
+                        'type': 'tool_result',
+                        'content': 'Invalid JSON: expected `,` or `}` at line 1 column 99\n\nFix the errors and try again.',
+                        'is_error': True,
+                    },
+                    {'text': 'Please fix the tool call and try again.', 'type': 'text'},
+                ],
+            },
+        ]
+    )
