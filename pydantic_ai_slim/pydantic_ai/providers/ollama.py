@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import os
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -62,13 +61,17 @@ class OllamaProvider(Provider[AsyncOpenAI]):
                 profile = profile_func(model_name)
 
         # As OllamaProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(
+        # we need to maintain that behavior unless json_schema_transformer is set explicitly.
+        # Ollama's /v1/chat/completions endpoint supports response_format with json_schema natively.
+        # Strict mode is not supported (issue #4116).
+        base = OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_thinking_field='reasoning',
+            openai_supports_strict_tool_definition=False,
             supports_json_schema_output=True,
             supports_json_object_output=True,
         ).update(profile)
+        return base
 
     def __init__(
         self,
