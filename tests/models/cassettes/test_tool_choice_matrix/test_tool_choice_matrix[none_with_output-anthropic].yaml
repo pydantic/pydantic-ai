@@ -1,0 +1,100 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '677'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Tell me about Paris
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        name: final_result
+        type: tool
+      tools:
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+      - description: The final response which ends this conversation
+        input_schema:
+          properties:
+            city:
+              type: string
+            summary:
+              type: string
+          required:
+          - city
+          - summary
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1356'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_01Ktg8De7dHX9vY9zouAJrVF
+        input:
+          city: Paris
+          summary: Paris is the capital and most populous city of France, located in the north-central part of the country
+            along the Seine River. Known as the "City of Light" (La Ville Lumière), Paris is renowned for its art, fashion,
+            gastronomy, and culture. The city is home to iconic landmarks including the Eiffel Tower, Notre-Dame Cathedral,
+            the Louvre Museum (housing the Mona Lisa), Arc de Triomphe, and Sacré-Cœur Basilica. Paris is divided into 20
+            arrondissements (districts) and has been a major center of art, literature, and philosophy for centuries. It's
+            famous for its beautiful architecture, charming cafés, haute couture fashion houses, and world-class cuisine.
+            The city attracts millions of tourists annually and remains one of the world's most important cultural, political,
+            and economic centers.
+        name: final_result
+        type: tool_use
+      id: msg_01JBdJWmQkP2nRNEtwXmqr6E
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 734
+        output_tokens: 239
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

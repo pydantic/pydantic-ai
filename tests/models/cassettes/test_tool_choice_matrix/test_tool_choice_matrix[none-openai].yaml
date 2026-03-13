@@ -1,0 +1,100 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '409'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: none
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1452'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '11262'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: "I can't fetch live weather data right now. Do you mean Paris, France or another Paris? If you want a real-time
+            forecast I can tell you how to check a live source, or you can tell me whether you want \"right now\", \"today\",
+            or \"this week\" and I'll give typical/seasonal expectations instead.\n\nIf you mean Paris, France, and you want
+            a quick seasonal snapshot for late January:\n- Typical temperatures: daytime highs around 5-8°C (41-46°F), nighttime
+            lows around 0-4°C (32-39°F).  \n- Conditions: often cloudy or overcast, frequent rain; snow is possible but not
+            common.  \n- Wind: light to moderate breezes.  \n- What to wear: warm coat, layers, waterproof shoes/umbrella.\n\nTell
+            me which Paris and whether you want a live update (and I'll explain how to get one) or a detailed typical forecast
+            for specific days."
+          refusal: null
+          role: assistant
+      created: 1769721476
+      id: chatcmpl-D3Tgi0mMz0WAeprUYyPAJhIT3aTnQ
+      model: gpt-5-mini-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 589
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 384
+          rejected_prediction_tokens: 0
+        prompt_tokens: 132
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 721
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,57 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What''s the weather in Paris?"}]}], "system": [], "inferenceConfig":
+      {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZjU3NmM5MGMtOTYzMi00YTBlLTkxZWQtZDAxNGI2YWIzMDFm
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '124'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '850'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2396
+      output:
+        message:
+          content:
+          - text: |-
+              I don't have access to real-time weather data or the ability to browse the internet, so I can't tell you the current weather in Paris.
+
+              To get the current weather in Paris, you could:
+              - Check a weather website like weather.com, weather.gov, or accuweather.com
+              - Search "Paris weather" on Google or another search engine
+              - Use a weather app on your phone
+              - Ask a voice assistant with internet access like Siri, Google Assistant, or Alexa
+
+              Is there anything else I can help you with regarding Paris?
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 14
+        outputTokens: 124
+        serverToolUsage: {}
+        totalTokens: 138
+    status:
+      code: 200
+      message: OK
+version: 1
