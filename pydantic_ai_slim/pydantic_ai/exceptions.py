@@ -14,12 +14,15 @@ else:
 
 
 if TYPE_CHECKING:
-    from .messages import RetryPromptPart
+    from .messages import ModelResponse, RetryPromptPart
 
 __all__ = (
     'ModelRetry',
     'CallDeferred',
     'ApprovalRequired',
+    'SkipModelRequest',
+    'SkipToolValidation',
+    'SkipToolExecution',
     'UserError',
     'AgentRunError',
     'UnexpectedModelBehavior',
@@ -98,6 +101,45 @@ class ApprovalRequired(Exception):
 
     def __init__(self, metadata: dict[str, Any] | None = None):
         self.metadata = metadata
+        super().__init__()
+
+
+class SkipModelRequest(Exception):
+    """Exception to raise in before/wrap model request hooks to skip the model call.
+
+    The provided response will be used instead of calling the model.
+    """
+
+    response: ModelResponse
+
+    def __init__(self, response: ModelResponse):
+        self.response = response
+        super().__init__()
+
+
+class SkipToolValidation(Exception):
+    """Exception to raise in before/wrap tool validate hooks to skip validation.
+
+    The provided args will be used as the validated arguments.
+    """
+
+    validated_args: dict[str, Any]
+
+    def __init__(self, validated_args: dict[str, Any]):
+        self.validated_args = validated_args
+        super().__init__()
+
+
+class SkipToolExecution(Exception):
+    """Exception to raise in before/wrap tool execute hooks to skip execution.
+
+    The provided result will be used as the tool result.
+    """
+
+    result: Any
+
+    def __init__(self, result: Any):
+        self.result = result
         super().__init__()
 
 
