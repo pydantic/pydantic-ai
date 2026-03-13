@@ -872,21 +872,13 @@ class Model(ABC):
             _profile = replace(_profile, supported_builtin_tools=effective_tools)
 
         if _profile.context_window is None:
-            # Try to resolve from genai-prices, first by system, then by base_url
-            try:
-                # Huggingface does not have a base_url and even if self.system would resolve eager check of the tuple for the loop raises UserError
-                provider_url = self.base_url
-            except UserError:
-                provider_url = None
-            for model_ref, provider_id, provider_api_url in [
-                (self.model_name, self.system, None),
-                (self.model_name, None, provider_url),
-                (_profile.upstream_model_name, _profile.upstream_provider_id, None),
+            for model_ref, provider_id in [
+                (self.model_name, self.system),
+                (self.model_name, None),
+                (_profile.upstream_model_name, _profile.upstream_provider_id),
             ]:
-                if provider_id is None and provider_api_url is None:
-                    continue
                 try:
-                    _, model_info = get_snapshot().find_provider_model(model_ref, None, provider_id, provider_api_url)
+                    _, model_info = get_snapshot().find_provider_model(model_ref, None, provider_id, None)
                     if model_info.context_window is not None:
                         _profile = replace(_profile, context_window=model_info.context_window)
                         break
