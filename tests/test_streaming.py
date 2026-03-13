@@ -1770,6 +1770,339 @@ class TestMultipleToolCalls:
             ]
         )
 
+    async def test_graceful_strategy_executes_function_tools_but_skips_output_tools(self):
+        """Test that 'graceful' strategy executes function tools but skips remaining output tools."""
+        tool_called: list[str] = []
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
+            yield {2: DeltaToolCall('regular_tool', '{"x": 42}')}
+            yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """Another tool that should be called."""
+            tool_called.append('another_tool')
+            return y
+
+        async with agent.run_stream('test graceful strategy') as result:
+            response = await result.get_output()
+            assert response.value == snapshot('first')
+            messages = result.all_messages()
+
+        # Verify all function tools were called
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
+
+        # Verify we got tool returns in the correct order
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test graceful strategy', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='regular_tool', args='{"x": 42}', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='another_tool', args='{"y": 2}', tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=50, output_tokens=10),
+                    model_name='function::sf',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content=42,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_graceful_strategy_does_not_call_additional_output_tools(self):
+        """Test that 'graceful' strategy does not execute additional output tool functions."""
+        output_tools_called: list[str] = []
+
+        def process_first(output: OutputType) -> OutputType:
+            """Process first output."""
+            output_tools_called.append('first')
+            return output
+
+        def process_second(output: OutputType) -> OutputType:  # pragma: no cover
+            """Process second output."""
+            output_tools_called.append('second')
+            return output
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {1: DeltaToolCall('first_output', '{"value": "first"}')}
+            yield {2: DeltaToolCall('second_output', '{"value": "second"}')}
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='graceful',
+        )
+
+        async with agent.run_stream('test graceful output tools') as result:
+            response = await result.get_output()
+
+        # Verify the result came from the first output tool
+        assert isinstance(response, OutputType)
+        assert response.value == 'first'
+
+        # Verify only the first output tool was called
+        assert output_tools_called == ['first']
+
+        # Verify we got tool returns in the correct order
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test graceful output tools', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='first_output', args='{"value": "first"}', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='second_output', args='{"value": "second"}', tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=50, output_tokens=8),
+                    model_name='function::stream_function',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='first_output',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='second_output',
+                            content='Output tool not used - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_graceful_strategy_uses_first_final_result(self):
+        """Test that 'graceful' strategy uses the first final result and ignores subsequent ones."""
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
+            yield {2: DeltaToolCall('final_result', '{"value": "second"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='graceful')
+
+        async with agent.run_stream('test multiple final results') as result:
+            response = await result.get_output()
+            assert response.value == snapshot('first')
+            messages = result.all_messages()
+
+        # Verify we got appropriate tool returns
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=50, output_tokens=8),
+                    model_name='function::sf',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Output tool not used - a final result was already processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_graceful_strategy_with_final_result_in_middle(self):
+        """Test that 'graceful' strategy executes function tools but skips output and deferred tools."""
+        tool_called: list[str] = []
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {1: DeltaToolCall('regular_tool', '{"x": 1}')}
+            yield {2: DeltaToolCall('final_result', '{"value": "final"}')}
+            yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
+            yield {4: DeltaToolCall('unknown_tool', '{"value": "???"}')}
+            yield {5: DeltaToolCall('deferred_tool', '{"x": 5}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """Another tool that should be called."""
+            tool_called.append('another_tool')
+            return y
+
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            tool_called.append('deferred_tool')
+            return x + 1
+
+        async with agent.run_stream('test graceful strategy with final result in middle') as result:
+            response = await result.get_output()
+            assert response.value == snapshot('final')
+            messages = result.all_messages()
+
+        # Verify function tools were called but deferred tools were not
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
+
+        # Verify we got appropriate tool returns
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='test graceful strategy with final result in middle',
+                            timestamp=IsNow(tz=timezone.utc),
+                        )
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='regular_tool',
+                            args='{"x": 1}',
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"value": "final"}',
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolCallPart(
+                            tool_name='another_tool',
+                            args='{"y": 2}',
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolCallPart(
+                            tool_name='unknown_tool',
+                            args='{"value": "???"}',
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolCallPart(
+                            tool_name='deferred_tool',
+                            args='{"x": 5}',
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=50, output_tokens=17),
+                    model_name='function::sf',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content=1,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool',
+                            content=2,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        RetryPromptPart(
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
+                            tool_name='unknown_tool',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='deferred_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                ),
+            ]
+        )
+
     async def test_exhaustive_strategy_executes_all_tools(self):
         """Test that 'exhaustive' strategy executes all tools while using first final result."""
         tool_called: list[str] = []
