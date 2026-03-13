@@ -3017,6 +3017,57 @@ Examples:
     )
 
 
+def test_docstring_example_with_and_without_output():
+    def my_tool(x: int) -> int:
+        """
+        My tool.
+
+        Examples:
+            >>> my_tool(1)
+            1
+            >>> my_tool(2)
+        """
+        return x  # pragma: no cover
+
+    tool = Tool(my_tool)
+    assert tool.description == 'My tool.\n\nExamples:\n    >>> my_tool(1)\n    1\n    >>> my_tool(2)'
+
+
+def test_tool_examples_fallback():
+    agent = Agent('test')
+
+    @agent.tool_plain(examples=[{'x': 1}])
+    def my_tool(x: int) -> int:
+        """My tool."""
+        return x
+
+    test_model = TestModel()
+    agent.run_sync('hello', model=test_model)
+
+    assert test_model.last_model_request_parameters is not None
+    tool_def = test_model.last_model_request_parameters.function_tools[0]
+
+    assert tool_def.examples is None
+    assert tool_def.description == 'My tool.\n\nExamples:\n[\n  {\n    "x": 1\n  }\n]'
+
+
+def test_tool_examples_fallback_no_desc():
+    agent = Agent('test')
+
+    @agent.tool_plain(examples=[{'x': 1}])
+    def my_tool(x: int) -> int:
+        return x
+
+    test_model = TestModel()
+    agent.run_sync('hello', model=test_model)
+
+    assert test_model.last_model_request_parameters is not None
+    tool_def = test_model.last_model_request_parameters.function_tools[0]
+
+    assert tool_def.examples is None
+    assert tool_def.description == 'Examples:\n[\n  {\n    "x": 1\n  }\n]'
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize('is_stream', [True, False])
 async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):

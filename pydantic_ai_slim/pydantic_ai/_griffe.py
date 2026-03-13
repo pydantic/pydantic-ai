@@ -71,14 +71,14 @@ def doc_descriptions(
         examples_content: list[str] = []
         for source, output in examples.value:
             if isinstance(source, DocstringSectionKind):
-                if output is not None:
+                if output is not None:  # pragma: no branch
                     examples_content.append(str(output))
             elif output:
                 examples_content.append(f'{source}\n{output}')
             else:
                 examples_content.append(str(source))
 
-        if examples_content:
+        if examples_content:  # pragma: no branch
             formatted_examples = '\n\n'.join(examples_content)
             formatted_examples = textwrap.indent(formatted_examples, '    ')
 

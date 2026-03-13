@@ -571,7 +571,7 @@ class ToolDefinition:
     """Example inputs demonstrating correct tool usage patterns.
 
     Provide realistic examples showing parameter conventions, optional field patterns,
-    nested structures, and API-specific conventions. Each example must validate against
+    nested structures, and API-specific conventions. Each example should validate against
     the tool's `parameters_json_schema`.
 
     Supported by:
