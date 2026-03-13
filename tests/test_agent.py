@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
-from typing import Any, Generic, Literal, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, Union
 
 import pytest
 from dirty_equals import IsJson
@@ -73,10 +73,29 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
+if TYPE_CHECKING:
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+else:
+    try:
+        from pydantic_ai.providers.azure import AzureProvider
+        from pydantic_ai.providers.openai import OpenAIProvider
+    except ImportError:  # pragma: lax no cover
+        AzureProvider = OpenAIProvider = None
+
+    try:
+        from pydantic_ai.providers.anthropic import AnthropicProvider
+    except ImportError:  # pragma: lax no cover
+        AnthropicProvider = None
+
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
+
+requires_openai = pytest.mark.skipif(OpenAIProvider is None, reason='openai not installed')  # pyright: ignore[reportUnnecessaryComparison]
+requires_anthropic = pytest.mark.skipif(AnthropicProvider is None, reason='anthropic not installed')  # pyright: ignore[reportUnnecessaryComparison]
 
 
 def test_result_tuple():
@@ -5787,6 +5806,114 @@ def test_agent_repr() -> None:
     assert repr(agent) == snapshot(
         "Agent(model=None, name=None, end_strategy='early', model_settings=None, output_type=<class 'str'>, instrument=None)"
     )
+
+
+async def test_agent_context_manager_no_model():
+    agent = Agent()
+    async with agent:
+        pass
+
+
+def test_cached_async_http_client_deprecated():
+    from pydantic_ai.models import cached_async_http_client
+
+    with pytest.warns(DeprecationWarning, match='cached_async_http_client is deprecated'):
+        cached_async_http_client()
+
+
+@requires_openai
+async def test_provider_lifecycle_closes_client():
+    """Provider lifecycle closes owned HTTP client on exit.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider = OpenAIProvider(api_key='test-key')
+    async with provider:
+        http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not http_client.is_closed
+    assert http_client.is_closed
+
+
+@requires_openai
+async def test_provider_reentrant_lifecycle():
+    """Reentrant provider lifecycle keeps client open until outermost exit.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider = OpenAIProvider(api_key='test-key')
+    async with provider:
+        http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        async with provider:
+            assert not http_client.is_closed
+        assert not http_client.is_closed
+    assert http_client.is_closed
+
+
+@requires_openai
+async def test_provider_aexit_without_aenter():
+    """Calling __aexit__ without __aenter__ is a no-op (no crash).
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider = OpenAIProvider(api_key='test-key')
+    await provider.__aexit__(None, None, None)
+    # Clean up the owned http client to avoid ResourceWarning from __del__
+    assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+    await provider._own_http_client.aclose()  # pyright: ignore[reportPrivateUsage]
+
+
+@requires_openai
+async def test_provider_del_warns_on_unclosed_client():
+    """Provider.__del__ warns if the HTTP client was never closed.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider = OpenAIProvider(api_key='test-key')
+    assert provider._own_http_client is not None  # pyright: ignore[reportPrivateUsage]
+    assert not provider._own_http_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    with pytest.warns(ResourceWarning, match='was garbage collected with an open HTTP client'):
+        provider.__del__()
+    # Clean up
+    await provider._own_http_client.aclose()  # pyright: ignore[reportPrivateUsage]
+
+
+@requires_openai
+async def test_provider_reentry_after_close():
+    """Provider can be re-entered after exit by recreating the HTTP client."""
+    provider = OpenAIProvider(api_key='test-key')
+
+    async with provider:
+        first_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not first_client.is_closed
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not second_client.is_closed
+        assert second_client is not first_client
+    assert second_client.is_closed
+
+
+@requires_openai
+async def test_azure_provider_lifecycle_closes_client():
+    """Azure provider lifecycle closes owned HTTP client on exit.
+
+    Regression test for PR #4421 (provider lifecycle management).
+    https://github.com/pydantic/pydantic-ai/pull/4421
+    """
+    provider = AzureProvider(
+        azure_endpoint='https://test.openai.azure.com',
+        api_key='test-key',
+        api_version='2024-02-01',
+    )
+    async with provider:
+        http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
+        assert not http_client.is_closed
+    assert http_client.is_closed
 
 
 def test_tool_call_with_validation_value_error_serializable():

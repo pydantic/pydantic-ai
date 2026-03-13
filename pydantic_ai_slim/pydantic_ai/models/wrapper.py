@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from typing_extensions import Self
+
 from .._run_context import RunContext
 from ..messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from ..profiles import ModelProfile
@@ -67,6 +69,13 @@ class WrapperModel(Model):
     def __init__(self, wrapped: Model | KnownModelName):
         super().__init__()
         self.wrapped = infer_model(wrapped)
+
+    async def __aenter__(self) -> Self:
+        await self.wrapped.__aenter__()
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        await self.wrapped.__aexit__(*args)
 
     async def request(
         self,

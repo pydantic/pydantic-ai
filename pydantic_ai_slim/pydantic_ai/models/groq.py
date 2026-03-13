@@ -173,6 +173,11 @@ class GroqModel(Model):
         """The model provider."""
         return self._provider.name
 
+    @property
+    def provider(self) -> Provider[AsyncGroq]:
+        """The provider for this model."""
+        return self._provider  # pragma: no cover
+
     @classmethod
     def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
         """Return the set of builtin tool types this model can handle."""

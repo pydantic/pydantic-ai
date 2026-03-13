@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 import httpx
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 
 if TYPE_CHECKING:
     from botocore.client import BaseClient
@@ -147,8 +147,6 @@ def gateway_provider(
     base_url = (
         base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', os.getenv('PAIG_BASE_URL')) or _infer_base_url(api_key)
     )
-    http_client = http_client or cached_async_http_client(provider=f'gateway/{upstream_provider}')
-    http_client.event_hooks = {'request': [_request_hook(api_key)]}
 
     if route is None:
         # Use the implied providerId as the default route.
@@ -156,23 +154,8 @@ def gateway_provider(
 
     base_url = _merge_url_path(base_url, route)
 
-    if upstream_provider in ('openai', 'openai-chat', 'openai-responses', 'chat', 'responses'):
-        from .openai import OpenAIProvider
-
-        return OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client)
-    elif upstream_provider == 'groq':
-        from .groq import GroqProvider
-
-        return GroqProvider(api_key=api_key, base_url=base_url, http_client=http_client)
-    elif upstream_provider == 'anthropic':
-        from anthropic import AsyncAnthropic
-
-        from .anthropic import AnthropicProvider
-
-        return AnthropicProvider(
-            anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
-        )
-    elif upstream_provider in ('bedrock', 'converse'):
+    # Bedrock uses the AWS SDK (botocore) rather than httpx, so skip http_client creation.
+    if upstream_provider in ('bedrock', 'converse'):
         from .bedrock import BedrockProvider
 
         return BedrockProvider(
@@ -180,10 +163,41 @@ def gateway_provider(
             base_url=base_url,
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
+
+    own_http_client = http_client is None
+    http_client = http_client or create_async_http_client()
+    http_client.event_hooks = {'request': [_request_hook(api_key)]}
+
+    def _with_http_client(provider: Provider[Any]) -> Provider[Any]:
+        if own_http_client:
+            provider._own_http_client = http_client  # pyright: ignore[reportPrivateUsage]
+            provider._http_client_factory = create_async_http_client  # pyright: ignore[reportPrivateUsage]
+        return provider
+
+    if upstream_provider in ('openai', 'openai-chat', 'openai-responses', 'chat', 'responses'):
+        from .openai import OpenAIProvider
+
+        return _with_http_client(OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client))
+    elif upstream_provider == 'groq':
+        from .groq import GroqProvider
+
+        return _with_http_client(GroqProvider(api_key=api_key, base_url=base_url, http_client=http_client))
+    elif upstream_provider == 'anthropic':
+        from anthropic import AsyncAnthropic
+
+        from .anthropic import AnthropicProvider
+
+        return _with_http_client(
+            AnthropicProvider(
+                anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
+            )
+        )
     elif upstream_provider in ('google-vertex', 'gemini'):
         from .google import GoogleProvider
 
-        return GoogleProvider(vertexai=True, api_key=api_key, base_url=base_url, http_client=http_client)
+        return _with_http_client(
+            GoogleProvider(vertexai=True, api_key=api_key, base_url=base_url, http_client=http_client)
+        )
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
 

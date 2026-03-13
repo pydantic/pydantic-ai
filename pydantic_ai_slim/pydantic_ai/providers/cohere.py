@@ -6,7 +6,7 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.providers import Provider
 
@@ -78,6 +78,13 @@ class CohereProvider(Provider[AsyncClientV2]):
                 self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
                 self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)
             else:
-                http_client = cached_async_http_client(provider='cohere')
+                http_client = create_async_http_client()
+                self._own_http_client = http_client
+                self._http_client_factory = create_async_http_client
                 self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
                 self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client_wrapper.httpx_client.httpx_client = http_client  # type: ignore
+        if self._v1_client is not None:
+            self._v1_client._client_wrapper.httpx_client.httpx_client = http_client  # type: ignore
