@@ -1,9 +1,11 @@
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 import gzip
 import json
+import re
 import unicodedata
 import urllib.parse
 import zlib
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import brotli
@@ -102,6 +104,44 @@ def deserialize(cassette_string: str):
     return cassette_dict
 
 
+def _content_type_startswith(content_type: Sequence[str | bytes], prefix: str) -> bool:
+    return any(
+        (h if isinstance(h, str) else h.decode('utf-8') if isinstance(h, bytes) else '').startswith(prefix)
+        for h in content_type
+    )
+
+
+def scrub_form_credentials(data: dict[str, Any], content_type: list[str]) -> None:
+    """Redact credentials from application/x-www-form-urlencoded request bodies."""
+    if not _content_type_startswith(content_type, 'application/x-www-form-urlencoded'):
+        return
+    query_params = urllib.parse.parse_qs(data['body'])
+    for key in ['assertion', 'client_id', 'client_secret', 'refresh_token', 'RoleArn', 'RoleSessionName']:
+        if key in query_params:
+            query_params[key] = ['scrubbed']
+            data['body'] = urllib.parse.urlencode(query_params, doseq=True)
+
+
+def scrub_xml_credentials(data: dict[str, Any], headers: dict[str, list[str]], content_type: list[str]) -> None:
+    """Redact AWS STS credentials from text/xml response bodies."""
+    if content_type != ['text/xml']:
+        return
+    body = data.get('body', None)
+    if isinstance(body, dict):
+        body = body.get('string', '')
+    if not isinstance(body, str) or '<Credentials>' not in body:
+        return
+    body = re.sub(r'<AccessKeyId>[^<]+</AccessKeyId>', '<AccessKeyId>SCRUBBED</AccessKeyId>', body)
+    body = re.sub(r'<SecretAccessKey>[^<]+</SecretAccessKey>', '<SecretAccessKey>SCRUBBED</SecretAccessKey>', body)
+    body = re.sub(r'<SessionToken>[^<]+</SessionToken>', '<SessionToken>SCRUBBED</SessionToken>', body)
+    body = re.sub(r'<Expiration>[^<]+</Expiration>', '<Expiration>2099-01-01T00:00:00Z</Expiration>', body)
+    body = re.sub(r'<AssumedRoleId>[^<]+</AssumedRoleId>', '<AssumedRoleId>SCRUBBED</AssumedRoleId>', body)
+    body = re.sub(r'<Arn>[^<]+</Arn>', '<Arn>SCRUBBED</Arn>', body)
+    data['body'] = {'string': body}
+    if 'content-length' in headers:
+        headers['content-length'] = [str(len(body.encode('utf-8')))]
+
+
 def serialize(cassette_dict: Any):  # pragma: lax no cover
     for interaction in cassette_dict['interactions']:
         for _kind, data in interaction.items():
@@ -149,6 +189,8 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     data['parsed_body'] = normalize_body(parsed)
                     if 'access_token' in data['parsed_body']:
                         data['parsed_body']['access_token'] = 'scrubbed'
+                    if 'id_token' in data['parsed_body']:
+                        data['parsed_body']['id_token'] = 'scrubbed'
                     del data['body']
                     # Update content-length to match the body that will be produced during deserialize.
                     # This is necessary because decompression changes the body size, and botocore
@@ -156,12 +198,8 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     if 'content-length' in headers:
                         new_body = json.dumps(data['parsed_body'])
                         headers['content-length'] = [str(len(new_body.encode('utf-8')))]
-            if content_type == ['application/x-www-form-urlencoded']:
-                query_params = urllib.parse.parse_qs(data['body'])
-                for key in ['assertion', 'client_id', 'client_secret', 'refresh_token']:  # pragma: no cover
-                    if key in query_params:
-                        query_params[key] = ['scrubbed']
-                        data['body'] = urllib.parse.urlencode(query_params, doseq=True)
+            scrub_form_credentials(data, content_type)
+            scrub_xml_credentials(data, headers, content_type)
 
     # Use our custom dumper
     return yaml.dump(cassette_dict, Dumper=LiteralDumper, allow_unicode=True, width=120)
