@@ -103,6 +103,7 @@ __all__ = (
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
+    'Instructions',
 )
 
 
@@ -444,19 +445,42 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._entered_count = 0
         self._exit_stack = None
 
+    @overload
     @classmethod
     def from_spec(
         cls,
         spec: dict[str, Any] | AgentSpec,
         *,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
-    ) -> Agent[None, str]:
+    ) -> Agent[None, str]: ...
+
+    @overload
+    @classmethod
+    def from_spec(
+        cls,
+        spec: dict[str, Any] | AgentSpec,
+        *,
+        deps_type: type[T],
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+    ) -> Agent[T, str]: ...
+
+    @classmethod
+    def from_spec(
+        cls,
+        spec: dict[str, Any] | AgentSpec,
+        *,
+        deps_type: type[Any] = type(None),
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+    ) -> Agent[Any, str]:
         """Construct an Agent from a spec dict or `AgentSpec`.
 
         This allows defining agents declaratively in YAML/JSON/dict form.
 
         Args:
             spec: The agent specification, either a dict or an `AgentSpec` instance.
+            deps_type: The type of the dependencies for the agent. When provided,
+                template strings in capabilities (e.g. ``"Hello {{name}}"``) are
+                compiled and validated against this type.
             custom_capability_types: Additional capability classes to make available
                 beyond the built-in defaults.
 
@@ -464,10 +488,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             A new Agent instance.
         """
         from pydantic_ai._spec import build_registry, load_from_registry
+        from pydantic_ai._template import validate_from_spec_args
         from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
         from pydantic_ai.capabilities import DEFAULT_CAPABILITY_TYPES
 
         validated_spec = _AgentSpecModel.model_validate(spec) if isinstance(spec, dict) else spec
+
+        validation_context: dict[str, Any] = {
+            'deps_type': deps_type if deps_type is not type(None) else None,
+            'deps_schema': validated_spec.deps_schema,
+        }
 
         registry = build_registry(
             custom_types=custom_capability_types,
@@ -476,6 +506,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             label='capability',
         )
 
+        def _instantiate_cap(
+            cap_cls: type[AbstractCapability[Any]],
+            args: tuple[Any, ...],
+            kwargs: dict[str, Any],
+        ) -> AbstractCapability[Any]:
+            args, kwargs = validate_from_spec_args(cap_cls, args, kwargs, validation_context)
+            return cap_cls.from_spec(*args, **kwargs)
+
         capabilities: list[AbstractCapability[Any]] = []
         for cap_spec in validated_spec.capabilities:
             capability = load_from_registry(
@@ -483,11 +521,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 cap_spec,
                 label='capability',
                 custom_types_param='custom_capability_types',
-                instantiate=lambda c, args, kwargs: c.from_spec(*args, **kwargs),
+                instantiate=_instantiate_cap,
             )
             capabilities.append(capability)
 
-        return Agent(model=validated_spec.model, capabilities=capabilities)
+        return Agent(model=validated_spec.model, deps_type=deps_type, capabilities=capabilities)
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -548,7 +586,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -568,7 +606,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -588,7 +626,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
@@ -953,7 +991,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-        instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        instructions: _instructions.Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
@@ -1590,6 +1628,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if isinstance(instruction, str):
                 literal_parts.append(instruction)
             else:
+                # TemplateStr instances land here too: they are callable with a
+                # RunContext parameter, so SystemPromptRunner handles them like
+                # any other system prompt function.
                 functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
 
         literal = '\n'.join(literal_parts).strip() or None
