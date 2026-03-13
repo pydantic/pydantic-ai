@@ -19,6 +19,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, Instru
 
 from .. import (
     _agent_graph,
+    _instructions,
     _output,
     _system_prompt,
     _utils,
@@ -40,6 +41,7 @@ from .._agent_graph import (
 from .._output import OutputToolset
 from .._tool_manager import ParallelExecutionMode, ToolManager
 from ..builtin_tools import AbstractBuiltinTool
+from ..capabilities import AbstractCapability, CombinedCapability, HistoryProcessorCapability
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun, AgentRunResult
@@ -68,7 +70,13 @@ from ..toolsets._dynamic import (
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
-from .abstract import AbstractAgent, AgentMetadata, EventStreamHandler, Instructions, RunOutputDataT
+from .abstract import (
+    AbstractAgent,
+    AgentMetadata,
+    EventStreamHandler,
+    Instructions,
+    RunOutputDataT,
+)
 from .wrapper import WrapperAgent
 
 if TYPE_CHECKING:
@@ -79,6 +87,7 @@ if TYPE_CHECKING:
     from ..builtin_tools import AbstractBuiltinTool
     from ..mcp import MCPServer
     from ..ui._web import ModelsParam
+    from .spec import AgentSpec
 
 __all__ = (
     'Agent',
@@ -181,7 +190,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.Instructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -202,6 +211,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
     ) -> None: ...
 
     @overload
@@ -211,7 +221,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.Instructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -232,6 +242,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
     ) -> None: ...
 
     def __init__(
@@ -239,7 +250,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         *,
         output_type: OutputSpec[OutputDataT] = str,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.Instructions[AgentDepsT] = None,
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
@@ -260,6 +271,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -332,6 +344,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
                 multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
                 to `run()` or `iter()` will wait until a slot becomes available.
+            capabilities: Optional list of capabilities to register with the agent.
         """
         if model is None or defer_model_check:
             self._model = model
@@ -340,6 +353,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._name = name
         self.end_strategy = end_strategy
+
+        capabilities = list(capabilities or [])
+        for history_processor in history_processors or []:
+            capabilities.append(HistoryProcessorCapability(history_processor))
+
+        self.root_capability = CombinedCapability(capabilities)
+
         self.model_settings = model_settings
 
         self._output_type = output_type
@@ -358,7 +378,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type)
         self._output_validators = []
 
-        self._instructions = self._normalize_instructions(instructions)
+        self._instructions = _instructions.normalize_instructions(instructions)
+        self._instructions.extend(_instructions.normalize_instructions(self.root_capability.get_instructions()))
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -370,7 +391,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._validation_context = validation_context
 
-        self._builtin_tools = builtin_tools
+        self._builtin_tools = list(builtin_tools)
+        self._builtin_tools.extend(self.root_capability.get_builtin_tools())
 
         self._prepare_tools = prepare_tools
         self._prepare_output_tools = prepare_output_tools
@@ -385,14 +407,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             timeout=self._tool_timeout,
             output_schema=self._output_schema,
         )
+
+        toolsets = list(toolsets or [])
+        toolset = self.root_capability.get_toolset()
+        if toolset is not None:
+            toolsets.append(toolset)
+
         self._dynamic_toolsets = [
             DynamicToolset[AgentDepsT](toolset_func=toolset)
             for toolset in toolsets or []
             if not isinstance(toolset, AbstractToolset)
         ]
         self._user_toolsets = [toolset for toolset in toolsets or [] if isinstance(toolset, AbstractToolset)]
-
-        self.history_processors = history_processors or []
 
         self._event_stream_handler = event_stream_handler
 
@@ -417,6 +443,51 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._enter_lock = Lock()
         self._entered_count = 0
         self._exit_stack = None
+
+    @classmethod
+    def from_spec(
+        cls,
+        spec: dict[str, Any] | AgentSpec,
+        *,
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+    ) -> Agent[None, str]:
+        """Construct an Agent from a spec dict or `AgentSpec`.
+
+        This allows defining agents declaratively in YAML/JSON/dict form.
+
+        Args:
+            spec: The agent specification, either a dict or an `AgentSpec` instance.
+            custom_capability_types: Additional capability classes to make available
+                beyond the built-in defaults.
+
+        Returns:
+            A new Agent instance.
+        """
+        from pydantic_ai._spec import build_registry, load_from_registry
+        from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
+        from pydantic_ai.capabilities import DEFAULT_CAPABILITY_TYPES
+
+        validated_spec = _AgentSpecModel.model_validate(spec) if isinstance(spec, dict) else spec
+
+        registry = build_registry(
+            custom_types=custom_capability_types,
+            defaults=DEFAULT_CAPABILITY_TYPES,
+            get_name=lambda c: c.get_serialization_name(),
+            label='capability',
+        )
+
+        capabilities: list[AbstractCapability[Any]] = []
+        for cap_spec in validated_spec.capabilities:
+            capability = load_from_registry(
+                registry,
+                cap_spec,
+                label='capability',
+                custom_types_param='custom_capability_types',
+                instantiate=lambda c, args, kwargs: c.from_spec(*args, **kwargs),
+            )
+            capabilities.append(capability)
+
+        return Agent(model=validated_spec.model, capabilities=capabilities)
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -684,7 +755,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_schema=output_schema,
             output_validators=output_validators,
             validation_context=self._validation_context,
-            history_processors=self.history_processors,
+            root_capability=self.root_capability,
             builtin_tools=[*self._builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,
@@ -926,7 +997,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tools_token = None
 
         if _utils.is_set(instructions):
-            normalized_instructions = self._normalize_instructions(instructions)
+            normalized_instructions = _instructions.normalize_instructions(instructions)
             instructions_token = self._override_instructions.set(_utils.Some(normalized_instructions))
         else:
             instructions_token = None
@@ -1500,19 +1571,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             return deps
 
-    def _normalize_instructions(
-        self,
-        instructions: Instructions[AgentDepsT],
-    ) -> list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]:
-        if instructions is None:
-            return []
-        if isinstance(instructions, str) or callable(instructions):
-            return [instructions]
-        return list(instructions)
-
     def _get_instructions(
         self,
-        additional_instructions: Instructions[AgentDepsT] = None,
+        additional_instructions: _instructions.Instructions[AgentDepsT] = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         override_instructions = self._override_instructions.get()
         if override_instructions:
@@ -1520,7 +1581,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             instructions = self._instructions.copy()
             if additional_instructions is not None:
-                instructions.extend(self._normalize_instructions(additional_instructions))
+                instructions.extend(_instructions.normalize_instructions(additional_instructions))
 
         literal_parts: list[str] = []
         functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []

@@ -3186,13 +3186,13 @@ def test_tool_exceeds_token_limit_error():
 
     with pytest.raises(
         IncompleteToolCall,
-        match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments.',
+        match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments\.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
         IncompleteToolCall,
-        match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments.',
+        match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments\.',
     ):
         agent.run_sync('Hello')
 

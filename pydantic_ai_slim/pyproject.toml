@@ -106,6 +106,7 @@ cli = [
     "prompt-toolkit>=3",
     "argcomplete>=3.5.0",
     "pyperclip>=1.9.0",
+    "pyyaml>=6.0.2",
 ]
 # MCP
 mcp = ["mcp>=1.25.0,<2.0"]
@@ -129,6 +130,8 @@ temporal = ["temporalio==1.20.0"]
 dbos = ["dbos>=2.10.0"]
 # Prefect
 prefect = ["prefect>=3.4.21"]
+# Execution environments
+docker-environment = ["docker>=7.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -148,6 +151,7 @@ conflicts = [
         { extra = "outlines-vllm-offline" },
     ],
 ]
+
 
 [tool.uv.sources]
 pydantic-graph = { workspace = true }
