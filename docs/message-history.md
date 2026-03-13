@@ -553,6 +553,12 @@ agent = Agent('openai:gpt-5.2', history_processors=[filter_responses, summarize_
 In this case, the `filter_responses` processor will be applied first, and the
 `summarize_old_messages` processor will be applied second.
 
+### Third-Party History Processors
+
+The community maintains packages that provide ready-to-use history processors:
+
+- [`summarization-pydantic-ai`](https://github.com/vstorm-co/summarization-pydantic-ai) by [Vstorm](https://vstorm.co/) — `SummarizationProcessor` for LLM-based context compression and `SlidingWindowProcessor` for zero-cost message trimming. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
+
 ## Examples
 
 For a more complete example of using messages in conversations, see the [chat app](examples/chat-app.md) example.
