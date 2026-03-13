@@ -6369,10 +6369,10 @@ def test_deprecated_kwargs_still_work():
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
 
-            Agent(
+            Agent(  # pyright: ignore[reportDeprecated]
                 'test',
                 mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])],
-            )  # type: ignore[call-arg]
+            )
             assert len(w) == 1
             assert issubclass(w[0].category, DeprecationWarning)
             assert '`mcp_servers` is deprecated' in str(w[0].message)
