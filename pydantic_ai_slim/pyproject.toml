@@ -107,6 +107,8 @@ cli = [
     "argcomplete>=3.5.0",
     "pyperclip>=1.9.0",
 ]
+# Realtime (bidirectional streaming sessions)
+realtime = ["websockets>=14.0"]
 # MCP
 mcp = ["mcp>=1.25.0,<2.0"]
 # FastMCP

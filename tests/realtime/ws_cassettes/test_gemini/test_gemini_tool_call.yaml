@@ -1,0 +1,56 @@
+version: 1
+interactions:
+- direction: sent
+  data:
+    setup:
+      model: projects/pydantic-ai/locations/us-central1/publishers/google/models/gemini-live-2.5-flash-native-audio
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: You are a weather assistant. Always use the get_weather tool when
+            asked about weather.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_weather
+          parametersJsonSchema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- direction: received
+  data:
+    setupComplete:
+      sessionId: 16dbe99e-065e-44f9-b025-f09394554a7a
+- direction: sent
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is the weather in London?
+        role: user
+      turnComplete: true
+- direction: received
+  data:
+    toolCall:
+      functionCalls:
+      - name: get_weather
+        args:
+          city: London
+        id: 386960d7-689d-42b1-a7c7-43962a0c8281
+- direction: sent
+  data:
+    tool_response:
+      functionResponses:
+      - id: 386960d7-689d-42b1-a7c7-43962a0c8281
+        name: ''
+        response:
+          result: Sunny in London
