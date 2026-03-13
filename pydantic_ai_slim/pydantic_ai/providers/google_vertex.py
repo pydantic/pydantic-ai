@@ -185,7 +185,7 @@ class _VertexAIAuth(httpx.Auth):
 
 
 async def _async_google_auth() -> tuple[BaseCredentials, str | None]:
-    return await anyio.to_thread.run_sync(google.auth.default, ['https://www.googleapis.com/auth/cloud-platform'])  # type: ignore
+    return await anyio.to_thread.run_sync(google.auth.default, ['https://www.googleapis.com/auth/cloud-platform'])  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType,reportUnknownArgumentType,reportReturnType]
 
 
 async def _creds_from_file(service_account_file: str | Path) -> ServiceAccountCredentials:

@@ -138,7 +138,7 @@ class CohereModel(Model):
 
     @property
     def base_url(self) -> str:
-        client_wrapper = self.client._client_wrapper  # type: ignore
+        client_wrapper = self.client._client_wrapper  # pyright: ignore[reportPrivateUsage]
         return str(client_wrapper.get_base_url())
 
     @property

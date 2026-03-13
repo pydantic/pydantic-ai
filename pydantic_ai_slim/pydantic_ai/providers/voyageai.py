@@ -24,7 +24,7 @@ class VoyageAIProvider(Provider[AsyncClient]):
 
     @property
     def base_url(self) -> str:
-        return self._client._params.get('base_url') or 'https://api.voyageai.com/v1'  # type: ignore
+        return self._client._params.get('base_url') or 'https://api.voyageai.com/v1'  # pyright: ignore[reportReturnType,reportPrivateUsage]
 
     @property
     def client(self) -> AsyncClient:

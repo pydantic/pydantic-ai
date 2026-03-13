@@ -119,6 +119,6 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             raise ValueError('Cannot provide both `base_url` and `provider_name`.')
 
         if hf_client is None:
-            self._client = AsyncInferenceClient(api_key=api_key, provider=provider_name, base_url=base_url)  # type: ignore
+            self._client = AsyncInferenceClient(api_key=api_key, provider=provider_name, base_url=base_url)  # pyright: ignore[reportArgumentType]
         else:
             self._client = hf_client
