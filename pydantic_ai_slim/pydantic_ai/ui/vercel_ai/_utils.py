@@ -3,16 +3,22 @@
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-from pydantic_ai.messages import ProviderDetailsDelta, ToolReturnPart
+from pydantic_ai.messages import BaseToolReturnPart, ProviderDetailsDelta, ToolReturnPart
 from pydantic_ai.ui.vercel_ai.request_types import (
+    DynamicToolApprovalRequestedPart,
+    DynamicToolApprovalRespondedPart,
     DynamicToolInputAvailablePart,
     DynamicToolInputStreamingPart,
     DynamicToolOutputAvailablePart,
+    DynamicToolOutputDeniedPart,
     DynamicToolOutputErrorPart,
+    ToolApprovalRequestedPart,
     ToolApprovalResponded,
+    ToolApprovalRespondedPart,
     ToolInputAvailablePart,
     ToolInputStreamingPart,
     ToolOutputAvailablePart,
+    ToolOutputDeniedPart,
     ToolOutputErrorPart,
     UIMessage,
 )
@@ -27,6 +33,16 @@ from pydantic_ai.ui.vercel_ai.response_types import (
 __all__ = []
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
+
+
+def tool_return_output(part: BaseToolReturnPart) -> Any:
+    """Extract the return value from a tool return part.
+
+    If the model response object contains a 'return_value' key, return its value,
+    otherwise return the entire output dict. This matches the streaming output format.
+    """
+    output = part.model_response_object()
+    return output.get('return_value', output)
 
 
 def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[str, Any]:
@@ -100,19 +116,36 @@ _TOOL_PART_TYPES = (
     ToolInputAvailablePart,
     ToolOutputAvailablePart,
     ToolOutputErrorPart,
+    ToolApprovalRequestedPart,
+    ToolApprovalRespondedPart,
+    ToolOutputDeniedPart,
     DynamicToolInputStreamingPart,
     DynamicToolInputAvailablePart,
     DynamicToolOutputAvailablePart,
     DynamicToolOutputErrorPart,
+    DynamicToolApprovalRequestedPart,
+    DynamicToolApprovalRespondedPart,
+    DynamicToolOutputDeniedPart,
+)
+
+
+_APPROVAL_RESPONDED_TYPES = (
+    ToolApprovalRespondedPart,
+    DynamicToolApprovalRespondedPart,
 )
 
 
 def iter_tool_approval_responses(
     messages: list[UIMessage],
 ) -> Iterator[tuple[str, ToolApprovalResponded]]:
-    """Yield `(tool_call_id, approval)` for each responded tool approval in assistant messages."""
+    """Yield `(tool_call_id, approval)` for each responded tool approval in assistant messages.
+
+    Only ``approval-responded`` parts are matched. ``output-denied`` parts have
+    already been materialized into the message history by ``load_messages()`` and
+    must not be re-processed as deferred results.
+    """
     for msg in messages:
         if msg.role == 'assistant':
             for part in msg.parts:
-                if isinstance(part, _TOOL_PART_TYPES) and isinstance(part.approval, ToolApprovalResponded):
+                if isinstance(part, _APPROVAL_RESPONDED_TYPES) and isinstance(part.approval, ToolApprovalResponded):
                     yield part.tool_call_id, part.approval

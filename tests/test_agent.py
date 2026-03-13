@@ -1999,6 +1999,25 @@ def test_prompted_output_with_template():
     )
 
 
+def test_prompted_output_with_template_false():
+    def return_foo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.model_request_parameters.prompted_output_template is False
+        assert info.model_request_parameters.prompted_output_instructions is None
+        assert info.instructions is None
+        text = Foo(bar='baz').model_dump_json()
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    m = FunctionModel(return_foo)
+
+    class Foo(BaseModel):
+        bar: str
+
+    agent = Agent(m, output_type=PromptedOutput(Foo, template=False))
+
+    result = agent.run_sync('What is the capital of Mexico?')
+    assert result.output == snapshot(Foo(bar='baz'))
+
+
 def test_prompted_output_with_defs():
     class Foo(BaseModel):
         """Foo description"""
@@ -2591,6 +2610,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='New instructions',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -2602,7 +2622,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
         ]
     )
 
-    assert result.new_messages() == result.all_messages()[-1:]
+    assert result.new_messages() == result.all_messages()[-2:]
 
 
 def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_prompt():
@@ -3166,13 +3186,13 @@ def test_tool_exceeds_token_limit_error():
 
     with pytest.raises(
         IncompleteToolCall,
-        match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments.',
+        match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments\.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
         IncompleteToolCall,
-        match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments.',
+        match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments\.',
     ):
         agent.run_sync('Hello')
 
@@ -6479,6 +6499,58 @@ def test_parallel_mcp_calls():
     assert result.output == snapshot('finished')
 
 
+async def test_parallel_tool_exception_cancels_sibling_tasks():
+    """Non-CancelledError exceptions during parallel tool execution must cancel sibling tasks.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4423.
+    Previously only asyncio.CancelledError triggered cleanup; any other exception
+    left the remaining tasks running as orphaned asyncio tasks.
+    """
+    slow_tool_started = asyncio.Event()
+    slow_tool_cancelled = asyncio.Event()
+
+    async def call_two_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='fast_failing_tool'),
+                ToolCallPart(tool_name='slow_tool'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(call_two_tools))
+
+    @agent.tool_plain
+    async def fast_failing_tool() -> str:
+        # Yield control so slow_tool can start, then raise.
+        await asyncio.sleep(0)
+        raise RuntimeError('boom')
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        slow_tool_started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            slow_tool_cancelled.set()
+            raise
+        return 'done'  # pragma: no cover
+
+    tasks_before = asyncio.all_tasks()
+    with pytest.raises(RuntimeError, match='boom'):
+        await agent.run('call tools')
+
+    # Give the event loop a moment to process cancellations.
+    await asyncio.sleep(0)
+
+    # The slow tool must have started (confirming both tasks ran in parallel).
+    assert slow_tool_started.is_set(), 'slow_tool never started — not running in parallel'
+    # The slow tool must have been cancelled when fast_failing_tool raised.
+    assert slow_tool_cancelled.is_set(), 'slow_tool was not cancelled after RuntimeError'
+    # No new asyncio tasks should be left over from this run.
+    leaked = asyncio.all_tasks() - tasks_before
+    assert not leaked, f'Orphaned tasks remain: {leaked}'
+
+
 @pytest.mark.parametrize('mode', ['argument', 'contextmanager'])
 def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     """Test that tool calls are executed correctly when a `sequential` tool is present in the call."""
@@ -6893,6 +6965,7 @@ async def test_hitl_tool_approval():
                         content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
+                        outcome='denied',
                     ),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -6924,6 +6997,7 @@ async def test_hitl_tool_approval():
                         content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
+                        outcome='denied',
                     ),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -7702,6 +7776,16 @@ async def test_message_history():
             pass
         assert run.new_messages() == snapshot(
             [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Hello',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
                 ModelResponse(
                     parts=[TextPart(content='ok here is text')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
@@ -7711,7 +7795,7 @@ async def test_message_history():
                 ),
             ]
         )
-        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"ok here is text",')
+        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
         assert run.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -7722,6 +7806,7 @@ async def test_message_history():
                         )
                     ],
                     timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='ok here is text')],
