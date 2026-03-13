@@ -49,17 +49,17 @@ def create_function_toolset() -> FunctionToolset[None]:
         """Get the current time in a timezone."""
         return f'Time in {timezone}'
 
-    @toolset.tool(lazy=True)
+    @toolset.tool(defer_loading=True)
     def calculate_mortgage(principal: float, rate: float, years: int) -> str:  # pragma: no cover
         """Calculate monthly mortgage payment for a loan."""
         return 'Mortgage calculated'
 
-    @toolset.tool(lazy=True)
+    @toolset.tool(defer_loading=True)
     def stock_price(symbol: str) -> str:  # pragma: no cover
         """Get the current stock price for a symbol."""
         return f'Stock price for {symbol}'
 
-    @toolset.tool(lazy=True)
+    @toolset.tool(defer_loading=True)
     def crypto_price(coin: str) -> str:  # pragma: no cover
         """Get the current cryptocurrency price."""
         return f'Crypto price for {coin}'
@@ -67,8 +67,8 @@ def create_function_toolset() -> FunctionToolset[None]:
     return toolset
 
 
-async def test_searchable_toolset_filters_lazy_tools():
-    """Test that lazy tools are not exposed initially."""
+async def test_searchable_toolset_filters_deferred_tools():
+    """Test that deferred tools are not exposed initially."""
     toolset = create_function_toolset()
     searchable = SearchableToolset(wrapped=toolset)
     ctx = build_run_context(None)
@@ -83,7 +83,7 @@ async def test_searchable_toolset_filters_lazy_tools():
 
 
 async def test_searchable_toolset_search_returns_matching_tools():
-    """Test that search_tools returns matching lazy tools."""
+    """Test that search_tools returns matching deferred tools."""
     toolset = create_function_toolset()
     searchable = SearchableToolset(wrapped=toolset)
     ctx = build_run_context(None)
@@ -168,7 +168,7 @@ async def test_searchable_toolset_max_results():
 
     for i in range(15):
 
-        @toolset.tool(lazy=True, name=f'tool_{i}')
+        @toolset.tool(defer_loading=True, name=f'tool_{i}')
         def tool_func() -> str:  # pragma: no cover
             """A tool for testing."""
             return 'result'
@@ -214,7 +214,7 @@ async def test_searchable_toolset_discovered_tools_available():
 
 
 async def test_searchable_toolset_reserved_name_collision():
-    """Test that `UserError` is raised if a tool is named 'search_tools' and lazy tools exist."""
+    """Test that `UserError` is raised if a tool is named 'search_tools' and deferred tools exist."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool
@@ -222,10 +222,10 @@ async def test_searchable_toolset_reserved_name_collision():
         """Search for tools."""
         return 'search result'
 
-    @toolset.tool(lazy=True)
-    def lazy_tool() -> str:  # pragma: no cover
-        """A lazy tool to trigger search injection."""
-        return 'lazy'
+    @toolset.tool(defer_loading=True)
+    def deferred_tool() -> str:  # pragma: no cover
+        """A deferred tool to trigger search injection."""
+        return 'deferred'
 
     searchable = SearchableToolset(wrapped=toolset)
     ctx = build_run_context(None)
@@ -234,8 +234,8 @@ async def test_searchable_toolset_reserved_name_collision():
         await searchable.get_tools(ctx)
 
 
-async def test_searchable_toolset_no_lazy_tools_returns_all():
-    """Test that when there are no lazy tools, all tools are returned without search_tools."""
+async def test_searchable_toolset_no_deferred_tools_returns_all():
+    """Test that when there are no deferred tools, all tools are returned without search_tools."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool
@@ -271,8 +271,8 @@ async def test_agent_always_wraps_in_searchable_toolset():
     assert isinstance(toolset, SearchableToolset)
 
 
-async def test_agent_wraps_in_searchable_with_lazy():
-    """Test that agent wraps with SearchableToolset when there are lazy tools."""
+async def test_agent_wraps_in_searchable_with_deferred():
+    """Test that agent wraps with SearchableToolset when there are deferred tools."""
     agent = Agent('test')
 
     @agent.tool_plain
@@ -280,7 +280,7 @@ async def test_agent_wraps_in_searchable_with_lazy():
         """Get the current weather for a city."""
         return f'Weather in {city}'
 
-    @agent.tool_plain(lazy=True)
+    @agent.tool_plain(defer_loading=True)
     def calculate_mortgage(principal: float) -> str:  # pragma: no cover
         """Calculate mortgage payment."""
         return 'Calculated'
@@ -311,7 +311,7 @@ async def test_searchable_toolset_tool_with_none_description():
     """Test that tools with None description are handled correctly in search."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
-    @toolset.tool(lazy=True)
+    @toolset.tool(defer_loading=True)
     def no_desc_tool() -> str:  # pragma: no cover
         return 'no description'
 
@@ -366,18 +366,18 @@ async def test_searchable_toolset_multiple_searches_accumulate():
     assert 'crypto_price' not in tool_names
 
 
-async def test_function_toolset_all_lazy():
-    """Test FunctionToolset with all tools having lazy=True."""
+async def test_function_toolset_all_deferred():
+    """Test FunctionToolset with all tools having defer_loading=True."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
-    @toolset.tool(lazy=True)
-    def lazy_tool1() -> str:  # pragma: no cover
-        """First lazy tool."""
+    @toolset.tool(defer_loading=True)
+    def deferred_tool1() -> str:  # pragma: no cover
+        """First deferred tool."""
         return 'result1'
 
-    @toolset.tool(lazy=True)
-    def lazy_tool2() -> str:  # pragma: no cover
-        """Second lazy tool."""
+    @toolset.tool(defer_loading=True)
+    def deferred_tool2() -> str:  # pragma: no cover
+        """Second deferred tool."""
         return 'result2'
 
     searchable = SearchableToolset(wrapped=toolset)
@@ -387,8 +387,8 @@ async def test_function_toolset_all_lazy():
     tool_names = list(tools.keys())
 
     assert tool_names == snapshot(['search_tools'])
-    assert 'lazy_tool1' not in tool_names
-    assert 'lazy_tool2' not in tool_names
+    assert 'deferred_tool1' not in tool_names
+    assert 'deferred_tool2' not in tool_names
 
 
 async def test_searchable_toolset_ignores_non_metadata_history():
@@ -442,8 +442,8 @@ async def test_searchable_toolset_ignores_non_metadata_history():
     assert 'crypto_price' not in tools
 
 
-async def test_lazy_toolset_marks_all_tools():
-    """Test that LazyToolset marks all tools as lazy when tool_names is None."""
+async def test_deferred_loading_toolset_marks_all_tools():
+    """Test that DeferredLoadingToolset marks all tools for deferred loading when tool_names is None."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool
@@ -456,8 +456,8 @@ async def test_lazy_toolset_marks_all_tools():
         """Tool B."""
         return 'b'
 
-    lazy = toolset.lazy()
-    searchable = SearchableToolset(wrapped=lazy)
+    deferred = toolset.defer_loading()
+    searchable = SearchableToolset(wrapped=deferred)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
@@ -466,8 +466,8 @@ async def test_lazy_toolset_marks_all_tools():
     assert 'tool_b' not in tools
 
 
-async def test_lazy_toolset_marks_specific_tools():
-    """Test that LazyToolset marks only named tools as lazy."""
+async def test_deferred_loading_toolset_marks_specific_tools():
+    """Test that DeferredLoadingToolset marks only named tools for deferred loading."""
     toolset: FunctionToolset[None] = FunctionToolset()
 
     @toolset.tool
@@ -480,8 +480,8 @@ async def test_lazy_toolset_marks_specific_tools():
         """Tool B."""
         return 'b'
 
-    lazy = toolset.lazy(['tool_b'])
-    searchable = SearchableToolset(wrapped=lazy)
+    deferred = toolset.defer_loading(['tool_b'])
+    searchable = SearchableToolset(wrapped=deferred)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)

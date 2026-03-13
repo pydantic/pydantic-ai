@@ -53,7 +53,7 @@ class _SearchToolIndex:
 
 @dataclass(kw_only=True)
 class _SearchTool(ToolsetTool[AgentDepsT]):
-    lazy_tools: dict[str, ToolsetTool[AgentDepsT]]
+    deferred_tools: dict[str, ToolsetTool[AgentDepsT]]
     search_index: list[_SearchToolIndex]
 
 
@@ -62,24 +62,24 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
     """A toolset that enables tool discovery for large toolsets.
 
     This toolset wraps another toolset and provides a `search_tools` tool that allows
-    the model to discover tools marked with `lazy=True`.
+    the model to discover tools marked with `defer_loading=True`.
 
-    Tools with `lazy=True` are not initially presented to the model.
+    Tools with `defer_loading=True` are not initially presented to the model.
     Instead, they become available after the model discovers them via the search tool.
     """
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)
 
-        lazy: dict[str, ToolsetTool[AgentDepsT]] = {}
+        deferred: dict[str, ToolsetTool[AgentDepsT]] = {}
         visible: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in all_tools.items():
-            if tool.tool_def.lazy:
-                lazy[name] = tool
+            if tool.tool_def.defer_loading:
+                deferred[name] = tool
             else:
                 visible[name] = tool
 
-        if not lazy:
+        if not deferred:
             return all_tools
 
         if _SEARCH_TOOLS_NAME in all_tools:
@@ -96,7 +96,7 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
                 description=tool.tool_def.description,
                 description_lower=tool.tool_def.description.lower() if tool.tool_def.description else None,
             )
-            for name, tool in lazy.items()
+            for name, tool in deferred.items()
         ]
 
         search_tool = _SearchTool(
@@ -104,13 +104,13 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
             tool_def=_SEARCH_TOOL_DEF,
             max_retries=1,
             args_validator=_SEARCH_TOOLS_VALIDATOR,
-            lazy_tools=lazy,
+            deferred_tools=deferred,
             search_index=search_index,
         )
 
         result: dict[str, ToolsetTool[AgentDepsT]] = {_SEARCH_TOOLS_NAME: search_tool}
         result.update(visible)
-        for name, tool in lazy.items():
+        for name, tool in deferred.items():
             if name in discovered:
                 result[name] = tool
 

@@ -9,7 +9,7 @@
         - ApprovalRequiredToolset
         - FilteredToolset
         - FunctionToolset
-        - LazyToolset
+        - DeferredLoadingToolset
         - PrefixedToolset
         - RenamedToolset
         - PreparedToolset

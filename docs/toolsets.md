@@ -383,13 +383,13 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-### Lazy Tools
+### Deferred Loading
 
-[`LazyToolset`][pydantic_ai.toolsets.LazyToolset] wraps a toolset and marks its tools as lazy, hiding them from the model until discovered via [tool search](tools-advanced.md#tool-search). This is useful for large toolsets (e.g. MCP servers with many endpoints) where loading all tool definitions into the model's context would be wasteful.
+[`DeferredLoadingToolset`][pydantic_ai.toolsets.DeferredLoadingToolset] wraps a toolset and marks its tools for deferred loading, hiding them from the model until discovered via [tool search](tools-advanced.md#tool-search). This is useful for large toolsets (e.g. MCP servers with many endpoints) where loading all tool definitions into the model's context would be wasteful.
 
-To easily chain different modifications, you can also call [`.lazy()`][pydantic_ai.toolsets.AbstractToolset.lazy] on any toolset instead of directly constructing a `LazyToolset`. Pass a list of tool names to hide only specific tools, or `None` (the default) to hide all.
+To easily chain different modifications, you can also call [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on any toolset instead of directly constructing a `DeferredLoadingToolset`. Pass a list of tool names to hide only specific tools, or `None` (the default) to hide all.
 
-```python {title="lazy_toolset.py"}
+```python {title="deferred_loading_toolset.py"}
 from pydantic_ai import Agent, FunctionToolset
 
 toolset: FunctionToolset[None] = FunctionToolset()
@@ -407,7 +407,7 @@ def stock_price(ticker: str) -> str:
     return f'{ticker}: $150.00'
 
 
-agent = Agent('openai:gpt-5.2', toolsets=[toolset.lazy(['stock_price'])])
+agent = Agent('openai:gpt-5.2', toolsets=[toolset.defer_loading(['stock_price'])])
 ```
 
 ### Changing Tool Execution
