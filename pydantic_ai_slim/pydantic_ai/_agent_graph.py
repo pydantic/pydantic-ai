@@ -635,6 +635,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_schema = ctx.deps.output_schema
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
+                has_only_thinking_parts = bool(self.model_response.parts) and all(
+                    isinstance(part, _messages.ThinkingPart) for part in self.model_response.parts
+                )
                 if not self.model_response.parts:
                     # Don't retry if the model returned an empty response because the token limit was exceeded, possibly during thinking.
                     if self.model_response.finish_reason == 'length':
@@ -695,6 +698,27 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         _messages.ModelRequest(parts=[], instructions=instructions)
                     )
                     return
+
+                # This can happen with models that return text + tool calls in one response,
+                # then return only thinking after tool execution.
+                if has_only_thinking_parts and (text_processor := output_schema.text_processor):
+                    for message in reversed(ctx.state.message_history):
+                        if isinstance(message, _messages.ModelResponse):
+                            text = ''
+                            for part in message.parts:
+                                if isinstance(part, _messages.TextPart):
+                                    text += part.content
+                                elif isinstance(part, _messages.BuiltinToolCallPart):
+                                    # Text parts before a built-in tool call are essentially thoughts,
+                                    # not part of the final result output, so we reset the accumulated text
+                                    text = ''  # pragma: no cover
+                            if text:
+                                try:
+                                    self._next_node = await self._handle_text_response(ctx, text, text_processor)
+                                    return
+                                except ToolRetryError:  # pragma: no cover
+                                    # If the text from the previous response was invalid, ignore it.
+                                    pass
 
                 text = ''
                 tool_calls: list[_messages.ToolCallPart] = []
