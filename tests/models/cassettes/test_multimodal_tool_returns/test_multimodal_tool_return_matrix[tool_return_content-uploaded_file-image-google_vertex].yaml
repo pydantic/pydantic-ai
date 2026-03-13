@@ -21,7 +21,7 @@ interactions:
       cache-control:
       - no-cache, no-store, max-age=0, must-revalidate
       content-length:
-      - '1160'
+      - '258'
       content-type:
       - application/json; charset=utf-8
       expires:
@@ -37,7 +37,7 @@ interactions:
     parsed_body:
       access_token: scrubbed
       expires_in: 3599
-      id_token: eyJhbGciOiJSUzI1NiIsImtpZCI6IjI1MDdmNTFhZjJhMTYyNDY3MDc0ODQ2NzRhNDJhZTNjMmI2MjMxOWMiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJhdWQiOiI3NjQwODYwNTE4NTAtNnFyNHA2Z3BpNmhuNTA2cHQ4ZWp1cTgzZGkzNDFodXIuYXBwcy5nb29nbGV1c2VyY29udGVudC5jb20iLCJzdWIiOiIxMTgyODA0MjAxMzMxODU0NDg2MTgiLCJlbWFpbCI6ImRzZmFwcHNAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsImF0X2hhc2giOiJEbjNiWUhsbjdqRGl5T01ZOHhSSTRRIiwiaWF0IjoxNzcyNzUxMDU1LCJleHAiOjE3NzI3NTQ2NTV9.axvJpdoGGprmsVRjhX_vmgonaVkc1eXRT5YPhIpjiXX399X8eGGrJYOguwQJ7CCOo48GrfJZwG44Nzk4nti9YFrHIGul2OfFQz13hZPIVMlDkWNNZFoAABOGPu-QEr1hBqHx2UmzKZaI7B8aPSokJSPWJwqMHdpioHvlqgSOmKP1ceuhngCmJ6QztajS5TVH6OIoV0f00aC4DoXlhDnUhctx69C5sfsSySyAnZKmZYgDuSSgg6FQSL5a3twjUmF74odYAzaBKZf94QJ70OFdkDujl_fm1xRU_VdaqXVTi6w2BdIQCBJC4APU8cry0IibkkLvmaaFsojD_ILOndawJA
+      id_token: scrubbed
       scope: https://www.googleapis.com/auth/sqlservice.login openid https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email
       token_type: Bearer
     status:

@@ -1,6 +1,6 @@
 interactions:
 - request:
-    body: Action=AssumeRole&Version=2011-06-15&RoleArn=arn%3Aaws%3Aiam%3A%3A353014496775%3Arole%2Fbedrock-test-role&RoleSessionName=botocore-session-1772734080
+    body: Action=AssumeRole&Version=2011-06-15&RoleArn=scrubbed&RoleSessionName=scrubbed
     headers:
       amz-sdk-invocation-id:
       - !!binary |
@@ -21,8 +21,8 @@ interactions:
         <AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
           <AssumeRoleResult>
             <AssumedRoleUser>
-              <AssumedRoleId>AROAVEMKNXYDZCPN3XKT3:botocore-session-1772734080</AssumedRoleId>
-              <Arn>arn:aws:sts::353014496775:assumed-role/bedrock-test-role/botocore-session-1772734080</Arn>
+              <AssumedRoleId>SCRUBBED</AssumedRoleId>
+              <Arn>SCRUBBED</Arn>
             </AssumedRoleUser>
             <Credentials>
               <AccessKeyId>SCRUBBED</AccessKeyId>
@@ -37,7 +37,7 @@ interactions:
         </AssumeRoleResponse>
     headers:
       content-length:
-      - '702'
+      - '585'
       content-type:
       - text/xml
     status:
