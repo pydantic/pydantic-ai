@@ -13,6 +13,8 @@ from .abstract import AbstractCapability
 
 @dataclass
 class ModelSettingsCapability(AbstractCapability[AgentDepsT]):
+    """A capability that applies model settings before each request."""
+
     settings: ModelSettings
 
     @classmethod

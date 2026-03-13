@@ -16,6 +16,8 @@ from pydantic_ai.toolsets import AbstractToolset
 
 @dataclass
 class AbstractCapability(ABC, Generic[AgentDepsT]):
+    """Abstract base class for agent capabilities."""
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         """Return the name used for spec serialization (CamelCase class name by default).

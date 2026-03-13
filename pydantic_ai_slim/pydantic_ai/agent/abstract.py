@@ -69,6 +69,8 @@ EventStreamHandler: TypeAlias = Callable[
 
 AgentMetadata = dict[str, Any] | Callable[[RunContext[AgentDepsT]], dict[str, Any]]
 
+Instructions = _instructions.Instructions
+
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     """Abstract superclass for [`Agent`][pydantic_ai.agent.Agent], [`WrapperAgent`][pydantic_ai.agent.WrapperAgent], and your own custom agent implementations."""

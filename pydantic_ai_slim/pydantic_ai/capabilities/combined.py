@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from pydantic_ai import _instructions
+from pydantic_ai import _instructions, _system_prompt
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
@@ -14,12 +14,14 @@ from .abstract import AbstractCapability
 
 @dataclass
 class CombinedCapability(AbstractCapability[AgentDepsT]):
+    """A capability that combines multiple capabilities."""
+
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
     def get_instructions(self) -> _instructions.Instructions[AgentDepsT] | None:
-        instructions = []
+        instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = []
         for capability in self.capabilities:
-            instructions.extend(_instructions.normalize_instructions(capability.get_instructions()))  # type: ignore[reportPrivateUsage]
+            instructions.extend(_instructions.normalize_instructions(capability.get_instructions()))
         return instructions or None
 
     def get_model_settings(self) -> ModelSettings | None:

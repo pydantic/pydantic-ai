@@ -98,9 +98,7 @@ class _SerializedNamedSpec(RootModel[str | dict[str, Any]]):
         if isinstance(value, str):
             return value
         if len(value) != 1:
-            raise ValueError(
-                f'Expected a single key containing the class name, found keys {list(value.keys())}'
-            )
+            raise ValueError(f'Expected a single key containing the class name, found keys {list(value.keys())}')
         return value
 
     @property

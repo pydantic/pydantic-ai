@@ -8,6 +8,8 @@ from .abstract import AbstractCapability
 
 @dataclass
 class Toolset(AbstractCapability[AgentDepsT]):
+    """A capability that provides a toolset."""
+
     toolset: AbstractToolset[AgentDepsT]
 
     @classmethod

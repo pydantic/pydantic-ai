@@ -74,6 +74,7 @@ from .abstract import (
     AbstractAgent,
     AgentMetadata,
     EventStreamHandler,
+    Instructions,
     RunOutputDataT,
 )
 from .wrapper import WrapperAgent
@@ -343,6 +344,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
                 multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
                 to `run()` or `iter()` will wait until a slot becomes available.
+            capabilities: Optional list of capabilities to register with the agent.
         """
         if model is None or defer_model_check:
             self._model = model
