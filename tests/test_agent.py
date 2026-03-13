@@ -6814,6 +6814,110 @@ async def test_retry_message_no_tools():
     assert retry_parts[0].content == 'Please return text.'
 
 
+async def test_thinking_only_response_retry_with_tool_output():
+    """Test that thinking-only responses retry with tool-output guidance when text output is not allowed."""
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools is not None
+
+        if call_count == 1:
+            return ModelResponse(parts=[ThinkingPart(content='thinking...')])
+        else:
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "ok"}')])
+
+    result = await Agent(FunctionModel(model_function), output_type=ToolOutput(Foo)).run('Hello')
+
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart)
+    ]
+    assert len(retry_parts) == 1
+    assert retry_parts[0].content == 'Please include your response in a tool call.'
+    assert result.output == Foo(a=1, b='ok')
+
+
+async def test_thinking_only_response_backward_looking_recovery():
+    """Test that thinking-only response after a tool call recovers text from prior model response."""
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # First call: return text alongside a tool call
+            return ModelResponse(
+                parts=[
+                    TextPart(content="Here's my analysis."),
+                    ToolCallPart(tool_name='save_progress', args='{"data": "test"}'),
+                ],
+            )
+        else:
+            # Second call (after tool return): return thinking-only
+            return ModelResponse(
+                parts=[ThinkingPart(content='Nothing more to say.')],
+            )
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def save_progress(data: str) -> str:
+        return 'saved'
+
+    result = await agent.run('Hello')
+
+    assert result.output == "Here's my analysis."
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content="Here's my analysis."),
+                    ToolCallPart(tool_name='save_progress', args='{"data": "test"}', tool_call_id=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=9),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='save_progress',
+                        content='saved',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='Nothing more to say.')],
+                usage=RequestUsage(input_tokens=52, output_tokens=14),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_hitl_tool_approval():
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
