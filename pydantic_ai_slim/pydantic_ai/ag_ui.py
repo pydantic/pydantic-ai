@@ -65,6 +65,7 @@ async def handle_ag_ui_request(
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
+    accept_frontend_system_prompt: bool = False,
 ) -> Response:
     """Handle an AG-UI request by running the agent and returning a streaming response.
 
@@ -87,6 +88,7 @@ async def handle_ag_ui_request(
         toolsets: Optional additional toolsets for this run.
         on_complete: Optional callback function called when the agent run completes successfully.
             The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
+        accept_frontend_system_prompt: Whether to accept system prompts sent by the frontend.
 
     Returns:
         A streaming Starlette response with AG-UI protocol events.
@@ -106,6 +108,7 @@ async def handle_ag_ui_request(
         infer_name=infer_name,
         toolsets=toolsets,
         on_complete=on_complete,
+        accept_frontend_system_prompt=accept_frontend_system_prompt,
     )
 
 
@@ -126,6 +129,7 @@ def run_ag_ui(
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
+    accept_frontend_system_prompt: bool = False,
 ) -> AsyncIterator[str]:
     """Run the agent with the AG-UI run input and stream AG-UI protocol events.
 
@@ -149,11 +153,14 @@ def run_ag_ui(
         toolsets: Optional additional toolsets for this run.
         on_complete: Optional callback function called when the agent run completes successfully.
             The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
+        accept_frontend_system_prompt: Whether to accept system prompts sent by the frontend.
 
     Yields:
         Streaming event chunks encoded as strings according to the accept header value.
     """
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=accept)
+    adapter = AGUIAdapter(
+        agent=agent, run_input=run_input, accept=accept, accept_frontend_system_prompt=accept_frontend_system_prompt
+    )
     return adapter.encode_stream(
         adapter.run_stream(
             output_type=output_type,

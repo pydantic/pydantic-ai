@@ -146,3 +146,21 @@ When `sdk_version=6`, the adapter will:
 3. Emit `tool-output-denied` chunks for rejected tools
 
 On the frontend, AI SDK UI's [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) hook handles the approval flow. You can use the [`Confirmation`](https://ai-sdk.dev/elements/components/confirmation) component from AI Elements for a pre-built approval UI, or build your own using the hook's `addToolApprovalResponse` function.
+
+## System Prompts
+
+Agents configured with `system_prompt` or `@agent.system_prompt` work as expected with the Vercel AI adapter — the agent's system prompts are injected into the request sent to the model.
+
+By default, system prompts sent by the frontend are **stripped** for security, since a malicious client could inject arbitrary instructions via crafted API requests. A warning is emitted when this happens.
+
+To accept frontend system prompts instead, pass `accept_frontend_system_prompt=True`:
+
+```python {test="skip" lint="skip"}
+adapter = VercelAIAdapter(
+    agent=agent,
+    run_input=run_input,
+    accept_frontend_system_prompt=True,
+)
+```
+
+When a frontend system prompt is accepted, the agent's own system prompt is not injected — since a `SystemPromptPart` already exists in the history. If the frontend sends no system prompt, the agent's system prompt is injected as usual.

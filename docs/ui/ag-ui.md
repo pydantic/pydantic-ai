@@ -282,6 +282,24 @@ Since `app` is an ASGI application, it can be used with any ASGI server:
 uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 ```
 
+### System prompts
+
+Agents configured with `system_prompt` or `@agent.system_prompt` work as expected with AG-UI — the agent's system prompts are injected into the request sent to the model.
+
+By default, system prompts sent by the frontend (as `SystemMessage` in the AG-UI message history) are **stripped** for security, since a malicious client could inject arbitrary instructions via crafted API requests. A warning is emitted when this happens.
+
+To accept frontend system prompts instead, pass `accept_frontend_system_prompt=True`:
+
+```python {test="skip" lint="skip"}
+adapter = AGUIAdapter(
+    agent=agent,
+    run_input=run_input,
+    accept_frontend_system_prompt=True,
+)
+```
+
+When a frontend system prompt is accepted, the agent's own system prompt is not injected — since a `SystemPromptPart` already exists in the history. If the frontend sends no system prompt, the agent's system prompt is injected as usual.
+
 ## Examples
 
 For more examples of how to use [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] see
