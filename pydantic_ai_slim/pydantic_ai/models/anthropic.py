@@ -797,7 +797,7 @@ class AnthropicModel(Model):
                             id=_guard_tool_call_id(t=response_part),
                             type='tool_use',
                             name=response_part.tool_name,
-                            input=response_part.args_as_dict(),
+                            input=_safe_args_as_dict(response_part),
                         )
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
@@ -1506,3 +1506,20 @@ def _map_mcp_server_result_block(
         content=item.model_dump(mode='json', include={'content', 'is_error'}),
         tool_call_id=item.tool_use_id,
     )
+
+
+def _safe_args_as_dict(part: ToolCallPart | BuiltinToolCallPart) -> dict[str, Any]:
+    """Safely extract tool call arguments as a dict.
+
+    When the LLM produces malformed JSON in tool call arguments, `args_as_dict()`
+    raises a `ValueError`. This helper catches that error and returns an empty dict
+    so that the retry flow can proceed — the retry prompt already contains the
+    parse-error details for the model to self-correct.
+
+    See: https://github.com/pydantic/pydantic-ai/issues/4430
+    """
+    try:
+        return part.args_as_dict()
+    except ValueError:
+        return {}
+
