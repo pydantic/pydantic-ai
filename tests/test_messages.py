@@ -1310,10 +1310,16 @@ def test_tool_return_part_response_methods_with_files():
 def test_tool_return_part_model_response_str_and_user_content():
     img = ImageUrl(url='https://example.com/img.png')
 
-    # No files → fast path returns model_response_str
+    # Scalar string, no files → fast path returns model_response_str
     p_no_files = ToolReturnPart(tool_name='t', content='hello', tool_call_id='c1')
     text, user_content = p_no_files.model_response_str_and_user_content()
     assert text == snapshot('hello')
+    assert user_content == snapshot([])
+
+    # Single-element list, no files → list structure preserved
+    p_single_list = ToolReturnPart(tool_name='t', content=['hello'], tool_call_id='c1b')
+    text, user_content = p_single_list.model_response_str_and_user_content()
+    assert text == snapshot('["hello"]')
     assert user_content == snapshot([])
 
     # Single text + file → scalar text, not JSON array
