@@ -168,12 +168,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         return len(encoding.encode(text))
 
 
-def _map_usage(
-    usage: Usage | None,
-    provider: str,
-    provider_url: str,
-    model: str,
-) -> RequestUsage:
+def _map_usage(usage: Usage | None, provider: str, provider_url: str, model: str) -> RequestUsage:
     # OpenAI SDK types say CreateEmbeddingResponse.usage will always be set, in reality some OpenAI-compatible APIs omit it.
     if usage is None:
         return RequestUsage()

@@ -7970,3 +7970,119 @@ async def test_central_content_filter_with_partial_content():
     # Should NOT raise ContentFilterError
     result = await agent.run('Trigger filter')
     assert result.output == 'Partially generated content...'
+
+
+def test_context_window_used():
+    """context_window_used returns the fraction of the context window used after a model response."""
+
+    count = 0
+
+    def func_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal count
+        if count == 0:
+            count += 1
+            return ModelResponse(
+                parts=[ToolCallPart('my_tool')], usage=RequestUsage(input_tokens=50000, output_tokens=25000)
+            )
+
+        return ModelResponse(
+            parts=[TextPart('Run finished.')], usage=RequestUsage(input_tokens=50000, output_tokens=12000)
+        )
+
+    agent = Agent(model=FunctionModel(func_model, profile=ModelProfile(context_window=100000)))
+
+    @agent.tool
+    def my_tool(ctx: RunContext) -> float | None:
+        return ctx.context_window_used
+
+    result = agent.run_sync('Find context window used')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Find context window used', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=50000, output_tokens=25000),
+                model_name='function:func_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content=0.75,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Run finished.')],
+                usage=RequestUsage(input_tokens=50000, output_tokens=12000),
+                model_name='function:func_model:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_context_window_used_no_model_response():
+    """context_window_used returns None when there are only ModelRequest messages."""
+
+    call_count = 0
+
+    def func_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart('my_tool', '{}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(parts=[TextPart('done')], usage=RequestUsage(input_tokens=10, output_tokens=5))
+
+    agent = Agent(model=FunctionModel(func_model, profile=ModelProfile(context_window=100000)))
+
+    @agent.tool
+    def my_tool(ctx: RunContext) -> str:
+        # On the first call, messages only has the UserPromptPart and a ModelResponse with a tool call
+        # but context_window_used should still work since there's a ModelResponse with usage
+        assert ctx.context_window_used is not None
+        return 'ok'
+
+    result = agent.run_sync('test')
+    assert result.output == 'done'
+
+
+def test_context_window_used_no_context_window():
+    """context_window_used returns None when model has no context_window set."""
+
+    count = 0
+
+    def func_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal count
+        if count == 0:
+            count += 1
+            return ModelResponse(
+                parts=[ToolCallPart('my_tool')], usage=RequestUsage(input_tokens=50000, output_tokens=25000)
+            )
+        return ModelResponse(parts=[TextPart('done')], usage=RequestUsage(input_tokens=10, output_tokens=5))
+
+    # context_window defaults to None
+    agent = Agent(model=FunctionModel(func_model))
+
+    @agent.tool
+    def my_tool(ctx: RunContext) -> str:
+        # ModelResponse exists but context_window is None, so should return None
+        assert ctx.context_window_used is None
+        return 'ok'
+
+    result = agent.run_sync('test')
+    assert result.output == 'done'

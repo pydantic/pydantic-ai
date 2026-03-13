@@ -66,7 +66,8 @@ class NebiusProvider(Provider[AsyncOpenAI]):
 
         # As NebiusProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        result = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        return result.with_upstream(provider, model_name)
 
     @overload
     def __init__(self) -> None: ...

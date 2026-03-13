@@ -1255,7 +1255,12 @@ class AnthropicStreamedResponse(StreamedResponse):
         builtin_tool_calls: dict[str, BuiltinToolCallPart] = {}
         async for event in self._response:
             if isinstance(event, BetaRawMessageStartEvent):
-                self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name)
+                self._usage = _map_usage(
+                    event,
+                    self._provider_name,
+                    self._provider_url,
+                    self._model_name,
+                )
                 self.provider_response_id = event.message.id
                 if event.message.container:
                     self.provider_details = self.provider_details or {}
@@ -1374,7 +1379,13 @@ class AnthropicStreamedResponse(StreamedResponse):
                     pass
 
             elif isinstance(event, BetaRawMessageDeltaEvent):
-                self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name, self._usage)
+                self._usage = _map_usage(
+                    event,
+                    self._provider_name,
+                    self._provider_url,
+                    self._model_name,
+                    self._usage,
+                )
                 if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
                     self.provider_details = self.provider_details or {}
                     self.provider_details['finish_reason'] = raw_finish_reason

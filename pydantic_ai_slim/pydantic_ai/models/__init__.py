@@ -17,6 +17,7 @@ from functools import cache, cached_property
 from typing import Any, Generic, Literal, TypeVar, get_args, overload
 
 import httpx
+from genai_prices.data_snapshot import get_snapshot
 from typing_extensions import TypeAliasType, TypedDict
 
 from .. import _utils
@@ -869,6 +870,22 @@ class Model(ABC):
 
         if effective_tools != profile_supported:
             _profile = replace(_profile, supported_builtin_tools=effective_tools)
+
+        if _profile.context_window is None:
+            for model_ref, provider_id in [
+                (self.model_name, self.system),
+                (self.model_name, None),
+                (_profile.upstream_model_name, _profile.upstream_provider_id),
+            ]:
+                if model_ref is None:  # model_ref is required
+                    continue
+                try:
+                    _, model_info = get_snapshot().find_provider_model(model_ref, None, provider_id, None)
+                    if model_info.context_window is not None:
+                        _profile = replace(_profile, context_window=model_info.context_window)
+                        break
+                except LookupError:
+                    pass
 
         return _profile
 
