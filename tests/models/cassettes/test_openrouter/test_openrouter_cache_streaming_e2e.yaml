@@ -1,0 +1,84 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1504'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - cache_control:
+            ttl: 5m
+            type: ephemeral
+          text: You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+          type: text
+        role: system
+      - content:
+        - cache_control:
+            ttl: 5m
+            type: ephemeral
+          text: Say hello in one word.
+          type: text
+        role: user
+      model: anthropic/claude-sonnet-4.6
+      stream: true
+      stream_options:
+        include_usage: true
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    body:
+      string: |+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        data: {"id":"gen-1773012759-4u9w7As08eMtL75bWtu8","object":"chat.completion.chunk","created":1773012759,"model":"anthropic/claude-4.6-sonnet-20260217","provider":"Amazon Bedrock","choices":[{"index":0,"delta":{"content":"Hello!","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1773012759-4u9w7As08eMtL75bWtu8","object":"chat.completion.chunk","created":1773012759,"model":"anthropic/claude-4.6-sonnet-20260217","provider":"Amazon Bedrock","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}]}
+
+        data: {"id":"gen-1773012759-4u9w7As08eMtL75bWtu8","object":"chat.completion.chunk","created":1773012759,"model":"anthropic/claude-4.6-sonnet-20260217","provider":"Amazon Bedrock","choices":[],"usage":{"prompt_tokens":254,"completion_tokens":5,"total_tokens":259,"cost":0.000837,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.000837,"upstream_inference_prompt_cost":0.000762,"upstream_inference_completions_cost":0.000075},"completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0}}}
+
+        data: [DONE]
+
+    headers:
+      access-control-allow-origin:
+      - '*'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

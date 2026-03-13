@@ -653,6 +653,7 @@ class CachePoint:
 
     - Anthropic
     - Amazon Bedrock (Converse API)
+    - OpenRouter (Anthropic and Gemini models)
     """
 
     kind: Literal['cache-point'] = 'cache-point'
@@ -663,7 +664,8 @@ class CachePoint:
 
     Supported by:
 
-    * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
+    * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information.
+    * OpenRouter with Anthropic models (automatically omitted for Gemini models, which do not support explicit TTL)."""
 
 
 UploadedFileProviderName: TypeAlias = Literal['anthropic', 'openai', 'google-gla', 'google-vertex', 'bedrock', 'xai']
