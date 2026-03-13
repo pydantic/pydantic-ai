@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -76,6 +77,24 @@ class SpanQuery(TypedDict, total=False):
     some_ancestor_has: SpanQuery
     all_ancestors_have: SpanQuery
     no_ancestor_has: SpanQuery
+
+
+def _attribute_value_matches(stored: AttributeValue | None, expected: Any) -> bool:
+    """Compare a stored span attribute value against an expected query value.
+
+    OpenTelemetry attribute values only support primitive types and sequences of primitives.
+    When complex values like dicts are set as attributes, instrumentation libraries (e.g. logfire)
+    serialize them to JSON strings. This function handles that case by attempting to deserialize
+    stored JSON strings and comparing as Python objects when a direct comparison fails.
+    """
+    if stored == expected:
+        return True
+    if isinstance(stored, str) and not isinstance(expected, str):
+        try:
+            return json.loads(stored) == expected
+        except (json.JSONDecodeError, ValueError):
+            return False
+    return False
 
 
 @dataclass(repr=False, kw_only=True)
@@ -267,7 +286,7 @@ class SpanNode:
 
         # Attribute conditions
         if (has_attributes := query.get('has_attributes')) and not all(
-            self.attributes.get(key) == value for key, value in has_attributes.items()
+            _attribute_value_matches(self.attributes.get(key), value) for key, value in has_attributes.items()
         ):
             return False
         if (has_attributes_keys := query.get('has_attribute_keys')) and not all(

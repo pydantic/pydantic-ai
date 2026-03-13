@@ -15,7 +15,7 @@ with try_import() as imports_successful:
     from pydantic_evals.otel._context_subtree import (
         context_subtree,
     )
-    from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
+    from pydantic_evals.otel.span_tree import SpanNode, SpanQuery, SpanTree
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
@@ -221,6 +221,54 @@ async def test_span_node_matches(span_tree: SpanTree):
     # Test matches by both name and attributes
     assert child1_node.matches(SpanQuery(name_equals='child1', has_attributes={'type': 'important'}))
     assert not child1_node.matches(SpanQuery(name_equals='child1', has_attributes={'type': 'normal'}))
+
+
+async def test_attribute_value_matches_json_serialized_dicts():
+    """Test that has_attributes can match dict values stored as JSON strings.
+
+    When instrumentation libraries like logfire store complex attribute values (dicts, lists),
+    they serialize them to JSON strings since OpenTelemetry only supports primitive attribute types.
+    SpanQuery should still match these by deserializing the stored string before comparison.
+    """
+    from datetime import datetime, timezone
+
+    # Build a SpanNode with a JSON-serialized dict attribute (simulating what logfire does)
+    node = SpanNode(
+        name='test_span',
+        trace_id=1,
+        span_id=1,
+        parent_span_id=None,
+        start_timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        end_timestamp=datetime(2024, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+        attributes={
+            'simple': 'value',
+            'data': '{"foo":1,"bar":true}',
+            'nested': '{"outer":{"inner":"deep"}}',
+            'list_attr': '[1,2,3]',
+            'not_json': 'just a plain string',
+        },
+    )
+
+    # Direct string match still works
+    assert node.matches(SpanQuery(has_attributes={'simple': 'value'}))
+
+    # Dict value matches against its JSON-serialized form
+    assert node.matches(SpanQuery(has_attributes={'data': {'foo': 1, 'bar': True}}))
+
+    # Nested dict value matches
+    assert node.matches(SpanQuery(has_attributes={'nested': {'outer': {'inner': 'deep'}}}))
+
+    # List value matches against its JSON-serialized form
+    assert node.matches(SpanQuery(has_attributes={'list_attr': [1, 2, 3]}))
+
+    # Wrong value still fails
+    assert not node.matches(SpanQuery(has_attributes={'data': {'foo': 2, 'bar': True}}))
+
+    # Non-JSON string does not match a dict query
+    assert not node.matches(SpanQuery(has_attributes={'not_json': {'key': 'value'}}))
+
+    # Missing key fails
+    assert not node.matches(SpanQuery(has_attributes={'missing': 'anything'}))
 
 
 async def test_span_tree_repr(span_tree: SpanTree):
