@@ -1,0 +1,255 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1370'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What files are in the project?
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      system: You are 'JAK of all trades', a General Agent for Knowledge built with Pydantic AI.
+      thinking:
+        type: adaptive
+      tool_choice:
+        type: auto
+      tools:
+      - description: List directory contents.
+        input_schema:
+          additionalProperties: false
+          properties:
+            path:
+              default: .
+              description: The directory path to list. Defaults to the working directory.
+              type: string
+          type: object
+        name: ls
+      - description: |-
+          Read a file from the filesystem.
+
+          Returns text files with line numbers, or renders image files for visual inspection.
+          Use offset and limit to read specific sections of large files.
+        input_schema:
+          additionalProperties: false
+          properties:
+            limit:
+              default: 2000
+              description: Maximum number of lines to read.
+              type: integer
+            offset:
+              default: 0
+              description: The line number to start reading from (0-indexed).
+              type: integer
+            path:
+              description: The file path to read.
+              type: string
+          required:
+          - path
+          type: object
+        name: read_file
+      - allowed_domains: null
+        blocked_domains: null
+        max_uses: null
+        name: web_search
+        type: web_search_20250305
+        user_location: null
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1131'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - proxy;dur=3067
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - signature: EoECCkYICxgCKkC9kJCXnOOozw4bb7SQwd10I18p4QT0LvSiuTO/Kk/ZS5SKjCQssQB85RrsI7qMW6tOpK1FTXOJJXXhF7A9vpaZEgxdSMy6KvrYNmOcaPcaDJ+oHBevUe3CAQOckCIwXfS7Ot83dITN3n9me6U1mqQA/QsgryeMElup11XKF2FbMSSLcYmxiU06wI5IeBeQKmna9uKDLeuzEyjc9zgnAQUillFZdMl5RyhFFeOn/W4CtUayUtIuIjO2uCRcIf3SF2ofFguM+QPrrPEPDAk8DhpJVu0nQiw7fBXw4D8uw4QCTWYovfOczc6zdXuOoDPx8hDfSaDgltt784EYAQ==
+        thinking: The user wants to know what files are in the project. Let me list the directory contents.
+        type: thinking
+      - text: Sure! Let me take a look at the project directory for you!
+        type: text
+      - caller:
+          type: direct
+        id: toolu_012sQMLodvEG5SR6CbBzAVgR
+        input: {}
+        name: ls
+        type: tool_use
+      id: msg_0144Q9U7pi8P2FVcvBpXojeU
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 2483
+        output_tokens: 83
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2258'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What files are in the project?
+          type: text
+        role: user
+      - content:
+        - signature: EoECCkYICxgCKkC9kJCXnOOozw4bb7SQwd10I18p4QT0LvSiuTO/Kk/ZS5SKjCQssQB85RrsI7qMW6tOpK1FTXOJJXXhF7A9vpaZEgxdSMy6KvrYNmOcaPcaDJ+oHBevUe3CAQOckCIwXfS7Ot83dITN3n9me6U1mqQA/QsgryeMElup11XKF2FbMSSLcYmxiU06wI5IeBeQKmna9uKDLeuzEyjc9zgnAQUillFZdMl5RyhFFeOn/W4CtUayUtIuIjO2uCRcIf3SF2ofFguM+QPrrPEPDAk8DhpJVu0nQiw7fBXw4D8uw4QCTWYovfOczc6zdXuOoDPx8hDfSaDgltt784EYAQ==
+          thinking: The user wants to know what files are in the project. Let me list the directory contents.
+          type: thinking
+        - text: Sure! Let me take a look at the project directory for you!
+          type: text
+        - id: toolu_012sQMLodvEG5SR6CbBzAVgR
+          input: {}
+          name: ls
+          type: tool_use
+        role: assistant
+      - content:
+        - content: |-
+            README.md (39 bytes)
+            main.py (21 bytes)
+          is_error: false
+          tool_use_id: toolu_012sQMLodvEG5SR6CbBzAVgR
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      system: You are 'JAK of all trades', a General Agent for Knowledge built with Pydantic AI.
+      thinking:
+        type: adaptive
+      tool_choice:
+        type: auto
+      tools:
+      - description: List directory contents.
+        input_schema:
+          additionalProperties: false
+          properties:
+            path:
+              default: .
+              description: The directory path to list. Defaults to the working directory.
+              type: string
+          type: object
+        name: ls
+      - description: |-
+          Read a file from the filesystem.
+
+          Returns text files with line numbers, or renders image files for visual inspection.
+          Use offset and limit to read specific sections of large files.
+        input_schema:
+          additionalProperties: false
+          properties:
+            limit:
+              default: 2000
+              description: Maximum number of lines to read.
+              type: integer
+            offset:
+              default: 0
+              description: The line number to start reading from (0-indexed).
+              type: integer
+            path:
+              description: The file path to read.
+              type: string
+          required:
+          - path
+          type: object
+        name: read_file
+      - allowed_domains: null
+        blocked_domains: null
+        max_uses: null
+        name: web_search
+        type: web_search_20250305
+        user_location: null
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '808'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - proxy;dur=3285
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: "The project currently contains **2 files**:\n\n1. \U0001F4C4 **`README.md`** *(39 bytes)* - A Markdown file,
+          likely containing documentation or a description of the project.\n2. \U0001F40D **`main.py`** *(21 bytes)* - A Python
+          source file, likely the main entry point of the application.\n\nWould you like me to read the contents of either
+          file?"
+        type: text
+      id: msg_01VT3wcJQf4ZpFcYfTS7MNSF
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 2594
+        output_tokens: 100
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

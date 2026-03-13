@@ -239,6 +239,7 @@ def test_docs_examples(
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
+    env.set('TAVILY_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -616,6 +617,12 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'echo "running in Docker"': 'Command executed successfully.',
     'task A': 'Task A completed.',
     'task B': 'Task B completed.',
+    'Find recent papers about transformer architectures': (
+        'Here are some recent papers about transformer architectures from arxiv.org:\n'
+        '\n'
+        '1. "Attention Is All You Need" - The foundational paper on the Transformer model.\n'
+        '2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.'
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -637,7 +644,15 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
 
         assert isinstance(m.content, str)
-        if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
+        if m.content == 'What is the latest news in AI?':
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        'Here are the latest developments in AI: AI continues to advance rapidly with new breakthroughs in large language models and multimodal systems.'
+                    )
+                ]
+            )
+        elif m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='joke_factory', args={'count': 5}, tool_call_id='pyd_ai_tool_call_id')]
             )

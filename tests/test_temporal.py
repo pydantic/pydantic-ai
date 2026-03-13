@@ -19,6 +19,7 @@ from pydantic_ai import (
     AgentStreamEvent,
     BinaryContent,
     BinaryImage,
+    CodeExecutionTool,
     DocumentUrl,
     ExternalToolset,
     FinalResultEvent,
@@ -45,11 +46,14 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client
+from pydantic_ai.messages import UploadedFile
+from pydantic_ai.models import Model, ModelRequestParameters, cached_async_http_client, infer_model_profile
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -472,55 +476,50 @@ async def test_complex_agent_run_in_workflow(
                                 )
                             ],
                         ),
+                        BasicSpan(content='running tool: get_country'),
                         BasicSpan(
-                            content='running 2 tools',
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
                             children=[
-                                BasicSpan(content='running tool: get_country'),
                                 BasicSpan(
-                                    content='StartActivity:agent__complex_agent__event_stream_handler',
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content=IsStr(
+                                                regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                            )
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='running tool: get_product_name',
+                            children=[
+                                BasicSpan(
+                                    content='StartActivity:agent__complex_agent__mcp_server__mcp__call_tool',
                                     children=[
                                         BasicSpan(
-                                            content='RunActivity:agent__complex_agent__event_stream_handler',
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
-                                            ],
+                                            content='RunActivity:agent__complex_agent__mcp_server__mcp__call_tool'
                                         )
                                     ],
-                                ),
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
                                 BasicSpan(
-                                    content='running tool: get_product_name',
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
                                     children=[
+                                        BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='StartActivity:agent__complex_agent__mcp_server__mcp__call_tool',
-                                            children=[
-                                                BasicSpan(
-                                                    content='RunActivity:agent__complex_agent__mcp_server__mcp__call_tool'
-                                                )
-                                            ],
-                                        )
+                                            content=IsStr(
+                                                regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                            )
+                                        ),
                                     ],
-                                ),
-                                BasicSpan(
-                                    content='StartActivity:agent__complex_agent__event_stream_handler',
-                                    children=[
-                                        BasicSpan(
-                                            content='RunActivity:agent__complex_agent__event_stream_handler',
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
-                                            ],
-                                        )
-                                    ],
-                                ),
+                                )
                             ],
                         ),
                         BasicSpan(
@@ -578,37 +577,32 @@ async def test_complex_agent_run_in_workflow(
                             ],
                         ),
                         BasicSpan(
-                            content='running 1 tool',
+                            content='running tool: get_weather',
                             children=[
                                 BasicSpan(
-                                    content='running tool: get_weather',
+                                    content='StartActivity:agent__complex_agent__toolset__<agent>__call_tool',
                                     children=[
                                         BasicSpan(
-                                            content='StartActivity:agent__complex_agent__toolset__<agent>__call_tool',
-                                            children=[
-                                                BasicSpan(
-                                                    content='RunActivity:agent__complex_agent__toolset__<agent>__call_tool'
-                                                )
-                                            ],
+                                            content='RunActivity:agent__complex_agent__toolset__<agent>__call_tool'
                                         )
                                     ],
-                                ),
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
                                 BasicSpan(
-                                    content='StartActivity:agent__complex_agent__event_stream_handler',
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
                                     children=[
+                                        BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='RunActivity:agent__complex_agent__event_stream_handler',
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=2'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
-                                            ],
-                                        )
+                                            content=IsStr(
+                                                regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                            )
+                                        ),
                                     ],
-                                ),
+                                )
                             ],
                         ),
                         BasicSpan(
@@ -2153,6 +2147,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     # but temporal tests fail when we use IsNow
                     timestamp=IsDatetime(),
                     instructions='Just call tools without asking for confirmation.',
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -2505,6 +2500,54 @@ async def test_document_url_serialization_preserves_media_type(allow_model_reque
         )
 
 
+# ============================================================================
+# UploadedFile Serialization Test - Verifies that UploadedFile with custom
+# media_type is properly serialized through Temporal activities
+# ============================================================================
+
+uploaded_file_agent = Agent(
+    TestModel(
+        custom_output_args={
+            'file_id': 'file-abc123',
+            'provider_name': 'openai',
+            'media_type': 'image/png',
+            'identifier': 'file-1',
+        }
+    ),
+    name='uploaded_file_agent',
+    output_type=UploadedFile,
+)
+
+uploaded_file_temporal_agent = TemporalAgent(uploaded_file_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class UploadedFileAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> UploadedFile:
+        result = await uploaded_file_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_uploaded_file_serialization_preserves_media_type(allow_model_requests: None, client: Client):
+    """Test that `UploadedFile` with custom `media_type` is preserved through Temporal serialization."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UploadedFileAgentWorkflow],
+        plugins=[AgentPlugin(uploaded_file_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            UploadedFileAgentWorkflow.run,
+            args=['Return a file reference'],
+            id=UploadedFileAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot(
+            UploadedFile(file_id='file-abc123', provider_name='openai', _media_type='image/png', _identifier='file-1')
+        )
+
+
 # Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
 web_search_model = OpenAIResponsesModel(
     'gpt-5',
@@ -2844,6 +2887,96 @@ class MultiModelWorkflow:
         return result.output
 
 
+class _BuiltinToolModel(TestModel):
+    SUPPORTED_TOOLS: frozenset[type[AbstractBuiltinTool]] = frozenset()
+
+    @classmethod
+    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+        return cls.SUPPORTED_TOOLS
+
+    def _request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        # Override to skip TestModel._request's builtin tools rejection
+        return ModelResponse(parts=[TextPart(self.custom_output_text or '')], model_name=self.model_name)
+
+
+class _WebSearchOnlyModel(_BuiltinToolModel):
+    SUPPORTED_TOOLS = frozenset({WebSearchTool})
+
+
+class _CodeExecutionOnlyModel(_BuiltinToolModel):
+    SUPPORTED_TOOLS = frozenset({CodeExecutionTool})
+
+
+def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractBuiltinTool:
+    if WebSearchTool in ctx.model.profile.supported_builtin_tools:
+        return WebSearchTool()
+    return CodeExecutionTool()
+
+
+web_search_builtin_model = _WebSearchOnlyModel(custom_output_text='search model', model_name='web-search')
+code_execution_builtin_model = _CodeExecutionOnlyModel(custom_output_text='code model', model_name='code-exec')
+
+builtin_tool_agent = Agent(
+    web_search_builtin_model,
+    name='builtin_tool_dynamic_agent',
+    builtin_tools=[_select_builtin_tool],
+)
+
+builtin_tool_temporal_agent = TemporalAgent(
+    builtin_tool_agent,
+    name='builtin_tool_dynamic_agent',
+    models={'code': code_execution_builtin_model},
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class BuiltinToolWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, model_id: str | None = None) -> str:
+        result = await builtin_tool_temporal_agent.run(prompt, model=model_id)
+        return result.output
+
+
+# Model that does NOT support any builtin tools (used as default)
+no_builtin_support_model = _BuiltinToolModel(custom_output_text='no builtin support', model_name='no-builtin-test')
+
+# Model that DOES support WebSearchTool (registered as alternate model)
+web_search_builtin_override_model = _WebSearchOnlyModel(
+    custom_output_text='web search response',
+    model_name='web-search-override',
+)
+
+# Agent initialized with model that doesn't support builtins, but has builtin tools configured
+builtins_in_workflow_agent = Agent(
+    no_builtin_support_model,
+    builtin_tools=[WebSearchTool()],
+    instrument=True,
+    name='builtins_in_workflow',
+)
+
+# TemporalAgent registers an alternate model that DOES support builtins
+builtins_in_workflow_temporal_agent = TemporalAgent(
+    builtins_in_workflow_agent,
+    name='builtins_in_workflow',
+    models={'web_search': web_search_builtin_override_model},
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class BuiltinsInWorkflow(PydanticAIWorkflow):
+    @workflow.run
+    async def run(self, prompt: str, model_id: str | None = None) -> str:
+        result = await builtins_in_workflow_temporal_agent.run(prompt, model=model_id)
+        return result.output
+
+
 @workflow.defn
 class MultiModelWorkflowUnregistered:
     @workflow.run
@@ -2901,6 +3034,66 @@ async def test_temporal_agent_multi_model_selection_in_workflow(allow_model_requ
             task_queue=TASK_QUEUE,
         )
         assert output == 'Response from model 3'
+
+
+async def test_temporal_dynamic_builtin_tools_select_by_model(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BuiltinToolWorkflow],
+        plugins=[AgentPlugin(builtin_tool_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            BuiltinToolWorkflow.run,
+            args=['Hello', None],
+            id='BuiltinToolWorkflow_default',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'search model'
+        assert isinstance(web_search_builtin_model.last_model_request_parameters, ModelRequestParameters)
+        assert web_search_builtin_model.last_model_request_parameters.builtin_tools
+        assert isinstance(web_search_builtin_model.last_model_request_parameters.builtin_tools[0], WebSearchTool)
+
+        output = await client.execute_workflow(
+            BuiltinToolWorkflow.run,
+            args=['Hello', 'code'],
+            id='BuiltinToolWorkflow_code',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'code model'
+        assert isinstance(code_execution_builtin_model.last_model_request_parameters, ModelRequestParameters)
+        assert code_execution_builtin_model.last_model_request_parameters.builtin_tools
+        assert isinstance(
+            code_execution_builtin_model.last_model_request_parameters.builtin_tools[0],
+            CodeExecutionTool,
+        )
+
+
+async def test_builtins_in_workflow_with_runtime_model_override(allow_model_requests: None, client: Client):
+    """Test that builtin tools work when agent is initialized with a non-supporting model
+    but run with a model that does support builtins."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BuiltinsInWorkflow],
+        plugins=[AgentPlugin(builtins_in_workflow_temporal_agent)],
+    ):
+        # Run with the model that supports WebSearchTool
+        result = await client.execute_workflow(
+            BuiltinsInWorkflow.run,
+            args=['search for something', 'web_search'],
+            id='BuiltinsInWorkflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert result == 'web search response'
+
+    # Verify the web search model received the WebSearchTool in its request parameters
+    assert isinstance(web_search_builtin_override_model.last_model_request_parameters, ModelRequestParameters)
+    assert web_search_builtin_override_model.last_model_request_parameters.builtin_tools
+    assert isinstance(
+        web_search_builtin_override_model.last_model_request_parameters.builtin_tools[0],
+        WebSearchTool,
+    )
 
 
 async def test_temporal_agent_multi_model_unregistered_error(allow_model_requests: None, client: Client):
@@ -3053,6 +3246,49 @@ async def test_temporal_agent_model_selection_by_instance(
             task_queue=TASK_QUEUE,
         )
         assert output == expected_output
+
+
+def test_temporal_model_profile_for_raw_strings():
+    """Test TemporalModel infers model_name, system, and profile from raw strings without constructing providers."""
+
+    default_model = TestModel(custom_output_text='default')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__profile_inference',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # Without using_model, properties come from default
+    assert temporal_model.profile == default_model.profile
+    assert temporal_model.model_name == default_model.model_name
+    assert temporal_model.system == default_model.system
+
+    # With raw string, all properties are inferred correctly
+    with temporal_model.using_model('openai:gpt-5'):
+        assert temporal_model.model_name == 'gpt-5'
+        assert temporal_model.system == 'openai'
+        assert temporal_model.profile == infer_model_profile('openai:gpt-5')
+
+    # Anthropic profile inference includes WebSearchTool support
+    with temporal_model.using_model('anthropic:claude-sonnet-4-5'):
+        assert temporal_model.model_name == 'claude-sonnet-4-5'
+        assert temporal_model.system == 'anthropic'
+        assert temporal_model.profile == infer_model_profile('anthropic:claude-sonnet-4-5')
+
+    # Registered models work correctly for all properties
+    alt_model = TestModel(custom_output_text='alt', model_name='alt-model')
+    temporal_model_with_registry = TemporalModel(
+        default_model,
+        activity_name_prefix='test__profile_registry',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': alt_model},
+    )
+    with temporal_model_with_registry.using_model('alt'):
+        assert temporal_model_with_registry.model_name == 'alt-model'
+        assert temporal_model_with_registry.system == alt_model.system
+        assert temporal_model_with_registry.profile == alt_model.profile
 
 
 async def test_temporal_model_request_outside_workflow():
@@ -3234,6 +3470,114 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
         result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
     assert result['data_converter'].payload_codec is codec
+
+
+def test_temporal_model_profile_with_no_provider_prefix() -> None:
+    """Test TemporalModel uses DEFAULT_PROFILE when model string has no inferable provider."""
+
+    default_model = TestModel(custom_output_text='default')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__no_provider_prefix',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # A model string without a provider prefix that can't be inferred returns DEFAULT_PROFILE
+    with temporal_model.using_model('some-random-model'):
+        assert temporal_model.profile is DEFAULT_PROFILE
+
+
+def test_temporal_model_profile_with_unknown_provider() -> None:
+    """Test TemporalModel uses DEFAULT_PROFILE when provider is unknown."""
+
+    default_model = TestModel(custom_output_text='default')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__unknown_provider',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    # An unknown provider should return DEFAULT_PROFILE
+    with temporal_model.using_model('unknown-provider:some-model'):
+        assert temporal_model.profile is DEFAULT_PROFILE
+
+
+@pytest.mark.parametrize(
+    'model_id',
+    [
+        'openai:gpt-5',
+        'gateway/openai:gpt-5',
+    ],
+)
+def test_temporal_model_prepare_request_with_unregistered_model_string(model_id: str) -> None:
+    """Test prepare_request uses inferred profile for unregistered model strings.
+
+    Verifies that the OpenAI json_schema_transformer is applied to function tool
+    schemas (adding additionalProperties: false) when using an OpenAI model string,
+    both directly and via gateway/.
+    """
+    default_model = TestModel(custom_output_text='default')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__prepare_request_unregistered',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+    )
+
+    tool_def = ToolDefinition(
+        name='my_tool',
+        description='A test tool',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'x': {'type': 'integer'}},
+            'required': ['x'],
+        },
+    )
+
+    model_request_params = ModelRequestParameters(
+        function_tools=[tool_def],
+        builtin_tools=[],
+        output_mode='text',
+        allow_text_output=True,
+        output_tools=[],
+        output_object=None,
+    )
+
+    # With an unregistered model string, prepare_request should use the inferred
+    # profile's json_schema_transformer (OpenAI adds additionalProperties: false)
+    with temporal_model.using_model(model_id):
+        _, params = temporal_model.prepare_request(None, model_request_params)
+        assert params.output_mode == 'text'
+        assert len(params.function_tools) == 1
+        assert params.function_tools[0].parameters_json_schema['additionalProperties'] is False
+
+
+def test_temporal_model_customize_request_parameters_with_registered_model() -> None:
+    """Test customize_request_parameters delegates to the currently active registered model."""
+
+    class _CustomizingTestModel(TestModel):
+        def customize_request_parameters(
+            self, model_request_parameters: ModelRequestParameters
+        ) -> ModelRequestParameters:
+            return ModelRequestParameters(output_mode='tool', allow_text_output=False)
+
+    default_model = TestModel(custom_output_text='default')
+    alternate_model = _CustomizingTestModel(custom_output_text='alternate')
+    temporal_model = TemporalModel(
+        default_model,
+        activity_name_prefix='test__customize_registered',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alternate': alternate_model},
+    )
+
+    with temporal_model.using_model('alternate'):
+        customized = temporal_model.customize_request_parameters(ModelRequestParameters())
+
+    assert customized.output_mode == 'tool'
+    assert customized.allow_text_output is False
 
 
 # Tests for BinaryContent and DocumentUrl serialization in Temporal
