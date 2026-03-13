@@ -19,7 +19,7 @@ from __future__ import annotations as _annotations
 import json
 from datetime import timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel
@@ -98,7 +98,10 @@ with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     from xai_sdk.proto import chat_pb2, usage_pb2
 
-    from pydantic_ai.models.xai import XaiModel, XaiModelSettings
+    from pydantic_ai.models.xai import (
+        XaiModel,
+        XaiModelSettings,
+    )
     from pydantic_ai.providers.xai import XaiProvider
 
 
@@ -125,6 +128,24 @@ def test_xai_init():
 
     assert m.model_name == XAI_NON_REASONING_MODEL
     assert m.system == 'xai'
+
+
+def test_xai_client_property_reflects_provider_changes():
+    class _SwappableXaiProvider(XaiProvider):
+        @XaiProvider.client.setter
+        def client(self, client: Any) -> None:
+            self._lazy_client = None
+            self._client = client
+
+    client_a = cast(Any, MockXai())
+    provider = _SwappableXaiProvider(xai_client=client_a)
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=provider)
+
+    assert m.client is client_a
+
+    client_b = cast(Any, MockXai())
+    provider.client = client_b
+    assert m.client is client_b
 
 
 def test_xai_init_with_fixture_api_key(xai_api_key: str):

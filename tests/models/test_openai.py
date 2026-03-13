@@ -110,6 +110,23 @@ def test_init():
     assert m.model_name == 'gpt-4o'
 
 
+def test_openai_chat_client_property_reflects_provider_changes():
+    class _SwappableOpenAIProvider(OpenAIProvider):
+        @OpenAIProvider.client.setter
+        def client(self, client: AsyncOpenAI) -> None:
+            self._client = client
+
+    client_a = cast(AsyncOpenAI, MockOpenAI())
+    provider = _SwappableOpenAIProvider(openai_client=client_a)
+    model = OpenAIChatModel('gpt-4o', provider=provider)
+
+    assert model.client is client_a
+
+    client_b = cast(AsyncOpenAI, MockOpenAI())
+    provider.client = client_b
+    assert model.client is client_b
+
+
 @pytest.mark.parametrize(
     'aspect_ratio,size,expected',
     [
