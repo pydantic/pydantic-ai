@@ -18,10 +18,11 @@ from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..builtin_tools import BUILTIN_TOOLS_REQUIRING_CONFIG, SUPPORTED_BUILTIN_TOOLS
 from ..exceptions import UserError
-from ..messages import ModelMessage, ModelResponse
+from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse, ToolReturnPart
 from ..models import KnownModelName, infer_model
 from ..output import OutputDataT
 from ..settings import ModelSettings
+from ..toolsets import AbstractToolset
 
 try:
     import argcomplete
@@ -248,6 +249,10 @@ subcommands:
         default='dark',
     )
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
+    parser.add_argument(
+        '--mcp-config',
+        help='Path to MCP servers configuration file (JSON, same format as Claude Desktop).',
+    )
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
@@ -279,6 +284,17 @@ def _run_chat_command(
             return 1
         agent = loaded
 
+    toolsets: Sequence[AbstractToolset[Any]] = ()
+    if args.mcp_config:
+        try:
+            from ..mcp import load_mcp_servers
+        except ImportError as e:  # pragma: no cover
+            raise ImportError(
+                'Please install the `mcp` package to use --mcp-config, '
+                'you can use the `mcp` optional group - `pip install "pydantic-ai-slim[mcp]"`'
+            ) from e
+        toolsets = load_mcp_servers(args.mcp_config)
+
     model_arg_set = args.model is not None
     if agent.model is None or model_arg_set:
         try:
@@ -308,13 +324,13 @@ def _run_chat_command(
 
     if args.prompt:
         try:
-            asyncio.run(ask_agent(agent, args.prompt, stream, console, code_theme))
+            asyncio.run(ask_agent(agent, args.prompt, stream, console, code_theme, toolsets=toolsets))
         except KeyboardInterrupt:
             pass
         return 0
 
     try:
-        return asyncio.run(run_chat(stream, agent, console, code_theme, prog_name))
+        return asyncio.run(run_chat(stream, agent, console, code_theme, prog_name, toolsets=toolsets))
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 
@@ -330,6 +346,7 @@ async def run_chat(
     message_history: Sequence[ModelMessage] | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] = (),
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -357,7 +374,16 @@ async def run_chat(
         else:
             try:
                 messages = await ask_agent(
-                    agent, text, stream, console, code_theme, deps, messages, model_settings, usage_limits
+                    agent,
+                    text,
+                    stream,
+                    console,
+                    code_theme,
+                    deps,
+                    messages,
+                    model_settings,
+                    usage_limits,
+                    toolsets=toolsets,
                 )
             except CancelledError:  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
@@ -378,32 +404,67 @@ async def ask_agent(
     messages: Sequence[ModelMessage] | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] = (),
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
     if not stream:
         with status:
-            result = await agent.run(prompt, message_history=messages, deps=deps)
+            result = await agent.run(
+                prompt,
+                message_history=messages,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                toolsets=toolsets or None,
+            )
         content = str(result.output)
         console.print(Markdown(content, code_theme=code_theme))
         return result.all_messages()
 
     with status, ExitStack() as stack:
         async with agent.iter(
-            prompt, message_history=messages, deps=deps, model_settings=model_settings, usage_limits=usage_limits
+            prompt,
+            message_history=messages,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            toolsets=toolsets or None,
         ) as agent_run:
             live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
+            content_pieces: list[str] = []
+            updated_content = ''
+
             async for node in agent_run:
+                status.stop()
+                stack.enter_context(live)
+
                 if Agent.is_model_request_node(node):
                     async with node.stream(agent_run.ctx) as handle_stream:
-                        status.stop()  # stopping multiple times is idempotent
-                        stack.enter_context(live)  # entering multiple times is idempotent
-
                         async for content in handle_stream.stream_output(debounce_by=None):
-                            live.update(Markdown(str(content), code_theme=code_theme))
+                            updated_content = str(content)
+                            display = '\n\n'.join(content_pieces + [updated_content])
+                            live.update(Markdown(display, code_theme=code_theme))
 
-        assert agent_run.result is not None
-        return agent_run.result.all_messages()
+                elif Agent.is_call_tools_node(node):
+                    if updated_content:
+                        content_pieces.append(updated_content)
+                        updated_content = ''
+
+                    async with node.stream(agent_run.ctx) as handle_stream:
+                        async for event in handle_stream:
+                            if isinstance(event, FunctionToolCallEvent):
+                                tool_name = event.part.tool_name
+                                display = '\n\n'.join(content_pieces + [f'> _Calling tool `{tool_name}`..._'])
+                                live.update(Markdown(display, code_theme=code_theme))
+                            elif isinstance(event, FunctionToolResultEvent) and isinstance(  # pragma: no branch
+                                event.result, ToolReturnPart
+                            ):
+                                tool_name = event.result.tool_name
+                                content_pieces.append(f'> Called tool `{tool_name}`.')
+
+            assert agent_run.result is not None
+            return agent_run.result.all_messages()
 
 
 class CustomAutoSuggest(AutoSuggestFromHistory):
