@@ -85,6 +85,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.supports_json_schema_output is False
     assert anthropic_profile.json_schema_transformer is None
     assert anthropic_profile.supported_builtin_tools == frozenset()
+    assert anthropic_profile.bedrock_count_tokens_model_id == 'anthropic.claude-3-5-sonnet-20240620-v1:0'
 
     anthropic_profile = provider.model_profile('anthropic.claude-instant-v1')
     anthropic_model_profile_mock.assert_called_with('claude-instant')
@@ -93,6 +94,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.supports_json_schema_output is False
     assert anthropic_profile.json_schema_transformer is None
     assert anthropic_profile.supported_builtin_tools == frozenset()
+    assert anthropic_profile.bedrock_count_tokens_model_id == 'anthropic.claude-instant-v1'
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
@@ -106,23 +108,27 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(mistral_profile, BedrockModelProfile)
     assert mistral_profile.bedrock_tool_result_format == 'json'
     assert mistral_profile.supported_builtin_tools == frozenset()
+    assert mistral_profile.bedrock_count_tokens_model_id == 'mistral.mistral-large-2407-v1:0'
 
     meta_profile = provider.model_profile('meta.llama3-8b-instruct-v1:0')
     meta_model_profile_mock.assert_called_with('llama3-8b-instruct')
-    assert meta_profile is not None
+    assert isinstance(meta_profile, BedrockModelProfile)
     assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
     assert meta_profile.supported_builtin_tools == frozenset()
+    assert meta_profile.bedrock_count_tokens_model_id == 'meta.llama3-8b-instruct-v1:0'
 
     cohere_profile = provider.model_profile('cohere.command-text-v14')
     cohere_model_profile_mock.assert_called_with('command-text')
-    assert cohere_profile is not None
+    assert isinstance(cohere_profile, BedrockModelProfile)
     assert cohere_profile.supported_builtin_tools == frozenset()
+    assert cohere_profile.bedrock_count_tokens_model_id == 'cohere.command-text-v14'
 
     deepseek_profile = provider.model_profile('deepseek.deepseek-r1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
-    assert deepseek_profile is not None
+    assert isinstance(deepseek_profile, BedrockModelProfile)
     assert deepseek_profile.ignore_streamed_leading_whitespace is True
     assert deepseek_profile.supported_builtin_tools == frozenset()
+    assert deepseek_profile.bedrock_count_tokens_model_id == 'deepseek.deepseek-r1'
 
     amazon_profile = provider.model_profile('us.amazon.nova-pro-v1:0')
     amazon_model_profile_mock.assert_called_with('nova-pro')
@@ -131,6 +137,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert amazon_profile.bedrock_supports_tool_choice is True
     assert amazon_profile.bedrock_supports_prompt_caching is True
     assert amazon_profile.supported_builtin_tools == frozenset()
+    assert amazon_profile.bedrock_count_tokens_model_id == 'amazon.nova-pro-v1:0'
 
     amazon_profile = provider.model_profile('us.amazon.nova-2-lite-v1:0')
     amazon_model_profile_mock.assert_called_with('nova-2-lite')
@@ -142,9 +149,10 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
 
     amazon_profile = provider.model_profile('us.amazon.titan-text-express-v1:0')
     amazon_model_profile_mock.assert_called_with('titan-text-express')
-    assert amazon_profile is not None
+    assert isinstance(amazon_profile, BedrockModelProfile)
     assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
     assert amazon_profile.supported_builtin_tools == frozenset()
+    assert amazon_profile.bedrock_count_tokens_model_id == 'amazon.titan-text-express-v1:0'
 
     unknown_model = provider.model_profile('unknown-model')
     assert unknown_model is None

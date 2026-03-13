@@ -43,6 +43,8 @@ class BedrockModelProfile(ModelProfile):
     bedrock_send_back_thinking_parts: bool = False
     bedrock_supports_prompt_caching: bool = False
     bedrock_supports_tool_caching: bool = False
+    bedrock_count_tokens_model_id: str | None = None
+    """Foundational model ID to use for token counting when the model name is an ARN."""
 
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
@@ -152,7 +154,10 @@ class BedrockProvider(Provider[BaseClient]):
             model_name = model_name_with_version
 
         if provider in provider_to_profile:
-            return provider_to_profile[provider](model_name)
+            count_tokens_model_id = f'{provider}.{model_name_with_version}'
+            return BedrockModelProfile(bedrock_count_tokens_model_id=count_tokens_model_id).update(
+                provider_to_profile[provider](model_name)
+            )
 
         return None
 
