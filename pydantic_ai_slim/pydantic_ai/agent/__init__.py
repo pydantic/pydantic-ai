@@ -444,19 +444,41 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._entered_count = 0
         self._exit_stack = None
 
+    @overload
     @classmethod
     def from_spec(
         cls,
         spec: dict[str, Any] | AgentSpec,
         *,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
-    ) -> Agent[None, str]:
+    ) -> Agent[None, str]: ...
+
+    @overload
+    @classmethod
+    def from_spec(
+        cls,
+        spec: dict[str, Any] | AgentSpec,
+        *,
+        output_type: OutputSpec[T],
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+    ) -> Agent[None, T]: ...
+
+    @classmethod
+    def from_spec(
+        cls,
+        spec: dict[str, Any] | AgentSpec,
+        *,
+        output_type: OutputSpec[Any] | None = None,
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+    ) -> Agent[Any, Any]:
         """Construct an Agent from a spec dict or `AgentSpec`.
 
         This allows defining agents declaratively in YAML/JSON/dict form.
 
         Args:
             spec: The agent specification, either a dict or an `AgentSpec` instance.
+            output_type: The output type for the agent. If provided, takes precedence over
+                `output_schema` in the spec.
             custom_capability_types: Additional capability classes to make available
                 beyond the built-in defaults.
 
@@ -468,6 +490,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         from pydantic_ai.capabilities import DEFAULT_CAPABILITY_TYPES
 
         validated_spec = _AgentSpecModel.model_validate(spec) if isinstance(spec, dict) else spec
+
+        effective_output_type: OutputSpec[Any]
+        if output_type is not None:
+            effective_output_type = output_type
+        elif validated_spec.output_schema is not None:
+            from pydantic_ai.output import StructuredDict
+
+            effective_output_type = StructuredDict(validated_spec.output_schema)
+        else:
+            effective_output_type = str
 
         registry = build_registry(
             custom_types=custom_capability_types,
@@ -487,7 +519,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
             capabilities.append(capability)
 
-        return Agent(model=validated_spec.model, capabilities=capabilities)
+        return Agent(model=validated_spec.model, output_type=effective_output_type, capabilities=capabilities)
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:

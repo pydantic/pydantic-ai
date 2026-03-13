@@ -324,3 +324,75 @@ def test_agent_from_spec_with_agent_spec_object():
     )
     agent = Agent.from_spec(spec)
     assert agent.model is not None
+
+
+def test_agent_from_spec_output_type():
+    """Test Agent.from_spec with output_type parameter."""
+    from pydantic import BaseModel
+
+    class MyOutput(BaseModel):
+        name: str
+        value: int
+
+    agent = Agent.from_spec({'model': 'test'}, output_type=MyOutput)
+    assert agent.output_type == MyOutput
+
+
+def test_agent_from_spec_output_schema():
+    """Test Agent.from_spec with output_schema in spec."""
+    schema = {
+        'type': 'object',
+        'properties': {
+            'name': {'type': 'string'},
+            'age': {'type': 'integer'},
+        },
+        'required': ['name', 'age'],
+    }
+    agent = Agent.from_spec({'model': 'test', 'output_schema': schema})
+    # output_type should be a StructuredDict subclass (dict subclass with JSON schema)
+    assert agent.output_type is not str
+    assert isinstance(agent.output_type, type) and issubclass(agent.output_type, dict)
+
+
+def test_agent_from_spec_output_type_takes_precedence():
+    """Test that output_type parameter takes precedence over output_schema in spec."""
+    from pydantic import BaseModel
+
+    class MyOutput(BaseModel):
+        name: str
+
+    schema = {
+        'type': 'object',
+        'properties': {'name': {'type': 'string'}},
+        'required': ['name'],
+    }
+    agent = Agent.from_spec({'model': 'test', 'output_schema': schema}, output_type=MyOutput)
+    assert agent.output_type == MyOutput
+
+
+def test_agent_from_spec_output_schema_invalid():
+    """Test Agent.from_spec with a non-object output_schema raises UserError."""
+    from pydantic_ai.exceptions import UserError
+
+    with pytest.raises(UserError, match='Schema must be an object'):
+        Agent.from_spec({'model': 'test', 'output_schema': {'type': 'string'}})
+
+
+async def test_agent_from_spec_output_schema_integration():
+    """Test Agent.from_spec with output_schema produces dict output."""
+    from pydantic_ai.models.test import TestModel
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'city': {'type': 'string'},
+            'country': {'type': 'string'},
+        },
+        'required': ['city', 'country'],
+    }
+    agent = Agent.from_spec({'model': 'test', 'output_schema': schema})
+    result = await agent.run(
+        'Tell me a city',
+        model=TestModel(custom_output_args={'city': 'Paris', 'country': 'France'}),
+    )
+    assert result.output == {'city': 'Paris', 'country': 'France'}

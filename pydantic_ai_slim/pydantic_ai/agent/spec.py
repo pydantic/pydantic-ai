@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel
 
 from pydantic_ai._spec import NamedSpec
@@ -20,4 +22,5 @@ class AgentSpec(BaseModel):
     """Specification for constructing an Agent from a dict/YAML/JSON."""
 
     model: str
+    output_schema: dict[str, Any] | None = None
     capabilities: list[CapabilitySpec] = []
