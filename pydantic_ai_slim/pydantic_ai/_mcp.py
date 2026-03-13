@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Sequence
-from typing import Literal
+from typing import Any, Literal
 
+import logfire
+from pydantic.alias_generators import to_snake
 from typing_extensions import assert_never
 
+from pydantic_ai.agent.abstract import AbstractAgent
+
 from . import exceptions, messages
+from .agent import AgentDepsT, OutputDataT
 
 try:
     from mcp import types as mcp_types
+    from mcp.server.lowlevel.server import Server, StructuredContent
+    from mcp.types import Tool
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `mcp` package to use the MCP server, '
@@ -135,3 +142,53 @@ def map_from_sampling_content(
     else:
         # TODO: Add support for Image/Audio using FilePart.
         raise NotImplementedError('Image and Audio responses in sampling are not yet supported')
+
+
+def agent_to_mcp(
+    agent: AbstractAgent[AgentDepsT, OutputDataT],
+    *,
+    server_name: str | None = None,
+    tool_name: str | None = None,
+    tool_description: str | None = None,
+    deps: AgentDepsT = None,
+) -> Server:
+    server_name = to_snake((server_name or agent.name or 'PydanticAI Agent').replace(' ', '_'))
+    tool_name = to_snake((tool_name or agent.name or 'PydanticAI Agent').replace(' ', '_'))
+    app = Server(name=server_name)
+
+    async def list_tools() -> list[Tool]:
+        return [
+            Tool(
+                name=tool_name,
+                description=tool_description,
+                inputSchema={
+                    'type': 'object',
+                    'properties': {'prompt': {'type': 'string'}},
+                    'required': ['prompt'],
+                },
+                outputSchema={
+                    'type': 'object',
+                    'properties': {'result': agent.output_json_schema()},
+                    'required': ['result'],
+                },
+            )
+        ]
+
+    async def call_tool(name: str, args: dict[str, Any]) -> StructuredContent:
+        if name != tool_name:
+            raise ValueError(f'Unknown tool: {name}')
+
+        prompt = args.get('prompt')
+        if not isinstance(prompt, str):
+            raise ValueError(f"Expected 'prompt' argument to be a string, got {type(prompt).__name__}")
+
+        logfire.info('Calling tool {name}', name=name, args=args)
+
+        result = await agent.run(user_prompt=prompt, deps=deps)
+
+        return dict(result=result.output)
+
+    app.list_tools()(list_tools)
+    app.call_tool()(call_tool)
+
+    return app
