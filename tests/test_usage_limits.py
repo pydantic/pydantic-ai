@@ -379,6 +379,24 @@ def test_add_usages():
     assert RunUsage() + RunUsage() == RunUsage()
 
 
+
+
+def test_add_usage_does_not_mutate_original_details():
+    """Regression test for shallow-copy details dict mutation in Usage.__add__.
+
+    Adding usage should not mutate the original usage object (particularly the `details` dict).
+    """
+
+    u1 = RunUsage(details={"a": 1})
+    u2 = RunUsage(details={"a": 2, "b": 3})
+
+    u3 = u1 + u2
+
+    assert u3.details == {"a": 3, "b": 3}
+    # Original should be unchanged
+    assert u1.details == {"a": 1}
+
+
 def test_add_usages_with_none_detail_value():
     """Test that None values in details are skipped when incrementing usage."""
     usage = RunUsage(

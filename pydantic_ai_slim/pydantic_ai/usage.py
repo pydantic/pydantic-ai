@@ -2,6 +2,12 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from copy import copy
+
+
+def _copy_usage_details(u: "UsageBase") -> dict[str, int]:
+    """Copy details dict to avoid mutating original usage when using shallow copy()."""
+    return u.details.copy()
+
 from dataclasses import dataclass, fields
 from typing import Annotated, Any
 
@@ -129,6 +135,7 @@ class RequestUsage(UsageBase):
         **WARNING:** this CANNOT be used to sum multiple requests without breaking some pricing calculations.
         """
         new_usage = copy(self)
+        new_usage.details = _copy_usage_details(self)
         new_usage.incr(other)
         return new_usage
 
@@ -217,6 +224,7 @@ class RunUsage(UsageBase):
         This is provided so it's trivial to sum usage information from multiple runs.
         """
         new_usage = copy(self)
+        new_usage.details = _copy_usage_details(self)
         new_usage.incr(other)
         return new_usage
 
