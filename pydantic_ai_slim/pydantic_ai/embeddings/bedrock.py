@@ -518,6 +518,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
         *,
         provider: Literal['bedrock'] | Provider[BaseClient] = 'bedrock',
         settings: EmbeddingSettings | None = None,
+        base_model_name: BedrockEmbeddingModelName | None = None,
     ):
         """Initialize a Bedrock embedding model.
 
@@ -533,6 +534,9 @@ class BedrockEmbeddingModel(EmbeddingModel):
 
             settings: Model-specific [`EmbeddingSettings`][pydantic_ai.embeddings.EmbeddingSettings]
                 to use as defaults for this model.
+
+            base_model_name: The underlying foundation model name, used to determine request/response format
+                when `model_name` is an application inference profile ARN. Defaults to `model_name`.
         """
         self._model_name = model_name
 
@@ -540,7 +544,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
             provider = infer_provider(provider)
         self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
-        self._handler = _get_handler_for_model(model_name)
+        self._handler = _get_handler_for_model(base_model_name or model_name)
 
         super().__init__(settings=settings)
 
@@ -588,7 +592,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
             inputs=inputs,
             input_type=input_type,
             usage=RequestUsage(input_tokens=input_tokens),
-            model_name=self.model_name,
+            model_name=self._handler.model_name,
             provider_name=self.system,
             provider_response_id=response_id,
         )
@@ -624,7 +628,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
             inputs=inputs,
             input_type=input_type,
             usage=RequestUsage(input_tokens=total_input_tokens),
-            model_name=self.model_name,
+            model_name=self._handler.model_name,
             provider_name=self.system,
         )
 
