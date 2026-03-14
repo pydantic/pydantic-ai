@@ -1077,13 +1077,13 @@ class TestBedrock:
         )
 
     async def test_arn_inference_profile_model_name(self, bedrock_provider: BedrockProvider):
-        """Test that the model_name property returns the embedding model when ARN inference profile is used."""
+        """Test that the model_name property returns arn when inference profile is used."""
         model = BedrockEmbeddingModel(
             'arn:aws:bedrock:us-east-1:000000000000:application-inference-profile/abcd123',
             provider=bedrock_provider,
             base_model_name='amazon.titan-embed-text-v2:0',
         )
-        assert model.model_name == 'amazon.titan-embed-text-v2:0'
+        assert model.model_name == 'arn:aws:bedrock:us-east-1:000000000000:application-inference-profile/abcd123'
 
     async def test_arn_inference_profile_embed_query(self, bedrock_provider: BedrockProvider):
         """Test that embedding with an ARN inference profile works correctly."""
@@ -1110,7 +1110,7 @@ class TestBedrock:
         """Test that providing an ARN inference profile without the base name raises an error."""
         with pytest.raises(UserError, match='Unsupported Bedrock embedding model'):
             BedrockEmbeddingModel(
-                'arn:aws:bedrock:us-east-1:000000000000 :application-inference-profile/abcd123',
+                'arn:aws:bedrock:us-east-1:000000000000:application-inference-profile/abcd123',
                 provider=bedrock_provider,
             )
 
