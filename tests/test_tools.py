@@ -3023,6 +3023,8 @@ def test_docstring_example_with_and_without_output():
         My tool.
 
         Examples:
+            Some text explanation.
+
             >>> my_tool(1)
             1
             >>> my_tool(2)
@@ -3030,7 +3032,12 @@ def test_docstring_example_with_and_without_output():
         return x  # pragma: no cover
 
     tool = Tool(my_tool)
-    assert tool.description == 'My tool.\n\nExamples:\n    >>> my_tool(1)\n    1\n    >>> my_tool(2)'
+
+    expected_description = (
+        'My tool.\n\nExamples:\n    Some text explanation.\n\n    >>> my_tool(1)\n    1\n    >>> my_tool(2)'
+    )
+
+    assert tool.description == expected_description
 
 
 def test_tool_examples_fallback():
