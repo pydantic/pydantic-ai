@@ -30,6 +30,7 @@ with try_import() as imports_successful:
     from fastmcp.exceptions import ToolError
     from fastmcp.server.server import FastMCP
     from mcp.types import (
+        Annotations,
         AnyUrl,
         AudioContent,
         BlobResourceContents,
@@ -601,3 +602,98 @@ server.run()"""
         toolset = FastMCPToolset(config_dict)
         client = toolset.client
         assert isinstance(client.transport, MCPConfigTransport)
+
+
+class TestAudienceFiltering:
+    """Tests for audience annotation filtering added in fix/mcp-respect-audience-annotations.
+
+    All tests exercise the public call_tool API rather than private helpers.
+    """
+
+    async def test_call_tool_user_only_content_returns_placeholder(self, run_context: RunContext[None]) -> None:
+        """When all content blocks are annotated for user-only, the model receives the placeholder."""
+        fastmcp_server = FastMCP('test_server')
+
+        @fastmcp_server.tool()
+        def user_only_tool() -> list[TextContent]:
+            return [TextContent(type='text', text='secret', annotations=Annotations(audience=['user']))]
+
+        toolset = FastMCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool(
+                name='user_only_tool', tool_args={}, ctx=run_context, tool=tools['user_only_tool']
+            )
+        assert result == 'Tool executed successfully. (No model-visible content in result.)'
+
+    async def test_call_tool_assistant_content_passes_through(self, run_context: RunContext[None]) -> None:
+        """Content annotated for assistant (or with no annotation) passes through unchanged."""
+        fastmcp_server = FastMCP('test_server')
+
+        @fastmcp_server.tool()
+        def assistant_tool() -> list[TextContent]:
+            return [TextContent(type='text', text='hello model', annotations=Annotations(audience=['assistant']))]
+
+        toolset = FastMCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool(
+                name='assistant_tool', tool_args={}, ctx=run_context, tool=tools['assistant_tool']
+            )
+        assert result == 'hello model'
+
+    async def test_call_tool_no_annotation_passes_through(self, run_context: RunContext[None]) -> None:
+        """Content with no audience annotation is always forwarded to the model.
+
+        FastMCP wraps plain str returns in a ``{'result': ...}`` structured-content dict;
+        the toolset returns that dict as-is since no audience filtering applies.
+        """
+        fastmcp_server = FastMCP('test_server')
+
+        @fastmcp_server.tool()
+        def plain_tool() -> str:
+            return 'plain result'
+
+        toolset = FastMCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool(name='plain_tool', tool_args={}, ctx=run_context, tool=tools['plain_tool'])
+        assert result == {'result': 'plain result'}
+
+    async def test_call_tool_empty_content_returns_structured_content(self, run_context: RunContext[None]) -> None:
+        """A tool that returns an empty list gets wrapped in structured_content by FastMCP."""
+        fastmcp_server = FastMCP('test_server')
+
+        @fastmcp_server.tool()
+        def empty_tool() -> list[Any]:
+            return []
+
+        toolset = FastMCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool(name='empty_tool', tool_args={}, ctx=run_context, tool=tools['empty_tool'])
+            # FastMCP wraps the return value as structured_content; an empty list
+            # becomes {'result': []} so the model knows the tool ran successfully.
+            assert result == {'result': []}
+
+    @pytest.mark.anyio
+    async def test_call_tool_empty_typed_content_returns_empty_list(self, run_context: RunContext[None]) -> None:
+        """A tool typed as list[TextContent] returning [] gives empty content with no structured_content.
+
+        FastMCP recognises list[TextContent] as a content-type return and does not
+        serialise it into structured_content, so call_tool should return [].
+        """
+        fastmcp_server = FastMCP('test_server')
+
+        @fastmcp_server.tool()
+        def empty_typed_tool() -> list[TextContent]:
+            return []
+
+        toolset = FastMCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool(
+                name='empty_typed_tool', tool_args={}, ctx=run_context, tool=tools['empty_typed_tool']
+            )
+        # content=[], structured_content=None → return []
+        assert result == []

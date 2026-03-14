@@ -102,7 +102,7 @@ async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(20)
+        assert len(tools) == snapshot(22)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
@@ -206,7 +206,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(20)
+        assert len(tools) == snapshot(22)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
@@ -2447,3 +2447,42 @@ async def test_server_capabilities_list_changed_fields() -> None:
         assert isinstance(caps.prompts_list_changed, bool)
         assert isinstance(caps.tools_list_changed, bool)
         assert isinstance(caps.resources_list_changed, bool)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tests for MCP audience annotation filtering (issue #4353)
+# All tests exercise public APIs (direct_call_tool / call_tool) against the real
+# tests.mcp_server rather than private helpers or mocks.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+async def test_mcp_user_only_content_returns_placeholder(mcp_server: MCPServerStdio) -> None:
+    """A tool whose content is annotated audience=['user'] returns the assistant placeholder.
+
+    Uses the real ``get_user_only_content`` tool registered in tests/mcp_server.py.
+    """
+    async with mcp_server:
+        result = await mcp_server.direct_call_tool('get_user_only_content', {})
+    assert result == 'Tool executed successfully. (No model-visible content in result.)'
+
+
+async def test_mcp_no_annotation_content_passes_through(mcp_server: MCPServerStdio) -> None:
+    """A tool with no audience annotation forwards its content to the model."""
+    async with mcp_server:
+        result = await mcp_server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
+    assert result == snapshot(32.0)
+
+
+@pytest.mark.anyio
+async def test_mcp_annotations_present_but_no_audience_passes_through(mcp_server: MCPServerStdio) -> None:
+    """Content with Annotations set but audience=None is forwarded to the model.
+
+    Covers the _include_content_for_assistant branch where annotations exist but
+    the audience field itself is None (mcp.py line: 'if audience is None: return True').
+    """
+    async with mcp_server:
+        result = await mcp_server.direct_call_tool('get_annotated_no_audience_content', {})
+    # audience=None means all audiences → content passes through (not filtered as user-only)
+    # result comes back via the structured_content path as a list of dicts
+    assert result != 'Tool executed successfully. (No model-visible content in result.)'
+    assert 'Annotations present' in str(result)
