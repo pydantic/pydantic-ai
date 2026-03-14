@@ -30,6 +30,7 @@ with try_import() as imports_successful:
     from fastmcp.exceptions import ToolError
     from fastmcp.server.server import FastMCP
     from mcp.types import (
+        Annotations,
         AnyUrl,
         AudioContent,
         BlobResourceContents,
@@ -611,8 +612,6 @@ class TestAudienceFiltering:
 
     async def test_call_tool_user_only_content_returns_placeholder(self, run_context: RunContext[None]) -> None:
         """When all content blocks are annotated for user-only, the model receives the placeholder."""
-        from mcp.types import Annotations, TextContent
-
         fastmcp_server = FastMCP('test_server')
 
         @fastmcp_server.tool()
@@ -629,8 +628,6 @@ class TestAudienceFiltering:
 
     async def test_call_tool_assistant_content_passes_through(self, run_context: RunContext[None]) -> None:
         """Content annotated for assistant (or with no annotation) passes through unchanged."""
-        from mcp.types import Annotations, TextContent
-
         fastmcp_server = FastMCP('test_server')
 
         @fastmcp_server.tool()
