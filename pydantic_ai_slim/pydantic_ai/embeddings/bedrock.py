@@ -558,7 +558,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
     @property
     def model_name(self) -> BedrockEmbeddingModelName:
         """The embedding model name."""
-        return self._model_name
+        return self._base_model_name
 
     @property
     def system(self) -> str:
