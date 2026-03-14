@@ -550,6 +550,29 @@ from pydantic_ai import Embedder
 embedder = Embedder('bedrock:us.amazon.titan-embed-text-v2:0')
 ```
 
+#### Using AWS Application Inference Profiles
+
+AWS Bedrock supports [custom application inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html) for cost tracking and resource management. When using an inference profile ARN as the model name, Pydantic AI cannot determine the underlying embedding model family from the ARN alone, so it cannot select the correct request/response format.
+
+Pass `base_model_name` to specify the underlying foundation model, which tells Pydantic AI which handler to use (Titan, Cohere, or Nova):
+
+```python {title="bedrock_inference_profile.py" test="skip"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
+from pydantic_ai.providers.bedrock import BedrockProvider
+
+provider = BedrockProvider(region_name='us-east-1')
+
+model = BedrockEmbeddingModel(
+    'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-embed-profile',
+    provider=provider,
+    base_model_name='amazon.titan-embed-text-v2:0',  # Determines request/response format
+)
+embedder = Embedder(model)
+```
+
+The `base_model_name` must match the family of the underlying model referenced by the profile — use a Titan model name for Titan-based profiles, a Cohere model name for Cohere-based profiles, and so on.
+
 #### Using a Custom Provider
 
 For advanced configuration like explicit credentials or a custom boto3 client, you can create a [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] directly. See the [Bedrock provider documentation](models/bedrock.md#provider-argument) for more details.

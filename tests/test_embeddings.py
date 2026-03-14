@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections.abc import Iterator
@@ -1075,6 +1076,57 @@ class TestBedrock:
                 provider_response_id=IsStr(),
             )
         )
+
+    async def test_arn_inference_profile_selects_handler(self):
+        """Test that embedding with an ARN inference profile routes to the correct endpoint."""
+        arn = 'arn:aws:bedrock:us-east-1:000000000000:application-inference-profile/abcd123'
+
+        mock_client = MagicMock()
+        mock_client.meta.endpoint_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
+
+        mock_body = MagicMock()
+        mock_body.read.return_value = json.dumps(
+            {
+                'embedding': [0.1, 0.2, 0.3],
+                'embeddingsByType': {'float': [0.1, 0.2, 0.3]},
+            }
+        ).encode()
+
+        mock_client.invoke_model.return_value = {
+            'ResponseMetadata': {'HTTPHeaders': {'x-amzn-bedrock-input-token-count': '6'}},
+            'body': mock_body,
+        }
+
+        provider = BedrockProvider(bedrock_client=mock_client)
+        model = BedrockEmbeddingModel(arn, provider=provider, base_model_name='amazon.titan-embed-text-v2:0')
+        result = await model.embed('Hello with ARN model name!', input_type='query')
+
+        mock_client.invoke_model.assert_called_once_with(
+            modelId=arn,
+            body=json.dumps({'inputText': 'Hello with ARN model name!', 'normalize': True}),
+            contentType='application/json',
+            accept='application/json',
+        )
+
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=[[0.1, 0.2, 0.3]],
+                inputs=['Hello with ARN model name!'],
+                input_type='query',
+                model_name=arn,
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=6),
+            )
+        )
+
+    async def test_arn_inference_profile_no_base_error(self, bedrock_provider: BedrockProvider):
+        """Test that providing an ARN inference profile without the base name raises an error."""
+        with pytest.raises(UserError, match='Unsupported Bedrock embedding model'):
+            BedrockEmbeddingModel(
+                'arn:aws:bedrock:us-east-1:000000000000:application-inference-profile/abcd123',
+                provider=bedrock_provider,
+            )
 
     async def test_unsupported_model_error(self, bedrock_provider: BedrockProvider):
         with pytest.raises(UserError, match='Unsupported Bedrock embedding model'):
