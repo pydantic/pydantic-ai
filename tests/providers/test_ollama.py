@@ -105,6 +105,23 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     assert qwen_profile is not None
     assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
     assert qwen_profile.ignore_streamed_leading_whitespace is True
+    assert qwen_profile.supports_json_schema_output is True
+
+    qwen_profile = provider.model_profile('qwen3.5')
+    qwen_model_profile_mock.assert_called_with('qwen3.5')
+    assert qwen_profile is not None
+    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.ignore_streamed_leading_whitespace is True
+    assert qwen_profile.supports_json_schema_output is True
+    assert qwen_profile.supports_json_object_output is True
+
+    qwen_profile = provider.model_profile('qwen3.5:35b')
+    qwen_model_profile_mock.assert_called_with('qwen3.5:35b')
+    assert qwen_profile is not None
+    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.ignore_streamed_leading_whitespace is True
+    assert qwen_profile.supports_json_schema_output is True
+    assert qwen_profile.supports_json_object_output is True
 
     qwen_profile = provider.model_profile('qwq')
     qwen_model_profile_mock.assert_called_with('qwq')
@@ -126,3 +143,5 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is not None
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert unknown_profile.supports_json_schema_output is True
+    assert unknown_profile.supports_json_object_output is True

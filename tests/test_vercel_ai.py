@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
     BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
+    FunctionToolResultEvent,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -32,6 +33,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -57,10 +59,17 @@ with try_import() as starlette_import_successful:
     from starlette.responses import StreamingResponse
 
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
-    from pydantic_ai.ui.vercel_ai._utils import dump_provider_metadata, load_provider_metadata
+    from pydantic_ai.ui.vercel_ai._utils import (
+        dump_provider_metadata,
+        iter_tool_approval_responses,
+        load_provider_metadata,
+    )
     from pydantic_ai.ui.vercel_ai.request_types import (
+        DynamicToolApprovalRespondedPart,
         DynamicToolInputAvailablePart,
+        DynamicToolInputStreamingPart,
         DynamicToolOutputAvailablePart,
+        DynamicToolOutputDeniedPart,
         FileUIPart,
         ReasoningUIPart,
         SubmitMessage,
@@ -68,7 +77,9 @@ with try_import() as starlette_import_successful:
         ToolApprovalRequested,
         ToolApprovalResponded,
         ToolInputAvailablePart,
+        ToolInputStreamingPart,
         ToolOutputAvailablePart,
+        ToolOutputDeniedPart,
         ToolOutputErrorPart,
         UIMessage,
     )
@@ -2426,13 +2437,13 @@ async def test_tool_output_denied_chunk_emission():
                 role='assistant',
                 parts=[
                     TextUIPart(text='I will delete the file for you.'),
-                    DynamicToolInputAvailablePart(
+                    DynamicToolApprovalRespondedPart(
                         tool_name='delete_file',
                         tool_call_id='delete_approved',
                         input={'path': 'approved.txt'},
                         approval=ToolApprovalResponded(id='approval-456', approved=True),
                     ),
-                    DynamicToolInputAvailablePart(
+                    DynamicToolApprovalRespondedPart(
                         tool_name='delete_file',
                         tool_call_id='delete_1',
                         input={'path': 'test.txt'},
@@ -2513,6 +2524,7 @@ async def test_tool_output_denied_chunk_emission():
                         content='User cancelled the deletion',
                         tool_call_id='delete_1',
                         timestamp=IsDatetime(),
+                        outcome='denied',
                     ),
                 ],
                 timestamp=IsDatetime(),
@@ -2558,7 +2570,7 @@ async def test_tool_approval_extraction_with_edge_cases():
                         input={'x': 'no_approval'},
                         approval=None,
                     ),
-                    DynamicToolInputAvailablePart(
+                    DynamicToolApprovalRespondedPart(
                         tool_name='some_tool',
                         tool_call_id='approved_tool',
                         input={'x': 'approved'},
@@ -2624,7 +2636,7 @@ async def test_tool_approval_denial_with_reason():
                 id='assistant-1',
                 role='assistant',
                 parts=[
-                    DynamicToolInputAvailablePart(
+                    DynamicToolApprovalRespondedPart(
                         tool_name='delete_file',
                         tool_call_id='delete_1',
                         input={'path': 'important.txt'},
@@ -2632,13 +2644,13 @@ async def test_tool_approval_denial_with_reason():
                             id='denial-id', approved=False, reason='User cancelled the deletion'
                         ),
                     ),
-                    DynamicToolInputAvailablePart(
+                    DynamicToolApprovalRespondedPart(
                         tool_name='delete_file',
                         tool_call_id='delete_2',
                         input={'path': 'temp.txt'},
                         approval=ToolApprovalResponded(id='denial-no-reason', approved=False),
                     ),
-                    DynamicToolInputAvailablePart(
+                    DynamicToolApprovalRespondedPart(
                         tool_name='delete_file',
                         tool_call_id='delete_3',
                         input={'path': 'ok.txt'},
@@ -2656,6 +2668,39 @@ async def test_tool_approval_denial_with_reason():
     assert approvals['delete_1'] == ToolDenied(message='User cancelled the deletion')
     assert approvals['delete_2'] is False
     assert approvals['delete_3'] is True
+
+
+async def test_tool_approval_ignores_output_denied_parts():
+    """Test that output-denied parts are not yielded by iter_tool_approval_responses.
+
+    When a denied tool is retried, the assistant message accumulates both an
+    output-denied part (terminal, already materialized by load_messages) and an
+    approval-responded part (pending, needs deferred handling). Only the latter
+    should be extracted.
+    """
+    messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                DynamicToolOutputDeniedPart(
+                    tool_name='delete_file',
+                    tool_call_id='tool_A',
+                    input={'path': 'first.txt'},
+                    approval=ToolApprovalResponded(id='deny-A', approved=False, reason='Not allowed'),
+                ),
+                DynamicToolApprovalRespondedPart(
+                    tool_name='delete_file',
+                    tool_call_id='tool_B',
+                    input={'path': 'second.txt'},
+                    approval=ToolApprovalResponded(id='deny-B', approved=False),
+                ),
+            ],
+        )
+    ]
+
+    results = dict(iter_tool_approval_responses(messages))
+    assert results == {'tool_B': ToolApprovalResponded(id='deny-B', approved=False)}
 
 
 async def test_run_stream_with_deferred_tool_results_no_model_response():
@@ -3166,11 +3211,12 @@ async def test_adapter_load_messages():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
-                        content="Can't do that",
+                    ToolReturnPart(
                         tool_name='get_table_of_contents',
+                        content="Can't do that",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
                         timestamp=IsDatetime(),
+                        outcome='failed',
                     )
                 ]
             ),
@@ -3197,10 +3243,11 @@ async def test_adapter_load_messages():
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content={'error_text': "Can't do that", 'is_error': True},
+                        content="Can't do that",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2z',
                         timestamp=IsDatetime(),
                         provider_name='openai',
+                        outcome='failed',
                     ),
                     TextPart(
                         content='Here are the Table of Contents for both repositories:... Both products are designed to work together - Pydantic AI for building AI agents and Logfire for observing and monitoring them in production.'
@@ -3938,23 +3985,20 @@ Fix the errors and try again.\
         ]
     )
 
-    # Verify roundtrip
+    # Verify roundtrip — load_messages now produces ToolReturnPart(outcome='failed')
+    # instead of RetryPromptPart for tool errors from the Vercel AI format
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
-    # Content will have changed for retry prompt part, so we check it's value
-    # And then set it back to the original value
-    retry_prompt_part = reloaded_messages[2].parts[0]
-    assert isinstance(retry_prompt_part, RetryPromptPart)
-    assert retry_prompt_part == snapshot(
-        RetryPromptPart(
-            content='Tool failed with error\n\nFix the errors and try again.',
+    tool_error_part = reloaded_messages[2].parts[0]
+    assert isinstance(tool_error_part, ToolReturnPart)
+    assert tool_error_part == snapshot(
+        ToolReturnPart(
             tool_name='my_tool',
+            content='Tool failed with error\n\nFix the errors and try again.',
             tool_call_id='tool_789',
             timestamp=IsDatetime(),
+            outcome='failed',
         )
     )
-    retry_prompt_part.content = 'Tool failed with error'
-    _sync_timestamps(messages, reloaded_messages)
-    assert reloaded_messages == messages
 
 
 async def test_adapter_dump_messages_with_retry_no_tool_name():
@@ -4509,6 +4553,182 @@ async def test_convert_user_prompt_part_only_urls():
     )
 
 
+async def test_convert_user_prompt_part_uploaded_file():
+    """Test converting a user prompt with UploadedFile content."""
+    from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
+
+    part = UserPromptPart(
+        content=[UploadedFile(file_id='file-abc123', provider_name='openai', media_type='application/pdf')]
+    )
+    ui_parts = _convert_user_prompt_part(part)
+    assert ui_parts == snapshot(
+        [
+            FileUIPart(
+                media_type='application/pdf',
+                url='file-abc123',
+                provider_metadata={'pydantic_ai': {'file_id': 'file-abc123', 'provider_name': 'openai'}},
+            ),
+        ]
+    )
+
+
+async def test_adapter_load_messages_uploaded_file():
+    """Test loading UploadedFile from provider_metadata."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='user',
+            parts=[
+                FileUIPart(
+                    media_type='application/pdf',
+                    url='file-abc123',
+                    provider_metadata={'pydantic_ai': {'file_id': 'file-abc123', 'provider_name': 'openai'}},
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            UploadedFile(
+                                file_id='file-abc123',
+                                provider_name='openai',
+                                _media_type='application/pdf',
+                                media_type='application/pdf',
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )
+
+
+async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
+    """Test converting a user prompt with UploadedFile that has vendor_metadata and custom identifier."""
+    from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
+
+    part = UserPromptPart(
+        content=[
+            UploadedFile(
+                file_id='files/video123',
+                provider_name='google-gla',
+                media_type='video/mp4',
+                vendor_metadata={'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
+                identifier='my-custom-id',
+            )
+        ]
+    )
+    ui_parts = _convert_user_prompt_part(part)
+    assert ui_parts == snapshot(
+        [
+            FileUIPart(
+                media_type='video/mp4',
+                url='files/video123',
+                provider_metadata={
+                    'pydantic_ai': {
+                        'file_id': 'files/video123',
+                        'provider_name': 'google-gla',
+                        'vendor_metadata': {'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
+                        'identifier': 'my-custom-id',
+                    }
+                },
+            ),
+        ]
+    )
+
+
+async def test_adapter_load_messages_uploaded_file_with_vendor_metadata():
+    """Test round-tripping UploadedFile with vendor_metadata and custom identifier."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='user',
+            parts=[
+                FileUIPart(
+                    media_type='video/mp4',
+                    url='files/video123',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'file_id': 'files/video123',
+                            'provider_name': 'google-gla',
+                            'vendor_metadata': {'start_offset': {'seconds': 10}, 'end_offset': {'seconds': 60}},
+                            'identifier': 'my-custom-id',
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            UploadedFile(
+                                file_id='files/video123',
+                                provider_name='google-gla',
+                                _media_type='video/mp4',
+                                media_type='video/mp4',
+                                vendor_metadata={
+                                    'start_offset': {'seconds': 10},
+                                    'end_offset': {'seconds': 60},
+                                },
+                                _identifier='my-custom-id',
+                                identifier='my-custom-id',
+                            )
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )
+
+
+async def test_adapter_load_messages_file_url_without_metadata():
+    """Test loading FileUIPart without provider_metadata falls back to URL-based detection."""
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='user',
+            parts=[
+                FileUIPart(
+                    media_type='image/png',
+                    url='https://example.com/image.png',
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(
+                                url='https://example.com/image.png', _media_type='image/png', media_type='image/png'
+                            ),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )
+
+
 async def test_adapter_dump_messages_thinking_with_metadata():
     """Test dumping and loading messages with ThinkingPart metadata preservation."""
     original_messages = [
@@ -4793,8 +5013,6 @@ async def test_adapter_tool_call_part_with_provider_metadata():
 
 async def test_adapter_load_messages_tool_call_with_provider_metadata():
     """Test loading dynamic tool part with provider_metadata preserves metadata on ToolCallPart."""
-    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolInputAvailablePart
-
     ui_messages = [
         UIMessage(
             id='msg1',
@@ -5017,10 +5235,11 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                 ),
                 BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content={'error_text': 'Search failed: rate limit exceeded', 'is_error': True},
+                    content='Search failed: rate limit exceeded',
                     tool_call_id='bt_err_123',
                     provider_name='openai',
                     provider_details={'error_code': 'RATE_LIMIT'},
+                    outcome='failed',
                 ),
             ]
         ),
@@ -5184,11 +5403,12 @@ async def test_adapter_load_messages_builtin_tool_error_with_provider_details():
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content={'error_text': 'Search failed: rate limit exceeded', 'is_error': True},
+                        content='Search failed: rate limit exceeded',
                         tool_call_id='bt_error',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                         provider_details={'error_code': 'RATE_LIMIT'},
+                        outcome='failed',
                     ),
                 ],
                 timestamp=IsDatetime(),
@@ -5199,8 +5419,6 @@ async def test_adapter_load_messages_builtin_tool_error_with_provider_details():
 
 async def test_adapter_load_messages_tool_input_streaming_part():
     """Test loading ToolInputStreamingPart which doesn't have call_provider_metadata yet."""
-    from pydantic_ai.ui.vercel_ai.request_types import ToolInputStreamingPart
-
     ui_messages = [
         UIMessage(
             id='msg1',
@@ -5231,8 +5449,6 @@ async def test_adapter_load_messages_tool_input_streaming_part():
 
 async def test_adapter_load_messages_dynamic_tool_input_streaming_part():
     """Test loading DynamicToolInputStreamingPart which doesn't have call_provider_metadata yet."""
-    from pydantic_ai.ui.vercel_ai.request_types import DynamicToolInputStreamingPart
-
     ui_messages = [
         UIMessage(
             id='msg1',
@@ -5330,15 +5546,12 @@ Fix the errors and try again.\
         ]
     )
 
-    # Verify roundtrip
+    # Verify roundtrip — load_messages now produces ToolReturnPart(outcome='failed')
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
-    # Content will have changed for retry prompt part, so we set it back to the original value
-    retry_prompt_part = reloaded_messages[2].parts[0]
-    assert isinstance(retry_prompt_part, RetryPromptPart)
-    assert retry_prompt_part.content == 'Tool execution failed\n\nFix the errors and try again.'
-    retry_prompt_part.content = 'Tool execution failed'
-    _sync_timestamps(messages, reloaded_messages)
-    assert reloaded_messages == messages
+    tool_error_part = reloaded_messages[2].parts[0]
+    assert isinstance(tool_error_part, ToolReturnPart)
+    assert tool_error_part.outcome == 'failed'
+    assert tool_error_part.content == 'Tool execution failed\n\nFix the errors and try again.'
 
 
 async def test_event_stream_text_with_provider_metadata():
@@ -5758,6 +5971,222 @@ async def test_event_stream_thinking_delta_with_provider_metadata():
     )
 
 
+async def test_event_stream_builtin_tool_return_denied():
+    """Test that ToolOutputDeniedChunk is emitted for a denied BuiltinToolReturnPart."""
+
+    async def event_generator():
+        yield PartStartEvent(
+            index=0,
+            part=BuiltinToolReturnPart(
+                tool_name='web_search',
+                tool_call_id='tc_denied',
+                content='Blocked by policy',
+                outcome='denied',
+            ),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Search')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-output-denied', 'toolCallId': 'tc_denied'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_builtin_tool_return_error():
+    async def event_generator():
+        yield PartStartEvent(
+            index=0,
+            part=BuiltinToolReturnPart(
+                tool_name='web_search',
+                tool_call_id='tc_err',
+                content='Search failed',
+                outcome='failed',
+            ),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Search')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {
+                'type': 'tool-output-error',
+                'toolCallId': 'tc_err',
+                'errorText': 'Search failed',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_adapter_dump_messages_tool_return_error():
+    """Test that ToolReturnPart(outcome='failed') dumps as ToolOutputErrorPart."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Do something')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='tc_err'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    content='Something went wrong',
+                    tool_call_id='tc_err',
+                    outcome='failed',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assistant_parts = [msg.model_dump() for msg in ui_messages if msg.role == 'assistant'][0]['parts']
+    assert assistant_parts == snapshot(
+        [
+            {
+                'type': 'tool-my_tool',
+                'tool_call_id': 'tc_err',
+                'state': 'output-error',
+                'raw_input': None,
+                'input': {'x': 1},
+                'error_text': 'Something went wrong',
+                'provider_executed': False,
+                'call_provider_metadata': None,
+                'approval': None,
+            }
+        ]
+    )
+
+    # Verify roundtrip
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    error_part = reloaded[2].parts[0]
+    assert isinstance(error_part, ToolReturnPart)
+    assert error_part.outcome == 'failed'
+    assert error_part.content == 'Something went wrong'
+
+
+async def test_adapter_dump_messages_builtin_tool_error_backward_compat():
+    """Test that old-format BuiltinToolReturnPart with is_error content is still detected as error."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search')]),
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'test'},
+                    tool_call_id='bt_old',
+                ),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content={'error_text': 'Rate limit exceeded', 'is_error': True},
+                    tool_call_id='bt_old',
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assistant_parts = [msg.model_dump() for msg in ui_messages if msg.role == 'assistant'][0]['parts']
+    assert assistant_parts == snapshot(
+        [
+            {
+                'type': 'tool-web_search',
+                'tool_call_id': 'bt_old',
+                'state': 'output-error',
+                'raw_input': None,
+                'input': {'query': 'test'},
+                'error_text': 'Rate limit exceeded',
+                'provider_executed': True,
+                'call_provider_metadata': None,
+                'approval': None,
+            }
+        ]
+    )
+
+
+async def test_event_stream_function_tool_return_error():
+    """Test that ToolOutputErrorChunk is emitted for ToolReturnPart(outcome='failed')."""
+
+    async def event_generator():
+        yield FunctionToolResultEvent(
+            result=ToolReturnPart(
+                tool_name='my_tool',
+                content='Something went wrong',
+                tool_call_id='tc_err',
+                outcome='failed',
+            ),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Do something')],
+            ),
+        ],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {
+                'type': 'tool-output-error',
+                'toolCallId': 'tc_err',
+                'errorText': 'Something went wrong',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
 def _sync_timestamps(original: list[ModelMessage], new: list[ModelMessage]) -> None:
     """Utility function to sync timestamps between original and new messages."""
     for orig_msg, new_msg in zip(original, new):
@@ -5890,3 +6319,182 @@ class TestSdkVersion:
             e for e in events_v6 if isinstance(e, dict) and e.get('type') == 'tool-input-start'
         )
         assert 'providerMetadata' in tool_input_start_v6
+
+
+@pytest.mark.parametrize(
+    ('reason', 'expected_content'),
+    [
+        pytest.param('Too dangerous', 'Too dangerous', id='explicit-reason'),
+        pytest.param(None, 'The tool call was denied.', id='default-reason'),
+    ],
+)
+async def test_adapter_load_messages_output_denied(reason: str | None, expected_content: str):
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                DynamicToolOutputDeniedPart(
+                    tool_name='delete_file',
+                    tool_call_id='tc_denied',
+                    input={'path': 'important.txt'},
+                    approval=ToolApprovalResponded(id='deny-1', approved=False, reason=reason),
+                ),
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == [
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='delete_file', args={'path': 'important.txt'}, tool_call_id='tc_denied')],
+            timestamp=IsDatetime(),
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='delete_file',
+                    content=expected_content,
+                    tool_call_id='tc_denied',
+                    timestamp=IsDatetime(),
+                    outcome='denied',
+                )
+            ]
+        ),
+    ]
+
+
+async def test_adapter_load_messages_output_denied_builtin_tool():
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ToolOutputDeniedPart(
+                    type='tool-web_search',
+                    tool_call_id='tc_builtin_denied',
+                    input={'query': 'secret data'},
+                    provider_executed=True,
+                    approval=ToolApprovalResponded(id='deny-2', approved=False, reason='Blocked by policy'),
+                ),
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'secret data'},
+                        tool_call_id='tc_builtin_denied',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content='Blocked by policy',
+                        tool_call_id='tc_builtin_denied',
+                        timestamp=IsDatetime(),
+                        outcome='denied',
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+async def test_denied_dynamic_tool_round_trip():
+    """Test that denied dynamic tool state survives a dump/load cycle."""
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='delete_file', args={'path': '/tmp/x'}, tool_call_id='tc1')],
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='delete_file', content='Too dangerous', tool_call_id='tc1', outcome='denied')
+            ],
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+
+    # The denied tool should produce a ToolOutputDeniedPart with the reason preserved
+    assistant_parts = ui_messages[0].parts
+    assert len(assistant_parts) == 1
+    assert isinstance(assistant_parts[0], ToolOutputDeniedPart)
+    assert assistant_parts[0].state == 'output-denied'
+    assert isinstance(assistant_parts[0].approval, ToolApprovalResponded)
+    assert assistant_parts[0].approval.reason == 'Too dangerous'
+
+    # Round-trip back: the denial reason is preserved via approval.reason
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    assert loaded == snapshot(
+        [
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='delete_file', args={'path': '/tmp/x'}, tool_call_id='tc1')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='delete_file',
+                        content='Too dangerous',
+                        tool_call_id='tc1',
+                        timestamp=IsDatetime(),
+                        outcome='denied',
+                    )
+                ]
+            ),
+        ]
+    )
+
+
+async def test_denied_builtin_tool_round_trip():
+    """Test that denied builtin tool state survives a dump/load cycle."""
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                BuiltinToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
+                BuiltinToolReturnPart(
+                    tool_name='web_search',
+                    content='Blocked by policy',
+                    tool_call_id='tc2',
+                    outcome='denied',
+                ),
+            ],
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+
+    # The denied builtin tool should produce a ToolOutputDeniedPart with the reason preserved
+    assistant_parts = ui_messages[0].parts
+    assert len(assistant_parts) == 1
+    assert isinstance(assistant_parts[0], ToolOutputDeniedPart)
+    assert assistant_parts[0].state == 'output-denied'
+    assert isinstance(assistant_parts[0].approval, ToolApprovalResponded)
+    assert assistant_parts[0].approval.reason == 'Blocked by policy'
+
+    # Round-trip back
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    assert loaded == snapshot(
+        [
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(tool_name='web_search', args={'query': 'secret'}, tool_call_id='tc2'),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content='Blocked by policy',
+                        tool_call_id='tc2',
+                        timestamp=IsDatetime(),
+                        outcome='denied',
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
