@@ -20,6 +20,7 @@ from pydantic_ai.embeddings import (
     Embedder,
     EmbeddingResult,
     EmbeddingSettings,
+    merge_embedding_settings,
     InstrumentedEmbeddingModel,
     KnownEmbeddingModelName,
     TestEmbeddingModel,
@@ -1532,6 +1533,30 @@ def test_sync():
 
     result = embedder.count_tokens_sync('Hello, world!')
     assert isinstance(result, int)
+
+
+def test_merge_embedding_settings_both_none():
+    assert merge_embedding_settings(None, None) is None
+
+
+def test_merge_embedding_settings_only_base():
+    base: EmbeddingSettings = {'dimensions': 128}  # pyright: ignore[reportAssignmentType]
+    assert merge_embedding_settings(base, None) == {'dimensions': 128}
+
+
+def test_merge_embedding_settings_only_overrides():
+    overrides: EmbeddingSettings = {'dimensions': 256}  # pyright: ignore[reportAssignmentType]
+    assert merge_embedding_settings(None, overrides) == {'dimensions': 256}
+
+
+def test_merge_embedding_settings_overrides_win_and_preserve_other_keys():
+    base: EmbeddingSettings = {'dimensions': 128, 'from_base': True}  # pyright: ignore[reportAssignmentType]
+    overrides: EmbeddingSettings = {'dimensions': 512, 'from_override': True}  # pyright: ignore[reportAssignmentType]
+    assert merge_embedding_settings(base, overrides) == {
+        'dimensions': 512,
+        'from_base': True,
+        'from_override': True,
+    }
 
 
 async def test_settings():
