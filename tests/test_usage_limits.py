@@ -844,3 +844,32 @@ def test_usage_limits_preserves_explicit_zero():
     # When only current arg is set, should use it
     limits = UsageLimits(input_tokens_limit=100)
     assert limits.input_tokens_limit == 100
+
+
+def test_usage_add_does_not_mutate_original_details():
+    """Test that __add__ does not mutate the original object's details dict.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4605
+    """
+    # RequestUsage.__add__
+    u1 = RequestUsage(input_tokens=10, details={'reasoning_tokens': 5})
+    u2 = RequestUsage(input_tokens=20, details={'reasoning_tokens': 3})
+    result = u1 + u2
+    assert u1.details == {'reasoning_tokens': 5}, 'original RequestUsage.details was mutated'
+    assert result.details == {'reasoning_tokens': 8}
+    assert u1.details is not result.details, 'details dict should not be shared'
+
+    # RunUsage.__add__
+    r1 = RunUsage(requests=1, input_tokens=100, details={'reasoning_tokens': 50})
+    r2 = RequestUsage(input_tokens=200, output_tokens=100, details={'reasoning_tokens': 150})
+    run_result = r1 + r2
+    assert r1.details == {'reasoning_tokens': 50}, 'original RunUsage.details was mutated'
+    assert run_result.details == {'reasoning_tokens': 200}
+    assert r1.details is not run_result.details, 'details dict should not be shared'
+
+    # Simulate repeated calls (the AgentStream.usage() bug from issue #4605)
+    initial = RunUsage(requests=1, input_tokens=500, details={})
+    stream = RequestUsage(input_tokens=500, output_tokens=200, details={'reasoning_tokens': 150})
+    for _ in range(3):
+        combined = initial + stream
+        assert combined.details == {'reasoning_tokens': 150}, 'repeated __add__ should not inflate values'
