@@ -3201,7 +3201,7 @@ def _find_tool_span(capfire: CaptureLogfire) -> Any:
         is_completed = s.attributes and s.attributes.get('logfire.span_type') == 'span'
         if is_tool and is_completed:
             return s
-    raise AssertionError('No completed tool span found')
+    raise AssertionError('No completed tool span found')  # pragma: no cover
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
