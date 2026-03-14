@@ -594,7 +594,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
             inputs=inputs,
             input_type=input_type,
             usage=RequestUsage(input_tokens=input_tokens),
-            model_name=self._base_model_name,
+            model_name=self.model_name,
             provider_name=self.system,
             provider_response_id=response_id,
         )
@@ -630,7 +630,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
             inputs=inputs,
             input_type=input_type,
             usage=RequestUsage(input_tokens=total_input_tokens),
-            model_name=self._base_model_name,
+            model_name=self.model_name,
             provider_name=self.system,
         )
 
