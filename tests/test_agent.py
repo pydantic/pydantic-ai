@@ -6117,7 +6117,9 @@ def test_deprecated_kwargs_still_work():
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
 
-            Agent('test', mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])])  # type: ignore[call-arg]
+            Agent(  # pyright: ignore[reportDeprecated]
+                'test', mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])]
+            )
             assert len(w) == 1
             assert issubclass(w[0].category, DeprecationWarning)
             assert '`mcp_servers` is deprecated' in str(w[0].message)
@@ -7970,3 +7972,172 @@ async def test_central_content_filter_with_partial_content():
     # Should NOT raise ContentFilterError
     result = await agent.run('Trigger filter')
     assert result.output == 'Partially generated content...'
+
+
+async def test_agent_allows_none_output_empty_response():
+    """Test that Agent(output_type=str | None) succeeds on empty response."""
+
+    async def empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    model = FunctionModel(function=empty_model)
+    agent = Agent(model, output_type=str | None)
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=51),
+                model_name='function:empty_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_allows_none_output_after_tool():
+    """Test that Agent(output_type=str | None) succeeds after tool call with no final text."""
+    call_count = 0
+
+    async def tool_then_empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')])
+        return ModelResponse(parts=[])
+
+    model = FunctionModel(function=tool_then_empty_model)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.tool_plain
+    def noop() -> str:
+        return 'done'
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert call_count == 2
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='noop', args={}, tool_call_id='123')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:tool_then_empty_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='noop',
+                        content='done',
+                        tool_call_id='123',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=52, output_tokens=2),
+                model_name='function:tool_then_empty_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_allows_none_output_validator_called():
+    """Test that output validators are called when returning None on empty response."""
+
+    async def empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    validator_called = False
+    model = FunctionModel(function=empty_model)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.output_validator
+    async def validate_output(ctx: RunContext[None], output: str | None) -> str | None:
+        nonlocal validator_called
+        validator_called = True
+        assert output is None
+        return output
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=51),
+                model_name='function:empty_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_allows_none_output_validator_retry():
+    """Test that output validator raising ModelRetry triggers a retry when output is None."""
+    call_count = 0
+
+    async def model_then_text(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[])
+        return ModelResponse(parts=[TextPart(content='hello')])
+
+    model = FunctionModel(function=model_then_text)
+    agent = Agent(model, output_type=str | None)
+
+    @agent.output_validator
+    async def reject_none(ctx: RunContext[None], output: str | None) -> str | None:
+        if output is None:
+            raise ModelRetry('None not acceptable, please respond')
+        return output
+
+    result = await agent.run('hello')
+    assert result.output == 'hello'
+    assert call_count == 2
+
+
+async def test_agent_still_fails_if_none_not_allowed():
+    """Test that Agent(output_type=str) still fails on empty response."""
+
+    async def empty_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[])
+
+    model = FunctionModel(function=empty_model)
+    agent = Agent(model, output_type=str)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+        await agent.run('hello')
+
+
+def test_agent_output_type_bare_none_error():
+    """Test that Agent(output_type=None) raises a clear error."""
+    with pytest.raises(UserError, match='At least one output type must be provided other than `None`'):
+        Agent('test', output_type=None)  # type: ignore[arg-type]

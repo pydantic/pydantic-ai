@@ -668,6 +668,36 @@ Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip
 """
 ```
 
+## Optional output (allowing `None`) {#optional-output}
+
+In some cases, you may want the agent to complete a run without producing any text output. For example, an agent that calls tools and then stops without generating a final message, or a text extractor that returns nothing when no relevant content is found.
+
+You can allow this by including `None` in the `output_type` union:
+
+```python {title="optional_output.py" test="skip" lint="skip"}
+from pydantic_ai import Agent
+
+agent = Agent('anthropic:claude-sonnet-4-20250514', output_type=str | None)
+
+
+@agent.tool_plain
+def read_file(path: str) -> str:
+    """Read a file and return its contents."""
+    return 'File contents here'
+
+
+result = agent.run_sync('Read the readme file, then stop without saying anything.')
+if result.output is None:
+    print('Agent completed without output')
+else:
+    print(result.output)
+```
+
+When the model returns an empty response and `None` is an allowed output type, the agent will return `None` instead of retrying. [Output validators](#output-validator-functions) are still called with `None`, so you can validate or transform it as needed.
+
+!!! note
+    `output_type=None` on its own is not valid — at least one other output type must be provided alongside `None`.
+
 ## Streamed Results
 
 There two main challenges with streamed results:
