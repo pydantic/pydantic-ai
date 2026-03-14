@@ -129,6 +129,7 @@ class RequestUsage(UsageBase):
         **WARNING:** this CANNOT be used to sum multiple requests without breaking some pricing calculations.
         """
         new_usage = copy(self)
+        new_usage.details = copy(self.details)
         new_usage.incr(other)
         return new_usage
 
@@ -217,6 +218,7 @@ class RunUsage(UsageBase):
         This is provided so it's trivial to sum usage information from multiple runs.
         """
         new_usage = copy(self)
+        new_usage.details = copy(self.details)
         new_usage.incr(other)
         return new_usage
 
