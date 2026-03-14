@@ -1,8 +1,11 @@
-# PLAN: Provider-Native Shell Tools — Remote & Local Execution with Skills
+# PLAN: Provider-Native Shell Tools — Capability-Driven Execution with Skills
 
 > **Issue refs:** #3365 (Anthropic/OpenAI Skills), #3963 (Shell/Bash builtin), #3794 (Text Editor tool)
 > **Related PRs:** #4393 (Execution Environments), #4505 (ShellTool PLAN), #4513 (TextEditorTool builtin), #4600 (Anthropic Skills draft — absorbed into this plan)
 > **Upstream vision:** #4303 (Capabilities abstraction), #4050 (Code Mode)
+> **In-flight work:** Capabilities PR (Douwe, pending), unified built-in tool call/return parts PR, built-in tool fallback issue (`prefers_builtin`), tool search deferred loading
+>
+> **Discussion log:** Architecture reviewed with Douwe Maan and David Sanchez on 2026-03-13. Key decisions: capability-driven routing (not user-picks), local-by-default for data privacy, memory tool pattern rejected as anti-pattern, capability hooks for built-in ↔ tool call bridging.
 
 ---
 
@@ -10,15 +13,15 @@
 
 1. [Problem Statement](#1-problem-statement)
 2. [Background & Landscape](#2-background--landscape)
-3. [Architectural Analysis: Two Tracks](#3-architectural-analysis-two-tracks)
-4. [Track 1: Remote Shell — `ShellTool` Builtin](#4-track-1-remote-shell--shelltool-builtin)
-5. [Track 2: Local Shell — Native Toolsets](#5-track-2-local-shell--native-toolsets)
+3. [Architecture: Capability-Driven Routing](#3-architecture-capability-driven-routing)
+4. [Implementation Layer: Remote Shell — `ShellTool` Builtin](#4-implementation-layer-remote-shell--shelltool-builtin)
+5. [Implementation Layer: Local Shell — Native Toolsets](#5-implementation-layer-local-shell--native-toolsets)
 6. [Provider Adapter Changes](#6-provider-adapter-changes)
 7. [Agent Loop & Message Changes](#7-agent-loop--message-changes)
 8. [Error Handling](#8-error-handling)
 9. [Security Considerations](#9-security-considerations)
 10. [Relationship to PR #4393](#10-relationship-to-pr-4393)
-11. [Relationship to Other PRs](#11-relationship-to-other-prs)
+11. [Relationship to Other PRs & In-Flight Work](#11-relationship-to-other-prs--in-flight-work)
 12. [Test Strategy](#12-test-strategy)
 13. [Documentation](#13-documentation)
 14. [Rollout & Phasing](#14-rollout--phasing)
@@ -41,14 +44,16 @@ Pydantic AI currently cannot:
 
 These capabilities fall into two fundamentally different execution models:
 
-| | Remote (Provider-Hosted) | Local (Client-Executed) |
-|---|---|---|
-| **Who runs it** | Provider's container infrastructure | Developer's local machine / Docker |
-| **Pydantic AI pattern** | `AbstractBuiltinTool` (server-executed) | `AbstractToolset` (client-executed) |
-| **Skills support** | Yes — skills run in the container | OpenAI: Yes (`LocalEnvironmentParam` has `skills` field); Anthropic: No |
-| **Anthropic** | `code_execution_20260120` (GA) / `code_execution_20250825` (beta) — provides `bash_code_execution` + `text_editor_code_execution` server-side sub-tools, plus `skills-2025-10-02` beta | `bash_20250124`, `text_editor_20250728` (fully client-executed, separate from hosted container) |
-| **OpenAI** | `shell` with `container_auto` / `container_reference` (server-executed) | `shell` with `environment: {type: "local"}` (client-executed, same tool type!), `apply_patch` |
-| **Use case** | "Let the provider run code for me" | "I want to run shell commands locally with optimal model performance" |
+
+|                         | Remote (Provider-Hosted)                                                                                                                                                               | Local (Client-Executed)                                                                         |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **Who runs it**         | Provider's container infrastructure                                                                                                                                                    | Developer's local machine / Docker                                                              |
+| **Pydantic AI pattern** | `AbstractBuiltinTool` (server-executed)                                                                                                                                                | `AbstractToolset` (client-executed)                                                             |
+| **Skills support**      | Yes — skills run in the container                                                                                                                                                      | OpenAI: Yes (`LocalEnvironmentParam` has `skills` field); Anthropic: No                         |
+| **Anthropic**           | `code_execution_20260120` (GA) / `code_execution_20250825` (beta) — provides `bash_code_execution` + `text_editor_code_execution` server-side sub-tools, plus `skills-2025-10-02` beta | `bash_20250124`, `text_editor_20250728` (fully client-executed, separate from hosted container) |
+| **OpenAI**              | `shell` with `container_auto` / `container_reference` (server-executed)                                                                                                                | `shell` with `environment: {type: "local"}` (client-executed, same tool type!), `apply_patch`   |
+| **Use case**            | "Let the provider run code for me"                                                                                                                                                     | "I want to run shell commands locally with optimal model performance"                           |
+
 
 **Important architectural note for Anthropic**: The hosted `bash_code_execution` (runs in Anthropic's container, returns `server_tool_use` blocks) is **completely separate** from the local `bash_20250124` (runs on client's machine, returns `tool_use` blocks). State is NOT shared between them. A model can use both simultaneously — they appear as two different execution environments.
 
@@ -56,10 +61,12 @@ These capabilities fall into two fundamentally different execution models:
 
 These models are **specifically fine-tuned** on their own tool harnesses:
 
-| Provider | Local Shell | Local Text Editor | Local Patch | Remote Shell (Hosted) |
-|----------|------------|------------------|-------------|----------------------|
-| Anthropic | `bash` (`bash_20250124`) — client-executed, separate tool type | `str_replace_based_edit_tool` (`text_editor_20250728`) — client-executed | N/A | `code_execution_20260120` (GA) / `code_execution_20250825` (beta) — server-executed `bash_code_execution` + `text_editor_code_execution` sub-tools |
-| OpenAI | `shell` with `environment: {type: "local"}` — client-executed (same `shell_call`/`shell_call_output` as hosted) | N/A | `apply_patch` (V4A diffs) — client-executed | `shell` with `container_auto`/`container_reference` — server-executed (same tool type as local!) |
+
+| Provider  | Local Shell                                                                                                     | Local Text Editor                                                        | Local Patch                                 | Remote Shell (Hosted)                                                                                                                              |
+| --------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Anthropic | `bash` (`bash_20250124`) — client-executed, separate tool type                                                  | `str_replace_based_edit_tool` (`text_editor_20250728`) — client-executed | N/A                                         | `code_execution_20260120` (GA) / `code_execution_20250825` (beta) — server-executed `bash_code_execution` + `text_editor_code_execution` sub-tools |
+| OpenAI    | `shell` with `environment: {type: "local"}` — client-executed (same `shell_call`/`shell_call_output` as hosted) | N/A                                                                      | `apply_patch` (V4A diffs) — client-executed | `shell` with `container_auto`/`container_reference` — server-executed (same tool type as local!)                                                   |
+
 
 Using a generic `execute_command` function tool instead of `bash` with `command: str` causes Claude to produce less reliable outputs. The same logical capability must be sent in the exact format each provider expects.
 
@@ -70,18 +77,22 @@ Using a generic `execute_command` function tool instead of `bash` with `command:
 ### 2.1 Anthropic Native Tools
 
 #### Bash Tool (Client-Executed)
+
 ```json
 {"type": "bash_20250124", "name": "bash"}
 ```
+
 - **Input**: `{"command": "ls -la"}` or `{"restart": true}`
 - **Execution**: Client-side — model sends tool call, developer executes and returns result
 - **Cost**: 245 additional input tokens per request
 - **No beta header required**
 
 #### Text Editor Tool (Client-Executed, Claude 4.x)
+
 ```json
 {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool", "max_characters": 10000}
 ```
+
 - **Commands**: `view`, `str_replace`, `create`, `insert` (no `undo_edit` in Claude 4)
 - **Cost**: 700 additional input tokens per request
 - **No beta header required**
@@ -90,19 +101,23 @@ Using a generic `execute_command` function tool instead of `bash` with `command:
 
 Anthropic's code execution tool provides a **fully server-side hosted shell** inside an Anthropic-managed container. The client never executes anything — results are returned in the same API response.
 
-| Version | Beta Header | Notes |
-|---------|------------|-------|
-| `code_execution_20260120` | None (GA) | Latest, recommended, no beta needed |
-| `code_execution_20250825` | `code-execution-2025-08-25` | Original hosted shell beta |
-| `code_execution_20250522` | `code-execution-2025-05-22` | Legacy Python-only sandbox |
+
+| Version                   | Beta Header                 | Notes                               |
+| ------------------------- | --------------------------- | ----------------------------------- |
+| `code_execution_20260120` | None (GA)                   | Latest, recommended, no beta needed |
+| `code_execution_20250825` | `code-execution-2025-08-25` | Original hosted shell beta          |
+| `code_execution_20250522` | `code-execution-2025-05-22` | Legacy Python-only sandbox          |
+
 
 The `20250825`+ versions provide two **server-side sub-tools**:
+
 - `bash_code_execution` — runs shell commands in the container
 - `text_editor_code_execution` — file operations (view, create, str_replace, insert)
 
-Response blocks use `server_tool_use` type (IDs prefixed `srvtoolu_`), with results as `bash_code_execution_tool_result` and `text_editor_code_execution_tool_result`.
+Response blocks use `server_tool_use` type (IDs prefixed `srvtoolu`_), with results as `bash_code_execution_tool_result` and `text_editor_code_execution_tool_result`.
 
 **Key capabilities:**
+
 - Container: Linux x86_64, Python 3.11.12, 5GiB RAM, 5GiB disk, 1 CPU, no internet
 - Container ID persists across turns via `response.container.id`
 - Skills via `container.skills` with `skills-2025-10-02` beta
@@ -114,6 +129,7 @@ Response blocks use `server_tool_use` type (IDs prefixed `srvtoolu_`), with resu
 **Important**: `bash_code_execution` (server-side, in container) is architecturally distinct from `bash_20250124` (client-side, on user's machine). State is NOT shared between them. Both can be used simultaneously — the model sees them as two separate execution environments.
 
 #### Anthropic Skills
+
 - Open standard (agentskills.io), adopted by multiple providers
 - Referenced via `SkillReference` with `skill_id`, `version`, `source` (`'custom'` or `'provider'`)
 - Mounted in the container as `container.skills` array
@@ -126,6 +142,7 @@ Response blocks use `server_tool_use` type (IDs prefixed `srvtoolu_`), with resu
 The OpenAI `shell` tool supports **both** hosted and local execution modes using the **same tool type and output items** (`shell_call` / `shell_call_output`). Available through the Responses API only (not Chat Completions).
 
 **Hosted mode** — OpenAI manages the container:
+
 ```json
 {
   "type": "shell",
@@ -136,6 +153,7 @@ The OpenAI `shell` tool supports **both** hosted and local execution modes using
   }
 }
 ```
+
 - Server-executed in OpenAI's Debian 12 container (Python 3.11, Node 22, Java 17, etc.)
 - Working directory: `/mnt/data`
 - Container expires after 20 minutes of inactivity
@@ -145,9 +163,11 @@ The OpenAI `shell` tool supports **both** hosted and local execution modes using
 - File mounting via `file_ids`
 
 **Local mode** — client executes commands:
+
 ```json
 {"type": "shell", "environment": {"type": "local"}}
 ```
+
 - Model returns `shell_call` output items with commands
 - Client executes in their own runtime, captures stdout/stderr/exit code
 - Client returns `shell_call_output` in next request
@@ -158,9 +178,11 @@ The OpenAI `shell` tool supports **both** hosted and local execution modes using
 **Key insight**: Unlike Anthropic (where hosted `bash_code_execution` and local `bash_20250124` are completely separate tools), OpenAI uses a **single `shell` tool type** for both modes. The execution mode is determined by the `environment` type, not the tool type.
 
 #### Apply Patch (Client-Executed)
+
 ```json
 {"type": "apply_patch"}
 ```
+
 - Supported on GPT-5.1+
 - Returns `apply_patch_call` with V4A format diffs
 - Operations: `create_file`, `update_file`, `delete_file`
@@ -168,12 +190,14 @@ The OpenAI `shell` tool supports **both** hosted and local execution modes using
 ### 2.3 Current Pydantic AI Architecture
 
 **Builtin tools** (`AbstractBuiltinTool`) — server-executed:
+
 - Passed in `ModelRequestParameters.builtin_tools`
 - Provider executes; returns `BuiltinToolCallPart` + `BuiltinToolReturnPart`
 - Agent loop does **not** execute these — only records in history
 - Examples: `WebSearchTool`, `CodeExecutionTool`, `WebFetchTool`
 
 **Toolsets** (`AbstractToolset`) — client-executed:
+
 - Return `ToolDefinition` objects with JSON schemas
 - Agent loop calls `toolset.call_tool()` to execute
 - Model adapters convert to provider-specific function tool formats
@@ -200,48 +224,134 @@ PR #4600 by @mattbrandman introduces `ShellTool` as an `AbstractBuiltinTool` for
 
 ---
 
-## 3. Architectural Analysis: Two Tracks
+## 3. Architecture: Capability-Driven Routing
 
-### 3.1 Track 1: Remote Shell → `ShellTool` (Builtin)
+### 3.1 Design Principle: Users Declare Capabilities, Not Implementation
 
-Provider-hosted container execution fits the existing `AbstractBuiltinTool` pattern perfectly:
-- The provider runs code in their container — we don't execute anything
+The user should **never** need to choose between `ShellTool` (remote builtin) and `ShellToolset` (local toolset) directly. Instead, the user declares that their agent has a **shell capability**, and the framework determines the optimal execution path based on:
+
+1. **What the user provided** — local execution context (paths, executor, environment) vs. none
+2. **What the provider supports** — remote containers, native local tools, or neither
+3. **Data privacy defaults** — if anything local is pointed at (directory path, skills on local filesystem), **default to local mode** to avoid accidental data leakage to providers
+
+```python
+# User declares capability — routing is automatic
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Shell
+
+# Local execution (implied by local path — data stays local)
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[
+    Shell(cwd='/workspace'),
+])
+
+# Remote execution (implied by provider-hosted config)
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[
+    Shell(skills=[...], network_policy=...),
+])
+
+# Auto: use provider remote if available, no local config needed
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[
+    Shell(),
+])
+```
+
+This replaces the previous design where remote and local were independent tracks that a user manually selected.
+
+### 3.2 Capability as the Integration Layer
+
+A `Shell` capability wraps both implementation layers. We ship a minimal `Capability` protocol now (Phase 4) and migrate to the richer #4303 base class when it lands. The user-facing API is stable from day one.
+
+```
+Shell (Capability)
+├── provides tools:
+│   ├── ShellToolset (local, client-executed) — when local execution is configured
+│   └── OR nothing — when using remote-only mode
+├── provides builtin_tools:
+│   ├── ShellTool (remote, provider-hosted) — when remote is configured or auto-detected
+│   └── OR nothing — when using local-only mode
+├── provides hooks:
+│   ├── pre_tool_call: translate BuiltinToolCallPart → ToolCallPart for local execution
+│   └── post_tool_call: translate ToolReturnPart → provider-native result format
+├── provides model_settings:
+│   └── container config, skills, network policy (when remote)
+└── provides instructions:
+    └── execution environment context for the model
+```
+
+**Key constraint**: The concept of the shell tool is **not hardcoded into the agent loop**. All bridging between built-in tool call parts and local tool execution happens within the capability's hooks. The agent loop continues to handle `ToolCallPart` and `BuiltinToolCallPart` through its existing code paths.
+
+### 3.3 Routing Logic
+
+The capability determines the execution path at `prepare()` time:
+
+```
+Shell(cwd='/workspace')  →  local mode
+  reason: local path provided → data privacy default
+
+Shell(executor=my_callback)  →  local mode
+  reason: explicit local executor
+
+Shell(skills=[SkillReference(...)], network_policy=...)  →  remote mode
+  reason: provider-hosted config, no local context
+
+Shell()  →  auto mode
+  if provider supports remote containers → remote
+  else if provider supports native local tools → local (function tool fallback)
+  else → generic function tool fallback
+
+Shell(cwd='/workspace', skills=[...])  →  local mode + skills
+  reason: local path present → local-by-default for privacy
+  skills uploaded to local execution context, NOT sent to provider
+```
+
+### 3.4 Implementation Layers (Building Blocks)
+
+The capability delegates to two existing implementation layers:
+
+**Remote layer** (`ShellTool` as `AbstractBuiltinTool`):
+- Provider-hosted container execution
 - Results come back as `BuiltinToolCallPart` + `BuiltinToolReturnPart`
-- Skills, network policy, and file mounting are container-level configuration
-- This is exactly what #4600 implements
+- Skills, network policy, file mounting are container-level config
+- Agent loop does NOT execute these — only records in history
 
-**Verdict**: `ShellTool` as `AbstractBuiltinTool` is the right pattern for remote execution.
+**Local layer** (`ShellToolset` / `TextEditorToolset` / `ApplyPatchToolset`):
+- Client-executed with provider-native presentation via `NativeToolDefinition`
+- Adapters emit provider-specific format (bash_20250124, shell with local env)
+- Model returns `ToolCallPart` (normalized by adapter)
+- Agent loop executes via `toolset.call_tool()`
 
-### 3.2 Track 2: Local Shell → Native Toolsets
+These layers already exist (Phases 1-3 complete). The capability is the new integration layer on top.
 
-Client-executed tools that need provider-native presentation don't fit either existing pattern:
-- Can't be `AbstractBuiltinTool` — the agent loop doesn't execute builtins
-- Can't be plain `AbstractToolset` — adapters convert toolsets to generic function tools
+### 3.5 Cross-Provider Tool Multiplicity
 
-We need a bridge: **native toolsets** that are client-executed (toolset path) but presented in provider-native format when supported. This requires a `NativeToolDefinition` on `ToolDefinition` that model adapters can recognize and translate.
+One Pydantic AI concept may map to **different numbers of provider tools**:
 
-### 3.3 How the Two Tracks Coexist
+| Pydantic AI | Anthropic | OpenAI |
+|---|---|---|
+| Shell capability (local) | `bash_20250124` (1 tool) | `shell` with `environment: local` (1 tool) |
+| Shell capability (remote) | `code_execution_20260120` → 2 sub-tools (`bash_code_execution` + `text_editor_code_execution`) | `shell` with `container_auto` (1 tool) |
+| Text editor | `text_editor_20250728` with `command` arg (1 tool, multiple commands) | N/A (function tool fallback) |
+| File patching | N/A (use text editor) | `apply_patch` (1 tool) |
 
-```
-User wants remote execution (provider container):
-  → ShellTool(skills=[...], network_policy=...) [builtin tool]
-  → Provider runs code, returns BuiltinToolCallPart/ReturnPart
-  → Agent loop records in history, no execution
+The Anthropic text editor is particularly notable: it bundles `view`, `str_replace`, `create`, `insert` as `command` values within a single tool. In Pydantic AI, the `TextEditorToolset` handles this as a single tool with command dispatch internally, matching Anthropic's native format. This breaks the 1:1 tool mapping assumption — the capability layer handles this abstraction.
 
-User wants local execution (their machine/Docker):
-  → ShellToolset(execute=my_callback) [native toolset]
-  → Adapter emits provider-native format (bash_20250124, shell with local env)
-  → Model returns ToolCallPart (normalized by adapter)
-  → Agent loop executes via toolset.call_tool()
-```
+### 3.6 Anti-Patterns to Avoid
 
-These are independent — a user picks one or both based on their needs. They share no code paths besides the message format.
+**Do NOT follow the `MemoryTool` pattern.** The current Anthropic-specific memory tool implementation requires a manually registered companion function tool with a matching name. This is Anthropic-specific, not cross-provider, and creates hidden coupling. The capability approach replaces this pattern with explicit, typed, cross-provider routing.
+
+**Do NOT hardcode shell concepts in the agent loop.** All shell-specific logic belongs in the capability, its hooks, or the model adapters. The agent loop should only know about generic `ToolCallPart`, `BuiltinToolCallPart`, and their return counterparts.
+
+### 3.7 Relationship to Built-in Tool Fallback
+
+There is an open issue about **automatic fallback** from a locally-defined tool to a provider built-in tool (with a `prefers_builtin` flag on `ToolDefinition`). The shell capability is a concrete instance of this pattern: a locally-defined shell tool should use the provider's native built-in tool format when available. The capability approach generalizes this — the web search capability will follow the same pattern (use provider's web search built-in when available, fall back to Tavily/etc. otherwise).
+
+Similarly, there is in-flight work on **tool search** with a `defer_loading` flag on `ToolDefinition` that affects whether tool definitions are sent to the API or pre-filtered locally. The capability layer should be aware of this for large skill sets.
 
 ---
 
-## 4. Track 1: Remote Shell — `ShellTool` Builtin
+## 4. Implementation Layer: Remote Shell — `ShellTool` Builtin
 
-This section describes the remote/hosted shell support, largely carried forward from #4600.
+This section describes the remote/hosted shell implementation layer, largely carried forward from #4600. In the capability-driven architecture (section 3), this is the backend that the `Shell` capability delegates to when remote execution is selected.
 
 ### 4.1 New Types in `builtin_tools.py`
 
@@ -294,6 +404,7 @@ class UploadedFile:
 ### 4.3 Validation
 
 In `models/__init__.py`:
+
 - `ShellTool` + `CodeExecutionTool` = `UserError` (mutually exclusive — OpenAI's API errors if both `code_interpreter` and `shell` are present; Anthropic's `code_execution_20250825` supersedes `code_execution_20250522`)
 - `ShellTool.network_policy` on unsupported provider = `UserError`
 - `UploadedFile(target='container')` without `ShellTool` = `UserError`
@@ -331,6 +442,7 @@ UploadedFile(file_id='file-xxx', provider_name='anthropic', target='message')
 ```
 
 Wire format:
+
 - `target='message'` or `'both'` → `BetaImageBlockParam` / `BetaRequestDocumentBlockParam` (image/document content)
 - `target='container'` or `'both'` → `BetaContainerUploadBlockParam(file_id=..., type='container_upload')`
 - Using `target='container'` without `ShellTool` → `UserError`
@@ -370,23 +482,39 @@ agent.run('Continue analysis', model_settings=settings)
 ```
 
 Wire format:
-- `UploadedFile(target='container')` → collected by `_OpenAICodeExecutionContext`, merged into `environment.file_ids` on the `container_auto` shell tool
+
+- `UploadedFile(target='container')` → collected by `_collect_container_file_ids()` from messages and merged with `openai_shell_uploaded_files` into `environment.file_ids` on the `container_auto` shell tool (first turn). On subsequent turns (when `container_reference` is used), new container-targeted files are uploaded via `client.containers.files.create(container_id, file_id)` before the model request.
 - `openai_shell_container='cntr_xxx'` → `container_reference` environment type (cannot combine with skills, network policy, or file uploads — those require `container_auto`)
 - `openai_shell_container=False` → force fresh `container_auto`, ignore history
 
 Container reuse across turns:
-- **Implicit**: message history round-tripping (OpenAI's `previous_response_id` handles this natively)
+
+- **Automatic**: `_build_shell_tool_param` scans message history via `ShellTool.get_container_id(messages)` for an existing `container_id` (from `BuiltinToolCallPart.args['container_id']`). If found, uses `container_reference` instead of `container_auto`. This is the default behavior — no user configuration needed.
 - **Explicit**: `openai_shell_container='cntr_xxx'` for containers created via `client.containers.create()`
+- **Force fresh**: `openai_shell_container=False` forces `container_auto` AND strips `container_reference` from message history round-trip items (line ~2269), ensuring OpenAI doesn't infer the old container from conversation context.
+
+**Important**: `container_auto` always creates a new container. Each turn that uses `container_auto` gets a fresh container and loses all prior state. This is why auto-reuse via `container_reference` is the default — without it, multi-turn shell sessions would be broken. Empirically verified: `container_auto` with `file_ids` on turn 2 does NOT add files to an existing container; it creates a new one.
+
+**Creation-time vs. reuse-time settings**: `skills`, `network_policy`, and `openai_shell_uploaded_files` are creation-time concerns on `container_auto`. Once auto-reuse switches to `container_reference`, these settings no longer apply. Users who need to change them must use `openai_shell_container=False` to force a fresh container.
+
+**Expired container auto-recovery**: Containers have short lifetimes. When a user resumes a chat days later, the auto-inferred `container_id` from history will be expired. The adapter handles this with a targeted retry in `_responses_create`:
+
+- If the API returns 404 with `"Container with id '...' not found"` AND the container was **auto-inferred** from history (not explicitly set via `openai_shell_container`), the adapter retries the request with `openai_shell_container=False`, which creates a fresh `container_auto` with `file_ids` from `openai_shell_uploaded_files` re-mounted.
+- If the container was **explicitly set** by the user (`openai_shell_container='cntr_xxx'`), the 404 propagates as `ModelHTTPError` — the user chose that specific container, so they should know it's gone.
+- Detection uses `_is_container_not_found_error(e)` helper (follows the existing `_check_azure_content_filter` pattern for error-body inspection).
+- The retry is self-healing: the fresh response contains a new `container_id`, which becomes the most recent in history, so subsequent turns auto-reuse the new container without hitting the expired one again.
 
 #### Comparison
 
-| Aspect | Anthropic | OpenAI |
-|--------|-----------|--------|
-| File upload mechanism | Message content blocks | Environment `file_ids` |
-| When files are sent | Per-message (can change each turn) | At container creation / per-request |
-| Container reuse | Auto from history + `anthropic_container` setting | Implicit via `previous_response_id` + `openai_shell_container` setting |
-| Pre-created containers | Via `anthropic_container: {'id': '...'}` | Via `openai_shell_container: 'cntr_xxx'` using `container_reference` |
-| Container + skills conflict | No conflict (skills in `container.skills`) | `container_reference` cannot combine with skills/network_policy/file_ids (use `container_auto`) |
+
+| Aspect                      | Anthropic                                         | OpenAI                                                                                          |
+| --------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| File upload mechanism       | Message content blocks                            | Environment `file_ids`                                                                          |
+| When files are sent         | Per-message (can change each turn)                | At container creation / per-request                                                             |
+| Container reuse             | Auto from history + `anthropic_container` setting | Auto from history via `ShellTool.get_container_id()` + `openai_shell_container` setting         |
+| Pre-created containers      | Via `anthropic_container: {'id': '...'}`          | Via `openai_shell_container: 'cntr_xxx'` using `container_reference`                            |
+| Container + skills conflict | No conflict (skills in `container.skills`)        | `container_reference` cannot combine with skills/network_policy/file_ids (use `container_auto`) |
+
 
 ### 4.6 Anthropic Adapter: Remote Shell
 
@@ -409,8 +537,7 @@ Container reuse across turns:
 - Network policy → `network_policy` on `container_auto` environment
 - Domain secrets → `domain_secrets` in network policy for auth headers
 - File mounting → `file_ids` in environment (from `UploadedFile(target='container')`)
-- Container reuse: `openai_shell_container` setting → `container_reference` with explicit `container_id`, or `container_auto` for fresh
-- `_OpenAICodeExecutionContext` tracks transport type and container-target uploaded files
+- Container reuse: **automatic** via `ShellTool.get_container_id(messages)` history scan → `container_reference`; explicit via `openai_shell_container='cntr_xxx'`; force fresh via `openai_shell_container=False` (strips container refs from both tool param and message history round-trip)
 - `shell_call` / `shell_call_output` output items mapped to `BuiltinToolCallPart` / `BuiltinToolReturnPart`
 - Raw `shell` tools in `openai_builtin_tools` auto-normalized
 - New fields on `OpenAIResponsesModelSettings` TypedDict:
@@ -426,9 +553,10 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     openai_shell_container: str | Literal[False] | None
     """Container configuration for the OpenAI shell tool.
-    - None (default): fresh container_auto each time.
-    - str (e.g. 'cntr_xxx'): reuse via container_reference.
-    - False: force fresh container, ignore history.
+    - None (default): auto-reuse container from message history via ShellTool.get_container_id();
+      falls back to container_auto on first turn.
+    - str (e.g. 'cntr_xxx'): reuse a specific pre-created container via container_reference.
+    - False: force fresh container_auto, strip container references from history round-trip.
     Cannot combine container_reference with skills, network_policy, or file uploads.
     """
 ```
@@ -437,9 +565,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
 ---
 
-## 5. Track 2: Local Shell — Native Toolsets
+## 5. Implementation Layer: Local Shell — Native Toolsets
 
-This section describes the local/client-executed tool support, which is new to this plan.
+This section describes the local/client-executed tool implementation layer. In the capability-driven architecture (section 3), these toolsets are the backends that the `Shell`, `TextEditor`, and `FilePatching` capabilities delegate to when local execution is selected.
 
 ### 5.1 Core Concept: `NativeToolDefinition`
 
@@ -526,13 +654,15 @@ class ShellToolset(AbstractToolset[AgentDepsT]):
 
 **Session model**: `_LocalShellExecutor` maintains a **persistent shell session** — `cd`, `export`, and other state-modifying commands persist across consecutive `execute()` calls. This matches the behavior models expect from Anthropic's `bash` tool (documented as "persistent bash session that maintains state"). `restart()` terminates the session and starts a fresh one. The `ToolDefinition` sets `sequential=True` to ensure concurrent calls are serialized, since the underlying subprocess is single-threaded.
 
-**`call_tool()` handles:**
+`**call_tool()` handles:**
+
 - `command` → `executor.execute(command)`
 - `restart=True` → `executor.restart()`
 - Timeout: wraps call with `anyio.fail_after(self.timeout)` → raises `ModelRetry(f'Command timed out after {self.timeout}s.')`
 - Truncation: if `len(output) > max_output_chars`, truncates and appends `'[output truncated — {shown} chars of {total} total]'`
 
 **Hello world:**
+
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.toolsets import ShellToolset
@@ -541,7 +671,8 @@ agent = Agent('anthropic:claude-sonnet-4-6', toolsets=[ShellToolset.local(cwd='/
 result = agent.run_sync('List all Python files')
 ```
 
-**`get_tools()` emits:**
+`**get_tools()` emits:**
+
 ```python
 ToolDefinition(
     name='shell',
@@ -559,6 +690,7 @@ ToolDefinition(
 ```
 
 **Execution flow:**
+
 1. Adapter sees `native_definition` is `ShellNativeDefinition`
 2. Anthropic → `{"type": "bash_20250124", "name": "bash"}`
 3. OpenAI Responses → `{"type": "shell", "environment": {"type": "local"}}`
@@ -680,10 +812,12 @@ This approach avoids hidden mutable state and is composability-safe — the tool
 ### 5.8 Anthropic Adapter: Local Tools
 
 When `ToolDefinition` has `native_definition.kind == 'shell'`:
+
 - Emit `BetaToolBash20250124Param(type='bash_20250124', name='bash')`
 - Register name mapping: `'bash'` ↔ toolset's `tool_name`
 
 When `native_definition.kind == 'text_editor'`:
+
 - Emit `BetaToolTextEditor20250728Param(type='text_editor_20250728', name='str_replace_based_edit_tool', max_characters=...)`
 - Register name mapping
 
@@ -693,11 +827,13 @@ Next request: `ToolReturnPart` → `BetaToolResultBlockParam` with native name.
 ### 5.9 OpenAI Adapter: Local Tools
 
 When `native_definition.kind == 'shell'`:
+
 - Emit `{"type": "shell", "environment": {"type": "local"}}` — uses the same `shell` tool type as hosted mode, just with local environment
 - Same `shell_call` / `shell_call_output` output items as hosted mode
 - Client executes commands from `shell_call` and returns `shell_call_output`
 
 When `native_definition.kind == 'apply_patch'`:
+
 - Emit `{"type": "apply_patch"}` for GPT-5.1+
 - Fall back to function tool for older models
 
@@ -714,32 +850,36 @@ Result: `shell_call_output` / `apply_patch_call_output` with appropriate format.
 
 ### 6.1 Anthropic (`models/anthropic.py`)
 
-| Change | Track | Source |
-|--------|-------|--------|
-| `ShellTool` → `BetaCodeExecutionTool20250825Param` | Remote | #4600 |
-| Skills → `BetaSkillParams` in container | Remote | #4600 |
-| Container ID persistence | Remote | #4600 |
-| `BetaBashCodeExecutionToolResultBlock` mapping | Remote | #4600 |
-| `BetaTextEditorCodeExecutionToolResultBlock` mapping | Remote | #4600 |
-| `BetaContainerUploadBlockParam` from `UploadedFile(target='container')` | Remote | #4600 |
-| `native_definition.kind='shell'` → `bash_20250124` | Local | New |
-| `native_definition.kind='text_editor'` → `text_editor_20250728` | Local | New |
-| Name mapping (bash ↔ shell, str_replace_based_edit_tool ↔ toolset name) | Local | New |
+
+| Change                                                                  | Track  | Source |
+| ----------------------------------------------------------------------- | ------ | ------ |
+| `ShellTool` → `BetaCodeExecutionTool20250825Param`                      | Remote | #4600  |
+| Skills → `BetaSkillParams` in container                                 | Remote | #4600  |
+| Container ID persistence                                                | Remote | #4600  |
+| `BetaBashCodeExecutionToolResultBlock` mapping                          | Remote | #4600  |
+| `BetaTextEditorCodeExecutionToolResultBlock` mapping                    | Remote | #4600  |
+| `BetaContainerUploadBlockParam` from `UploadedFile(target='container')` | Remote | #4600  |
+| `native_definition.kind='shell'` → `bash_20250124`                      | Local  | New    |
+| `native_definition.kind='text_editor'` → `text_editor_20250728`         | Local  | New    |
+| Name mapping (bash ↔ shell, str_replace_based_edit_tool ↔ toolset name) | Local  | New    |
+
 
 ### 6.2 OpenAI Responses (`models/openai.py`)
 
-| Change | Track | Source |
-|--------|-------|--------|
-| `ShellTool` → `FunctionShellToolParam` (container_auto) | Remote | #4600 |
-| Skills → `SkillReferenceParam` in environment | Remote | #4600 |
-| Network policy → `OpenAIContainerAutoNetworkPolicy` | Remote | #4600 |
-| File mounting → `file_ids` in environment | Remote | #4600 |
-| `_OpenAICodeExecutionContext` for transport tracking | Remote | #4600 |
-| `ResponseFunctionShellToolCall` / Output mapping | Remote | #4600 |
-| `openai_shell_uploaded_files`, `openai_shell_container` settings | Remote | #4600 |
-| `native_definition.kind='shell'` → `shell` with `environment: {type: "local"}` | Local | New |
-| `native_definition.kind='apply_patch'` → `apply_patch` (GPT-5.1+) | Local | New |
-| Name mapping for local tools | Local | New |
+
+| Change                                                                         | Track  | Source |
+| ------------------------------------------------------------------------------ | ------ | ------ |
+| `ShellTool` → `FunctionShellToolParam` (container_auto)                        | Remote | #4600  |
+| Skills → `SkillReferenceParam` in environment                                  | Remote | #4600  |
+| Network policy → `OpenAIContainerAutoNetworkPolicy`                            | Remote | #4600  |
+| File mounting → `file_ids` in environment                                      | Remote | #4600  |
+| `_OpenAICodeExecutionContext` for transport tracking                           | Remote | #4600  |
+| `ResponseFunctionShellToolCall` / Output mapping                               | Remote | #4600  |
+| `openai_shell_uploaded_files`, `openai_shell_container` settings               | Remote | #4600  |
+| `native_definition.kind='shell'` → `shell` with `environment: {type: "local"}` | Local  | New    |
+| `native_definition.kind='apply_patch'` → `apply_patch` (GPT-5.1+)              | Local  | New    |
+| Name mapping for local tools                                                   | Local  | New    |
+
 
 ### 6.3 OpenAI Chat (`models/openai.py`)
 
@@ -758,6 +898,7 @@ Result: `shell_call_output` / `apply_patch_call_output` with appropriate format.
 ### 7.1 `messages.py`
 
 From #4600:
+
 - `UploadedFileTarget` type alias
 - `UploadedFile.target` field (default `'message'`)
 - `UploadedFile.part_kind` field
@@ -772,6 +913,7 @@ From #4600:
 ### 7.2.1 OTel/Logfire Observability
 
 No new instrumentation is required:
+
 - **Track 2 (local)**: Native toolsets produce standard `ToolCallPart` / `ToolReturnPart`, which are already instrumented in `_otel_messages.py`
 - **Track 1 (remote)**: `BuiltinToolCallPart` / `BuiltinToolReturnPart` are already handled by existing instrumentation
 - Container IDs in `provider_details` will appear naturally in span attributes via the existing `provider_metadata` instrumentation
@@ -783,11 +925,13 @@ No new instrumentation is required:
 ### 7.4 Multi-Provider Message History
 
 When a conversation switches providers mid-stream (e.g., Anthropic → OpenAI), message history may contain:
+
 - `BuiltinToolCallPart` / `BuiltinToolReturnPart` from the previous provider's remote shell
 - `ToolCallPart` / `ToolReturnPart` from the previous provider's native local tools
 - `UploadedFile` references with a `provider_name` that doesn't match the new provider
 
 **Handling:**
+
 - `UploadedFile` with mismatched `provider_name` → **skip silently** during message mapping (the file ID is provider-specific and unusable). The existing pattern in the Anthropic adapter already validates `item.provider_name != self.system`.
 - `BuiltinToolCallPart` / `BuiltinToolReturnPart` with mismatched `provider_name` → already handled (adapters check `response_part.provider_name == self.system` before processing)
 - `ToolCallPart` from native local tools → normalized to the toolset's `tool_name` (e.g., `'shell'`), so they round-trip as regular tool calls. The new adapter will map them to its own native format if the tool is still present, or as-is otherwise.
@@ -800,22 +944,26 @@ Following established patterns in the codebase (`ModelRetry` for recoverable too
 
 ### 8.1 Local Shell Errors (Track 2)
 
-| Scenario | Handling | Pattern |
-|----------|----------|---------|
-| Command timeout | `ModelRetry(f'Command timed out after {timeout}s.')` | Same as `FunctionToolset` timeout in `toolsets/function.py` |
-| Non-zero exit code | Return `ShellOutput(output=stderr+stdout, exit_code=N)` — let the model decide how to proceed | Not an error — exit codes are informational |
-| Output exceeds `max_output_chars` | Truncate and append `'[output truncated — {shown} chars of {total} total]'` | Toolset-level truncation |
-| `execute()` raises unexpected exception | Propagate as-is (not `ModelRetry`) — framework-level exception | Follows `FunctionToolset` pattern |
+
+| Scenario                                | Handling                                                                                      | Pattern                                                     |
+| --------------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Command timeout                         | `ModelRetry(f'Command timed out after {timeout}s.')`                                          | Same as `FunctionToolset` timeout in `toolsets/function.py` |
+| Non-zero exit code                      | Return `ShellOutput(output=stderr+stdout, exit_code=N)` — let the model decide how to proceed | Not an error — exit codes are informational                 |
+| Output exceeds `max_output_chars`       | Truncate and append `'[output truncated — {shown} chars of {total} total]'`                   | Toolset-level truncation                                    |
+| `execute()` raises unexpected exception | Propagate as-is (not `ModelRetry`) — framework-level exception                                | Follows `FunctionToolset` pattern                           |
+
 
 ### 8.2 Remote Shell Errors (Track 1)
 
-| Scenario | Handling | Pattern |
-|----------|----------|---------|
-| Container expired / not found | Provider returns API error → adapter raises `ModelHTTPError` or similar | Standard API error handling |
-| Stale `container_id` in history | Adapter catches container-not-found, clears `container_id` from settings, retries with fresh container | Graceful degradation |
-| Invalid `file_id` in `UploadedFile` | Provider returns API error → surfaces as request failure | Standard API error handling |
-| Skills not available on model | `UserError` at configuration time (checked via `supported_builtin_tools` in `prepare_request`) | Same as existing builtin tool validation |
-| `ShellTool.network_policy` on unsupported provider | `UserError` at configuration time | Same pattern as existing profile flag checks |
+
+| Scenario                                           | Handling                                                                                               | Pattern                                      |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| Container expired / not found                      | Provider returns API error → adapter raises `ModelHTTPError` or similar                                | Standard API error handling                  |
+| Stale `container_id` in history                    | Adapter catches container-not-found, clears `container_id` from settings, retries with fresh container | Graceful degradation                         |
+| Invalid `file_id` in `UploadedFile`                | Provider returns API error → surfaces as request failure                                               | Standard API error handling                  |
+| Skills not available on model                      | `UserError` at configuration time (checked via `supported_builtin_tools` in `prepare_request`)         | Same as existing builtin tool validation     |
+| `ShellTool.network_policy` on unsupported provider | `UserError` at configuration time                                                                      | Same pattern as existing profile flag checks |
+
 
 ### 8.3 Concurrency
 
@@ -825,12 +973,14 @@ Following established patterns in the codebase (`ModelRetry` for recoverable too
 
 ### 8.4 Configuration Errors
 
-| Scenario | Handling |
-|----------|----------|
-| `ShellTool` + `CodeExecutionTool` | `UserError('ShellTool and CodeExecutionTool are mutually exclusive...')` |
-| `UploadedFile(target='container')` without `ShellTool` | `UserError('UploadedFile with target including container requires ShellTool...')` |
+
+| Scenario                                                  | Handling                                                                                          |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `ShellTool` + `CodeExecutionTool`                         | `UserError('ShellTool and CodeExecutionTool are mutually exclusive...')`                          |
+| `UploadedFile(target='container')` without `ShellTool`    | `UserError('UploadedFile with target including container requires ShellTool...')`                 |
 | `openai_shell_container` + skills/network_policy/file_ids | `UserError('container_reference cannot combine with skills, network_policy, or file uploads...')` |
-| `ShellTool` on unsupported provider | `UserError` via existing `supported_builtin_tools` validation |
+| `ShellTool` on unsupported provider                       | `UserError` via existing `supported_builtin_tools` validation                                     |
+
 
 ---
 
@@ -850,8 +1000,8 @@ These are provided by the framework without requiring hooks or callbacks:
 
 - **Output truncation**: `ShellToolset.max_output_chars` prevents token budget exhaustion from large outputs
 - **Timeout**: `ShellToolset.timeout` prevents runaway commands
-- **`ModelRetry` on timeout**: Model can adjust its approach rather than hanging
-- **`ApprovalRequiredToolset` composition**: Users can wrap `ShellToolset` in `ApprovalRequiredToolset` for human-in-the-loop approval:
+- `**ModelRetry` on timeout**: Model can adjust its approach rather than hanging
+- `**ApprovalRequiredToolset` composition**: Users can wrap `ShellToolset` in `ApprovalRequiredToolset` for human-in-the-loop approval:
 
 ```python
 from pydantic_ai.toolsets import ShellToolset, ApprovalRequiredToolset
@@ -861,7 +1011,7 @@ approved_shell = ApprovalRequiredToolset(wrapped=shell)
 agent = Agent('anthropic:claude-sonnet-4-6', toolsets=[approved_shell])
 ```
 
-- **`FilteredToolset` composition**: Users can restrict which commands are available
+- `**FilteredToolset` composition**: Users can restrict which commands are available
 - **Execution callback ownership**: The `ShellExecutor` protocol means the user controls exactly how commands are executed — they can add allowlists, denylists, sandboxing, logging, or any other safety mechanism in their implementation
 
 ### 9.3 What We Explicitly Do NOT Provide
@@ -874,6 +1024,7 @@ agent = Agent('anthropic:claude-sonnet-4-6', toolsets=[approved_shell])
 ### 9.4 Remote Shell Security (Track 1)
 
 Provider-hosted containers are sandboxed by the provider. Security considerations:
+
 - Network policy controls what the container can access (OpenAI `allowlist`)
 - Domain secrets prevent credential leakage (OpenAI `domain_secrets`)
 - Containers have limited resources (Anthropic: 5GiB RAM, 5GiB disk, 1 CPU, no internet by default)
@@ -885,13 +1036,16 @@ Provider-hosted containers are sandboxed by the provider. Security consideration
 
 **Complementary, not overlapping.** This plan and #4393 address different concerns:
 
-| Concern | This Plan | PR #4393 |
-|---------|-----------|----------|
-| Where code runs | Provider containers (remote) OR local via callback (local) | Framework-managed environments (local, Docker, memory) |
-| How tools appear | Provider-native formats + function fallback | Generic function tools only |
-| Key files | `builtin_tools.py`, `tools.py`, `models/`, `toolsets/shell.py`, `messages.py` | `environments/`, `toolsets/execution_environment.py` |
+
+| Concern          | This Plan                                                                     | PR #4393                                               |
+| ---------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Where code runs  | Provider containers (remote) OR local via callback (local)                    | Framework-managed environments (local, Docker, memory) |
+| How tools appear | Provider-native formats + function fallback                                   | Generic function tools only                            |
+| Key files        | `builtin_tools.py`, `tools.py`, `models/`, `toolsets/shell.py`, `messages.py` | `environments/`, `toolsets/execution_environment.py`   |
+
 
 **Future integration** after both land:
+
 ```python
 from pydantic_ai.environments import LocalEnvironment
 from pydantic_ai.toolsets import ShellToolset, TextEditorToolset
@@ -904,6 +1058,7 @@ agent = Agent('anthropic:claude-sonnet-4-6', toolsets=[
 ```
 
 Or via a convenience wrapper:
+
 ```python
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
@@ -913,7 +1068,7 @@ agent = Agent(
 
 ---
 
-## 11. Relationship to Other PRs
+## 11. Relationship to Other PRs & In-Flight Work
 
 ### 11.1 PR #4505 (ShellTool PLAN.md by @bsherifi)
 
@@ -921,19 +1076,42 @@ Our `NativeToolDefinition` generalizes their `native_kind: Literal['shell']` con
 
 ### 11.2 PR #4513 (TextEditorTool by @st4r0)
 
-Their approach follows the `MemoryTool` pattern (builtin + companion function tool). The toolset approach is architecturally cleaner for client-executed tools. Their test cassettes and Anthropic adapter changes are valuable references.
+Their approach follows the `MemoryTool` pattern (builtin + companion function tool). The capability-driven toolset approach is architecturally cleaner for client-executed tools — and avoids the anti-pattern identified in section 3.6. Their test cassettes and Anthropic adapter changes are valuable references.
 
-### 11.3 #4303 (Capabilities Abstraction)
+### 11.3 #4303 (Capabilities Abstraction) — ENHANCES, NOT BLOCKS
 
-This plan's `ShellTool` (remote) and `ShellToolset` (local) are the implementation layer that a future `Shell()` capability would delegate to:
+The capabilities PR (Douwe, in-flight) introduces a richer `Capability` base class with hooks, instructions, and model settings. We ship Phase 4 with a minimal `Capability` protocol now and migrate to #4303's base class when it lands — gaining hooks for built-in ↔ tool call bridging, system prompt instructions, and model settings integration. Our implementation layers (`ShellTool`, `ShellToolset`, etc.) become backends that the `Shell` capability delegates to:
 
 ```
-Shell (Capability, v2)
+Shell (Capability)
 ├── ShellTool (remote, provider-hosted) when provider supports containers
 ├── ShellToolset (local, client-executed) when user provides local execution
 ├── ExecutionEnvironmentToolset (local, from #4393) for environment-backed execution
-└── Adds instructions, hooks, guardrails, compaction on top
+├── Hooks: built-in ↔ tool call part bridging for local native tools
+└── Instructions, model settings, guardrails
 ```
+
+The capability's hooks handle the translation between `BuiltinToolCallPart` and `ToolCallPart` without hardcoding shell concepts into the agent loop.
+
+### 11.4 Built-in Tool Fallback Issue
+
+Open issue about automatic fallback from a locally-defined tool to a provider built-in tool, using a `prefers_builtin` or similar flag on `ToolDefinition`. The shell capability is a concrete instance of this pattern — a locally-defined shell tool should prefer the provider's native built-in tool format when available. The `NativeToolDefinition` field on `ToolDefinition` is our current implementation of this concept. The capability layer will generalize it (web search capability will follow the same fallback pattern: provider web search → Tavily/etc.).
+
+### 11.5 Tool Search / Deferred Loading
+
+In-flight work on a `defer_loading` flag on `ToolDefinition` that allows tool definitions to be filtered on the server side (provider tool search) or pre-filtered locally. Relevant for large skill sets where sending all tool definitions would be inefficient. The capability layer should be aware of this when exposing many tools from skills.
+
+### 11.6 Unified Built-in Tool Call/Return Parts PR
+
+Open PR that unifies the `content` field of `BuiltinToolCallPart` and `BuiltinToolReturnPart` across all providers (currently raw JSON from each API). This plan should not conflict with that work. The unified content format will make it easier for capability hooks to translate between built-in and regular tool call parts, since the content will have a consistent shape regardless of provider.
+
+### 11.7 David Sanchez's Cartesian Test Patterns
+
+David's work on the multimodal tool return parts PR and tool choice PR established patterns for cross-provider Cartesian product testing. This plan's test strategy (section 12) should follow those patterns for comprehensive coverage across provider × mode × streaming combinations.
+
+### 11.8 `MemoryTool` — Anti-Pattern to Replace
+
+The current `MemoryTool` implementation on Anthropic requires a manually registered companion function tool with a matching name. This is Anthropic-specific and creates hidden coupling. Once the capabilities abstraction lands, `MemoryTool` should be refactored to use the same capability-driven pattern as Shell. This plan does NOT implement that refactor but establishes the pattern it should follow.
 
 ---
 
@@ -954,6 +1132,7 @@ doppler run -- pytest tests/models/test_openai_responses.py -k test_shell
 All model/API integration tests use `pytest-recording` with VCR cassettes. Cassettes must be **recorded locally and committed** — CI runs with `record_mode=none` (playback only).
 
 **To record new cassettes:**
+
 ```bash
 # Record all cassettes (rewrites existing ones)
 doppler run -- make update-vcr-tests
@@ -964,6 +1143,7 @@ doppler run -- uv run -m pytest --record-mode=rewrite tests/models/test_openai_r
 ```
 
 **Record modes:**
+
 - `rewrite` — record and overwrite existing cassettes (use when updating tests)
 - `once` — record only if cassette doesn't exist (use for new tests)
 - `none` — playback only, fail if cassette missing (CI default)
@@ -971,6 +1151,7 @@ doppler run -- uv run -m pytest --record-mode=rewrite tests/models/test_openai_r
 **Cassette location:** `tests/models/cassettes/{test_module_name}/` — auto-discovered from test function name. Example: `test_anthropic_shell_tool()` → `tests/models/cassettes/test_anthropic/test_anthropic_shell_tool.yaml`
 
 **Cassette hygiene:**
+
 - Sensitive headers (`authorization`, `x-api-key`) are automatically filtered by the custom serializer in `tests/json_body_serializer.py`
 - JSON bodies are normalized and prettified
 - Access tokens and client secrets are scrubbed
@@ -989,6 +1170,7 @@ make test
 ```
 
 **CI coverage pipeline:**
+
 1. Tests run on Python 3.10–3.14 across 3 variants (slim, standard, all-extras)
 2. Each run writes `.coverage/.coverage.{python}-{variant}`
 3. `uv run coverage combine` merges all coverage data
@@ -997,6 +1179,7 @@ make test
 6. HTML report uploaded as CI artifact for review
 
 **Coverage markers:**
+
 - `# pragma: no cover` — strict: asserts code is NOT covered. CI fails if it gets covered. Use only for genuinely untestable code.
 - `# pragma: lax no cover` — lenient: allows partial coverage without failing. Use for platform-specific or CI-only code paths.
 
@@ -1009,6 +1192,7 @@ make test
 Per `tests/AGENTS.md`:
 
 **Remote (Track 1):**
+
 - Anthropic: `code_execution_20250825` with skills
 - Anthropic: `code_execution_20250825` with container file uploads
 - OpenAI: `FunctionShellToolParam` with `container_auto`
@@ -1016,6 +1200,7 @@ Per `tests/AGENTS.md`:
 - Both: streaming variants
 
 **Local (Track 2):**
+
 - Anthropic: `bash_20250124` via `ShellToolset`
 - Anthropic: `text_editor_20250728` via `TextEditorToolset`
 - OpenAI: `shell` (local mode) via `ShellToolset`
@@ -1032,16 +1217,25 @@ Per `tests/AGENTS.md`:
 - `UploadedFile.target` handling in Anthropic and OpenAI adapters
 - **Native tool fallback**: verify `ShellToolset` with a provider that doesn't support native shell (e.g., Google, Groq) emits a standard function tool and logs a `warnings.warn()`
 
-### 12.3 Cross-Provider Parametrization
+### 12.3 Cross-Provider Cartesian Matrix
 
-- Shell: Anthropic, OpenAI Responses, generic fallback
-- Text editor: Anthropic, generic fallback
-- Apply patch: OpenAI, generic fallback
+Following David Sanchez's patterns from the multimodal tool return parts and tool choice PRs, define a Cartesian matrix covering all combinations:
+
+| Dimension | Values |
+|---|---|
+| Provider | Anthropic, OpenAI Responses, OpenAI Chat (fallback), Google (fallback), Groq (fallback) |
+| Mode | Remote (hosted), Local (native), Local (function fallback) |
+| Streaming | Yes, No |
+| Tool type | Shell, Text Editor, Apply Patch |
+| Capability routing | Local path → local, Remote config → remote, Auto → provider-dependent |
+
+Not all combinations are valid (e.g., OpenAI Chat doesn't support remote shell). Invalid combinations should be tested for graceful error handling or silent fallback. The matrix ensures we've thought about all interaction gaps.
 
 ### 12.4 Snapshot Tests
 
 - `result.all_messages()` for full tool call/return flow
 - Provider-specific request payloads (verify native format emission)
+- Capability routing decisions (verify local-by-default for data privacy)
 
 ---
 
@@ -1056,10 +1250,11 @@ Per `tests/AGENTS.md`:
 
 ### 13.2 New: `docs/native-tools.md`
 
-- **Decision tree at the top**: "Which shell tool do I use?" (remote vs local)
+- **Capability API first**: Show `Shell(cwd='/workspace')` as the recommended approach
 - **Security warning**: Prominent admonition about LLM-driven shell execution risks
 - Explain native vs function tools and why it matters (models fine-tuned on provider schemas)
-- `ShellToolset`, `TextEditorToolset`, `ApplyPatchToolset` usage with hello-world examples
+- **Data privacy note**: Explain that local paths default to local execution to avoid data leakage
+- **Advanced section**: Direct `ShellToolset`, `TextEditorToolset`, `ApplyPatchToolset` usage for users who need low-level control
 - Provider-specific behavior and fallback
 - Safety patterns: `ApprovalRequiredToolset` composition, custom executors with restrictions
 
@@ -1091,21 +1286,21 @@ Users currently passing raw shell tool dicts via `openai_builtin_tools=[{"type":
 
 Every phase must complete the following before merge:
 
-- [ ] `__all__` exports in new/modified modules; public types re-exported from `pydantic_ai/__init__.py` (api-design rule: export commonly-used types from top-level package)
-- [ ] `_: KW_ONLY` marker before optional fields in all new dataclasses (api-design rule: prevents breakage when adding parameters)
-- [ ] Private implementation details prefixed with `_` and excluded from `__all__` (e.g., `_LocalShellExecutor`)
-- [ ] `make format` and `make typecheck` pass
-- [ ] `make testcov` passes with 100% coverage
-- [ ] New docs pages registered in `mkdocs.yml` nav; links verified with `make docs-serve`
-- [ ] Docstrings on all public types and methods, with backtick-wrapped identifiers
-- [ ] PR uses the [PR template](.github/pull_request_template.md) with issue refs (#3365, #3963, #3794), AI-generated code checkbox checked
-- [ ] VCR cassettes recorded and committed (no secrets in diffs)
+- `__all__` exports in new/modified modules; public types re-exported from `pydantic_ai/__init__.py` (api-design rule: export commonly-used types from top-level package)
+- `_: KW_ONLY` marker before optional fields in all new dataclasses (api-design rule: prevents breakage when adding parameters)
+- Private implementation details prefixed with `_` and excluded from `__all__` (e.g., `_LocalShellExecutor`)
+- `make format` and `make typecheck` pass
+- `make testcov` passes with 100% coverage
+- New docs pages registered in `mkdocs.yml` nav; links verified with `make docs-serve`
+- Docstrings on all public types and methods, with backtick-wrapped identifiers
+- PR uses the [PR template](.github/pull_request_template.md) with issue refs (#3365, #3963, #3794), AI-generated code checkbox checked
+- VCR cassettes recorded and committed (no secrets in diffs)
 
 ### Beta Module Question
 
-The [version policy](docs/version-policy.md) says minor releases may introduce features under a `beta` module when the API is not yet stable. `NativeToolDefinition` and the native toolsets (`ShellToolset`, `TextEditorToolset`, `ApplyPatchToolset`) introduce a new abstraction pattern. **Question for maintainers**: should Track 2 (native toolsets) ship under `pydantic_ai.beta.toolsets` initially, or is the design stable enough for the main module? Track 1 (remote `ShellTool`) follows established `AbstractBuiltinTool` patterns and does not need beta.
+The [version policy](docs/version-policy.md) says minor releases may introduce features under a `beta` module when the API is not yet stable. `NativeToolDefinition` and the native toolsets (`ShellToolset`, `TextEditorToolset`, `ApplyPatchToolset`) introduce a new abstraction pattern. **Question for maintainers**: should the native toolsets ship under `pydantic_ai.beta.toolsets` initially, or is the design stable enough for the main module? The remote `ShellTool` follows established `AbstractBuiltinTool` patterns and does not need beta. The capability wrapper (Phase 4) is more likely to need beta since it depends on the capabilities abstraction landing.
 
-### Phase 1: Remote Shell + Skills (from #4600)
+### Phase 1: Remote Shell + Skills (from #4600) — COMPLETE
 
 This is the existing #4600 work, refined:
 
@@ -1118,7 +1313,7 @@ This is the existing #4600 work, refined:
 7. `supports_shell_network_policy` profile flag
 8. Tests (VCR cassettes for both streaming and non-streaming), docs, docstrings
 
-### Phase 2: Local Shell (`NativeToolDefinition` + `ShellToolset`)
+### Phase 2: Local Shell (`NativeToolDefinition` + `ShellToolset`) — COMPLETE
 
 1. `ShellNativeDefinition`, `TextEditorNativeDefinition`, `ApplyPatchNativeDefinition` types, `NativeToolDefinition` union, `native_definition` field on `ToolDefinition`
 2. `ShellToolset`, `ShellExecutor`, `ShellOutput`, `_LocalShellExecutor` in `toolsets/shell.py`
@@ -1128,7 +1323,7 @@ This is the existing #4600 work, refined:
 6. Fallback warning: `warnings.warn()` on unsupported providers
 7. Tests (VCR cassettes, fallback path unit test), docs (`native-tools.md` with decision tree + security warning)
 
-### Phase 3: Local Text Editor + Apply Patch
+### Phase 3: Local Text Editor + Apply Patch — COMPLETE
 
 1. `TextEditorToolset` with discriminated union `TextEditorCommand` in `toolsets/text_editor.py`
 2. `ApplyPatchToolset` with typed `ApplyPatchOperation` in `toolsets/apply_patch.py`
@@ -1137,26 +1332,266 @@ This is the existing #4600 work, refined:
 5. Profile flags: `supports_native_text_editor_tool`, `supports_native_apply_patch_tool`
 6. Tests, docs
 
+### Phase 4: Capability Wrapper (NEW — does NOT block on #4303)
+
+This phase builds a minimal `Capability` protocol now and implements the `Shell` capability on top of it. When Douwe's richer `Capability` base class lands (#4303), we swap the base class and gain hooks, instructions, and model settings integration. The user-facing API (`capabilities=[Shell(...)]`) stays the same.
+
+#### 4a. Minimal `Capability` Protocol
+
+New file: `pydantic_ai_slim/pydantic_ai/capabilities/__init__.py`
+
+```python
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.toolsets.abstract import AbstractToolset
+
+
+class Capability(ABC):
+    """A high-level agent capability that provides toolsets and/or builtin tools.
+
+    Capabilities are the recommended way to give agents execution abilities.
+    They encapsulate routing logic (local vs remote), data privacy defaults,
+    and provider-specific configuration.
+
+    This is a minimal protocol that will be extended when #4303 lands to
+    also support hooks, instructions, and model settings.
+    """
+
+    @abstractmethod
+    def toolsets(self) -> list[AbstractToolset]:
+        """Return toolsets this capability provides (client-executed)."""
+        ...
+
+    @abstractmethod
+    def builtin_tools(self) -> list[AbstractBuiltinTool]:
+        """Return builtin tools this capability provides (provider-executed)."""
+        ...
+```
+
+#### 4b. `Agent` Integration
+
+Add `capabilities` parameter to `Agent.__init__`:
+
+```python
+class Agent:
+    def __init__(
+        self,
+        model=...,
+        *,
+        toolsets=(),
+        builtin_tools=(),
+        capabilities=(),   # NEW
+        ...
+    ):
+        # Decompose capabilities into toolsets + builtin_tools
+        for cap in capabilities:
+            self._toolsets.extend(cap.toolsets())
+            self._builtin_tools.extend(cap.builtin_tools())
+        # ... rest of existing init
+```
+
+This is a minimal addition — capabilities just decompose into the existing toolset/builtin_tool paths. When #4303 lands, this integration point expands to also extract hooks, instructions, and model settings from capabilities.
+
+#### 4c. `Shell` Capability
+
+New file: `pydantic_ai_slim/pydantic_ai/capabilities/shell.py`
+
+```python
+@dataclass(kw_only=True)
+class Shell(Capability):
+    """Shell execution capability with automatic routing.
+
+    Routing logic:
+    - If `cwd` or `executor` is provided → local mode (data stays local)
+    - If `skills` or `network_policy` is provided without local context → remote mode
+    - If nothing is provided → auto mode (remote if provider supports it, else local fallback)
+
+    Data privacy: local paths always default to local mode to avoid
+    accidental data leakage to providers.
+    """
+
+    # Local execution config
+    cwd: str | Path | None = None
+    executor: ShellExecutor | None = None
+    env: dict[str, str] | None = None
+
+    # Remote execution config
+    skills: Sequence[SkillReference] = ()
+    network_policy: CodeExecutionNetworkPolicy | None = None
+
+    # Shared config
+    timeout: float | None = None
+    max_output_chars: int = 200_000
+
+    def _resolve_mode(self) -> Literal['local', 'remote', 'auto']:
+        has_local = self.cwd is not None or self.executor is not None
+        has_remote = bool(self.skills) or self.network_policy is not None
+        if has_local:
+            return 'local'  # data privacy default
+        if has_remote and not has_local:
+            return 'remote'
+        return 'auto'
+
+    def toolsets(self) -> list[AbstractToolset]:
+        mode = self._resolve_mode()
+        if mode == 'remote':
+            return []  # remote-only, no local toolset
+        # local or auto: provide ShellToolset
+        executor = self.executor or _LocalShellExecutor(cwd=self.cwd, env=self.env)
+        return [ShellToolset(
+            executor=executor,
+            timeout=self.timeout,
+            max_output_chars=self.max_output_chars,
+        )]
+
+    def builtin_tools(self) -> list[AbstractBuiltinTool]:
+        mode = self._resolve_mode()
+        if mode == 'local':
+            return []  # local-only, no builtin
+        # remote or auto: provide ShellTool
+        return [ShellTool(
+            skills=self.skills,
+            network_policy=self.network_policy,
+        )]
+```
+
+#### 4d. `TextEditor` and `FilePatching` Capabilities
+
+```python
+@dataclass(kw_only=True)
+class TextEditor(Capability):
+    """Text editor capability (Anthropic text_editor_20250728, function fallback on others)."""
+    execute: TextEditorExecuteFunc
+    max_characters: int | None = None
+
+    def toolsets(self) -> list[AbstractToolset]:
+        return [TextEditorToolset(execute=self.execute, max_characters=self.max_characters)]
+
+    def builtin_tools(self) -> list[AbstractBuiltinTool]:
+        return []
+
+
+@dataclass(kw_only=True)
+class FilePatching(Capability):
+    """File patching capability (OpenAI apply_patch, function fallback on others)."""
+    execute: ApplyPatchExecuteFunc
+
+    def toolsets(self) -> list[AbstractToolset]:
+        return [ApplyPatchToolset(execute=self.execute)]
+
+    def builtin_tools(self) -> list[AbstractBuiltinTool]:
+        return []
+```
+
+#### 4e. `CodingEnvironment` Convenience Capability
+
+```python
+@dataclass(kw_only=True)
+class CodingEnvironment(Capability):
+    """Combined shell + text editor + file patching for a local coding environment.
+
+    Provides all execution tools backed by a local directory.
+    """
+    cwd: str | Path = '.'
+    env: dict[str, str] | None = None
+    timeout: float | None = None
+    max_output_chars: int = 200_000
+
+    def toolsets(self) -> list[AbstractToolset]:
+        return [
+            ShellToolset.local(cwd=self.cwd, env=self.env,
+                               timeout=self.timeout, max_output_chars=self.max_output_chars),
+            TextEditorToolset(execute=_local_text_editor(self.cwd)),
+            ApplyPatchToolset(execute=_local_apply_patch(self.cwd)),
+        ]
+
+    def builtin_tools(self) -> list[AbstractBuiltinTool]:
+        return []  # all local
+```
+
+#### 4f. Tests
+
+- Routing logic: `Shell(cwd=...)` → local, `Shell(skills=...)` → remote, `Shell()` → auto
+- Data privacy: `Shell(cwd='/workspace', skills=[...])` → local (path wins)
+- Decomposition: verify `Agent(capabilities=[Shell(...)])` produces correct toolsets + builtin_tools
+- Cross-provider Cartesian matrix (section 12.3) for Shell capability
+- VCR cassettes for capability-level integration tests
+
+#### 4g. Docs
+
+- Update `docs/native-tools.md` to use capability API as recommended approach
+- Demote direct `ShellToolset`/`ShellTool` usage to "Advanced / Low-Level" section
+- Add `docs/capabilities.md` with overview of the capability pattern
+
+#### 4h. Migration Path to #4303
+
+When the capabilities PR lands:
+
+1. `Capability` base class gains: `hooks()`, `instructions()`, `model_settings()` methods
+2. `Agent` integration expands to extract those from capabilities
+3. `Shell` adds hook for built-in ↔ tool call part bridging (local native tools)
+4. `Shell` adds instructions (execution environment context for the model)
+5. No change to user-facing API: `capabilities=[Shell(cwd='/workspace')]` stays the same
+
+**User-facing API (available NOW, before #4303):**
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Shell, TextEditor, CodingEnvironment
+
+# Simple: local shell
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[Shell(cwd='/workspace')])
+
+# Full coding environment (shell + text editor + file patching)
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[
+    CodingEnvironment(cwd='/workspace'),
+])
+
+# Remote with skills
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[
+    Shell(skills=[SkillReference(skill_id='my-skill')]),
+])
+
+# Auto: framework picks the best option for the provider
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[Shell()])
+```
+
+### Phase 4→#4303 Migration (After Capabilities PR lands)
+
+When Douwe's capabilities PR merges:
+
+1. Swap `Capability` base class from our minimal protocol to the richer #4303 base
+2. Add `hooks()` to `Shell` for built-in ↔ tool call part bridging
+3. Add `instructions()` for execution environment system prompt context
+4. Add `model_settings()` for container config pass-through
+5. Agent integration automatically picks up hooks/instructions/settings
+6. User-facing API unchanged: `capabilities=[Shell(cwd='/workspace')]`
+
 ### Future Work (Out of Scope)
 
 These are not phases of this plan but natural follow-ups:
 
-- **Execution Environment Integration (Post-#4393)**: `NativeExecutionEnvironmentToolset` convenience wrapper that backs `ShellToolset` / `TextEditorToolset` with `ExecutionEnvironment` from PR #4393. Depends on #4393 landing.
-- **Capabilities Layer (#4303)**: Native toolsets become backends for `Shell()`, `FileSystem()`, `CodeMode()` capabilities. Depends on the Capabilities abstraction design.
+- **WebSearch Capability**: Same pattern as Shell — use provider's web search built-in when available, fall back to Tavily/etc. otherwise. Validates the capability abstraction is generalizable.
+- **CodeMode Capability (#4050)**: Programmatic tool calling backed by Monty or provider code execution. Uses the same capability hooks for routing.
+- **MemoryTool Refactor**: Replace the Anthropic-specific `MemoryTool` pattern with a capability-driven `Memory` capability. Follows the same pattern established here.
+- **Tool Search Integration**: Deferred loading flag on `ToolDefinition` for large skill sets, capability-aware filtering.
+- **Execution Environment Integration (Post-#4393)**: `CodingEnvironment` backed by `ExecutionEnvironment` ABC from PR #4393 (Docker, E2B, etc.).
 
 ---
 
 ## 15. Open Questions
 
-### 15.1 Naming: `ShellToolset` vs `ShellTool`
+### 15.1 Naming: Capability vs Implementation Layer
 
-`ShellTool` (builtin, remote) follows the `*Tool` pattern (`WebSearchTool`, `CodeExecutionTool`). `ShellToolset` (toolset, local) follows the `*Toolset` pattern (`FunctionToolset`, `CombinedToolset`). The names differ by suffix, but the conceptual distinction (remote vs local) is non-obvious.
+With the capability-driven architecture, users primarily interact with `Shell` (capability), not `ShellTool`/`ShellToolset` directly. The `Tool`/`Toolset` distinction becomes an implementation detail.
 
-**Recommendation**: Keep the naming as-is — `ShellTool` and `ShellToolset`. The `Tool`/`Toolset` suffix distinction is consistent with the codebase. To address confusion, documentation must include a prominent decision tree:
+**Recommendation**: Keep `ShellTool` and `ShellToolset` as internal implementation layers. The `Shell` capability is the public API. Advanced users who need direct access can still use the toolsets, but docs should present the capability as the primary interface.
 
-> **Which shell tool do I use?**
-> - Want the **provider to run code** in their hosted container? → `ShellTool` (builtin)
-> - Want to **run commands on your machine** (or your Docker)? → `ShellToolset` (toolset)
+**Resolved**: The previous decision tree ("Which shell tool do I use?") is replaced by the capability's automatic routing logic.
 
 ### 15.2 Anthropic Tool Version Selection
 
@@ -1164,15 +1599,30 @@ These are not phases of this plan but natural follow-ups:
 
 **Recommendation**: Model profile determines version. Add version fields to Anthropic-specific profile.
 
-### 15.3 `ShellTool` + `ShellToolset` Coexistence
+### 15.3 Remote + Local Coexistence
 
-Can a user use both remote (`ShellTool`) and local (`ShellToolset`) simultaneously?
+Can a single `Shell` capability use both remote and local simultaneously? Anthropic supports this (hosted `bash_code_execution` is distinct from local `bash_20250124`). OpenAI uses the same `shell` tool type for both (differentiated by environment).
 
-**Recommendation**: Allow it — they serve different purposes and produce different message types (`BuiltinToolCallPart` vs `ToolCallPart`). On OpenAI, both emit a `shell` tool but with different environment types (`container_auto` vs `local`), so the adapter can distinguish them. The model sees them as two separate tools.
+**Recommendation**: Support it as an advanced option on the capability (e.g., `Shell(cwd='/workspace', also_remote=True)`). Default behavior should pick one mode. On OpenAI, both emit a `shell` tool but with different environment types, so the adapter can distinguish them.
 
 ### 15.4 Container ID for Remote Shell
 
-**Resolved** (from #4600): Store in `ModelResponse.provider_details['container_id']`. Anthropic adapter extracts from history. OpenAI uses `container_reference` or implicit history round-tripping.
+**Resolved**: Container ID is stored in two provider-specific locations:
+
+- **Anthropic**: `ModelResponse.provider_details['container_id']`
+- **OpenAI**: `BuiltinToolCallPart.args['container_id']`
+
+A unified helper `ShellTool.get_container_id(messages)` scans message history in reverse, checking both locations. This helper is used by:
+
+1. **OpenAI adapter** (`_build_shell_tool_param`): auto-switches from `container_auto` to `container_reference` on subsequent turns. The Anthropic adapter already had equivalent logic in `_get_container()`.
+2. **User tools** (non-Temporal): `ShellTool.get_container_id(ctx.messages)` provides direct access.
+3. **Temporal activities**: `ShellToolTemporalRunContext` (in `durable_exec/temporal/_builtin_tools.py`) overrides `serialize_run_context` to include `container_id` via the same helper. Users opt in with `TemporalAgent(agent, run_context_type=ShellToolTemporalRunContext)`.
+
+**Design rationale**: Container ID is NOT added to `RunContext` (which only has generic agent-loop fields) or the default `TemporalRunContext` serializer (which has zero tool-specific knowledge). The Temporal subclass lives in `durable_exec/temporal/` (not `builtin_tools.py`) to keep the dependency direction correct.
+
+**Force-fresh behavior**: `openai_shell_container=False` strips container references from BOTH the shell tool param (`container_auto` instead of `container_reference`) AND the message history round-trip items (omits `environment` on old `shell_call` input items). Without both, OpenAI infers the old container from conversation context.
+
+**Expired container recovery**: Auto-inferred containers that no longer exist (404 from OpenAI) are automatically retried with `container_auto` + files from `openai_shell_uploaded_files`. Explicitly set containers (`openai_shell_container='cntr_xxx'`) propagate the 404 as `ModelHTTPError`. See section 4.5 for details.
 
 ### 15.5 `UploadedFile.target` Shape
 
@@ -1203,6 +1653,7 @@ Phase 1 (remote) and Phase 2 (local) both produce OpenAI `shell_call` / `shell_c
 ### Anthropic Remote Shell (code_execution_20260120 GA / code_execution_20250825 beta)
 
 **Request (GA — no beta header needed):**
+
 ```json
 {
   "tools": [{"type": "code_execution_20260120", "name": "code_execution"}],
@@ -1213,6 +1664,7 @@ Phase 1 (remote) and Phase 2 (local) both produce OpenAI `shell_call` / `shell_c
 ```
 
 **Request (beta):**
+
 ```json
 {
   "tools": [{"type": "code_execution_20250825", "name": "code_execution"}],
@@ -1224,6 +1676,7 @@ Phase 1 (remote) and Phase 2 (local) both produce OpenAI `shell_call` / `shell_c
 ```
 
 **Response contains (server-executed — client does nothing):**
+
 - `server_tool_use` blocks (IDs prefixed `srvtoolu_`) for `bash_code_execution` and `text_editor_code_execution`
 - `bash_code_execution_tool_result` — output of shell commands run in container
 - `text_editor_code_execution_tool_result` — output of file operations in container
@@ -1233,16 +1686,19 @@ Phase 1 (remote) and Phase 2 (local) both produce OpenAI `shell_call` / `shell_c
 ### Anthropic Local Bash (bash_20250124)
 
 **Request:**
+
 ```json
 {"type": "bash_20250124", "name": "bash"}
 ```
 
 **Model output:**
+
 ```json
 {"type": "tool_use", "id": "toolu_xxx", "name": "bash", "input": {"command": "ls -la"}}
 ```
 
 **Client result:**
+
 ```json
 {"type": "tool_result", "tool_use_id": "toolu_xxx", "content": "total 42\n..."}
 ```
@@ -1250,11 +1706,13 @@ Phase 1 (remote) and Phase 2 (local) both produce OpenAI `shell_call` / `shell_c
 ### Anthropic Local Text Editor (text_editor_20250728)
 
 **Request:**
+
 ```json
 {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool", "max_characters": 10000}
 ```
 
 **Model output:**
+
 ```json
 {
   "type": "tool_use", "id": "toolu_xxx", "name": "str_replace_based_edit_tool",
@@ -1265,6 +1723,7 @@ Phase 1 (remote) and Phase 2 (local) both produce OpenAI `shell_call` / `shell_c
 ### OpenAI Remote Shell (FunctionShellToolParam)
 
 **Request:**
+
 ```json
 {
   "type": "shell",
@@ -1293,16 +1752,18 @@ Phase 1 (remote) and Phase 2 (local) both produce OpenAI `shell_call` / `shell_c
 
 ## Appendix B: Capability Matrix
 
-| Feature | Anthropic | OpenAI Responses | OpenAI Chat | Google | Groq | Other |
-|---------|-----------|-----------------|-------------|--------|------|-------|
-| Remote shell (hosted) | `code_execution_20260120` (GA) / `code_execution_20250825` (beta) | `shell` with `container_auto`/`container_reference` | No | No | No | No |
-| Remote sub-tools | `bash_code_execution` + `text_editor_code_execution` (server-side) | Shell commands via `shell_call`/`shell_call_output` (server-side) | No | No | No | No |
-| Skills | `skills-2025-10-02` beta | Via containers (`client.containers.create(skills=[...])`) | No | No | No | No |
-| Local bash | `bash_20250124` (client-executed, separate tool type) | No | No | No | No | No |
-| Local shell | No | `shell` with `environment: {type: "local"}` (client-executed, same `shell_call`/`shell_call_output`) | No | No | No | No |
-| Local text editor | `text_editor_20250728` (client-executed) | No | No | No | No | No |
-| Local apply_patch | No | `apply_patch` (GPT-5.1+, client-executed) | No | No | No | No |
-| Function tool fallback | Yes | Yes | Yes | Yes | Yes | Yes |
+
+| Feature                | Anthropic                                                          | OpenAI Responses                                                                                     | OpenAI Chat | Google | Groq | Other |
+| ---------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ----------- | ------ | ---- | ----- |
+| Remote shell (hosted)  | `code_execution_20260120` (GA) / `code_execution_20250825` (beta)  | `shell` with `container_auto`/`container_reference`                                                  | No          | No     | No   | No    |
+| Remote sub-tools       | `bash_code_execution` + `text_editor_code_execution` (server-side) | Shell commands via `shell_call`/`shell_call_output` (server-side)                                    | No          | No     | No   | No    |
+| Skills                 | `skills-2025-10-02` beta                                           | Via containers (`client.containers.create(skills=[...])`)                                            | No          | No     | No   | No    |
+| Local bash             | `bash_20250124` (client-executed, separate tool type)              | No                                                                                                   | No          | No     | No   | No    |
+| Local shell            | No                                                                 | `shell` with `environment: {type: "local"}` (client-executed, same `shell_call`/`shell_call_output`) | No          | No     | No   | No    |
+| Local text editor      | `text_editor_20250728` (client-executed)                           | No                                                                                                   | No          | No     | No   | No    |
+| Local apply_patch      | No                                                                 | `apply_patch` (GPT-5.1+, client-executed)                                                            | No          | No     | No   | No    |
+| Function tool fallback | Yes                                                                | Yes                                                                                                  | Yes         | Yes    | Yes  | Yes   |
+
 
 ---
 
@@ -1310,19 +1771,23 @@ Phase 1 (remote) and Phase 2 (local) both produce OpenAI `shell_call` / `shell_c
 
 ### Anthropic
 
-| Model | Bash Version | Text Editor Version | Text Editor Name |
-|-------|-------------|--------------------|--------------------|
-| Claude 4.x | `bash_20250124` | `text_editor_20250728` | `str_replace_based_edit_tool` |
-| Claude Sonnet 3.7 | `bash_20250124` | `text_editor_20250124` | `str_replace_editor` |
-| Claude Sonnet 3.5 (retired) | `bash_20241022` | `text_editor_20241022` | `str_replace_editor` |
+
+| Model                       | Bash Version    | Text Editor Version    | Text Editor Name              |
+| --------------------------- | --------------- | ---------------------- | ----------------------------- |
+| Claude 4.x                  | `bash_20250124` | `text_editor_20250728` | `str_replace_based_edit_tool` |
+| Claude Sonnet 3.7           | `bash_20250124` | `text_editor_20250124` | `str_replace_editor`          |
+| Claude Sonnet 3.5 (retired) | `bash_20241022` | `text_editor_20241022` | `str_replace_editor`          |
+
 
 ### OpenAI
 
-| Model | Shell (hosted + local) | Apply Patch | Notes |
-|-------|----------------------|-------------|-------|
-| GPT-5.4+ | Yes (both modes) | Yes | Full shell support |
-| GPT-5.1-5.3 | Yes (hosted) | Yes | Local mode availability TBD |
-| GPT-4o and below | No | No | Function tool fallback only |
+
+| Model            | Shell (hosted + local) | Apply Patch | Notes                       |
+| ---------------- | ---------------------- | ----------- | --------------------------- |
+| GPT-5.4+         | Yes (both modes)       | Yes         | Full shell support          |
+| GPT-5.1-5.3      | Yes (hosted)           | Yes         | Local mode availability TBD |
+| GPT-4o and below | No                     | No          | Function tool fallback only |
+
 
 ---
 
@@ -1360,3 +1825,18 @@ Phase 1 (remote) and Phase 2 (local) both produce OpenAI `shell_call` / `shell_c
 - `pydantic_ai_slim/pydantic_ai/models/openai.py` — `apply_patch`
 - `pydantic_ai_slim/pydantic_ai/profiles/` — additional flags
 - `docs/`, `tests/`
+
+### Phase 4 (Capability Wrapper, New)
+
+- `pydantic_ai_slim/pydantic_ai/capabilities/__init__.py` — `Capability` protocol, re-exports
+- `pydantic_ai_slim/pydantic_ai/capabilities/shell.py` — `Shell` capability with routing logic
+- `pydantic_ai_slim/pydantic_ai/capabilities/text_editor.py` — `TextEditor` capability
+- `pydantic_ai_slim/pydantic_ai/capabilities/file_patching.py` — `FilePatching` capability
+- `pydantic_ai_slim/pydantic_ai/capabilities/coding_env.py` — `CodingEnvironment` convenience capability
+- `pydantic_ai_slim/pydantic_ai/agent.py` — `capabilities` parameter on `Agent.__init__`
+- `pydantic_ai_slim/pydantic_ai/__init__.py` — re-export `Shell`, `TextEditor`, `FilePatching`, `CodingEnvironment`
+- `docs/capabilities.md` — capability pattern overview
+- `docs/native-tools.md` — updated to recommend capability API
+- `tests/test_capabilities.py` — routing logic, decomposition, data privacy defaults
+- `tests/test_capabilities_integration.py` — VCR cassettes through capability API
+

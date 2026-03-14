@@ -298,6 +298,28 @@ def _check_azure_content_filter(e: APIStatusError, system: str, model_name: str)
     return None
 
 
+def _collect_container_file_ids(messages: Sequence[ModelMessage]) -> list[str]:
+    """Collect file IDs from ``UploadedFile`` items with ``target='container'`` or ``'both'`` in messages."""
+    file_ids: list[str] = []
+    for msg in messages:
+        if isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, UserPromptPart) and isinstance(part.content, Sequence) and not isinstance(part.content, str):
+                    for item in part.content:
+                        if isinstance(item, UploadedFile) and item.target in ('container', 'both'):
+                            file_ids.append(item.file_id)
+    return file_ids
+
+
+def _is_container_not_found_error(e: APIStatusError) -> bool:
+    """Check if the error is a container-not-found error from OpenAI."""
+    body_any: Any = e.body
+    if not isinstance(body_any, dict):
+        return False
+    message = str(body_any.get('message') or '')  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    return 'Container' in message and 'not found' in message
+
+
 def _drop_sampling_params_for_reasoning(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
     """Drop sampling params when reasoning is enabled on models that support it.
 
@@ -509,12 +531,14 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     openai_shell_container: str | Literal[False]
     """Container configuration for the OpenAI shell tool.
 
-    - ``str`` (e.g. ``'cntr_xxx'``): reuse an existing container via ``container_reference``.
+    - ``str`` (e.g. ``'cntr_xxx'``): reuse a specific pre-created container via ``container_reference``.
       Cannot be combined with skills, network_policy, or file uploads.
-    - ``False``: force a fresh ``container_auto`` container, ignoring any container ID
-      extracted from message history.
+    - ``False``: force a fresh ``container_auto`` container and strip container references
+      from message history round-trip items.
 
-    Omit (default) to use a fresh ``container_auto`` each time.
+    Omit (default) to auto-reuse the container from message history via
+    :meth:`~pydantic_ai.builtin_tools.ShellTool.get_container_id`;
+    falls back to ``container_auto`` on the first turn.
     """
 
 
@@ -1719,9 +1743,23 @@ class OpenAIResponsesModel(Model):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
+        # Upload container-targeted files to an existing container before building tools.
+        # On the first turn (no container yet), files are collected in _build_shell_tool_param
+        # and included in container_auto.file_ids. On subsequent turns, we must use the
+        # Containers API since container_reference doesn't accept file_ids.
+        container_setting = model_settings.get('openai_shell_container')
+        if (
+            not isinstance(container_setting, str)
+            and container_setting is not False
+            and (existing_cid := ShellTool.get_container_id(messages))
+            and (new_file_ids := _collect_container_file_ids(messages))
+        ):
+            for file_id in new_file_ids:
+                await self.client.containers.files.create(container_id=existing_cid, file_id=file_id)
+
         native_tools, self._native_tool_names = self._get_tools(model_request_parameters)
         tools: list[responses.ToolParam] = (
-            self._get_builtin_tools(model_request_parameters, model_settings)
+            self._get_builtin_tools(model_request_parameters, model_settings, messages)
             + list(model_settings.get('openai_builtin_tools', []))
             + native_tools
         )
@@ -1827,6 +1865,16 @@ class OpenAIResponsesModel(Model):
             if model_response := _check_azure_content_filter(e, self.system, self.model_name):
                 return model_response
 
+            # Auto-retry with a fresh container when an auto-inferred container is expired/deleted.
+            # Only retries when the container was inferred from history (not explicitly set by user).
+            if (
+                e.status_code == 404
+                and _is_container_not_found_error(e)
+                and not isinstance(model_settings.get('openai_shell_container'), str)
+            ):
+                fresh_settings: OpenAIResponsesModelSettings = {**model_settings, 'openai_shell_container': False}
+                return await self._responses_create(messages, stream, fresh_settings, model_request_parameters)
+
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
@@ -1898,6 +1946,7 @@ class OpenAIResponsesModel(Model):
         self,
         model_request_parameters: ModelRequestParameters,
         model_settings: OpenAIResponsesModelSettings,
+        messages: list[ModelRequest | ModelResponse],
     ) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
         has_image_generating_tool = False
@@ -1929,7 +1978,7 @@ class OpenAIResponsesModel(Model):
                 tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
             elif isinstance(tool, ShellTool):
                 has_shell = True
-                tools.append(_build_shell_tool_param(tool, model_settings))
+                tools.append(_build_shell_tool_param(tool, model_settings, messages))
             elif isinstance(tool, MCPServerTool):
                 mcp_tool = responses.tool_param.Mcp(
                     type='mcp',
@@ -2265,7 +2314,11 @@ class OpenAIResponsesModel(Model):
                                     id=item.id or item.tool_call_id,
                                     status='completed',
                                 )
-                                if container_id := args.get('container_id'):
+                                # Attach the container reference from history unless explicitly forcing fresh
+                                if (
+                                    model_settings.get('openai_shell_container') is not False
+                                    and (container_id := args.get('container_id'))
+                                ):
                                     shell_call_item['environment'] = ContainerReferenceParam(
                                         container_id=container_id,
                                         type='container_reference',
@@ -3474,6 +3527,7 @@ def _map_mcp_call(
 def _build_shell_tool_param(
     tool: ShellTool,
     model_settings: OpenAIResponsesModelSettings,
+    messages: list[ModelRequest | ModelResponse],
 ) -> FunctionShellToolParam:
     """Build a ``FunctionShellToolParam`` from a ``ShellTool`` and model settings."""
     container_setting = model_settings.get('openai_shell_container')
@@ -3484,6 +3538,14 @@ def _build_shell_tool_param(
             type='shell',
             environment=ContainerReferenceParam(type='container_reference', container_id=container_setting),
         )
+
+    # Auto-reuse container from message history (unless explicitly forced fresh)
+    if container_setting is not False:
+        if cid := ShellTool.get_container_id(messages):
+            return FunctionShellToolParam(
+                type='shell',
+                environment=ContainerReferenceParam(type='container_reference', container_id=cid),
+            )
 
     # Otherwise build a container_auto environment
     environment: dict[str, Any] = {'type': 'container_auto'}
@@ -3506,8 +3568,12 @@ def _build_shell_tool_param(
                 'allowed_domains': list(tool.network_policy.allowed_domains),
             }
 
+    file_ids: list[str] = []
     if shell_files := model_settings.get('openai_shell_uploaded_files'):
-        environment['file_ids'] = [f.file_id for f in shell_files]
+        file_ids.extend(f.file_id for f in shell_files)
+    file_ids.extend(_collect_container_file_ids(messages))
+    if file_ids:
+        environment['file_ids'] = file_ids
 
     # Use cast because we build the ContainerAutoParam as a dict for flexibility
     return cast(FunctionShellToolParam, {'type': 'shell', 'environment': environment})

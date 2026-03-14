@@ -537,6 +537,41 @@ class ShellTool(AbstractBuiltinTool):
     kind: str = 'shell'
     """The kind of tool."""
 
+    @staticmethod
+    def get_container_id(messages: Sequence[Any]) -> str | None:
+        """Extract the most recent container ID from message history.
+
+        Scans messages in reverse for a container ID set by either provider:
+
+        * **OpenAI**: stored in ``BuiltinToolCallPart.args['container_id']``
+        * **Anthropic**: stored in ``ModelResponse.provider_details['container_id']``
+
+        Args:
+            messages: The message history to scan (``list[ModelMessage]``).
+
+        Returns:
+            The container ID string, or ``None`` if no container has been created.
+        """
+        from .messages import BuiltinToolCallPart, ModelResponse
+
+        for msg in reversed(messages):
+            if not isinstance(msg, ModelResponse):
+                continue
+            # Anthropic path: container_id in ModelResponse.provider_details
+            if msg.provider_details:
+                if cid := msg.provider_details.get('container_id'):
+                    return cid
+            # OpenAI path: container_id in BuiltinToolCallPart.args
+            for part in msg.parts:
+                if (
+                    isinstance(part, BuiltinToolCallPart)
+                    and part.tool_name == 'shell'
+                    and isinstance(part.args, dict)
+                ):
+                    if cid := part.args.get('container_id'):
+                        return cid
+        return None
+
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:
     if isinstance(tool_data, dict):
