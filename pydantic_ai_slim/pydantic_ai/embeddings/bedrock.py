@@ -509,6 +509,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
     client: BedrockRuntimeClient
 
     _model_name: BedrockEmbeddingModelName = field(repr=False)
+    _base_model_name: BedrockEmbeddingModelName = field(repr=False)
     _provider: Provider[BaseClient] = field(repr=False)
     _handler: _BedrockEmbeddingHandler = field(repr=False)
 
@@ -539,12 +540,13 @@ class BedrockEmbeddingModel(EmbeddingModel):
                 when `model_name` is an application inference profile ARN. Defaults to `model_name`.
         """
         self._model_name = model_name
+        self._base_model_name = base_model_name or model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
-        self._handler = _get_handler_for_model(base_model_name or model_name)
+        self._handler = _get_handler_for_model(self._base_model_name)
 
         super().__init__(settings=settings)
 
@@ -592,7 +594,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
             inputs=inputs,
             input_type=input_type,
             usage=RequestUsage(input_tokens=input_tokens),
-            model_name=self._handler.model_name,
+            model_name=self._base_model_name,
             provider_name=self.system,
             provider_response_id=response_id,
         )
@@ -628,7 +630,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
             inputs=inputs,
             input_type=input_type,
             usage=RequestUsage(input_tokens=total_input_tokens),
-            model_name=self._handler.model_name,
+            model_name=self._base_model_name,
             provider_name=self.system,
         )
 
