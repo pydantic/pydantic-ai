@@ -8,14 +8,14 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic, Literal
 
-from opentelemetry.trace import Tracer
+from opentelemetry.trace import StatusCode, Tracer
 from pydantic import ValidationError
 from typing_extensions import deprecated
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
+from .exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -407,16 +407,42 @@ class ToolManager(Generic[AgentDepsT]):
             ),
         }
 
+        # Use record_exception=False so we can handle exception recording manually.
+        # Control flow exceptions (CallDeferred, ApprovalRequired) should not be
+        # recorded as errors on the span — they are normal control flow, not failures.
         with tracer.start_as_current_span(
             instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=span_attributes,
+            record_exception=False,
+            set_status_on_exception=False,
         ) as span:
             try:
                 tool_result = await self._execute_tool_call_impl(validated, usage=usage)
+            except (CallDeferred, ApprovalRequired) as e:
+                # These are control flow exceptions, not real errors.
+                # Record the exception type and metadata as regular span attributes
+                # so the info is queryable, but do NOT mark the span as an error.
+                if span.is_recording():
+                    exc_type = type(e).__name__
+                    span.set_attribute('pydantic_ai.tool.control_flow', exc_type)
+                    if hasattr(e, 'metadata') and e.metadata is not None:
+                        span.set_attribute('pydantic_ai.tool.control_flow.metadata', json.dumps(e.metadata))
+                    span.set_status(StatusCode.OK)
+                raise
             except ToolRetryError as e:
                 part = e.tool_retry
                 if include_content and span.is_recording():
                     span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
+                # Record retry errors as exceptions on the span since they represent real issues
+                if span.is_recording():
+                    span.record_exception(e)
+                    span.set_status(StatusCode.ERROR, str(e))
+                raise
+            except BaseException as e:
+                # Record all other exceptions as errors on the span
+                if span.is_recording():
+                    span.record_exception(e)
+                    span.set_status(StatusCode.ERROR, str(e))
                 raise
 
             if include_content and span.is_recording():
