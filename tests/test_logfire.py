@@ -11,12 +11,12 @@ from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._utils import get_traceparent
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import DeferredToolRequests, RunContext
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
@@ -3191,3 +3191,115 @@ async def test_run_stream(
                 ]
             )
         )
+
+
+def _find_tool_span(capfire: CaptureLogfire) -> Any:
+    """Find the completed tool span from exported raw spans."""
+
+    for s in capfire.exporter.exported_spans:
+        is_tool = 'tool' in s.name.lower() or 'running' in s.name.lower()
+        is_completed = s.attributes and s.attributes.get('logfire.span_type') == 'span'
+        if is_tool and is_completed:
+            return s
+    raise AssertionError('No completed tool span found')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize(
+    'exception_class',
+    [CallDeferred, ApprovalRequired],
+    ids=['CallDeferred', 'ApprovalRequired'],
+)
+@pytest.mark.parametrize('version', [1, 2, 3, 4, 5])
+def test_deferral_span_attributes(
+    capfire: CaptureLogfire,
+    exception_class: type[CallDeferred | ApprovalRequired],
+    version: int,
+) -> None:
+    """Test that CallDeferred/ApprovalRequired record deferral attributes and respect version gating."""
+    from opentelemetry.trace import StatusCode as _StatusCode
+
+    agent = Agent(
+        TestModel(),
+        output_type=[str, DeferredToolRequests],
+        instrument=InstrumentationSettings(version=version),  # type: ignore[arg-type]
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise exception_class(metadata={'task_id': 'task-123'})
+
+    agent.run_sync('Hello')
+
+    tool_span = _find_tool_span(capfire)
+
+    # Deferral attributes should always be present regardless of version
+    assert tool_span.attributes['pydantic_ai.tool.deferral.name'] == exception_class.__name__
+    assert tool_span.attributes['pydantic_ai.tool.deferral.metadata'] == '{"task_id": "task-123"}'
+
+    if version >= 5:
+        # Version 5+: span should be OK, no exception events
+        assert tool_span.status.status_code == _StatusCode.OK
+        assert len(tool_span.events) == 0
+    else:
+        # Versions 1-4: span should be ERROR with exception event
+        assert tool_span.status.status_code == _StatusCode.ERROR
+        assert len(tool_span.events) == 1
+        assert tool_span.events[0].name == 'exception'
+        assert (
+            tool_span.events[0].attributes['exception.type']
+            == f'{exception_class.__module__}.{exception_class.__qualname__}'
+        )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_deferral_no_metadata(capfire: CaptureLogfire) -> None:
+    """Test that deferral without metadata doesn't set the metadata attribute."""
+    from opentelemetry.trace import StatusCode as _StatusCode
+
+    agent = Agent(
+        TestModel(),
+        output_type=[str, DeferredToolRequests],
+        instrument=InstrumentationSettings(version=5),
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise CallDeferred()
+
+    agent.run_sync('Hello')
+
+    tool_span = _find_tool_span(capfire)
+
+    assert tool_span.attributes['pydantic_ai.tool.deferral.name'] == 'CallDeferred'
+    assert 'pydantic_ai.tool.deferral.metadata' not in tool_span.attributes
+    assert tool_span.status.status_code == _StatusCode.OK
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_deferral_non_serializable_metadata(capfire: CaptureLogfire) -> None:
+    """Test that non-JSON-serializable metadata falls back to str() representation."""
+    from opentelemetry.trace import StatusCode as _StatusCode
+
+    class CustomObj:
+        def __repr__(self) -> str:
+            return '<CustomObj>'
+
+    agent = Agent(
+        TestModel(),
+        output_type=[str, DeferredToolRequests],
+        instrument=InstrumentationSettings(version=5),
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise CallDeferred(metadata={'obj': CustomObj()})
+
+    agent.run_sync('Hello')
+
+    tool_span = _find_tool_span(capfire)
+
+    assert tool_span.attributes['pydantic_ai.tool.deferral.name'] == 'CallDeferred'
+    # Falls back to str() since CustomObj is not JSON-serializable
+    assert tool_span.attributes['pydantic_ai.tool.deferral.metadata'] == "{'obj': <CustomObj>}"
+    assert tool_span.status.status_code == _StatusCode.OK

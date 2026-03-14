@@ -8,14 +8,14 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic, Literal
 
-from opentelemetry.trace import Tracer
+from opentelemetry.trace import StatusCode, Tracer
 from pydantic import ValidationError
 from typing_extensions import deprecated
 
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
+from .exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -410,13 +410,35 @@ class ToolManager(Generic[AgentDepsT]):
         with tracer.start_as_current_span(
             instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=span_attributes,
+            record_exception=False,
+            set_status_on_exception=False,
         ) as span:
             try:
                 tool_result = await self._execute_tool_call_impl(validated, usage=usage)
+            except (CallDeferred, ApprovalRequired) as exc:
+                span.set_attribute(instrumentation_names.tool_deferral_name_attr, type(exc).__name__)
+                if exc.metadata is not None:
+                    try:
+                        metadata_str = json.dumps(exc.metadata)
+                    except (TypeError, ValueError):
+                        metadata_str = str(exc.metadata)
+                    span.set_attribute(instrumentation_names.tool_deferral_metadata_attr, metadata_str)
+                if instrumentation_version >= 5:
+                    span.set_status(StatusCode.OK)
+                else:
+                    span.record_exception(exc)
+                    span.set_status(StatusCode.ERROR)
+                raise
             except ToolRetryError as e:
                 part = e.tool_retry
                 if include_content and span.is_recording():
                     span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
+                span.record_exception(e)
+                span.set_status(StatusCode.ERROR)
+                raise
+            except Exception as e:
+                span.record_exception(e)
+                span.set_status(StatusCode.ERROR)
                 raise
 
             if include_content and span.is_recording():
