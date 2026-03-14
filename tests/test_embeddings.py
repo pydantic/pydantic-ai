@@ -1085,12 +1085,12 @@ class TestBedrock:
         mock_client.meta.endpoint_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
 
         mock_body = MagicMock()
-        mock_body.read.return_value = json.dumps({
-            'embedding': [0.1, 0.2, 0.3],
-            'embeddingsByType': {
-                'float': [0.1, 0.2, 0.3]
-            },
-        }).encode()
+        mock_body.read.return_value = json.dumps(
+            {
+                'embedding': [0.1, 0.2, 0.3],
+                'embeddingsByType': {'float': [0.1, 0.2, 0.3]},
+            }
+        ).encode()
 
         mock_client.invoke_model.return_value = {
             'ResponseMetadata': {'HTTPHeaders': {'x-amzn-bedrock-input-token-count': '6'}},
@@ -1100,6 +1100,13 @@ class TestBedrock:
         provider = BedrockProvider(bedrock_client=mock_client)
         model = BedrockEmbeddingModel(arn, provider=provider, base_model_name='amazon.titan-embed-text-v2:0')
         result = await model.embed('Hello with ARN model name!', input_type='query')
+
+        mock_client.invoke_model.assert_called_once_with(
+            modelId=arn,
+            body=json.dumps({'inputText': 'Hello with ARN model name!', 'normalize': True}),
+            contentType='application/json',
+            accept='application/json',
+        )
 
         assert result == snapshot(
             EmbeddingResult(
