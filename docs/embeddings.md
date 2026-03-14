@@ -43,6 +43,19 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
     [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query] for search queries and
     [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents] for content you're indexing.
 
+## Embedding Settings
+
+Most embedding providers support optional settings (for example `dimensions` for dimension reduction).
+
+Settings can be provided in three places and are merged (later sources override earlier ones):
+
+1. **Model defaults** — settings configured on the embedding model itself (if you constructed the model directly).
+2. **Embedder defaults** — `Embedder(..., settings=...)`
+3. **Per-call overrides** — `embed_query(..., settings=...)` / `embed_documents(..., settings=...)`
+
+This uses [`merge_embedding_settings()`][pydantic_ai.embeddings.merge_embedding_settings] under the hood.
+That means settings behave like a shallow dict merge: keys from the override settings replace keys in the base settings, while non-overlapping keys are preserved.
+
 ## Embedding Result
 
 All embed methods return an [`EmbeddingResult`][pydantic_ai.embeddings.EmbeddingResult] containing the embeddings along with useful metadata.
