@@ -1,4 +1,3 @@
-from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 
 from pydantic_ai.builtin_tools import (
@@ -11,6 +10,8 @@ from pydantic_ai.builtin_tools import (
     WebSearchUserLocation,
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
+
+from .._inline_snapshot import snapshot
 
 ta = TypeAdapter(ModelRequestParameters)
 

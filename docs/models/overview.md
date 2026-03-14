@@ -405,7 +405,7 @@ You can also catch `FallbackExceptionGroup` directly if you want to handle it sp
 from pydantic_ai import Agent, FallbackExceptionGroup
 from pydantic_ai.models.fallback import FallbackModel
 
-agent = Agent(FallbackModel('openai:gpt-5-mini', 'anthropic:claude-sonnet-4-5'))
+agent = Agent(FallbackModel('openai:gpt-5-mini', 'anthropic:claude-sonnet-4-6'))
 
 try:
     response = agent.run_sync('What is the capital of France?')

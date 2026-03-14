@@ -6,7 +6,6 @@ from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsInt, IsJson, IsList
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import NotRequired, Self, TypedDict
 
@@ -23,6 +22,7 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr
 
 try:
@@ -144,25 +144,14 @@ def test_logfire(
                         {'id': 2, 'name': 'chat test', 'message': 'chat test'},
                         {
                             'id': 3,
-                            'name': 'running tools',
-                            'message': 'running 1 tool',
+                            'name': 'execute_tool my_ret',
+                            'message': 'running tool: my_ret',
                             'children': [
-                                {
-                                    'id': 4,
-                                    'name': 'execute_tool my_ret',
-                                    'message': 'running tool: my_ret',
-                                    'children': [
-                                        {
-                                            'id': 5,
-                                            'name': 'toolset_call_tool {name}',
-                                            'message': 'toolset_call_tool my_ret',
-                                        }
-                                    ],
-                                }
+                                {'id': 4, 'name': 'toolset_call_tool {name}', 'message': 'toolset_call_tool my_ret'}
                             ],
                         },
-                        {'id': 6, 'name': 'chat test', 'message': 'chat test'},
-                        {'id': 7, 'name': 'toolset_exit', 'message': 'toolset_exit'},
+                        {'id': 5, 'name': 'chat test', 'message': 'chat test'},
+                        {'id': 6, 'name': 'toolset_exit', 'message': 'toolset_exit'},
                     ],
                 }
             ]
@@ -179,25 +168,14 @@ def test_logfire(
                         {'id': 2, 'name': 'chat test', 'message': 'chat test'},
                         {
                             'id': 3,
-                            'name': 'running tools',
-                            'message': 'running 1 tool',
+                            'name': 'running tool',
+                            'message': 'running tool: my_ret',
                             'children': [
-                                {
-                                    'id': 4,
-                                    'name': 'running tool',
-                                    'message': 'running tool: my_ret',
-                                    'children': [
-                                        {
-                                            'id': 5,
-                                            'name': 'toolset_call_tool {name}',
-                                            'message': 'toolset_call_tool my_ret',
-                                        }
-                                    ],
-                                }
+                                {'id': 4, 'name': 'toolset_call_tool {name}', 'message': 'toolset_call_tool my_ret'}
                             ],
                         },
-                        {'id': 6, 'name': 'chat test', 'message': 'chat test'},
-                        {'id': 7, 'name': 'toolset_exit', 'message': 'toolset_exit'},
+                        {'id': 5, 'name': 'chat test', 'message': 'chat test'},
+                        {'id': 6, 'name': 'toolset_exit', 'message': 'toolset_exit'},
                     ],
                 }
             ]
@@ -217,25 +195,14 @@ def test_logfire(
                             {'id': 2, 'name': 'chat test', 'message': 'chat test'},
                             {
                                 'id': 3,
-                                'name': 'running tools',
-                                'message': 'running 1 tool',
+                                'name': 'running tool',
+                                'message': 'running tool: my_ret',
                                 'children': [
-                                    {
-                                        'id': 4,
-                                        'name': 'running tool',
-                                        'message': 'running tool: my_ret',
-                                        'children': [
-                                            {
-                                                'id': 5,
-                                                'name': 'toolset_call_tool {name}',
-                                                'message': 'toolset_call_tool my_ret',
-                                            }
-                                        ],
-                                    }
+                                    {'id': 4, 'name': 'toolset_call_tool {name}', 'message': 'toolset_call_tool my_ret'}
                                 ],
                             },
-                            {'id': 6, 'name': 'chat test', 'message': 'chat test'},
-                            {'id': 7, 'name': 'toolset_exit', 'message': 'toolset_exit'},
+                            {'id': 5, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 6, 'name': 'toolset_exit', 'message': 'toolset_exit'},
                         ],
                     }
                 ]
@@ -252,25 +219,14 @@ def test_logfire(
                             {'id': 2, 'name': 'chat test', 'message': 'chat test'},
                             {
                                 'id': 3,
-                                'name': 'running tools',
-                                'message': 'running 1 tool',
+                                'name': 'execute_tool my_ret',
+                                'message': 'running tool: my_ret',
                                 'children': [
-                                    {
-                                        'id': 4,
-                                        'name': 'execute_tool my_ret',
-                                        'message': 'running tool: my_ret',
-                                        'children': [
-                                            {
-                                                'id': 5,
-                                                'name': 'toolset_call_tool {name}',
-                                                'message': 'toolset_call_tool my_ret',
-                                            }
-                                        ],
-                                    }
+                                    {'id': 4, 'name': 'toolset_call_tool {name}', 'message': 'toolset_call_tool my_ret'}
                                 ],
                             },
-                            {'id': 6, 'name': 'chat test', 'message': 'chat test'},
-                            {'id': 7, 'name': 'toolset_exit', 'message': 'toolset_exit'},
+                            {'id': 5, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 6, 'name': 'toolset_exit', 'message': 'toolset_exit'},
                         ],
                     }
                 ]
@@ -2681,13 +2637,8 @@ def test_dynamic_function_instructions_in_agent_run_span(
                         'message': 'my_agent run',
                         'children': [
                             {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 2,
-                                'name': 'running tools',
-                                'message': 'running 1 tool',
-                                'children': [{'id': 3, 'name': 'running tool', 'message': 'running tool: my_tool'}],
-                            },
-                            {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 2, 'name': 'running tool', 'message': 'running tool: my_tool'},
+                            {'id': 3, 'name': 'chat test', 'message': 'chat test'},
                         ],
                     }
                 ]
@@ -2701,15 +2652,8 @@ def test_dynamic_function_instructions_in_agent_run_span(
                         'message': 'my_agent run',
                         'children': [
                             {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 2,
-                                'name': 'running tools',
-                                'message': 'running 1 tool',
-                                'children': [
-                                    {'id': 3, 'name': 'execute_tool my_tool', 'message': 'running tool: my_tool'}
-                                ],
-                            },
-                            {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 2, 'name': 'execute_tool my_tool', 'message': 'running tool: my_tool'},
+                            {'id': 3, 'name': 'chat test', 'message': 'chat test'},
                         ],
                     }
                 ]

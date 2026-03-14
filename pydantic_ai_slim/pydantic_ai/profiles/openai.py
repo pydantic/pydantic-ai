@@ -136,7 +136,7 @@ class OpenAIModelProfile(ModelProfile):
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
     # GPT-5.1+ models use `reasoning={"effort": "none"}` by default, which allows sampling params.
-    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2'))
+    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4'))
 
     # doesn't support `reasoning={"effort": "none"}` -  default is set at 'medium'
     # see https://platform.openai.com/docs/guides/reasoning
@@ -145,9 +145,12 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # always reasoning
     is_o_series = model_name.startswith('o')
 
-    thinking_always_enabled = is_o_series or (is_gpt_5 and 'gpt-5-chat' not in model_name)
+    # gpt-5.3-chat-latest is non-reasoning unlike other 5.1+ chat variants
+    is_gpt_5_3_chat = model_name.startswith('gpt-5.3-chat')
 
-    supports_reasoning = thinking_always_enabled or is_gpt_5_1_plus
+    thinking_always_enabled = is_o_series or (is_gpt_5 and '-chat' not in model_name)
+
+    supports_reasoning = (thinking_always_enabled or is_gpt_5_1_plus) and not is_gpt_5_3_chat
 
     # The o1-mini model doesn't support the `system` role, so we default to `user`.
     # See https://github.com/pydantic/pydantic-ai/issues/974 for more details.
@@ -172,7 +175,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_chat_supports_web_search=supports_web_search,
         openai_supports_encrypted_reasoning_content=supports_reasoning,
         openai_supports_reasoning=supports_reasoning,
-        openai_supports_reasoning_effort_none=is_gpt_5_1_plus,
+        openai_supports_reasoning_effort_none=is_gpt_5_1_plus and not is_gpt_5_3_chat,
     )
 
 
