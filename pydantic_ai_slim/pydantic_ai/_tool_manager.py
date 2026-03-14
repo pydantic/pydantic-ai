@@ -15,7 +15,13 @@ from typing_extensions import deprecated
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
+from .exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    ToolRetryError,
+    UnexpectedModelBehavior,
+)
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -410,13 +416,25 @@ class ToolManager(Generic[AgentDepsT]):
         with tracer.start_as_current_span(
             instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=span_attributes,
+            record_exception=False,  # Manually control exception recording
         ) as span:
             try:
                 tool_result = await self._execute_tool_call_impl(validated, usage=usage)
+            except (CallDeferred, ApprovalRequired):
+                # Control flow exceptions - don't record as errors
+                raise
             except ToolRetryError as e:
                 part = e.tool_retry
                 if include_content and span.is_recording():
                     span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
+                # Manually record as error
+                if span.is_recording():
+                    span.record_exception(e)
+                raise
+            except Exception as e:
+                # Other exceptions - record as errors
+                if span.is_recording():
+                    span.record_exception(e)
                 raise
 
             if include_content and span.is_recording():
