@@ -620,7 +620,7 @@ class OpenRouterModel(OpenAIChatModel):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
         new_settings = _openrouter_settings_to_openai_settings(
-            cast(OpenRouterModelSettings, merged_settings or {}), model_request_parameters
+            cast(OpenRouterModelSettings, merged_settings or {}), customized_parameters
         )
         return new_settings, customized_parameters
 
