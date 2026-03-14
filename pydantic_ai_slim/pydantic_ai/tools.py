@@ -6,7 +6,7 @@ from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cas
 
 from pydantic import Discriminator, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
-from pydantic_core import SchemaValidator, core_schema
+from pydantic_core import SchemaValidator, core_schema, to_jsonable_python
 from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
@@ -198,6 +198,24 @@ class ToolDenied:
     kind: Literal['tool-denied'] = 'tool-denied'
 
 
+def _process_examples(
+    examples: list[Any],
+    single_arg_name: str | None = None,
+    outer_typed_dict_key: str | None = None,
+) -> list[dict[str, Any]]:
+    """Process tool examples by flattening, serializing, and optionally wrapping them."""
+    if single_arg_name:
+        examples = [ex[single_arg_name] if isinstance(ex, dict) and single_arg_name in ex else ex for ex in examples]
+
+    # Serialize examples to JSON-compatible dicts
+    examples = [to_jsonable_python(ex) for ex in examples]
+
+    if outer_typed_dict_key:
+        examples = [{outer_typed_dict_key: ex} for ex in examples]
+
+    return examples
+
+
 def _deferred_tool_call_result_discriminator(x: Any) -> str | None:
     if isinstance(x, dict):
         if 'kind' in x:
@@ -276,6 +294,7 @@ class Tool(Generic[ToolAgentDepsT]):
     strict: bool | None
     sequential: bool
     requires_approval: bool
+    examples: list[Any] | None
     metadata: dict[str, Any] | None
     timeout: float | None
     function_schema: _function_schema.FunctionSchema
@@ -301,6 +320,7 @@ class Tool(Generic[ToolAgentDepsT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        examples: list[Any] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
@@ -364,6 +384,8 @@ class Tool(Generic[ToolAgentDepsT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+            examples: Example inputs demonstrating correct tool usage. Defaults to None.
+                See [`ToolDefinition.examples`][pydantic_ai.tools.ToolDefinition.examples] for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
@@ -388,6 +410,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.strict = strict
         self.sequential = sequential
         self.requires_approval = requires_approval
+        self.examples = examples
         self.metadata = metadata
         self.timeout = timeout
 
@@ -400,6 +423,7 @@ class Tool(Generic[ToolAgentDepsT]):
         json_schema: JsonSchemaValue,
         takes_ctx: bool = False,
         sequential: bool = False,
+        examples: list[Any] | None = None,
         args_validator: ArgsValidatorFunc[Any, ...] | None = None,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
@@ -416,6 +440,8 @@ class Tool(Generic[ToolAgentDepsT]):
             takes_ctx: An optional boolean parameter indicating whether the function
                 accepts the context object as an argument.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            examples: Example inputs demonstrating correct tool usage. Defaults to None.
+                See [`ToolDefinition.examples`][pydantic_ai.tools.ToolDefinition.examples] for more info.
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
@@ -442,11 +468,16 @@ class Tool(Generic[ToolAgentDepsT]):
             description=description,
             function_schema=function_schema,
             sequential=sequential,
+            examples=examples,
             args_validator=args_validator,
         )
 
     @property
     def tool_def(self):
+        examples = self.examples
+        if examples:
+            examples = _process_examples(examples, single_arg_name=self.function_schema.single_arg_name)
+
         return ToolDefinition(
             name=self.name,
             description=self.description,
@@ -455,6 +486,7 @@ class Tool(Generic[ToolAgentDepsT]):
             sequential=self.sequential,
             metadata=self.metadata,
             timeout=self.timeout,
+            examples=examples,
             kind='unapproved' if self.requires_approval else 'function',
         )
 
@@ -533,6 +565,20 @@ class ToolDefinition:
         See the [tools documentation](../deferred-tools.md#deferred-tools) for more info.
     - `'unapproved'`: a tool that requires human-in-the-loop approval.
         See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+    """
+
+    examples: list[dict[str, Any]] | None = None
+    """Example inputs demonstrating correct tool usage patterns.
+
+    Provide realistic examples showing parameter conventions, optional field patterns,
+    nested structures, and API-specific conventions. Each example should validate against
+    the tool's `parameters_json_schema`.
+
+    Supported by:
+
+    * [Anthropic](https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#providing-tool-use-examples)
+
+    If provided, these examples are also appended to the tool description for other models that don't support structured examples directly.
     """
 
     metadata: dict[str, Any] | None = None

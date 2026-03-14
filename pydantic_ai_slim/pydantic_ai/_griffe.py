@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import logging
 import re
+import textwrap
 from collections.abc import Callable
 from contextlib import contextmanager
 from inspect import Signature
@@ -65,6 +66,23 @@ def doc_descriptions(
     if main := next((p for p in sections if p.kind == DocstringSectionKind.text), None):
         main_desc = main.value
 
+    formatted_examples = ''
+    if examples := next((p for p in sections if p.kind == DocstringSectionKind.examples), None):
+        examples_content: list[str] = []
+        for source, output in examples.value:
+            if isinstance(source, DocstringSectionKind):
+                if output is not None:  # pragma: no branch
+                    examples_content.append(str(output))
+            elif output:
+                examples_content.append(f'{source}\n{output}')
+            else:
+                examples_content.append(str(source))
+
+        if examples_content:  # pragma: no branch
+            formatted_examples = '\n\n'.join(examples_content)
+            formatted_examples = textwrap.indent(formatted_examples, '    ')
+
+    return_xml = ''
     if return_ := next((p for p in sections if p.kind == DocstringSectionKind.returns), None):
         return_statement = return_.value[0]
         return_desc = return_statement.description
@@ -72,10 +90,17 @@ def doc_descriptions(
         type_tag = f'<type>{return_type}</type>\n' if return_type else ''
         return_xml = f'<returns>\n{type_tag}<description>{return_desc}</description>\n</returns>'
 
+    if return_xml:
         if main_desc:
             main_desc = f'<summary>{main_desc}</summary>\n{return_xml}'
         else:
             main_desc = return_xml
+
+    if formatted_examples:
+        if main_desc:
+            main_desc = f'{main_desc}\n\nExamples:\n{formatted_examples}'
+        else:
+            main_desc = f'Examples:\n{formatted_examples}'
 
     return main_desc, params
 

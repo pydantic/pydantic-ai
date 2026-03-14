@@ -149,6 +149,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -184,6 +185,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -227,6 +229,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -270,6 +273,7 @@ def test_google_style_with_returns():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -311,6 +315,7 @@ def test_sphinx_style_with_returns():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -358,6 +363,7 @@ def test_numpy_style_with_returns():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -393,6 +399,7 @@ def test_only_returns_type():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -419,6 +426,7 @@ def test_docstring_unknown():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -463,6 +471,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -500,6 +509,7 @@ def test_takes_just_model():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -546,6 +556,7 @@ def test_takes_model_and_int():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -912,6 +923,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -985,6 +997,7 @@ def test_json_schema_required_parameters():
                 'strict': None,
                 'kind': 'function',
                 'sequential': False,
+                'examples': None,
                 'metadata': None,
                 'timeout': None,
             },
@@ -1001,6 +1014,7 @@ def test_json_schema_required_parameters():
                 'strict': None,
                 'kind': 'function',
                 'sequential': False,
+                'examples': None,
                 'metadata': None,
                 'timeout': None,
             },
@@ -1090,6 +1104,7 @@ def test_schema_generator():
                 'strict': None,
                 'kind': 'function',
                 'sequential': False,
+                'examples': None,
                 'metadata': None,
                 'timeout': None,
             },
@@ -1105,6 +1120,7 @@ def test_schema_generator():
                 'strict': None,
                 'kind': 'function',
                 'sequential': False,
+                'examples': None,
                 'metadata': None,
                 'timeout': None,
             },
@@ -1143,6 +1159,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'strict': None,
             'kind': 'function',
             'sequential': False,
+            'examples': None,
             'metadata': None,
             'timeout': None,
         }
@@ -2826,6 +2843,236 @@ def test_agent_tool_timeout_passed_to_toolset():
 
     # The agent's tool_timeout should be passed to the toolset as timeout
     assert agent._function_toolset.timeout == 30.0
+
+
+def test_tool_examples_init():
+    def my_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    examples = [{'x': 1}]
+    tool = Tool(my_tool, examples=examples)
+    assert tool.examples == examples
+    assert tool.examples == tool.tool_def.examples == examples
+
+
+def test_tool_from_schema_examples():
+    def my_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    examples = [{'x': 1}]
+    tool = Tool.from_schema(
+        my_tool,
+        name='my_tool',
+        description='desc',
+        json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+        examples=examples,
+    )
+    assert tool.examples == examples
+    assert tool.tool_def.examples == examples
+
+
+def test_agent_tool_decorators_examples():
+    agent = Agent('test')
+    examples = [{'x': 1}]
+
+    @agent.tool(examples=examples)
+    def tool_ctx(ctx: RunContext[None], x: int) -> int:
+        return x  # pragma: no cover
+
+    @agent.tool_plain(examples=examples)
+    def tool_plain(x: int) -> int:
+        return x  # pragma: no cover
+
+    assert agent._function_toolset.tools['tool_ctx'].examples == examples
+    assert agent._function_toolset.tools['tool_plain'].examples == examples
+
+
+def test_tool_output_examples():
+    examples = [1, 2]
+    tool_output = ToolOutput(int, name='foo', examples=examples)
+    assert tool_output.examples == examples
+
+    agent = Agent('test', output_type=tool_output)
+    # Access the output toolset to verify definition
+    assert agent._output_toolset is not None
+    tool_def = agent._output_toolset._tool_defs[0]
+
+    # Verify examples are wrapped in the outer_typed_dict_key
+    assert tool_def.examples == [{'response': 1}, {'response': 2}]
+
+
+def test_tool_examples_flattening():
+    class MyModel(BaseModel):
+        x: int
+
+    def my_tool(arg: MyModel) -> int:
+        return arg.x  # pragma: no cover
+
+    # User provides examples matching the python signature
+    examples = [{'arg': {'x': 1}}, {'arg': {'x': 2}}]
+
+    # The Tool logic should flatten this to match the JSON schema sent to the LLM
+    tool = Tool(my_tool, examples=examples)
+
+    # Expect original examples to remain on the Tool object
+    assert tool.examples == examples
+
+    # Expect flattened examples ONLY on the tool definition
+    assert tool.tool_def.examples == [{'x': 1}, {'x': 2}]
+
+
+def test_tool_docstring_examples():
+    def my_tool(x: int) -> int:
+        """
+        My tool description.
+
+        Examples:
+            >>> my_tool(1)
+            1
+        """
+        return x  # pragma: no cover
+
+    tool = Tool(my_tool)
+
+    assert tool.description == snapshot(
+        """\
+My tool description.
+
+Examples:
+    >>> my_tool(1)
+    1\
+"""
+    )
+
+
+def test_tool_output_flattening():
+    class MyModel(BaseModel):
+        x: int
+
+    def output_func(arg: MyModel) -> int:
+        return arg.x  # pragma: no cover
+
+    # Function takes a model, so schema is flattened to the model
+    examples = [{'arg': {'x': 1}}]
+    tool_output = ToolOutput(output_func, examples=examples)
+
+    agent = Agent('test', output_type=tool_output)
+    assert agent._output_toolset is not None
+    tool_def = agent._output_toolset._tool_defs[0]
+
+    # Should be flattened (arg removed) -> [{'x': 1}]
+    assert tool_def.examples == [{'x': 1}]
+
+
+def test_tool_output_model_examples():
+    class MyModel(BaseModel):
+        x: int
+
+    # ToolOutput using a model directly
+    examples = [MyModel(x=1)]
+    tool_output = ToolOutput(MyModel, examples=examples)
+
+    agent = Agent('test', output_type=tool_output)
+    assert agent._output_toolset is not None
+    tool_def = agent._output_toolset._tool_defs[0]
+
+    # Model output -> outer_typed_dict_key is None
+    # No wrapping should happen
+    assert tool_def.examples == [{'x': 1}]
+
+
+def test_docstring_no_description():
+    def my_tool(x: int) -> int:
+        """
+        Examples:
+            >>> my_tool(1)
+            1
+        """
+        return x  # pragma: no cover
+
+    tool = Tool(my_tool)
+    assert tool.description == snapshot(
+        """\
+Examples:
+    >>> my_tool(1)
+    1\
+"""
+    )
+
+
+def test_docstring_text_example():
+    def my_tool(x: int) -> int:
+        """
+        Examples:
+            Just some text
+        """
+        return x  # pragma: no cover
+
+    tool = Tool(my_tool)
+    assert tool.description == snapshot(
+        """\
+Examples:
+    Just some text\
+"""
+    )
+
+
+def test_docstring_example_with_and_without_output():
+    def my_tool(x: int) -> int:
+        """
+        My tool.
+
+        Examples:
+            Some text explanation.
+
+            >>> my_tool(1)
+            1
+            >>> my_tool(2)
+        """
+        return x  # pragma: no cover
+
+    tool = Tool(my_tool)
+
+    expected_description = (
+        'My tool.\n\nExamples:\n    Some text explanation.\n\n    >>> my_tool(1)\n    1\n    >>> my_tool(2)'
+    )
+
+    assert tool.description == expected_description
+
+
+def test_tool_examples_fallback():
+    agent = Agent('test')
+
+    @agent.tool_plain(examples=[{'x': 1}])
+    def my_tool(x: int) -> int:
+        """My tool."""
+        return x
+
+    test_model = TestModel()
+    agent.run_sync('hello', model=test_model)
+
+    assert test_model.last_model_request_parameters is not None
+    tool_def = test_model.last_model_request_parameters.function_tools[0]
+
+    assert tool_def.examples is None
+    assert tool_def.description == 'My tool.\n\nExamples:\n[\n  {\n    "x": 1\n  }\n]'
+
+
+def test_tool_examples_fallback_no_desc():
+    agent = Agent('test')
+
+    @agent.tool_plain(examples=[{'x': 1}])
+    def my_tool(x: int) -> int:
+        return x
+
+    test_model = TestModel()
+    agent.run_sync('hello', model=test_model)
+
+    assert test_model.last_model_request_parameters is not None
+    tool_def = test_model.last_model_request_parameters.function_tools[0]
+
+    assert tool_def.examples is None
+    assert tool_def.description == 'Examples:\n[\n  {\n    "x": 1\n  }\n]'
 
 
 @pytest.mark.anyio

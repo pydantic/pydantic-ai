@@ -120,6 +120,7 @@ class BedrockProvider(Provider[BaseClient]):
                 # We don't currently support native structured output with Bedrock.
                 # See https://github.com/pydantic/pydantic-ai/issues/4209.
                 supports_json_schema_output=False,
+                supports_tool_examples=False,
             ),
             'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
                 _without_builtin_tools(mistral_model_profile(model_name))
