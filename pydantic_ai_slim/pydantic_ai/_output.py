@@ -241,6 +241,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         """Build an OutputSchema dataclass from an output type."""
         outputs = _flatten_output_spec(output_spec)
 
+        # `str | None` produces NoneType (the class) via get_union_args; bare `None` value produces None itself
         allows_none = NoneType in outputs or None in outputs
         if allows_none:
             outputs = [output for output in outputs if output is not NoneType and output is not None]
