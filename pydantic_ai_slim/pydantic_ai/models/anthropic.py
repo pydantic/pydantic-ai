@@ -793,11 +793,19 @@ class AnthropicModel(Model):
                         if response_part.content:
                             assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
                     elif isinstance(response_part, ToolCallPart):
+                        try:
+                            tool_input = response_part.args_as_dict()
+                        except ValueError:
+                            # If the tool call args are malformed JSON (e.g. from a model
+                            # hallucination), fall back to an empty dict so the retry
+                            # prompt that follows can surface the error to the model
+                            # and let it self-correct.  See #4430.
+                            tool_input = {}
                         tool_use_block_param = BetaToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),
                             type='tool_use',
                             name=response_part.tool_name,
-                            input=response_part.args_as_dict(),
+                            input=tool_input,
                         )
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
