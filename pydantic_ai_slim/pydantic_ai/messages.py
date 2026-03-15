@@ -20,7 +20,6 @@ from genai_prices import calc_price, types as genai_types
 from opentelemetry._logs import LogRecord
 from opentelemetry.util.types import AnyValue
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from pydantic.types import JsonValue
 from typing_extensions import TypeAliasType, deprecated
 
 from . import _otel_messages, _utils
@@ -469,7 +468,7 @@ class TextContent:
 
     _: KW_ONLY
 
-    metadata: JsonValue
+    metadata: Any = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     kind: Literal['text-content'] = 'text-content'

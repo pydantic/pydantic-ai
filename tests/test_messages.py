@@ -100,9 +100,6 @@ def test_document_url():
 
 
 def test_text_content():
-    with pytest.raises(ValueError):
-        TextContent(content='Hello, world!')  # type: ignore
-
     text_content = TextContent(content='Pydantic AI!', metadata={'foo': 'bar'})
     assert text_content.content == 'Pydantic AI!'
     assert text_content.metadata == {'foo': 'bar'}
