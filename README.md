@@ -130,7 +130,7 @@ class SupportOutput(BaseModel):
 # Agents are generic in the type of dependencies they accept and the type of output they return.
 # In this case, the support agent has type `Agent[SupportDependencies, SupportOutput]`.
 support_agent = Agent(
-    'openai:gpt-5.2',
+    'openai:gpt-4o',
     deps_type=SupportDependencies,
     # The response from the agent will, be guaranteed to be a SupportOutput,
     # if validation fails the agent is prompted to try again.
