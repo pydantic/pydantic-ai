@@ -32,6 +32,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -500,8 +501,9 @@ class GroqModel(Model):
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(chat.ChatCompletionContentPartTextParam(text=item, type='text'))
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append(chat.ChatCompletionContentPartTextParam(text=text, type='text'))
                 elif isinstance(item, ImageUrl):
                     image_url = ImageURL(url=item.url)
                     content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
