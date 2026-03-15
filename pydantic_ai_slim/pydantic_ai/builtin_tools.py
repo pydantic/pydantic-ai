@@ -20,6 +20,9 @@ __all__ = (
     'MemoryTool',
     'MCPServerTool',
     'FileSearchTool',
+    'SkillReference',
+    'CodeExecutionNetworkPolicy',
+    'ShellTool',
     'BUILTIN_TOOL_TYPES',
     'DEPRECATED_BUILTIN_TOOLS',
     'SUPPORTED_BUILTIN_TOOLS',
@@ -465,6 +468,109 @@ class FileSearchTool(AbstractBuiltinTool):
 
     kind: str = 'file_search'
     """The kind of tool."""
+
+
+@dataclass(kw_only=True)
+class SkillReference:
+    """Reference to a provider-hosted skill.
+
+    Skills are packaged tool environments that run inside hosted containers, supported by
+    both Anthropic and OpenAI.
+
+    Anthropic skills use the `skills-2025-10-02` beta and are referenced via ``container.skills``.
+    OpenAI skills are attached to containers created via ``client.containers.create(skills=[...])``.
+    """
+
+    skill_id: str
+    """The skill identifier (e.g. ``'computer-use'``, ``'data-analysis'``)."""
+
+    version: str | int | None = None
+    """Optional skill version. Passed as a string to both providers."""
+
+    source: Literal['custom', 'provider'] = 'custom'
+    """Skill source. Anthropic maps ``'provider'`` to ``'anthropic'``, ``'custom'`` to ``'custom'``.
+    OpenAI maps to ``'skill_reference'`` type with no source distinction."""
+
+
+@dataclass(kw_only=True)
+class CodeExecutionNetworkPolicy:
+    """Network access policy for hosted execution environments.
+
+    Controls whether code running in a hosted container can access the network,
+    and if so, which domains are allowed.
+
+    Supported by OpenAI Responses (``container_auto`` environment).
+    """
+
+    mode: Literal['disabled', 'allowlist']
+    """Network access mode: ``'disabled'`` blocks all network access,
+    ``'allowlist'`` permits only ``allowed_domains``."""
+
+    allowed_domains: Sequence[str] = ()
+    """Domains permitted when ``mode`` is ``'allowlist'``. Ignored when ``'disabled'``."""
+
+
+@dataclass(kw_only=True)
+class ShellTool(AbstractBuiltinTool):
+    """Builtin tool for provider-hosted workspace execution.
+
+    Provides bash, text editor, skills, and network policy in a hosted container.
+    Mutually exclusive with `CodeExecutionTool` — using both raises `UserError`.
+
+    Supported by:
+
+    * Anthropic (``code_execution_20260120`` GA / ``code_execution_20250825`` beta)
+    * OpenAI Responses (``shell`` with ``container_auto`` environment)
+    """
+
+    skills: Sequence[SkillReference] = ()
+    """Skills to mount in the hosted container."""
+
+    network_policy: CodeExecutionNetworkPolicy | None = None
+    """Network access policy for the hosted container.
+
+    Supported by:
+
+    * OpenAI Responses
+    """
+
+    kind: str = 'shell'
+    """The kind of tool."""
+
+    @staticmethod
+    def get_container_id(messages: Sequence[Any]) -> str | None:
+        """Extract the most recent container ID from message history.
+
+        Scans messages in reverse for a container ID set by either provider:
+
+        * **OpenAI**: stored in ``BuiltinToolCallPart.args['container_id']``
+        * **Anthropic**: stored in ``ModelResponse.provider_details['container_id']``
+
+        Args:
+            messages: The message history to scan (``list[ModelMessage]``).
+
+        Returns:
+            The container ID string, or ``None`` if no container has been created.
+        """
+        from .messages import BuiltinToolCallPart, ModelResponse
+
+        for msg in reversed(messages):
+            if not isinstance(msg, ModelResponse):
+                continue
+            # Anthropic path: container_id in ModelResponse.provider_details
+            if msg.provider_details:
+                if cid := msg.provider_details.get('container_id'):
+                    return cid
+            # OpenAI path: container_id in BuiltinToolCallPart.args
+            for part in msg.parts:
+                if (
+                    isinstance(part, BuiltinToolCallPart)
+                    and part.tool_name == 'shell'
+                    and isinstance(part.args, dict)
+                ):
+                    if cid := part.args.get('container_id'):
+                        return cid
+        return None
 
 
 def _tool_discriminator(tool_data: dict[str, Any] | AbstractBuiltinTool) -> str:

@@ -8,6 +8,7 @@ Pydantic AI supports the following built-in tools:
 
 - **[`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]**: Allows agents to search the web
 - **[`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]**: Enables agents to execute code in a secure environment
+- **[`ShellTool`][pydantic_ai.builtin_tools.ShellTool]**: Enables agents to execute code in a provider-hosted workspace with bash, text editor, and skills
 - **[`ImageGenerationTool`][pydantic_ai.builtin_tools.ImageGenerationTool]**: Enables agents to generate images
 - **[`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool]**: Enables agents to fetch web pages
 - **[`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool]**: Enables agents to use memory
@@ -238,6 +239,118 @@ assert isinstance(result.output, BinaryImage)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+## Shell Tool
+
+The [`ShellTool`][pydantic_ai.builtin_tools.ShellTool] enables your agent to execute code in a provider-hosted workspace with bash, a text editor, and optional skills running inside a container. It is the successor to [`CodeExecutionTool`](#code-execution-tool) for providers that support richer hosted execution environments.
+
+!!! warning "Mutual Exclusion"
+    `ShellTool` and `CodeExecutionTool` cannot be used together on the same agent. Using both will raise a [`UserError`][pydantic_ai.exceptions.UserError].
+
+### Provider Support
+
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| Anthropic | ✅ | Uses `code_execution_20260120` (GA). Container reuse is automatic from message history; override with the [`AnthropicModelSettings.anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container] setting. |
+| OpenAI Responses | ✅ | Uses `shell` with `container_auto` environment. Container reuse via the [`OpenAIResponsesModelSettings.openai_shell_container`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_container] setting. |
+| Google | ❌ | |
+| xAI | ❌ | |
+| Groq | ❌ | |
+| Bedrock | ❌ | |
+| Mistral | ❌ | |
+| Cohere | ❌ | |
+| HuggingFace | ❌ | |
+| Outlines | ❌ | |
+
+### Usage
+
+```py {title="shell_tool_basic.py" test="skip"}
+from pydantic_ai import Agent, ShellTool
+
+agent = Agent('anthropic:claude-sonnet-4-6', builtin_tools=[ShellTool()])
+
+result = agent.run_sync('Write a Python script that prints hello world, then run it')
+print(result.output)
+#> Here's the output from running the script: Hello, world!
+```
+
+With OpenAI, you must use their Responses API to access the shell tool:
+
+```py {title="shell_tool_openai.py" test="skip"}
+from pydantic_ai import Agent, ShellTool
+
+agent = Agent('openai-responses:gpt-5', builtin_tools=[ShellTool()])
+
+result = agent.run_sync('Write a Python script that prints hello world, then run it')
+print(result.output)
+#> Here's the output from running the script: Hello, world!
+```
+
+### Skills
+
+[`SkillReference`][pydantic_ai.builtin_tools.SkillReference] lets you attach packaged tool environments (skills) to the hosted container. Skills are supported by both Anthropic and OpenAI.
+
+```py {title="shell_tool_skills.py" test="skip"}
+from pydantic_ai import Agent, ShellTool
+from pydantic_ai.builtin_tools import SkillReference
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    builtin_tools=[ShellTool(skills=[SkillReference(skill_id='computer-use')])],
+)
+
+result = agent.run_sync('Take a screenshot of the desktop')
+print(result.output)
+#> I've taken a screenshot of the desktop.
+```
+
+### Network Policy
+
+[`CodeExecutionNetworkPolicy`][pydantic_ai.builtin_tools.CodeExecutionNetworkPolicy] controls whether code running in the container can access the network. This is currently supported by OpenAI Responses only.
+
+```py {title="shell_tool_network.py" test="skip"}
+from pydantic_ai import Agent, ShellTool
+from pydantic_ai.builtin_tools import CodeExecutionNetworkPolicy
+
+agent = Agent(
+    'openai-responses:gpt-5',
+    builtin_tools=[ShellTool(
+        network_policy=CodeExecutionNetworkPolicy(
+            mode='allowlist',
+            allowed_domains=['api.example.com'],
+        ),
+    )],
+)
+
+result = agent.run_sync('Fetch data from api.example.com and summarize it')
+print(result.output)
+#> Here is a summary of the data from the API...
+```
+
+### Mounting Files into Containers
+
+You can mount files into the execution container using [`UploadedFile`][pydantic_ai.messages.UploadedFile] with its `target` parameter set to `'container'` or `'both'`:
+
+- `'container'`: The file is mounted into the execution container only (not visible as message content).
+- `'both'`: The file is both sent as message content and mounted into the container.
+
+With OpenAI, files can also be mounted via the [`OpenAIResponsesModelSettings.openai_shell_uploaded_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_uploaded_files] setting.
+
+### Container Reuse
+
+Both providers support reusing containers across turns:
+
+- **Anthropic**: Container IDs from prior responses are automatically reused. Use [`AnthropicModelSettings.anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container] to explicitly specify a container (e.g. `{'id': 'container_xxx'}`) or set it to `False` to force a fresh container.
+- **OpenAI**: Use [`OpenAIResponsesModelSettings.openai_shell_container`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_shell_container] to reuse an existing container by ID (e.g. `'cntr_xxx'`) or set it to `False` to force a fresh container.
+
+### Configuration Options
+
+#### Provider Support
+
+| Parameter | Anthropic | OpenAI Responses |
+|-----------|-----------|------------------|
+| `skills` | ✅ | ✅ |
+| `network_policy` | ❌ | ✅ |
 
 ## Image Generation Tool
 

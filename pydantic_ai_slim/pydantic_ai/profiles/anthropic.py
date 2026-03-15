@@ -21,4 +21,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     return ModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
+        supports_native_shell_tool=True,
+        supports_native_text_editor_tool=True,
     )

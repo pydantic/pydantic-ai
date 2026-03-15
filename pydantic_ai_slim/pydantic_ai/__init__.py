@@ -10,11 +10,14 @@ from .agent import (
     capture_run_messages,
 )
 from .builtin_tools import (
+    CodeExecutionNetworkPolicy,
     CodeExecutionTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
+    ShellTool,
+    SkillReference,
     UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
     WebSearchTool,
@@ -95,6 +98,7 @@ from .messages import (
     ToolReturn,
     ToolReturnPart,
     UploadedFile,
+    UploadedFileTarget,
     UserContent,
     UserPromptPart,
     VideoFormat,
@@ -112,9 +116,22 @@ from .profiles import (
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings
-from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
+from .tools import (
+    ApplyPatchNativeDefinition,
+    DeferredToolRequests,
+    DeferredToolResults,
+    NativeToolDefinition,
+    RunContext,
+    ShellNativeDefinition,
+    TextEditorNativeDefinition,
+    Tool,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from .toolsets import (
     AbstractToolset,
+    ApplyPatchToolset,
     ApprovalRequiredToolset,
     CombinedToolset,
     ExternalToolset,
@@ -123,6 +140,8 @@ from .toolsets import (
     PrefixedToolset,
     PreparedToolset,
     RenamedToolset,
+    ShellToolset,
+    TextEditorToolset,
     ToolsetFunc,
     ToolsetTool,
     WrapperToolset,
@@ -212,6 +231,7 @@ __all__ = (
     'ToolReturn',
     'ToolReturnPart',
     'UploadedFile',
+    'UploadedFileTarget',
     'UserContent',
     'UserPromptPart',
     'VideoFormat',
@@ -226,6 +246,10 @@ __all__ = (
     # tools
     'Tool',
     'ToolDefinition',
+    'ShellNativeDefinition',
+    'TextEditorNativeDefinition',
+    'ApplyPatchNativeDefinition',
+    'NativeToolDefinition',
     'RunContext',
     'DeferredToolRequests',
     'DeferredToolResults',
@@ -233,6 +257,7 @@ __all__ = (
     'ToolDenied',
     # toolsets
     'AbstractToolset',
+    'ApplyPatchToolset',
     'ApprovalRequiredToolset',
     'CombinedToolset',
     'ExternalToolset',
@@ -241,15 +266,20 @@ __all__ = (
     'PrefixedToolset',
     'PreparedToolset',
     'RenamedToolset',
+    'ShellToolset',
+    'TextEditorToolset',
     'ToolsetFunc',
     'ToolsetTool',
     'WrapperToolset',
     # builtin_tools
+    'CodeExecutionNetworkPolicy',
     'CodeExecutionTool',
     'FileSearchTool',
     'ImageGenerationTool',
     'MCPServerTool',
     'MemoryTool',
+    'ShellTool',
+    'SkillReference',
     'UrlContextTool',
     'WebFetchTool',
     'WebSearchTool',

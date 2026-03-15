@@ -383,7 +383,7 @@ def patch_google_genai_gc_crash():
     """
     try:
         from google.genai._api_client import BaseApiClient
-    except ImportError:
+    except ImportError as _import_error:
         yield
         return
 
@@ -498,7 +498,7 @@ def _patch_hf_provider_mappings():
     try:
         from huggingface_hub.hf_api import InferenceProviderMapping
         from huggingface_hub.inference._providers._common import HARDCODED_MODEL_INFERENCE_MAPPING
-    except ImportError:
+    except ImportError as _import_error:
         return
 
     models: list[tuple[str, str, str]] = [

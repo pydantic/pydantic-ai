@@ -20,6 +20,8 @@ from pydantic_ai import (
     Agent,
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
     ImageUrl,
@@ -39,7 +41,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
-from pydantic_ai.builtin_tools import ImageGenerationTool, WebSearchTool
+from pydantic_ai.builtin_tools import ImageGenerationTool, ShellTool, WebSearchTool
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import SystemPromptPart, UploadedFile
 from pydantic_ai.models import ModelRequestParameters
@@ -48,6 +50,8 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets.apply_patch import ApplyPatchOperation, ApplyPatchOutput, ApplyPatchToolset
+from pydantic_ai.toolsets.shell import ShellToolset
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
@@ -1082,7 +1086,6 @@ async def test_image_url_force_download_chat() -> None:
         ]
 
         await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
-
         mock_download.assert_called_once()
         assert mock_download.call_args[0][0].url == 'https://example.com/image.png'
 
@@ -1110,7 +1113,6 @@ async def test_image_url_no_force_download_chat() -> None:
         ]
 
         await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
-
         mock_download.assert_not_called()
 
 
@@ -3798,7 +3800,6 @@ async def test_cache_point_filtering(allow_model_requests: None):
 
     # Test the instance method directly to trigger line 864
     msg = await m._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
-
     # CachePoint should be filtered out, only text content should remain
     assert msg['role'] == 'user'
     assert len(msg['content']) == 2  # type: ignore[reportUnknownArgumentType]
@@ -3812,7 +3813,8 @@ async def test_cache_point_filtering_responses_model():
 
     # Test the instance method directly to ensure CachePoint filtering
     msg = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
-        UserPromptPart(content=['text before', CachePoint(), 'text after'])
+        UserPromptPart(content=['text before', CachePoint(), 'text after']),
+        has_shell_tool=False,
     )
 
     # CachePoint should be filtered out, only text content should remain
@@ -4305,7 +4307,6 @@ async def test_openai_chat_instructions_after_system_prompts(allow_model_request
     ]
 
     openai_messages = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
-
     # Verify order: system1, system2, instructions, user
     assert len(openai_messages) == 4
     assert openai_messages == snapshot(
@@ -4555,3 +4556,1764 @@ async def test_openai_chat_refusal_streaming(allow_model_requests: None):
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I'm sorry, I can't help with that."
+
+
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_openai_responses_shell_tool(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[ShellTool()],
+        instructions='Always use the shell tool. Keep responses brief.',
+    )
+
+    result = await agent.run('What is 2 + 2? Use python to calculate it.')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2? Use python to calculate it.', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='shell',
+                        args={
+                            'commands': [
+                                """\
+python3 - <<'PY'
+print(2+2)
+PY\
+"""
+                            ],
+                            'container_id': 'cntr_69b114fb6b108190b8ba5d98d49508b60615b6d51b77bc58',
+                        },
+                        tool_call_id='call_T86WP7YSfjMG5EuLRXu392NC',
+                        id='sh_0e9f3e97bce0d13c0169b114ff980c819089563f2086370215',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='shell',
+                        content={'status': 'completed'},
+                        tool_call_id='call_T86WP7YSfjMG5EuLRXu392NC',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='Using Python, `2 + 2 = 4`.',
+                        id='msg_0e9f3e97bce0d13c0169b11503d268819087cf55e14b16a768',
+                        provider_name='openai',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=819, output_tokens=45, details={'reasoning_tokens': 29}),
+                model_name='gpt-5.4-2026-03-05',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_0e9f3e97bce0d13c0169b114f4ccc081909a37b78e8467ade0',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_openai_responses_shell_tool_stream(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        builtin_tools=[ShellTool()],
+        instructions='Always use the shell tool. Keep responses brief.',
+    )
+
+    async with agent.run_stream('What is 2 + 2? Use python to calculate it.') as result:
+        await result.get_output()
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2? Use python to calculate it.', timestamp=IsDatetime())],
+                timestamp=IsNow(tz=timezone.utc),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='shell',
+                        args={'commands': [], 'container_id': 'cntr_69b1150fe7d08198bcbee772d08ce2e202abcacf8b793b25'},
+                        tool_call_id='call_UJhs3tKkwVApGZxpFOWhtb1A',
+                        id='sh_01fef2178327e5240169b115112c4081988a00ee5464662502',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='shell',
+                        content={'status': 'completed'},
+                        tool_call_id='call_UJhs3tKkwVApGZxpFOWhtb1A',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content='Python calculates `2 + 2` as **4**.',
+                        id='msg_01fef2178327e5240169b1151654988198bb4b2a3321ff27ad',
+                        provider_name='openai',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=824, output_tokens=46, details={'reasoning_tokens': 29}),
+                model_name='gpt-5.4-2026-03-05',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                provider_response_id='resp_01fef2178327e5240169b1150cdd6881989ce841174dea3d34',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_local_shell_toolset(allow_model_requests: None, openai_api_key: str):
+    """Test ShellToolset with OpenAI Responses using native shell with local env."""
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        toolsets=[ShellToolset.local()],
+        instructions='Always use the shell tool. Keep responses brief.',
+    )
+
+    result = await agent.run('What is 2 + 2? Use python to calculate it.')
+    assert '4' in result.output
+    messages = result.all_messages()
+    tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    tool_returns = [p for msg in messages for p in msg.parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) >= 1
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2? Use python to calculate it.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='shell',
+                        args={
+                            'command': """\
+python3 - <<'PY'
+print(2+2)
+PY\
+"""
+                        },
+                        tool_call_id='call_WVFua0xH5q85NebJTGwIQGgo',
+                        id='sh_0b6630447668cb3e0169b194e051608199816546b75fcb2a65',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=271, output_tokens=45, details={'reasoning_tokens': 0}),
+                model_name='gpt-5.4-2026-03-05',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_0b6630447668cb3e0169b194dfd00481998ccb8872d04ed4c5',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='shell',
+                        content='{"output": "4\\n", "exit_code": 0}',
+                        tool_call_id='call_WVFua0xH5q85NebJTGwIQGgo',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='Python says: **4**',
+                        id='msg_0b6630447668cb3e0169b194e175408199888ef8fd4dd7cfbe',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=426, output_tokens=10, details={'reasoning_tokens': 0}),
+                model_name='gpt-5.4-2026-03-05',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_0b6630447668cb3e0169b194e102b88199b994a795f7e21b79',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_local_shell_toolset_stream(allow_model_requests: None, openai_api_key: str):
+    """Test ShellToolset streaming with OpenAI Responses using native shell with local env."""
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        toolsets=[ShellToolset.local()],
+        instructions='Always use the shell tool. Keep responses brief.',
+    )
+
+    async with agent.run_stream('What is 2 + 2? Use python to calculate it.') as result:
+        output = await result.get_output()
+    assert '4' in output
+    messages = result.all_messages()
+    tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2? Use python to calculate it.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='shell',
+                        args={'command': ''},
+                        tool_call_id='call_RTaGDusZZnSUBYA9VJvzpmni',
+                        id='sh_0290055475c8074e0169b194e720f88194b3f41ac93b777450',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=271, output_tokens=45, details={'reasoning_tokens': 0}),
+                model_name='gpt-5.4-2026-03-05',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                provider_response_id='resp_0290055475c8074e0169b194e6c51481948149545ccab45881',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Either `command` or `restart` must be provided.',
+                        tool_name='shell',
+                        tool_call_id='call_RTaGDusZZnSUBYA9VJvzpmni',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Always use the shell tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='Using Python: 2 + 2 = 4',
+                        id='msg_0290055475c8074e0169b194e821bc8194b4af90770b6d5fc6',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=385, output_tokens=15, details={'reasoning_tokens': 0}),
+                model_name='gpt-5.4-2026-03-05',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                provider_response_id='resp_0290055475c8074e0169b194e7b2a08194af124016bc21c9ae',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def _apply_patch_execute(op: ApplyPatchOperation) -> ApplyPatchOutput:
+    """Simple apply_patch executor for testing."""
+    if op.operation_type == 'create_file':
+        return ApplyPatchOutput(status='completed', output=f'Created {op.path}')
+    elif op.operation_type == 'update_file':
+        return ApplyPatchOutput(status='completed', output=f'Updated {op.path}')
+    elif op.operation_type == 'delete_file':
+        return ApplyPatchOutput(status='completed', output=f'Deleted {op.path}')
+    else:
+        return ApplyPatchOutput(status='failed', output=f'Unknown operation: {op.operation_type}')
+
+
+async def test_apply_patch_execute_helper_variants() -> None:
+    deleted = await _apply_patch_execute(ApplyPatchOperation(operation_type='delete_file', path='/tmp/gone.py'))
+    assert deleted == ApplyPatchOutput(status='completed', output='Deleted /tmp/gone.py')
+
+    class UnknownOperation:
+        operation_type = 'rename_file'
+        path = '/tmp/unknown.py'
+
+    unknown = await _apply_patch_execute(cast(ApplyPatchOperation, UnknownOperation()))
+    assert unknown == ApplyPatchOutput(status='failed', output='Unknown operation: rename_file')
+
+
+async def test_openai_responses_apply_patch_toolset(allow_model_requests: None, openai_api_key: str):
+    """Test ApplyPatchToolset with OpenAI Responses using native apply_patch format."""
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(
+        m,
+        toolsets=[ApplyPatchToolset(execute=_apply_patch_execute)],
+        instructions='Always use the apply_patch tool. Keep responses brief.',
+    )
+
+    result = await agent.run('Create a file at /tmp/hello.py containing print("hello world")')
+    messages = result.all_messages()
+    tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    tool_returns = [p for msg in messages for p in msg.parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) >= 1
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Create a file at /tmp/hello.py containing print("hello world")', timestamp=IsDatetime()
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Always use the apply_patch tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='apply_patch',
+                        args={
+                            'operation_type': 'create_file',
+                            'path': '/tmp/hello.py',
+                            'diff': '+print("hello world")\n',
+                        },
+                        tool_call_id='call_K9NB2l9lgPvMNYprN7kjMlab',
+                        id='apc_02704c300bf09b0b0169b1acb28cac8198891299c496597ca2',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=659, output_tokens=35, details={'reasoning_tokens': 0}),
+                model_name='gpt-5.4-2026-03-05',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_02704c300bf09b0b0169b1acb1ec1081989ddf87710887e3cb',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='apply_patch',
+                        content='{"status": "completed", "output": "Created /tmp/hello.py"}',
+                        tool_call_id='call_K9NB2l9lgPvMNYprN7kjMlab',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Always use the apply_patch tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='Done.',
+                        id='msg_02704c300bf09b0b0169b1acb425b88198ae7053d483d3581b',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=749, output_tokens=6, details={'reasoning_tokens': 0}),
+                model_name='gpt-5.4-2026-03-05',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id='resp_02704c300bf09b0b0169b1acb2eecc8198895ef5b8a7c0fb29',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_apply_patch_toolset_stream(allow_model_requests: None, openai_api_key: str):
+    """Test ApplyPatchToolset streaming with OpenAI Responses using native apply_patch format."""
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(
+        m,
+        toolsets=[ApplyPatchToolset(execute=_apply_patch_execute)],
+        instructions='Always use the apply_patch tool. Keep responses brief.',
+    )
+
+    async with agent.run_stream('Create a file at /tmp/hello.py containing print("hello world")') as result:
+        await result.get_output()
+    messages = result.all_messages()
+    tool_calls = [p for msg in messages for p in msg.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_calls) >= 1
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Create a file at /tmp/hello.py containing print("hello world")', timestamp=IsDatetime()
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Always use the apply_patch tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='apply_patch',
+                        args={'operation_type': 'create_file', 'path': 'tmp/hello.py', 'diff': ''},
+                        tool_call_id='call_UKOwbbQ3wP1PCnbgMdOECZY6',
+                        id='apc_0eb637b779deacb70169b1acb536c4819abc9c6e2d51a0650e',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=659, output_tokens=34, details={'reasoning_tokens': 0}),
+                model_name='gpt-5.4-2026-03-05',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                provider_response_id='resp_0eb637b779deacb70169b1acb49758819a891e19ad3d23d29d',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='apply_patch',
+                        content='{"status": "completed", "output": "Created tmp/hello.py"}',
+                        tool_call_id='call_UKOwbbQ3wP1PCnbgMdOECZY6',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Always use the apply_patch tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='apply_patch',
+                        args={'operation_type': 'update_file', 'path': 'tmp/hello.py', 'diff': ''},
+                        tool_call_id='call_5IM4j9OVWM5mKSXhRTEfBl5g',
+                        id='apc_0eb637b779deacb70169b1acb6cbc8819a8bab2ba15a5cf763',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=740, output_tokens=35, details={'reasoning_tokens': 0}),
+                model_name='gpt-5.4-2026-03-05',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                provider_response_id='resp_0eb637b779deacb70169b1acb632d8819a832d565353b260fc',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='apply_patch',
+                        content='{"status": "completed", "output": "Updated tmp/hello.py"}',
+                        tool_call_id='call_5IM4j9OVWM5mKSXhRTEfBl5g',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Always use the apply_patch tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='apply_patch',
+                        args={'operation_type': 'update_file', 'path': 'tmp/hello.py', 'diff': ''},
+                        tool_call_id='call_VL9BvRCyPrmiJIBYz5b09RsC',
+                        id='apc_0eb637b779deacb70169b1acb81164819a81f06d444899b547',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=825, output_tokens=35, details={'reasoning_tokens': 0}),
+                model_name='gpt-5.4-2026-03-05',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                provider_response_id='resp_0eb637b779deacb70169b1acb75f7c819a84d8bcfd07449c5b',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='apply_patch',
+                        content='{"status": "completed", "output": "Updated tmp/hello.py"}',
+                        tool_call_id='call_VL9BvRCyPrmiJIBYz5b09RsC',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='Always use the apply_patch tool. Keep responses brief.',
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='Done.',
+                        id='msg_0eb637b779deacb70169b1acb8c6a0819aa581435a878c1655',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=904, output_tokens=6, details={'reasoning_tokens': 0}),
+                model_name='gpt-5.4-2026-03-05',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                provider_response_id='resp_0eb637b779deacb70169b1acb86544819aa1ca10915dc8eda0',
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ('operation_type', 'path', 'expected_status', 'expected_output'),
+    [
+        ('delete_file', '/tmp/gone.py', 'completed', 'Deleted /tmp/gone.py'),
+        ('unknown', '/tmp/unknown.py', 'failed', 'Unknown operation: unknown'),
+    ],
+)
+async def test_apply_patch_execute_helper_covers_remaining_branches(
+    operation_type: str, path: str, expected_status: str, expected_output: str
+) -> None:
+    output = await _apply_patch_execute(ApplyPatchOperation(operation_type=cast(Any, operation_type), path=path))
+
+    assert output.status == expected_status
+    assert output.output == expected_output
+
+
+@pytest.mark.parametrize(
+    ('toolset', 'warning_kind'),
+    [
+        pytest.param(ShellToolset.local(), 'shell', id='shell'),
+        pytest.param(
+            ApplyPatchToolset(execute=_apply_patch_execute),
+            'apply_patch',
+            id='apply_patch',
+        ),
+    ],
+)
+async def test_openai_responses_warns_when_native_tool_falls_back(
+    toolset: Any,
+    warning_kind: str,
+    allow_model_requests: None,
+) -> None:
+    import pydantic_ai.models as models_mod
+    from pydantic_ai.profiles.openai import OpenAIModelProfile
+
+    models_mod.NATIVE_TOOL_FALLBACK_WARNED.clear()
+
+    profile = OpenAIModelProfile(
+        supports_native_shell_tool=False,
+        supports_native_apply_patch_tool=False,
+    )
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    output_item = ResponseOutputMessage(
+        id='msg_1',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
+    )
+    r = response_message([output_item])
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+    agent = Agent(m, toolsets=[toolset])
+
+    with pytest.warns(UserWarning, match=f'Native `{warning_kind}` tool: falling back to function tool format'):
+        await agent.run('hello')
+
+    # Verify fallback to function tool format in outgoing request
+    responses_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    tool_types = {t.get('type', 'function') for t in responses_kwargs['tools']}
+    assert 'function' in tool_types
+
+    # Second call should NOT warn again
+    output_item2 = ResponseOutputMessage(
+        id='msg_2',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
+    )
+    r2 = response_message([output_item2])
+    mock_client2 = MockOpenAIResponses.create_mock(r2)
+    m2 = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client2), profile=profile)
+    agent2 = Agent(m2, toolsets=[toolset])
+
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        await agent2.run('hello')
+
+    assert not any(warning_kind in str(w.message) for w in caught)
+
+
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_hosted_shell_multi_turn_round_trip(allow_model_requests: None):
+    """Multi-turn hosted shell: BuiltinToolCallPart/BuiltinToolReturnPart round-trip through ShellCall/ShellCallOutput."""
+    from openai.types.responses import (
+        ResponseFunctionShellToolCall,
+        ResponseFunctionShellToolCallOutput,
+        ResponseOutputMessage,
+        ResponseOutputText,
+    )
+    from openai.types.responses.response_container_reference import ResponseContainerReference
+    from openai.types.responses.response_function_shell_tool_call import Action
+    from openai.types.responses.response_function_shell_tool_call_output import Output, OutputOutcomeExit
+
+    shell_call = ResponseFunctionShellToolCall(
+        id='sh_001',
+        action=Action(commands=['echo hello']),
+        call_id='call_001',
+        status='completed',
+        type='shell_call',
+        environment=ResponseContainerReference(container_id='cntr_abc', type='container_reference'),
+    )
+    shell_output = ResponseFunctionShellToolCallOutput(
+        id='sh_out_001',
+        call_id='call_001',
+        output=[
+            Output(
+                outcome=OutputOutcomeExit(exit_code=0, type='exit'),
+                stdout='hello\n',
+                stderr='',
+            )
+        ],
+        status='completed',
+        type='shell_call_output',
+    )
+    text_msg = ResponseOutputMessage(
+        id='msg_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='First turn done.', type='output_text', annotations=[])],
+    )
+    r1 = response_message([shell_call, shell_output, text_msg])
+
+    text_msg2 = ResponseOutputMessage(
+        id='msg_002',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Second turn done.', type='output_text', annotations=[])],
+    )
+    r2 = response_message([text_msg2])
+
+    mock_client = MockOpenAIResponses.create_mock([r1, r2])
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, builtin_tools=[ShellTool()])
+
+    result1 = await agent.run('Run echo hello')
+    assert result1.output == 'First turn done.'
+    assert result1.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Run echo hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='shell',
+                        args={'commands': ['echo hello'], 'container_id': 'cntr_abc'},
+                        tool_call_id='call_001',
+                        id='sh_001',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='shell',
+                        content={'status': 'completed'},
+                        tool_call_id='call_001',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='shell',
+                        content={
+                            'status': 'completed',
+                            'outputs': [
+                                {'stdout': 'hello\n', 'stderr': '', 'outcome': {'type': 'exit', 'exit_code': 0}}
+                            ],
+                        },
+                        tool_call_id='call_001',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content='First turn done.', id='msg_001', provider_name='openai'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Second turn: pass message_history back — triggers BuiltinToolCallPart→ShellCall and BuiltinToolReturnPart→ShellCallOutput round-trip
+    result2 = await agent.run('What happened?', message_history=result1.all_messages())
+    assert result2.output == 'Second turn done.'
+
+    # Verify the second request sent the shell history back in the correct format
+    second_kwargs = get_mock_responses_kwargs(mock_client)[1]
+    input_items = cast(list[dict[str, Any]], second_kwargs['input'])
+    shell_call_items = [item for item in input_items if item.get('type') == 'shell_call']
+    shell_output_items = [item for item in input_items if item.get('type') == 'shell_call_output']
+    assert shell_call_items == snapshot(
+        [
+            {
+                'action': {'commands': ['echo hello']},
+                'call_id': 'call_001',
+                'type': 'shell_call',
+                'id': 'sh_001',
+                'status': 'completed',
+                'environment': {'container_id': 'cntr_abc', 'type': 'container_reference'},
+            }
+        ]
+    )
+    assert shell_output_items == snapshot(
+        [
+            {'call_id': 'call_001', 'output': [], 'type': 'shell_call_output', 'status': 'completed'},
+            {
+                'call_id': 'call_001',
+                'output': [{'outcome': {'type': 'exit', 'exit_code': 0}, 'stdout': 'hello\n', 'stderr': ''}],
+                'type': 'shell_call_output',
+                'status': 'completed',
+            },
+        ]
+    )
+
+
+async def test_local_shell_multi_turn_round_trip(allow_model_requests: None):
+    """Multi-turn local shell: ToolReturnPart round-trip through ShellCallOutput (lines 2059-2082)."""
+    from openai.types.responses import (
+        ResponseFunctionShellToolCall,
+        ResponseOutputMessage,
+        ResponseOutputText,
+    )
+    from openai.types.responses.response_function_shell_tool_call import Action
+
+    # First response: local shell call (no container reference → local shell)
+    shell_call = ResponseFunctionShellToolCall(
+        id='sh_local_001',
+        action=Action(commands=['echo hi']),
+        call_id='call_local_001',
+        status='completed',
+        type='shell_call',
+        environment=None,
+    )
+    text_after_tool = ResponseOutputMessage(
+        id='msg_local_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Local shell done.', type='output_text', annotations=[])],
+    )
+    text_turn2 = ResponseOutputMessage(
+        id='msg_local_002',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Second turn.', type='output_text', annotations=[])],
+    )
+
+    # Turn 1: model returns shell_call → agent runs tool → model returns text
+    # Turn 2 (separate agent.run with history): model returns text
+    r1 = response_message([shell_call])
+    r2 = response_message([text_after_tool])
+    r3 = response_message([text_turn2])
+
+    mock_client = MockOpenAIResponses.create_mock([r1, r2, r3])
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+
+    toolset = ShellToolset.local()
+
+    async def patched_call_tool(name: str, tool_args: dict[str, Any], ctx: Any, tool: Any) -> str:
+        return '{"output": "hi\\n", "exit_code": 0}'
+
+    agent = Agent(m, toolsets=[toolset])
+
+    with patch.object(toolset, 'call_tool', side_effect=patched_call_tool):
+        result1 = await agent.run('Run echo hi')
+
+    assert result1.output == 'Local shell done.'
+
+    # Verify ToolReturnPart was produced
+    tool_returns = [p for msg in result1.all_messages() for p in msg.parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) >= 1
+
+    # Second turn: message_history triggers ToolReturnPart → ShellCallOutput conversion (lines 2059-2082)
+    with patch.object(toolset, 'call_tool', side_effect=patched_call_tool):
+        result2 = await agent.run('What happened?', message_history=result1.all_messages())
+
+    assert result2.output == 'Second turn.'
+
+    # Verify the third request (second agent.run) sent ToolReturnPart as ShellCallOutput
+    third_kwargs = get_mock_responses_kwargs(mock_client)[2]
+    input_items = cast(list[dict[str, Any]], third_kwargs['input'])
+    shell_output_items = [item for item in input_items if item.get('type') == 'shell_call_output']
+    assert len(shell_output_items) == 1
+    assert shell_output_items[0]['status'] == 'completed'
+    # The JSON result was parsed: stdout is the 'output' field, exit_code is from 'exit_code'
+    assert shell_output_items[0]['output'][0]['stdout'] == 'hi\n'
+    assert shell_output_items[0]['output'][0]['outcome'] == {'type': 'exit', 'exit_code': 0}
+
+
+async def test_uploaded_file_container_target_without_shell_tool(allow_model_requests: None):
+    """UploadedFile with target='container' raises UserError when no ShellTool is present (lines 2497-2502)."""
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    text_msg = ResponseOutputMessage(
+        id='msg_uf_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
+    )
+    r = response_message([text_msg])
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(UserError, match='requires a `ShellTool`'):
+        await agent.run(
+            [
+                'Process this file',
+                UploadedFile(file_id='file-abc', provider_name='openai', target='container'),
+            ]
+        )
+
+
+async def test_shell_tool_param_with_explicit_container_id(allow_model_requests: None):
+    """ShellTool with explicit container ID setting (line 3482-3486)."""
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    text_msg = ResponseOutputMessage(
+        id='msg_ct_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
+    )
+    r = response_message([text_msg])
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, builtin_tools=[ShellTool()])
+
+    settings = cast(OpenAIResponsesModelSettings, {'openai_shell_container': 'cntr_explicit_123'})
+    await agent.run('hello', model_settings=settings)
+
+    kwargs = get_mock_responses_kwargs(mock_client)[0]
+    shell_tools = [t for t in kwargs['tools'] if t.get('type') == 'shell']
+    assert len(shell_tools) == 1
+    assert shell_tools[0] == snapshot(
+        {'type': 'shell', 'environment': {'type': 'container_reference', 'container_id': 'cntr_explicit_123'}}
+    )
+
+
+async def test_shell_tool_param_with_skills_and_versions(allow_model_requests: None):
+    """ShellTool with skills including versions (lines 3491-3498)."""
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    from pydantic_ai.builtin_tools import SkillReference
+
+    text_msg = ResponseOutputMessage(
+        id='msg_sk_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
+    )
+    r = response_message([text_msg])
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        m,
+        builtin_tools=[
+            ShellTool(
+                skills=[
+                    SkillReference(skill_id='data-analysis', version='2'),
+                    SkillReference(skill_id='computer-use'),
+                ],
+            )
+        ],
+    )
+
+    await agent.run('hello')
+
+    kwargs = get_mock_responses_kwargs(mock_client)[0]
+    shell_tools = [t for t in kwargs['tools'] if t.get('type') == 'shell']
+    assert len(shell_tools) == 1
+    assert shell_tools[0]['environment'] == snapshot(
+        {
+            'type': 'container_auto',
+            'skills': [
+                {'skill_id': 'data-analysis', 'type': 'skill_reference', 'version': '2'},
+                {'skill_id': 'computer-use', 'type': 'skill_reference'},
+            ],
+        }
+    )
+
+
+async def test_shell_tool_param_with_network_policy(allow_model_requests: None):
+    """ShellTool with network_policy (lines 3500-3507)."""
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    from pydantic_ai.builtin_tools import CodeExecutionNetworkPolicy
+
+    text_msg = ResponseOutputMessage(
+        id='msg_np_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
+    )
+    r = response_message([text_msg])
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+
+    # Test disabled network
+    agent = Agent(
+        m,
+        builtin_tools=[
+            ShellTool(network_policy=CodeExecutionNetworkPolicy(mode='disabled')),
+        ],
+    )
+    await agent.run('hello')
+
+    kwargs = get_mock_responses_kwargs(mock_client)[0]
+    shell_tools = [t for t in kwargs['tools'] if t.get('type') == 'shell']
+    assert shell_tools[0]['environment']['network_policy'] == snapshot({'type': 'disabled'})
+
+    # Test allowlist network
+    mock_client2 = MockOpenAIResponses.create_mock(r)
+    m2 = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client2))
+    agent2 = Agent(
+        m2,
+        builtin_tools=[
+            ShellTool(
+                network_policy=CodeExecutionNetworkPolicy(mode='allowlist', allowed_domains=['example.com']),
+            ),
+        ],
+    )
+    await agent2.run('hello')
+
+    kwargs2 = get_mock_responses_kwargs(mock_client2)[0]
+    shell_tools2 = [t for t in kwargs2['tools'] if t.get('type') == 'shell']
+    assert shell_tools2[0]['environment']['network_policy'] == snapshot(
+        {'type': 'allowlist', 'allowed_domains': ['example.com']}
+    )
+
+
+async def test_shell_tool_param_with_uploaded_files(allow_model_requests: None):
+    """ShellTool with uploaded_files in settings (lines 3509-3510)."""
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    text_msg = ResponseOutputMessage(
+        id='msg_uf_002',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
+    )
+    r = response_message([text_msg])
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, builtin_tools=[ShellTool()])
+
+    settings = cast(
+        OpenAIResponsesModelSettings,
+        {
+            'openai_shell_uploaded_files': [
+                UploadedFile(file_id='file-111', provider_name='openai'),
+                UploadedFile(file_id='file-222', provider_name='openai'),
+            ]
+        },
+    )
+    await agent.run('hello', model_settings=settings)
+
+    kwargs = get_mock_responses_kwargs(mock_client)[0]
+    shell_tools = [t for t in kwargs['tools'] if t.get('type') == 'shell']
+    assert len(shell_tools) == 1
+    assert shell_tools[0]['environment'] == snapshot({'type': 'container_auto', 'file_ids': ['file-111', 'file-222']})
+
+
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_shell_call_output_in_response(allow_model_requests: None):
+    """ResponseFunctionShellToolCallOutput in non-streaming response maps to BuiltinToolReturnPart (lines 3549-3565)."""
+    from openai.types.responses import (
+        ResponseFunctionShellToolCall,
+        ResponseFunctionShellToolCallOutput,
+        ResponseOutputMessage,
+        ResponseOutputText,
+    )
+    from openai.types.responses.response_container_reference import ResponseContainerReference
+    from openai.types.responses.response_function_shell_tool_call import Action
+    from openai.types.responses.response_function_shell_tool_call_output import Output, OutputOutcomeExit
+
+    shell_call = ResponseFunctionShellToolCall(
+        id='sh_map_001',
+        action=Action(commands=['ls -la']),
+        call_id='call_map_001',
+        status='completed',
+        type='shell_call',
+        environment=ResponseContainerReference(container_id='cntr_xyz', type='container_reference'),
+    )
+    shell_output = ResponseFunctionShellToolCallOutput(
+        id='sh_out_map_001',
+        call_id='call_map_001',
+        output=[
+            Output(
+                outcome=OutputOutcomeExit(exit_code=0, type='exit'),
+                stdout='total 42\ndrwxr-xr-x 3 user user 4096 Jan 1 00:00 .\n',
+                stderr='',
+            )
+        ],
+        status='completed',
+        type='shell_call_output',
+    )
+    text_msg = ResponseOutputMessage(
+        id='msg_map_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Files listed.', type='output_text', annotations=[])],
+    )
+    r = response_message([shell_call, shell_output, text_msg])
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, builtin_tools=[ShellTool()])
+
+    result = await agent.run('List files')
+    assert result.output == 'Files listed.'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='List files', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='shell',
+                        args={'commands': ['ls -la'], 'container_id': 'cntr_xyz'},
+                        tool_call_id='call_map_001',
+                        id='sh_map_001',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='shell',
+                        content={'status': 'completed'},
+                        tool_call_id='call_map_001',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='shell',
+                        content={
+                            'status': 'completed',
+                            'outputs': [
+                                {
+                                    'stdout': """\
+total 42
+drwxr-xr-x 3 user user 4096 Jan 1 00:00 .
+""",
+                                    'stderr': '',
+                                    'outcome': {'type': 'exit', 'exit_code': 0},
+                                }
+                            ],
+                        },
+                        tool_call_id='call_map_001',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content='Files listed.', id='msg_map_001', provider_name='openai'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_apply_patch_delete_file_operation(allow_model_requests: None):
+    """ResponseApplyPatchToolCall with delete_file operation (lines 3581-3582)."""
+    from openai.types.responses import (
+        ResponseApplyPatchToolCall,
+        ResponseOutputMessage,
+        ResponseOutputText,
+    )
+    from openai.types.responses.response_apply_patch_tool_call import OperationDeleteFile
+
+    delete_patch = ResponseApplyPatchToolCall(
+        id='ap_del_001',
+        call_id='call_ap_del_001',
+        operation=OperationDeleteFile(path='/tmp/unwanted.py', type='delete_file'),
+        status='completed',
+        type='apply_patch_call',
+    )
+    text_msg = ResponseOutputMessage(
+        id='msg_ap_del_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Deleted.', type='output_text', annotations=[])],
+    )
+    r1 = response_message([delete_patch])
+    r2 = response_message([text_msg])
+
+    mock_client = MockOpenAIResponses.create_mock([r1, r2])
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, toolsets=[ApplyPatchToolset(execute=_apply_patch_execute)])
+
+    result = await agent.run('Delete /tmp/unwanted.py')
+    assert result.output == 'Deleted.'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Delete /tmp/unwanted.py', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='apply_patch',
+                        args={'operation_type': 'delete_file', 'path': '/tmp/unwanted.py'},
+                        tool_call_id='call_ap_del_001',
+                        id='ap_del_001',
+                    )
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='apply_patch',
+                        content='{"status": "completed", "output": "Deleted /tmp/unwanted.py"}',
+                        tool_call_id='call_ap_del_001',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Deleted.', id='msg_ap_del_001', provider_name='openai')],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_streaming_shell_output_handling(allow_model_requests: None):
+    """Streaming: ResponseFunctionShellToolCallOutput in Added + Done events (lines 2855-2856, 2939-2941)."""
+    from openai.types.responses import (
+        ResponseCompletedEvent,
+        ResponseCreatedEvent,
+        ResponseFunctionShellToolCall,
+        ResponseFunctionShellToolCallOutput,
+        ResponseOutputItemAddedEvent,
+        ResponseOutputItemDoneEvent,
+        ResponseOutputMessage,
+        ResponseOutputText,
+        ResponseTextDeltaEvent,
+        ResponseTextDoneEvent,
+    )
+    from openai.types.responses.response_container_reference import ResponseContainerReference
+    from openai.types.responses.response_function_shell_tool_call import Action
+    from openai.types.responses.response_function_shell_tool_call_output import Output, OutputOutcomeExit
+
+    shell_call_item = ResponseFunctionShellToolCall(
+        id='sh_stream_001',
+        action=Action(commands=['date']),
+        call_id='call_stream_001',
+        status='completed',
+        type='shell_call',
+        environment=ResponseContainerReference(container_id='cntr_stream', type='container_reference'),
+    )
+    shell_output_item = ResponseFunctionShellToolCallOutput(
+        id='sh_out_stream_001',
+        call_id='call_stream_001',
+        output=[
+            Output(
+                outcome=OutputOutcomeExit(exit_code=0, type='exit'),
+                stdout='Thu Jan  1 00:00:00 UTC 2026\n',
+                stderr='',
+            )
+        ],
+        status='completed',
+        type='shell_call_output',
+    )
+    text_item = ResponseOutputMessage(
+        id='msg_stream_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Date shown.', type='output_text', annotations=[])],
+    )
+
+    full_response = response_message([shell_call_item, shell_output_item, text_item])
+
+    stream_events = [
+        ResponseCreatedEvent(
+            response=full_response,
+            sequence_number=0,
+            type='response.created',
+        ),
+        # Shell call added
+        ResponseOutputItemAddedEvent(
+            item=shell_call_item,
+            output_index=0,
+            sequence_number=1,
+            type='response.output_item.added',
+        ),
+        # Shell call done
+        ResponseOutputItemDoneEvent(
+            item=shell_call_item,
+            output_index=0,
+            sequence_number=2,
+            type='response.output_item.done',
+        ),
+        # Shell output added (line 2855-2856: pass)
+        ResponseOutputItemAddedEvent(
+            item=shell_output_item,
+            output_index=1,
+            sequence_number=3,
+            type='response.output_item.added',
+        ),
+        # Shell output done (lines 2939-2941: _map_shell_tool_call_output)
+        ResponseOutputItemDoneEvent(
+            item=shell_output_item,
+            output_index=1,
+            sequence_number=4,
+            type='response.output_item.done',
+        ),
+        # Text message added
+        ResponseOutputItemAddedEvent(
+            item=text_item,
+            output_index=2,
+            sequence_number=5,
+            type='response.output_item.added',
+        ),
+        # Text delta
+        ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Date shown.',
+            item_id='msg_stream_001',
+            logprobs=[],
+            output_index=2,
+            sequence_number=6,
+            type='response.output_text.delta',
+        ),
+        # Text done
+        ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_stream_001',
+            logprobs=[],
+            output_index=2,
+            sequence_number=7,
+            text='Date shown.',
+            type='response.output_text.done',
+        ),
+        # Text item done
+        ResponseOutputItemDoneEvent(
+            item=text_item,
+            output_index=2,
+            sequence_number=8,
+            type='response.output_item.done',
+        ),
+        # Response completed
+        ResponseCompletedEvent(
+            response=full_response,
+            sequence_number=9,
+            type='response.completed',
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream_events)
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, builtin_tools=[ShellTool()])
+
+    async with agent.run_stream('What date is it?') as result:
+        output = await result.get_output()
+
+    assert output == 'Date shown.'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What date is it?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='shell',
+                        args={'commands': ['date'], 'container_id': 'cntr_stream'},
+                        tool_call_id='call_stream_001',
+                        id='sh_stream_001',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='shell',
+                        content={'status': 'completed'},
+                        tool_call_id='call_stream_001',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='shell',
+                        content={
+                            'status': 'completed',
+                            'outputs': [
+                                {
+                                    'stdout': 'Thu Jan  1 00:00:00 UTC 2026\n',
+                                    'stderr': '',
+                                    'outcome': {'type': 'exit', 'exit_code': 0},
+                                }
+                            ],
+                        },
+                        tool_call_id='call_stream_001',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content='Date shown.', id='msg_stream_001', provider_name='openai'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='123',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_apply_patch_response_ignored_without_native_mapping(allow_model_requests: None):
+    """ResponseApplyPatchToolCall silently skipped when not in native_tool_names (line 1607->1510)."""
+    from openai.types.responses import ResponseApplyPatchToolCall, ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses.response_apply_patch_tool_call import OperationCreateFile
+
+    apply_patch = ResponseApplyPatchToolCall(
+        id='ap_ignored_001',
+        call_id='call_ignored_001',
+        operation=OperationCreateFile(path='/tmp/test.py', diff='+print("hi")\n', type='create_file'),
+        status='completed',
+        type='apply_patch_call',
+    )
+    text_msg = ResponseOutputMessage(
+        id='msg_ignored_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Done.', type='output_text', annotations=[])],
+    )
+    r = response_message([apply_patch, text_msg])
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)  # No ApplyPatchToolset
+
+    result = await agent.run('Create a file')
+    assert result.output == 'Done.'
+    response_msg = result.all_messages()[1]
+    assert len([p for p in response_msg.parts if isinstance(p, TextPart)]) == 1
+    assert len([p for p in response_msg.parts if isinstance(p, ToolCallPart)]) == 0
+
+
+async def test_shell_tool_return_non_json_round_trip(allow_model_requests: None):
+    """ToolReturnPart with non-JSON content triggers except branch (lines 2066-2068)."""
+    from openai.types.responses import ResponseFunctionShellToolCall, ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses.response_function_shell_tool_call import Action
+
+    shell_call = ResponseFunctionShellToolCall(
+        id='sh_nonjson_001',
+        action=Action(commands=['echo hi']),
+        call_id='call_nonjson_001',
+        status='completed',
+        type='shell_call',
+        environment=None,
+    )
+    text_t1 = ResponseOutputMessage(
+        id='msg_nj_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Done.', type='output_text', annotations=[])],
+    )
+    text_t2 = ResponseOutputMessage(
+        id='msg_nj_002',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='OK.', type='output_text', annotations=[])],
+    )
+    mock_client = MockOpenAIResponses.create_mock(
+        [response_message([shell_call]), response_message([text_t1]), response_message([text_t2])]
+    )
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    toolset = ShellToolset.local()
+
+    async def non_json_execute(name: str, tool_args: dict[str, Any], ctx: Any, tool: Any) -> str:
+        return 'raw output, not json'
+
+    agent = Agent(m, toolsets=[toolset])
+    with patch.object(toolset, 'call_tool', side_effect=non_json_execute):
+        result1 = await agent.run('Run echo hi')
+    with patch.object(toolset, 'call_tool', side_effect=non_json_execute):
+        result2 = await agent.run('What happened?', message_history=result1.all_messages())
+    assert result2.output == 'OK.'
+
+    third_kwargs = get_mock_responses_kwargs(mock_client)[2]
+    input_items = cast(list[dict[str, Any]], third_kwargs['input'])
+    shell_outputs = [i for i in input_items if i.get('type') == 'shell_call_output']
+    assert len(shell_outputs) >= 1
+    assert shell_outputs[0]['output'][0]['stdout'] == 'raw output, not json'
+
+
+async def test_apply_patch_output_none_round_trip(allow_model_requests: None):
+    """ApplyPatchCallOutput with output=None omits the output field (line 2100->2102)."""
+    from openai.types.responses import ResponseApplyPatchToolCall, ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses.response_apply_patch_tool_call import OperationCreateFile
+
+    patch_call = ResponseApplyPatchToolCall(
+        id='ap_none_001',
+        call_id='call_none_001',
+        operation=OperationCreateFile(path='/tmp/test.py', diff='+x\n', type='create_file'),
+        status='completed',
+        type='apply_patch_call',
+    )
+    text_t2 = ResponseOutputMessage(
+        id='msg_none_002',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='OK.', type='output_text', annotations=[])],
+    )
+    mock_client = MockOpenAIResponses.create_mock([response_message([patch_call]), response_message([text_t2])])
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+
+    async def no_output_execute(op: ApplyPatchOperation) -> ApplyPatchOutput:
+        return ApplyPatchOutput(status='completed')
+
+    agent = Agent(m, toolsets=[ApplyPatchToolset(execute=no_output_execute)])
+    result = await agent.run('Create /tmp/test.py')
+    assert result.output == 'OK.'
+
+    second_kwargs = get_mock_responses_kwargs(mock_client)[1]
+    input_items = cast(list[dict[str, Any]], second_kwargs['input'])
+    patch_outputs = [i for i in input_items if i.get('type') == 'apply_patch_call_output']
+    assert len(patch_outputs) == 1
+    assert 'output' not in patch_outputs[0]
+    assert patch_outputs[0]['status'] == 'completed'
+
+
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_hosted_shell_without_container_id_round_trip(allow_model_requests: None):
+    """BuiltinToolCallPart without container_id skips environment (line 2268->2273)."""
+    from openai.types.responses import (
+        ResponseFunctionShellToolCall,
+        ResponseFunctionShellToolCallOutput,
+        ResponseOutputMessage,
+        ResponseOutputText,
+    )
+    from openai.types.responses.response_function_shell_tool_call import Action
+    from openai.types.responses.response_function_shell_tool_call_output import Output, OutputOutcomeExit
+
+    shell_call = ResponseFunctionShellToolCall(
+        id='sh_noenv_001',
+        action=Action(commands=['pwd']),
+        call_id='call_noenv_001',
+        status='completed',
+        type='shell_call',
+        environment=None,
+    )
+    shell_output = ResponseFunctionShellToolCallOutput(
+        id='sh_out_noenv_001',
+        call_id='call_noenv_001',
+        output=[Output(outcome=OutputOutcomeExit(exit_code=0, type='exit'), stdout='/home', stderr='')],
+        status='completed',
+        type='shell_call_output',
+    )
+    text_t1 = ResponseOutputMessage(
+        id='msg_noenv_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Turn 1.', type='output_text', annotations=[])],
+    )
+    text_t2 = ResponseOutputMessage(
+        id='msg_noenv_002',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Turn 2.', type='output_text', annotations=[])],
+    )
+    mock_client = MockOpenAIResponses.create_mock(
+        [response_message([shell_call, shell_output, text_t1]), response_message([text_t2])]
+    )
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, builtin_tools=[ShellTool()])
+
+    result1 = await agent.run('pwd')
+    result2 = await agent.run('What?', message_history=result1.all_messages())
+    assert result2.output == 'Turn 2.'
+
+    second_kwargs = get_mock_responses_kwargs(mock_client)[1]
+    input_items = cast(list[dict[str, Any]], second_kwargs['input'])
+    shell_calls = [i for i in input_items if i.get('type') == 'shell_call']
+    assert len(shell_calls) == 1
+    assert 'environment' not in shell_calls[0]
+
+
+async def test_uploaded_file_container_target_with_shell_tool(allow_model_requests: None):
+    """UploadedFile target='container' + ShellTool skips input_file (line 2502->2422)."""
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    text_msg = ResponseOutputMessage(
+        id='msg_uf_ct_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='ok', type='output_text', annotations=[])],
+    )
+    mock_client = MockOpenAIResponses.create_mock(response_message([text_msg]))
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, builtin_tools=[ShellTool()])
+
+    await agent.run(
+        [
+            'Process this file',
+            UploadedFile(file_id='file-ct-001', provider_name='openai', target='container'),
+        ]
+    )
+
+    kwargs = get_mock_responses_kwargs(mock_client)[0]
+    input_items = cast(list[dict[str, Any]], kwargs['input'])
+    user_msgs = [i for i in input_items if isinstance(i, dict) and i.get('role') == 'user']
+    assert len(user_msgs) == 1
+    content: list[dict[str, Any]] = user_msgs[0].get('content', [])
+    file_items = [c for c in content if c.get('type') == 'input_file']
+    assert len(file_items) == 0
+
+
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_streaming_apply_patch_ignored_without_native_mapping(allow_model_requests: None):
+    """Streaming: apply_patch skipped when not in native_tool_names (line 2858->2727)."""
+    from openai.types.responses import (
+        ResponseApplyPatchToolCall,
+        ResponseCompletedEvent,
+        ResponseCreatedEvent,
+        ResponseOutputItemAddedEvent,
+        ResponseOutputItemDoneEvent,
+        ResponseOutputMessage,
+        ResponseOutputText,
+        ResponseTextDeltaEvent,
+        ResponseTextDoneEvent,
+    )
+    from openai.types.responses.response_apply_patch_tool_call import OperationCreateFile
+
+    ap_item = ResponseApplyPatchToolCall(
+        id='ap_str_ign_001',
+        call_id='call_str_ign_001',
+        operation=OperationCreateFile(path='/tmp/test.py', diff='+x\n', type='create_file'),
+        status='completed',
+        type='apply_patch_call',
+    )
+    text_item = ResponseOutputMessage(
+        id='msg_str_ign_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Done.', type='output_text', annotations=[])],
+    )
+    full_response = response_message([ap_item, text_item])
+
+    stream_events = [
+        ResponseCreatedEvent(response=full_response, sequence_number=0, type='response.created'),
+        ResponseOutputItemAddedEvent(
+            item=ap_item, output_index=0, sequence_number=1, type='response.output_item.added'
+        ),
+        ResponseOutputItemDoneEvent(item=ap_item, output_index=0, sequence_number=2, type='response.output_item.done'),
+        ResponseOutputItemAddedEvent(
+            item=text_item, output_index=1, sequence_number=3, type='response.output_item.added'
+        ),
+        ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Done.',
+            item_id='msg_str_ign_001',
+            logprobs=[],
+            output_index=1,
+            sequence_number=4,
+            type='response.output_text.delta',
+        ),
+        ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_str_ign_001',
+            logprobs=[],
+            output_index=1,
+            sequence_number=5,
+            text='Done.',
+            type='response.output_text.done',
+        ),
+        ResponseOutputItemDoneEvent(
+            item=text_item, output_index=1, sequence_number=6, type='response.output_item.done'
+        ),
+        ResponseCompletedEvent(response=full_response, sequence_number=7, type='response.completed'),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream_events)
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)  # No ApplyPatchToolset
+
+    async with agent.run_stream('Create file') as result:
+        output = await result.get_output()
+    assert output == 'Done.'
+    response_parts = result.all_messages()[1].parts
+    assert len([p for p in response_parts if isinstance(p, TextPart)]) == 1
+    assert len([p for p in response_parts if isinstance(p, ToolCallPart)]) == 0
+
+
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+)
+@pytest.mark.filterwarnings(
+    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+)
+async def test_shell_output_edge_cases_in_response(allow_model_requests: None):
+    """Shell output: empty outputs list + local env (lines 3523, 3550)."""
+    from openai.types.responses import (
+        ResponseFunctionShellToolCall,
+        ResponseFunctionShellToolCallOutput,
+        ResponseOutputMessage,
+        ResponseOutputText,
+    )
+    from openai.types.responses.response_function_shell_tool_call import Action
+
+    # Local env (not ContainerReference) → 3523->3526
+    shell_call_local = ResponseFunctionShellToolCall(
+        id='sh_edge_001',
+        action=Action(commands=['test']),
+        call_id='call_edge_001',
+        status='completed',
+        type='shell_call',
+        environment=None,
+    )
+    # Empty output list → 3550->3565
+    shell_output_empty = ResponseFunctionShellToolCallOutput(
+        id='sh_out_edge_001',
+        call_id='call_edge_001',
+        output=[],
+        status='completed',
+        type='shell_call_output',
+    )
+    text_msg = ResponseOutputMessage(
+        id='msg_edge_001',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='Edge cases.', type='output_text', annotations=[])],
+    )
+
+    r = response_message([shell_call_local, shell_output_empty, text_msg])
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, builtin_tools=[ShellTool()])
+
+    result = await agent.run('Test edge cases')
+    assert result.output == 'Edge cases.'
+
+    returns = [p for msg in result.all_messages() for p in msg.parts if isinstance(p, BuiltinToolReturnPart)]
+    assert len(returns) == 2
+
+    # Empty output → no 'outputs' key
+    content_empty = cast(dict[str, Any], returns[1].content)
+    assert content_empty == snapshot({'status': 'completed'})
