@@ -8,7 +8,6 @@ from pydantic import BaseModel
 
 from pydantic_ai._agent_graph import EndStrategy
 from pydantic_ai._spec import NamedSpec
-from pydantic_ai.settings import ModelSettings
 
 CapabilitySpec = NamedSpec
 """The specification of a capability to be constructed.
@@ -26,7 +25,7 @@ class AgentSpec(BaseModel):
     model: str
     name: str | None = None
     instructions: str | list[str] | None = None
-    model_settings: ModelSettings | None = None
+    model_settings: dict[str, Any] | None = None
     retries: int = 1
     output_retries: int | None = None
     end_strategy: EndStrategy = 'early'

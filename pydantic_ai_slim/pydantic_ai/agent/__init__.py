@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequen
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -551,7 +551,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             system_prompt=system_prompt,
             deps_type=deps_type,
             name=name or validated_spec.name,
-            model_settings=merge_model_settings(validated_spec.model_settings, model_settings),
+            model_settings=merge_model_settings(
+                cast(ModelSettings, validated_spec.model_settings),
+                model_settings,
+            ),
             retries=retries if retries is not None else validated_spec.retries,
             validation_context=validation_context,
             output_retries=output_retries if output_retries is not None else validated_spec.output_retries,
