@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import _instructions
+from pydantic_ai._template import TemplateStr
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 
@@ -18,6 +19,10 @@ class Instructions(AbstractCapability[AgentDepsT]):
         return self.instructions
 
     @classmethod
-    def from_spec(cls, *args: Any, **kwargs: Any) -> Instructions[Any]:
-        """Create from spec. Accepts a string instruction (since __init__ also takes callables)."""
-        return cls(*args, **kwargs)
+    def from_spec(cls, instructions: TemplateStr[AgentDepsT] | str = '') -> Instructions[Any]:
+        """Create from spec.
+
+        Narrower than the full `Instructions` type alias (which also accepts callables
+        and sequences) because specs only support literal strings and template strings.
+        """
+        return cls(instructions=instructions)

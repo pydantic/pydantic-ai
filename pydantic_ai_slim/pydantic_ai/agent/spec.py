@@ -13,6 +13,7 @@ from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapH
 
 from pydantic_ai._agent_graph import EndStrategy
 from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types
+from pydantic_ai._template import TemplateStr
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -38,8 +39,9 @@ class AgentSpec(BaseModel):
     json_schema_path: str | None = Field(default=None, alias='$schema')
     model: str
     name: str | None = None
-    description: str | None = None
-    instructions: str | list[str] | None = None
+    description: TemplateStr[Any] | str | None = None
+    instructions: TemplateStr[Any] | str | list[TemplateStr[Any] | str] | None = None
+    deps_schema: dict[str, Any] | None = None
     model_settings: dict[str, Any] | None = None
     retries: int = 1
     output_retries: int | None = None

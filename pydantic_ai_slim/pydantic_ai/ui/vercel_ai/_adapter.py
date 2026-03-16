@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
+from ... import _instructions
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -73,7 +74,6 @@ if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response
 
-    from ..._instructions import Instructions
     from ...agent import AbstractAgent
     from ...agent.abstract import AgentMetadata
     from ...builtin_tools import AbstractBuiltinTool
@@ -160,7 +160,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         message_history: Sequence[ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: Model | KnownModelName | str | None = None,
-        instructions: Instructions[DispatchDepsT] = None,
+        instructions: _instructions.Instructions[DispatchDepsT] = None,
         deps: DispatchDepsT = None,
         output_type: OutputSpec[Any] | None = None,
         model_settings: ModelSettings | None = None,
