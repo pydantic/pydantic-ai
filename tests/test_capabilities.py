@@ -1,13 +1,15 @@
+import os
 from dataclasses import dataclass
 
 import pytest
 
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     ExecutionEnvironment,
     Instructions,
-    ModelSettingsCapability,
+    ModelSettings,
     Thinking,
     WebSearch,
 )
@@ -22,6 +24,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets._dynamic import ToolsetFunc
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
@@ -37,34 +41,43 @@ def test_capability_types() -> None:
         {
             'ExecutionEnvironment': ExecutionEnvironment,
             'Instructions': Instructions,
-            'ModelSettings': ModelSettingsCapability,
+            'ModelSettings': ModelSettings,
             'Thinking': Thinking,
             'WebSearch': WebSearch,
         }
     )
 
 
-@pytest.fixture
-def memory_environment() -> MemoryEnvironment:
-    return MemoryEnvironment(files={'hello.py': 'print("hello")'})
+@pytest.mark.vcr()
+async def test_agent(allow_model_requests: None):
+    pytest.importorskip('anthropic')
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
-
-async def test_agent(anthropic_api_key: str, allow_model_requests: None, memory_environment: MemoryEnvironment):
+    api_key = os.getenv('ANTHROPIC_API_KEY', 'mock-value')
     agent = Agent(
-        'anthropic:claude-sonnet-4-6',
+        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=api_key)),
         capabilities=[
             Instructions("You are 'JAK of all trades', a General Agent for Knowledge built with Pydantic AI."),
             Thinking(),
-            ExecutionEnvironment(environment='local', include=['ls', 'read_file']),
+            ExecutionEnvironment(
+                environment=MemoryEnvironment(
+                    files={
+                        'README.md': '# My Project\nThis is a simple project.\n',
+                        'main.py': 'print("hello world")\n',
+                    }
+                ),
+                include=['ls', 'read_file'],
+            ),
             WebSearch(),
         ],
     )
-    result = await agent.run('Whats in lines 27-34 of the readme')
+    result = await agent.run('What files are in the project?')
 
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Whats in lines 27-34 of the readme', timestamp=IsDatetime())],
+                parts=[UserPromptPart(content='What files are in the project?', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 instructions="You are 'JAK of all trades', a General Agent for Knowledge built with Pydantic AI.",
                 run_id=IsStr(),
@@ -72,21 +85,21 @@ async def test_agent(anthropic_api_key: str, allow_model_requests: None, memory_
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user wants to read lines 27-34 of a readme file. Let me look for it in the current directory first.',
+                        content='The user wants to know what files are in the project. Let me list the directory contents.',
                         signature=IsStr(),
                         provider_name='anthropic',
                     ),
-                    TextPart(content='Sure! Let me look for the README file first!'),
+                    TextPart(content='Sure! Let me take a look at the project directory for you!'),
                     ToolCallPart(tool_name='ls', args={}, tool_call_id=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2506,
-                    output_tokens=88,
+                    input_tokens=2483,
+                    output_tokens=83,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 2506,
-                        'output_tokens': 88,
+                        'input_tokens': 2483,
+                        'output_tokens': 83,
                     },
                 ),
                 model_name='claude-sonnet-4-6',
@@ -103,89 +116,8 @@ async def test_agent(anthropic_api_key: str, allow_model_requests: None, memory_
                     ToolReturnPart(
                         tool_name='ls',
                         content="""\
-.cache/
-.claude/
-.coverage/
-.env (2538 bytes)
-.gemini/
-.git/
-.github/
-.gitignore (432 bytes)
-.logfire/
-.pre-commit-config.yaml (2082 bytes)
-.pytest_cache/
-.ruff_cache/
-.venv/
-.vscode/
-AGENTS.md (20683 bytes)
-CLAUDE.md (20683 bytes)
-LICENSE (1100 bytes)
-Makefile (5396 bytes)
-README.md (11667 bytes)
-clai/
-docs/
-docs-site/
-examples/
-mkdocs.yml (12666 bytes)
-pydantic_ai_slim/
-pydantic_evals/
-pydantic_graph/
-pyproject.toml (12355 bytes)
-scratch/
-scripts/
-tests/
-uv.lock (1917730 bytes)\
-""",
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                instructions="You are 'JAK of all trades', a General Agent for Knowledge built with Pydantic AI.",
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(content='Found it! Now let me read lines 27\u201334 of `README.md`.'),
-                    ToolCallPart(
-                        tool_name='read_file',
-                        args={'path': 'README.md', 'offset': 26, 'limit': 8},
-                        tool_call_id='toolu_01NLst65QFMKKaRdFEvE7GSq',
-                    ),
-                ],
-                usage=RequestUsage(
-                    input_tokens=2824,
-                    output_tokens=109,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 2824,
-                        'output_tokens': 109,
-                    },
-                ),
-                model_name='claude-sonnet-4-6',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'tool_use'},
-                provider_response_id=IsStr(),
-                finish_reason='tool_call',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='read_file',
-                        content="""\
-    27\t### <em>Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.</em>
-    28
-    29
-    30\tFastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
-    31
-    32\tYet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn\u2019t find anything that gave us the same feeling.
-    33
-    34\tWe built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
-... (167 more lines. Use offset=34 to continue reading.)
+README.md (39 bytes)
+main.py (21 bytes)\
 """,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -199,24 +131,23 @@ uv.lock (1917730 bytes)\
                 parts=[
                     TextPart(
                         content="""\
-Here are lines **27\u201334** of `README.md`:
+The project currently contains **2 files**:
 
-- **Line 27:** A tagline in italics \u2014 *\u201cPydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.\u201d*
-- **Line 28\u201329:** Blank lines.
-- **Line 30:** A comparison to FastAPI \u2014 noting how it revolutionized web development through its ergonomic design, built on [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
-- **Line 32:** An observation that despite virtually every Python agent framework using Pydantic Validation, the team couldn\u2019t find anything that gave them the same feeling when building [Pydantic Logfire](https://pydantic.dev/logfire).
-- **Line 34:** The mission statement \u2014 *\u201cWe built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.\u201d*\
+1. 📄 **`README.md`** *(39 bytes)* - A Markdown file, likely containing documentation or a description of the project.
+2. 🐍 **`main.py`** *(21 bytes)* - A Python source file, likely the main entry point of the application.
+
+Would you like me to read the contents of either file?\
 """
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=3170,
-                    output_tokens=236,
+                    input_tokens=2594,
+                    output_tokens=100,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 3170,
-                        'output_tokens': 236,
+                        'input_tokens': 2594,
+                        'output_tokens': 100,
                     },
                 ),
                 model_name='claude-sonnet-4-6',
@@ -324,3 +255,424 @@ def test_agent_from_spec_with_agent_spec_object():
     )
     agent = Agent.from_spec(spec)
     assert agent.model is not None
+
+
+def test_agent_from_spec_name():
+    agent = Agent.from_spec({'model': 'test', 'name': 'my-agent'})
+    assert agent.name == 'my-agent'
+
+
+def test_agent_from_spec_name_override():
+    agent = Agent.from_spec({'model': 'test', 'name': 'spec-name'}, name='override-name')
+    assert agent.name == 'override-name'
+
+
+def test_agent_from_spec_description():
+    agent = Agent.from_spec({'model': 'test', 'description': 'A helpful agent'})
+    assert agent.description == 'A helpful agent'
+
+
+def test_agent_from_spec_description_override():
+    agent = Agent.from_spec({'model': 'test', 'description': 'spec-desc'}, description='override-desc')
+    assert agent.description == 'override-desc'
+
+
+def test_agent_from_spec_instructions():
+    agent = Agent.from_spec({'model': 'test', 'instructions': 'Be helpful.'})
+    assert 'Be helpful.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_instructions_list():
+    agent = Agent.from_spec({'model': 'test', 'instructions': ['First.', 'Second.']})
+    assert 'First.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+    assert 'Second.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_instructions_merged():
+    agent = Agent.from_spec(
+        {'model': 'test', 'instructions': 'From spec.'},
+        instructions='From arg.',
+    )
+    assert 'From spec.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+    assert 'From arg.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_model_settings():
+    agent = Agent.from_spec({'model': 'test', 'model_settings': {'temperature': 0.5, 'max_tokens': 100}})
+    ms = agent.model_settings
+    assert isinstance(ms, dict)
+    assert ms.get('temperature') == 0.5  # pyright: ignore[reportUnknownMemberType]
+    assert ms.get('max_tokens') == 100  # pyright: ignore[reportUnknownMemberType]
+
+
+def test_agent_from_spec_model_settings_merged():
+    agent = Agent.from_spec(
+        {'model': 'test', 'model_settings': {'temperature': 0.5, 'max_tokens': 100}},
+        model_settings={'temperature': 0.9},
+    )
+    ms = agent.model_settings
+    assert isinstance(ms, dict)
+    assert ms.get('temperature') == 0.9  # pyright: ignore[reportUnknownMemberType]
+    assert ms.get('max_tokens') == 100  # pyright: ignore[reportUnknownMemberType]
+
+
+def test_agent_from_spec_retries():
+    agent = Agent.from_spec({'model': 'test', 'retries': 5})
+    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_result_retries == 5  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_retries_override():
+    agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
+    assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_result_retries == 2  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_output_retries():
+    agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
+    assert agent._max_tool_retries == 3  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_result_retries == 10  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_end_strategy():
+    agent = Agent.from_spec({'model': 'test', 'end_strategy': 'exhaustive'})
+    assert agent.end_strategy == 'exhaustive'
+
+
+def test_agent_from_spec_end_strategy_override():
+    agent = Agent.from_spec({'model': 'test', 'end_strategy': 'exhaustive'}, end_strategy='early')
+    assert agent.end_strategy == 'early'
+
+
+def test_agent_from_spec_tool_timeout():
+    agent = Agent.from_spec({'model': 'test', 'tool_timeout': 30.0})
+    assert agent._tool_timeout == 30.0  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_tool_timeout_override():
+    agent = Agent.from_spec({'model': 'test', 'tool_timeout': 30.0}, tool_timeout=5.0)
+    assert agent._tool_timeout == 5.0  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_instrument():
+    agent = Agent.from_spec({'model': 'test', 'instrument': True})
+    assert agent.instrument is True
+
+
+def test_agent_from_spec_metadata():
+    agent = Agent.from_spec({'model': 'test', 'metadata': {'env': 'prod', 'version': '1.0'}})
+    assert agent._metadata == {'env': 'prod', 'version': '1.0'}  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_metadata_override():
+    agent = Agent.from_spec(
+        {'model': 'test', 'metadata': {'env': 'prod'}},
+        metadata={'env': 'staging'},
+    )
+    assert agent._metadata == {'env': 'staging'}  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_model_override():
+    agent = Agent.from_spec({'model': 'test'}, model='test')
+    assert agent.model is not None
+
+
+def test_agent_from_spec_capabilities_merged():
+    @dataclass
+    class ExtraCap(AbstractCapability[None]):
+        pass
+
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [{'Instructions': 'From spec.'}],
+        },
+        capabilities=[ExtraCap()],
+    )
+    # Should have both the Instructions capability from spec and ExtraCap from arg
+    children = agent.root_capability.capabilities
+    assert any(isinstance(c, Instructions) for c in children)
+    assert any(isinstance(c, ExtraCap) for c in children)
+
+
+def test_model_json_schema_with_capabilities():
+    from pydantic_ai.agent.spec import AgentSpec
+
+    schema = AgentSpec.model_json_schema_with_capabilities()
+
+    assert schema['type'] == 'object'
+    assert 'model' in schema['properties']
+    assert 'capabilities' in schema['properties']
+    assert '$schema' in schema['properties']
+
+    # Capabilities should be a list with anyOf containing default types
+    cap_schema = schema['properties']['capabilities']
+    assert cap_schema['type'] == 'array'
+    any_of = cap_schema['items']['anyOf']
+
+    # Collect all capability names referenced in the schema (both const literals and object keys)
+    capability_names: set[str] = set()
+    for entry in any_of:
+        if 'const' in entry:
+            capability_names.add(entry['const'])
+        elif '$ref' in entry:
+            # Extract the name from refs like '#/$defs/spec_ExecutionEnvironment'
+            ref = entry['$ref']
+            ref_name = ref.rsplit('/', 1)[-1]
+            for prefix in ('spec_', 'short_spec_'):
+                if ref_name.startswith(prefix):
+                    capability_names.add(ref_name[len(prefix) :])
+
+    assert capability_names == {'ExecutionEnvironment', 'Instructions', 'ModelSettings', 'Thinking', 'WebSearch'}
+
+
+def test_model_json_schema_with_custom_capabilities():
+    from pydantic_ai.agent.spec import AgentSpec
+
+    schema = AgentSpec.model_json_schema_with_capabilities(
+        custom_capability_types=[CustomCapability],
+    )
+
+    any_of = schema['properties']['capabilities']['items']['anyOf']
+
+    capability_names: set[str] = set()
+    for entry in any_of:
+        if 'const' in entry:
+            capability_names.add(entry['const'])
+        elif '$ref' in entry:
+            ref = entry['$ref']
+            ref_name = ref.rsplit('/', 1)[-1]
+            for prefix in ('spec_', 'short_spec_'):
+                if ref_name.startswith(prefix):
+                    capability_names.add(ref_name[len(prefix) :])
+
+    assert 'CustomCapability' in capability_names
+    # Default capabilities should still be present
+    assert 'Thinking' in capability_names
+    assert 'WebSearch' in capability_names
+
+
+def test_save_schema(tmp_path: str):
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    schema_path = Path(tmp_path) / 'agent_spec.schema.json'
+    AgentSpec._save_schema(schema_path)  # pyright: ignore[reportPrivateUsage]
+
+    assert schema_path.exists()
+    import json
+
+    schema = json.loads(schema_path.read_text(encoding='utf-8'))
+    assert schema['type'] == 'object'
+    assert 'model' in schema['properties']
+    assert 'capabilities' in schema['properties']
+
+    # Calling again should not rewrite if content matches
+    mtime = schema_path.stat().st_mtime
+    AgentSpec._save_schema(schema_path)  # pyright: ignore[reportPrivateUsage]
+    assert schema_path.stat().st_mtime == mtime
+
+
+def test_from_file_yaml(tmp_path: str):
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('model: test\nname: my-agent\ninstructions: Be helpful\n', encoding='utf-8')
+    spec = AgentSpec.from_file(spec_path)
+    assert spec.model == 'test'
+    assert spec.name == 'my-agent'
+    assert spec.instructions == 'Be helpful'
+
+
+def test_from_file_json(tmp_path: str):
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec_path.write_text('{"model": "test", "name": "my-agent"}', encoding='utf-8')
+    spec = AgentSpec.from_file(spec_path)
+    assert spec.model == 'test'
+    assert spec.name == 'my-agent'
+
+
+def test_from_file_with_schema_field(tmp_path: str):
+    """$schema field in the file should be accepted and not cause validation errors."""
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('model: test\n', encoding='utf-8')
+
+    # YAML with $schema comment (ignored by yaml parser)
+    spec_with_schema = Path(tmp_path) / 'agent_with_schema.json'
+    spec_with_schema.write_text('{"$schema": "./agent_schema.json", "model": "test"}', encoding='utf-8')
+    spec = AgentSpec.from_file(spec_with_schema)
+    assert spec.model == 'test'
+    assert spec.json_schema_path == './agent_schema.json'
+
+
+def test_to_file_yaml(tmp_path: str):
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec = AgentSpec(model='test', name='my-agent', instructions='Be helpful')
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec.to_file(spec_path)
+
+    content = spec_path.read_text(encoding='utf-8')
+    # Should start with yaml-language-server schema comment
+    assert content.startswith('# yaml-language-server: $schema=')
+    assert 'model: test' in content
+    assert 'name: my-agent' in content
+
+    # Schema file should be generated
+    schema_path = Path(tmp_path) / 'agent_schema.json'
+    assert schema_path.exists()
+
+
+def test_to_file_json(tmp_path: str):
+    import json
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec = AgentSpec(model='test', name='my-agent')
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec.to_file(spec_path)
+
+    data = json.loads(spec_path.read_text(encoding='utf-8'))
+    assert data['$schema'] == 'agent_schema.json'
+    assert data['model'] == 'test'
+    assert data['name'] == 'my-agent'
+
+    # Schema file should be generated
+    schema_path = Path(tmp_path) / 'agent_schema.json'
+    assert schema_path.exists()
+
+
+def test_to_file_no_schema(tmp_path: str):
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec = AgentSpec(model='test')
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec.to_file(spec_path, schema_path=None)
+
+    content = spec_path.read_text(encoding='utf-8')
+    assert '# yaml-language-server' not in content
+
+    # No schema file should be generated
+    schema_path = Path(tmp_path) / 'agent_schema.json'
+    assert not schema_path.exists()
+
+
+def test_to_file_roundtrip_yaml(tmp_path: str):
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec = AgentSpec(model='test', name='roundtrip', instructions=['Be helpful', 'Be concise'])
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec.to_file(spec_path)
+
+    loaded = AgentSpec.from_file(spec_path)
+    assert loaded.model == 'test'
+    assert loaded.name == 'roundtrip'
+    assert loaded.instructions == ['Be helpful', 'Be concise']
+
+
+def test_to_file_roundtrip_json(tmp_path: str):
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec = AgentSpec(model='test', name='roundtrip', retries=3)
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec.to_file(spec_path)
+
+    loaded = AgentSpec.from_file(spec_path)
+    assert loaded.model == 'test'
+    assert loaded.name == 'roundtrip'
+    assert loaded.retries == 3
+
+
+@dataclass
+class ToolsetFuncCapability(AbstractCapability[None]):
+    """A capability that returns a ToolsetFunc instead of an AbstractToolset."""
+
+    def get_toolset(self) -> ToolsetFunc[None]:
+        def make_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
+            toolset = FunctionToolset[None]()
+
+            @toolset.tool
+            def greet(name: str) -> str:
+                """Greet someone by name."""
+                return f'Hello, {name}!'
+
+            return toolset
+
+        return make_toolset
+
+
+async def test_capability_returning_toolset_func():
+    """Test that a capability returning a ToolsetFunc works with an agent."""
+    from pydantic_ai.models.test import TestModel
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[ToolsetFuncCapability()],
+    )
+    result = await agent.run('Greet Alice')
+
+    tool_calls = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert len(tool_calls) == 1
+    assert tool_calls[0].tool_name == 'greet'
+
+    tool_returns = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    assert isinstance(tool_returns[0].content, str)
+    assert tool_returns[0].content.startswith('Hello, ')
+
+
+async def test_capability_returning_toolset_func_combined():
+    """Test that a ToolsetFunc capability works alongside other capabilities via CombinedCapability."""
+    from pydantic_ai.models.test import TestModel
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            Instructions('You are a helpful greeter.'),
+            ToolsetFuncCapability(),
+        ],
+    )
+    result = await agent.run('Greet Bob')
+
+    tool_returns = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    assert isinstance(tool_returns[0].content, str)
+    assert tool_returns[0].content.startswith('Hello, ')

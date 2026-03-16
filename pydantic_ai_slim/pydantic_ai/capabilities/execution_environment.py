@@ -14,6 +14,8 @@ from pydantic_ai.toolsets.execution_environment import ExecutionEnvironmentTools
 
 @dataclass(init=False)
 class ExecutionEnvironment(AbstractCapability[AgentDepsT]):
+    """A capability that provides an execution environment for running code."""
+
     toolset: ExecutionEnvironmentToolset = field(default_factory=ExecutionEnvironmentToolset)
 
     @overload

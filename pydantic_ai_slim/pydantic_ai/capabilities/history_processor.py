@@ -13,6 +13,8 @@ from .abstract import AbstractCapability
 
 @dataclass
 class HistoryProcessorCapability(AbstractCapability[AgentDepsT]):
+    """A capability that processes message history before model requests."""
+
     processor: _history_processor.HistoryProcessor[AgentDepsT]
 
     async def before_model_request(

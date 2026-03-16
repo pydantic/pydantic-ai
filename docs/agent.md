@@ -712,6 +712,24 @@ print(result_sync.output)
 
 The final request uses `temperature=0.0` (run-time), `max_tokens=500` (from model), demonstrating how settings merge with run-time taking precedence.
 
+##### Dynamic model settings
+
+Both agent-level and run-level `model_settings` accept a callable that receives a
+[`RunContext`][pydantic_ai.tools.RunContext] and returns [`ModelSettings`][pydantic_ai.settings.ModelSettings].
+The callable is invoked before each model request, so settings can vary per step.
+The current resolved settings so far are available via `ctx.model_settings` inside the callable.
+
+```py
+from pydantic_ai import Agent, ModelSettings
+
+agent = Agent(
+    'openai:gpt-5',
+    model_settings=lambda ctx: ModelSettings(
+        temperature=0.0 if ctx.run_step <= 1 else 0.7,
+    ),
+)
+```
+
 !!! note "Model Settings Support"
     Model-level settings are supported by all concrete model implementations (OpenAI, Anthropic, Google, etc.). Wrapper models like [`FallbackModel`](models/overview.md#fallback-model), [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel], and [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel] don't have their own settings - they use the settings of their underlying models.
 

@@ -1,25 +1,28 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from pydantic_ai import _instructions
+from pydantic_ai import _instructions, _system_prompt
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, RunContext
-from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetFunc
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from .abstract import AbstractCapability
 
 
 @dataclass
 class CombinedCapability(AbstractCapability[AgentDepsT]):
+    """A capability that combines multiple capabilities."""
+
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
 
     def get_instructions(self) -> _instructions.Instructions[AgentDepsT] | None:
-        instructions = []
+        instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = []
         for capability in self.capabilities:
-            instructions.extend(_instructions.normalize_instructions(capability.get_instructions()))  # type: ignore[reportPrivateUsage]
+            instructions.extend(_instructions.normalize_instructions(capability.get_instructions()))
         return instructions or None
 
     def get_model_settings(self) -> ModelSettings | None:
@@ -28,8 +31,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             model_settings = merge_model_settings(model_settings, capability.get_model_settings())
         return model_settings or None
 
-    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
-        toolsets = [toolset for capability in self.capabilities if (toolset := capability.get_toolset())]
+    def get_toolset(self) -> AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT] | None:
+        toolsets: list[AbstractToolset[AgentDepsT]] = []
+        for capability in self.capabilities:
+            toolset = capability.get_toolset()
+            if toolset is None:
+                pass
+            elif isinstance(toolset, AbstractToolset):
+                toolsets.append(toolset)  # pyright: ignore[reportUnknownArgumentType]
+            else:
+                toolsets.append(DynamicToolset[AgentDepsT](toolset_func=toolset))
         return CombinedToolset(toolsets) if toolsets else None
 
     def get_builtin_tools(self) -> Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]]:

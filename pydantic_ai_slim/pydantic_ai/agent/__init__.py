@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequen
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -73,6 +73,7 @@ from ..toolsets.prepared import PreparedToolset
 from .abstract import (
     AbstractAgent,
     AgentMetadata,
+    AgentModelSettings,
     EventStreamHandler,
     RunOutputDataT,
 )
@@ -102,6 +103,7 @@ __all__ = (
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
+    'AgentModelSettings',
 )
 
 
@@ -134,6 +136,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _model: models.Model | models.KnownModelName | str | None
 
     _name: str | None
+    _description: str | None
     end_strategy: EndStrategy
     """The strategy for handling multiple tool calls when a final result is found.
 
@@ -141,11 +144,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     - `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
     """
 
-    model_settings: ModelSettings | None
-    """Optional model request settings to use for this agents's runs, by default.
+    model_settings: AgentModelSettings[AgentDepsT] | None
+    """Optional model request settings to use for this agent's runs, by default.
 
-    Note, if `model_settings` is provided by `run`, `run_sync`, or `run_stream`, those settings will
-    be merged with this value, with the runtime argument taking priority.
+    Can be a static `ModelSettings` dict or a callable that takes a
+    [`RunContext`][pydantic_ai.tools.RunContext] and returns `ModelSettings`.
+    Callables are called before each model request, allowing dynamic per-step settings.
+
+    Note, if `model_settings` is also provided at run time, those settings will be merged
+    on top of the agent-level settings, with the run-level argument taking priority.
     """
 
     _output_type: OutputSpec[OutputDataT]
@@ -193,7 +200,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
-        model_settings: ModelSettings | None = None,
+        description: str | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
@@ -224,7 +232,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
-        model_settings: ModelSettings | None = None,
+        description: str | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
@@ -253,7 +262,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
-        model_settings: ModelSettings | None = None,
+        description: str | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
         output_retries: int | None = None,
@@ -290,7 +300,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 or add a type hint `: Agent[None, <return type>]`.
             name: The name of the agent, used for logging. If `None`, we try to infer the agent name from the call frame
                 when the agent is first run.
+            description: A human-readable description of the agent, attached to the agent run span as
+                `gen_ai.agent.description` when instrumentation is enabled.
             model_settings: Optional model request settings to use for this agent's runs, by default.
+                Can be a static `ModelSettings` dict or a callable that takes a
+                [`RunContext`][pydantic_ai.tools.RunContext] and returns `ModelSettings`.
+                Callables are called before each model request, allowing dynamic per-step settings.
             retries: The default number of retries to allow for tool calls and output validation, before raising an error.
                 For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
@@ -343,6 +358,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 a [`ConcurrencyLimiter`][pydantic_ai.ConcurrencyLimiter] for sharing limits across
                 multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
                 to `run()` or `iter()` will wait until a slot becomes available.
+            capabilities: Optional list of capabilities to configure the agent with.
         """
         if model is None or defer_model_check:
             self._model = model
@@ -350,6 +366,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._model = models.infer_model(model)
 
         self._name = name
+        self._description = description
         self.end_strategy = end_strategy
 
         capabilities = list(capabilities or [])
@@ -437,6 +454,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_metadata: ContextVar[_utils.Option[AgentMetadata[AgentDepsT]]] = ContextVar(
             '_override_metadata', default=None
         )
+        self._override_model_settings: ContextVar[_utils.Option[AgentModelSettings[AgentDepsT]]] = ContextVar(
+            '_override_model_settings', default=None
+        )
 
         self._enter_lock = Lock()
         self._entered_count = 0
@@ -448,15 +468,68 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec,
         *,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
-    ) -> Agent[None, str]:
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[Any] = str,
+        instructions: _instructions.Instructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        deps_type: type[Any] = NoneType,
+        name: str | None = None,
+        description: str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | None = None,
+        validation_context: Any = None,
+        output_retries: int | None = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[Any]] = (),
+        prepare_tools: ToolsPrepareFunc[Any] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
+        toolsets: Sequence[AbstractToolset[Any] | ToolsetFunc[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
+        event_stream_handler: EventStreamHandler[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AbstractCapability[Any]] | None = None,
+    ) -> Agent[Any, Any]:
         """Construct an Agent from a spec dict or `AgentSpec`.
 
         This allows defining agents declaratively in YAML/JSON/dict form.
+        Keyword arguments supplement the spec: scalar spec fields (like `name`,
+        `retries`) are used as defaults that explicit arguments override, while
+        `capabilities` from both sources are merged.
 
         Args:
             spec: The agent specification, either a dict or an `AgentSpec` instance.
             custom_capability_types: Additional capability classes to make available
                 beyond the built-in defaults.
+            model: Override the model from the spec.
+            output_type: The type of the output data, defaults to `str`.
+            instructions: Instructions for the agent.
+            system_prompt: Static system prompts.
+            deps_type: The type used for dependency injection.
+            name: The agent name, overrides spec `name` if provided.
+            description: The agent description, overrides spec `description` if provided.
+            model_settings: Model request settings.
+            retries: Default retries for tool calls and output validation, overrides spec `retries` if provided.
+            validation_context: Pydantic validation context for tool arguments and outputs.
+            output_retries: Max retries for output validation, overrides spec `output_retries` if provided.
+            tools: Tools to register with the agent.
+            builtin_tools: Builtin tools for the agent.
+            prepare_tools: Custom function to prepare tool definitions.
+            prepare_output_tools: Custom function to prepare output tool definitions.
+            toolsets: Toolsets to register with the agent.
+            defer_model_check: Defer model evaluation until first run.
+            end_strategy: Strategy for tool calls alongside a final result, overrides spec `end_strategy` if provided.
+            instrument: Instrumentation settings, overrides spec `instrument` if provided.
+            metadata: Metadata to store with each run, overrides spec `metadata` if provided.
+            history_processors: Processors for message history.
+            event_stream_handler: Handler for streaming events.
+            tool_timeout: Default timeout for tool execution, overrides spec `tool_timeout` if provided.
+            max_concurrency: Limit on concurrent agent runs.
+            capabilities: Additional capabilities merged with those from the spec.
 
         Returns:
             A new Agent instance.
@@ -474,7 +547,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             label='capability',
         )
 
-        capabilities: list[AbstractCapability[Any]] = []
+        # Merge instructions from spec and arg
+        merged_instructions = _instructions.normalize_instructions(validated_spec.instructions)
+        merged_instructions.extend(_instructions.normalize_instructions(instructions))
+
+        all_capabilities: list[AbstractCapability[Any]] = []
         for cap_spec in validated_spec.capabilities:
             capability = load_from_registry(
                 registry,
@@ -483,9 +560,40 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 custom_types_param='custom_capability_types',
                 instantiate=lambda c, args, kwargs: c.from_spec(*args, **kwargs),
             )
-            capabilities.append(capability)
+            all_capabilities.append(capability)
+        if capabilities:
+            all_capabilities.extend(capabilities)
 
-        return Agent(model=validated_spec.model, capabilities=capabilities)
+        return Agent(
+            model=model or validated_spec.model,
+            output_type=output_type,
+            instructions=merged_instructions or None,
+            system_prompt=system_prompt,
+            deps_type=deps_type,
+            name=name or validated_spec.name,
+            description=description or validated_spec.description,
+            model_settings=merge_model_settings(
+                cast(ModelSettings, validated_spec.model_settings),
+                model_settings,
+            ),
+            retries=retries if retries is not None else validated_spec.retries,
+            validation_context=validation_context,
+            output_retries=output_retries if output_retries is not None else validated_spec.output_retries,
+            tools=tools,
+            builtin_tools=builtin_tools,
+            prepare_tools=prepare_tools,
+            prepare_output_tools=prepare_output_tools,
+            toolsets=toolsets,
+            defer_model_check=defer_model_check,
+            end_strategy=end_strategy if end_strategy is not None else validated_spec.end_strategy,
+            instrument=instrument if instrument is not None else validated_spec.instrument,
+            metadata=metadata if metadata is not None else validated_spec.metadata,
+            history_processors=history_processors,
+            event_stream_handler=event_stream_handler,
+            tool_timeout=tool_timeout if tool_timeout is not None else validated_spec.tool_timeout,
+            max_concurrency=max_concurrency,
+            capabilities=all_capabilities,
+        )
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -520,6 +628,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._name = value
 
     @property
+    def description(self) -> str | None:
+        """A human-readable description of the agent."""
+        return self._description
+
+    @description.setter
+    def description(self, value: str | None) -> None:
+        """Set the description of the agent."""
+        self._description = value
+
+    @property
     def deps_type(self) -> type:
         """The type of dependencies used by the agent."""
         return self._deps_type
@@ -546,9 +664,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -566,9 +684,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -586,9 +704,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         message_history: Sequence[_messages.ModelMessage] | None = None,
         deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
-        instructions: Instructions[AgentDepsT] = None,
+        instructions: _instructions.Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -666,7 +784,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
-            model_settings: Optional settings to use for this model's request.
+            model_settings: Optional settings to use for this model's request, or a callable
+                that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings.
+                Callables are called before each model request, allowing dynamic per-step settings.
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
@@ -714,9 +834,26 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_step=0,
         )
 
-        # Merge model settings in order of precedence: run > agent > model
-        merged_settings = merge_model_settings(model_used.settings, self.model_settings)
-        model_settings = merge_model_settings(merged_settings, model_settings)
+        # Build a resolver that computes model settings per-step, in order of precedence: run > agent > model
+        model_settings_override = self._override_model_settings.get()
+        agent_model_settings = (
+            model_settings_override.value if model_settings_override is not None else self.model_settings
+        )
+        run_model_settings = model_settings if model_settings_override is None else None
+
+        def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
+            base = model_used.settings
+            run_context.model_settings = base
+            resolved_agent = (
+                agent_model_settings(run_context) if callable(agent_model_settings) else agent_model_settings
+            )
+            merged = merge_model_settings(base, resolved_agent)
+            run_context.model_settings = merged
+            resolved_run = run_model_settings(run_context) if callable(run_model_settings) else run_model_settings
+            final = merge_model_settings(merged, resolved_run)
+            run_context.model_settings = final
+            return final
+
         usage_limits = usage_limits or _usage.UsageLimits()
 
         instructions_literal, instructions_functions = self._get_instructions(additional_instructions=instructions)
@@ -758,7 +895,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             new_message_index=len(message_history) if message_history else 0,
             resumed_request=None,
             model=model_used,
-            model_settings=model_settings,
+            get_model_settings=get_model_settings,
             usage_limits=usage_limits,
             max_result_retries=self._max_result_retries,
             end_strategy=self.end_strategy,
@@ -788,14 +925,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings.version if instrumentation_settings else DEFAULT_INSTRUMENTATION_VERSION
         )
 
+        span_attributes: dict[str, str] = {
+            'model_name': model_used.model_name if model_used else 'no-model',
+            'agent_name': agent_name,
+            'gen_ai.agent.name': agent_name,
+            'logfire.msg': f'{agent_name} run',
+        }
+        if self._description is not None:
+            span_attributes['gen_ai.agent.description'] = self._description
+
         run_span = tracer.start_span(
             instrumentation_names.get_agent_run_span_name(agent_name),
-            attributes={
-                'model_name': model_used.model_name if model_used else 'no-model',
-                'agent_name': agent_name,
-                'gen_ai.agent.name': agent_name,
-                'logfire.msg': f'{agent_name} run',
-            },
+            attributes=span_attributes,
         )
 
         run_metadata: dict[str, Any] | None = None
@@ -955,7 +1096,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         }
 
     @contextmanager
-    def override(
+    def override(  # noqa: C901
         self,
         *,
         name: str | _utils.Unset = _utils.UNSET,
@@ -963,8 +1104,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-        instructions: Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        instructions: _instructions.Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
@@ -980,6 +1122,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions: The instructions to use instead of the instructions registered with the agent.
             metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
                 per-run `metadata` argument is ignored.
+            model_settings: The model settings to use instead of the model settings passed to the agent constructor.
+                When set, any per-run `model_settings` argument is ignored.
         """
         if _utils.is_set(name):
             name_token = self._override_name.set(_utils.Some(name))
@@ -1017,6 +1161,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             metadata_token = None
 
+        if _utils.is_set(model_settings):
+            model_settings_token = self._override_model_settings.set(_utils.Some(model_settings))
+        else:
+            model_settings_token = None
+
         try:
             yield
         finally:
@@ -1034,6 +1183,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_instructions.reset(instructions_token)
             if metadata_token is not None:
                 self._override_metadata.reset(metadata_token)
+            if model_settings_token is not None:
+                self._override_model_settings.reset(model_settings_token)
 
     @overload
     def instructions(
