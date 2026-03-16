@@ -6687,6 +6687,9 @@ async def test_wrapper_agent():
     assert wrapper_agent.name == agent.name
     wrapper_agent.name = 'wrapped'
     assert wrapper_agent.name == 'wrapped'
+    assert wrapper_agent.description == agent.description
+    wrapper_agent.description = 'wrapped description'
+    assert wrapper_agent.description == 'wrapped description'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
     assert wrapper_agent.output_json_schema() == snapshot(
@@ -6965,6 +6968,7 @@ async def test_hitl_tool_approval():
                         content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
+                        outcome='denied',
                     ),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -6996,6 +7000,7 @@ async def test_hitl_tool_approval():
                         content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
+                        outcome='denied',
                     ),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
