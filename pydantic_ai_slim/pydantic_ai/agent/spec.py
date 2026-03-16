@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Union
 from pydantic import BaseModel
 from pydantic_core import to_json
 
+from pydantic_ai._agent_graph import EndStrategy
 from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types
 
 if TYPE_CHECKING:
@@ -28,6 +29,16 @@ class AgentSpec(BaseModel):
     """Specification for constructing an Agent from a dict/YAML/JSON."""
 
     model: str
+    name: str | None = None
+    description: str | None = None
+    instructions: str | list[str] | None = None
+    model_settings: dict[str, Any] | None = None
+    retries: int = 1
+    output_retries: int | None = None
+    end_strategy: EndStrategy = 'early'
+    tool_timeout: float | None = None
+    instrument: bool | None = None
+    metadata: dict[str, Any] | None = None
     capabilities: list[CapabilitySpec] = []
 
     @classmethod

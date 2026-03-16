@@ -48,6 +48,14 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.wrapped.name = value
 
     @property
+    def description(self) -> str | None:
+        return self.wrapped.description
+
+    @description.setter
+    def description(self, value: str | None) -> None:
+        self.wrapped.description = value
+
+    @property
     def deps_type(self) -> type:
         return self.wrapped.deps_type
 

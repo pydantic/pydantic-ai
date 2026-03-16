@@ -257,6 +257,142 @@ def test_agent_from_spec_with_agent_spec_object():
     assert agent.model is not None
 
 
+def test_agent_from_spec_name():
+    agent = Agent.from_spec({'model': 'test', 'name': 'my-agent'})
+    assert agent.name == 'my-agent'
+
+
+def test_agent_from_spec_name_override():
+    agent = Agent.from_spec({'model': 'test', 'name': 'spec-name'}, name='override-name')
+    assert agent.name == 'override-name'
+
+
+def test_agent_from_spec_description():
+    agent = Agent.from_spec({'model': 'test', 'description': 'A helpful agent'})
+    assert agent.description == 'A helpful agent'
+
+
+def test_agent_from_spec_description_override():
+    agent = Agent.from_spec({'model': 'test', 'description': 'spec-desc'}, description='override-desc')
+    assert agent.description == 'override-desc'
+
+
+def test_agent_from_spec_instructions():
+    agent = Agent.from_spec({'model': 'test', 'instructions': 'Be helpful.'})
+    assert 'Be helpful.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_instructions_list():
+    agent = Agent.from_spec({'model': 'test', 'instructions': ['First.', 'Second.']})
+    assert 'First.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+    assert 'Second.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_instructions_merged():
+    agent = Agent.from_spec(
+        {'model': 'test', 'instructions': 'From spec.'},
+        instructions='From arg.',
+    )
+    assert 'From spec.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+    assert 'From arg.' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_model_settings():
+    agent = Agent.from_spec({'model': 'test', 'model_settings': {'temperature': 0.5, 'max_tokens': 100}})
+    assert agent.model_settings is not None
+    assert agent.model_settings.get('temperature') == 0.5
+    assert agent.model_settings.get('max_tokens') == 100
+
+
+def test_agent_from_spec_model_settings_merged():
+    agent = Agent.from_spec(
+        {'model': 'test', 'model_settings': {'temperature': 0.5, 'max_tokens': 100}},
+        model_settings={'temperature': 0.9},
+    )
+    assert agent.model_settings is not None
+    assert agent.model_settings.get('temperature') == 0.9
+    assert agent.model_settings.get('max_tokens') == 100
+
+
+def test_agent_from_spec_retries():
+    agent = Agent.from_spec({'model': 'test', 'retries': 5})
+    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_result_retries == 5  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_retries_override():
+    agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
+    assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_result_retries == 2  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_output_retries():
+    agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
+    assert agent._max_tool_retries == 3  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_result_retries == 10  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_end_strategy():
+    agent = Agent.from_spec({'model': 'test', 'end_strategy': 'exhaustive'})
+    assert agent.end_strategy == 'exhaustive'
+
+
+def test_agent_from_spec_end_strategy_override():
+    agent = Agent.from_spec({'model': 'test', 'end_strategy': 'exhaustive'}, end_strategy='early')
+    assert agent.end_strategy == 'early'
+
+
+def test_agent_from_spec_tool_timeout():
+    agent = Agent.from_spec({'model': 'test', 'tool_timeout': 30.0})
+    assert agent._tool_timeout == 30.0  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_tool_timeout_override():
+    agent = Agent.from_spec({'model': 'test', 'tool_timeout': 30.0}, tool_timeout=5.0)
+    assert agent._tool_timeout == 5.0  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_instrument():
+    agent = Agent.from_spec({'model': 'test', 'instrument': True})
+    assert agent.instrument is True
+
+
+def test_agent_from_spec_metadata():
+    agent = Agent.from_spec({'model': 'test', 'metadata': {'env': 'prod', 'version': '1.0'}})
+    assert agent._metadata == {'env': 'prod', 'version': '1.0'}  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_metadata_override():
+    agent = Agent.from_spec(
+        {'model': 'test', 'metadata': {'env': 'prod'}},
+        metadata={'env': 'staging'},
+    )
+    assert agent._metadata == {'env': 'staging'}  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_model_override():
+    agent = Agent.from_spec({'model': 'test'}, model='test')
+    assert agent.model is not None
+
+
+def test_agent_from_spec_capabilities_merged():
+    @dataclass
+    class ExtraCap(AbstractCapability[None]):
+        pass
+
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [{'Instructions': 'From spec.'}],
+        },
+        capabilities=[ExtraCap()],
+    )
+    # Should have both the Instructions capability from spec and ExtraCap from arg
+    children = agent.root_capability.capabilities
+    assert any(isinstance(c, Instructions) for c in children)
+    assert any(isinstance(c, ExtraCap) for c in children)
+
+
 def test_model_json_schema_with_capabilities():
     from pydantic_ai.agent.spec import AgentSpec
 

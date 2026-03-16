@@ -3247,3 +3247,37 @@ async def test_run_stream(
                 ]
             )
         )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_agent_description(capfire: CaptureLogfire) -> None:
+    agent = Agent(
+        model=TestModel(),
+        name='my_agent',
+        description='An agent that greets users',
+        instrument=True,
+    )
+    assert agent.description == 'An agent that greets users'
+
+    await agent.run('Hello')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_run_span = next(s for s in spans if s['name'] == 'agent run')
+    assert agent_run_span['attributes']['gen_ai.agent.description'] == 'An agent that greets users'
+
+    agent.description = 'Updated description'
+    assert agent.description == 'Updated description'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_agent_description_absent_when_none(capfire: CaptureLogfire) -> None:
+    agent = Agent(model=TestModel(), name='my_agent', instrument=True)
+    assert agent.description is None
+
+    await agent.run('Hello')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_run_span = next(s for s in spans if s['name'] == 'agent run')
+    assert 'gen_ai.agent.description' not in agent_run_span['attributes']
