@@ -8017,6 +8017,7 @@ class TestCallableAgentLevelSettings:
             seen_settings.append(ctx.model_settings)
             return ModelSettings(max_tokens=100)
 
+        # FunctionModel has no settings (None), so ctx.model_settings should be None
         agent = Agent(FunctionModel(_text_model), model_settings=dynamic_settings)
         agent.run_sync('Hello')
 

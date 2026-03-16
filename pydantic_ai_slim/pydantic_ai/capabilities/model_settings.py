@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -13,7 +14,13 @@ from .abstract import AbstractCapability
 
 @dataclass
 class ModelSettingsCapability(AbstractCapability[AgentDepsT]):
-    settings: ModelSettings
+    """Capability that provides model settings, either static or dynamic.
+
+    When `settings` is a callable, it receives the [`RunContext`][pydantic_ai.tools.RunContext]
+    and is called before each model request, allowing per-step settings.
+    """
+
+    settings: ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings]
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -26,7 +33,10 @@ class ModelSettingsCapability(AbstractCapability[AgentDepsT]):
             return cls(settings=cast(ModelSettings, args[0]))
         return cls(settings=cast(ModelSettings, kwargs))
 
-    # TODO: Restore get_model_settings() method
+    def get_model_settings(self) -> ModelSettings | None:
+        if callable(self.settings):
+            return None
+        return self.settings
 
     async def before_model_request(
         self,
@@ -36,5 +46,6 @@ class ModelSettingsCapability(AbstractCapability[AgentDepsT]):
         model_settings: ModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ModelMessage], ModelSettings, ModelRequestParameters]:
-        model_settings = merge_model_settings(model_settings, self.settings) or self.settings
+        resolved = self.settings(ctx) if callable(self.settings) else self.settings
+        model_settings = merge_model_settings(model_settings, resolved) or resolved
         return messages, model_settings, model_request_parameters

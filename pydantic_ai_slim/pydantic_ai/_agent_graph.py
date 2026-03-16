@@ -125,7 +125,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     resumed_request: _messages.ModelRequest | None
 
     model: models.Model
-    model_settings: ModelSettings | None
+    get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
@@ -519,7 +519,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         model_request_parameters = await _prepare_request_parameters(ctx)
-        model_settings = ctx.deps.model_settings or ModelSettings()
+        model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
 
         messages, model_settings, model_request_parameters = await ctx.deps.root_capability.before_model_request(
             run_context,

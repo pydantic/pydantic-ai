@@ -729,22 +729,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_step=0,
         )
 
-        # Merge model settings in order of precedence: run > agent > model
+        # Build a resolver that computes model settings per-step, in order of precedence: run > agent > model
         model_settings_override = self._override_model_settings.get()
         agent_model_settings = (
             model_settings_override.value if model_settings_override is not None else self.model_settings
         )
         run_model_settings = model_settings if model_settings_override is None else None
 
-        merged_settings = merge_model_settings(model_used.settings, agent_model_settings)
-        model_settings = merge_model_settings(merged_settings, run_model_settings)
-
-        # Build a capability that resolves dynamic (callable) model_settings per-step
-        dynamic_settings_cap = _DynamicModelSettingsCapability(
-            agent_settings=agent_model_settings,
-            run_settings=run_model_settings,
-            base_settings=model_used.settings,
-        )
+        def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
+            base = model_used.settings
+            run_context.model_settings = base
+            resolved_agent = (
+                agent_model_settings(run_context) if callable(agent_model_settings) else agent_model_settings
+            )
+            merged = merge_model_settings(base, resolved_agent)
+            run_context.model_settings = merged
+            resolved_run = run_model_settings(run_context) if callable(run_model_settings) else run_model_settings
+            final = merge_model_settings(merged, resolved_run)
+            run_context.model_settings = final
+            return final
 
         usage_limits = usage_limits or _usage.UsageLimits()
 
@@ -774,14 +777,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             new_message_index=len(message_history) if message_history else 0,
             resumed_request=None,
             model=model_used,
-            model_settings=model_settings,
+            get_model_settings=get_model_settings,
             usage_limits=usage_limits,
             max_result_retries=self._max_result_retries,
             end_strategy=self.end_strategy,
             output_schema=output_schema,
             output_validators=output_validators,
             validation_context=self._validation_context,
-            root_capability=CombinedCapability([dynamic_settings_cap, self.root_capability]),
+            root_capability=self.root_capability,
             builtin_tools=[*self._builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,
@@ -1881,46 +1884,3 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
                 'To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.'
             )
         super().add_tool(tool)
-
-
-@dataclasses.dataclass
-class _DynamicModelSettingsCapability(AbstractCapability[AgentDepsT]):
-    """Internal capability that resolves callable model_settings per-step.
-
-    Handles the precedence chain: model > agent > run, resolving callables at each level
-    and exposing intermediate results via `ctx.model_settings`.
-    """
-
-    agent_settings: AgentModelSettings[AgentDepsT] | None
-    run_settings: AgentModelSettings[AgentDepsT] | None
-    base_settings: ModelSettings | None
-
-    @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return None
-
-    async def before_model_request(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        messages: list[_messages.ModelMessage],
-        model_settings: ModelSettings,
-        model_request_parameters: _agent_graph.models.ModelRequestParameters,
-    ) -> tuple[list[_messages.ModelMessage], ModelSettings, _agent_graph.models.ModelRequestParameters]:
-        # Only do dynamic resolution if there are callable settings
-        if not callable(self.agent_settings) and not callable(self.run_settings):
-            return messages, model_settings, model_request_parameters
-
-        # Resolve callables with progressive ctx.model_settings visibility
-        base = self.base_settings
-        ctx.model_settings = base
-
-        resolved_agent = self.agent_settings(ctx) if callable(self.agent_settings) else self.agent_settings
-        merged = merge_model_settings(base, resolved_agent)
-        ctx.model_settings = merged
-
-        resolved_run = self.run_settings(ctx) if callable(self.run_settings) else self.run_settings
-        final = merge_model_settings(merged, resolved_run)
-        ctx.model_settings = final
-
-        return messages, final or model_settings, model_request_parameters
