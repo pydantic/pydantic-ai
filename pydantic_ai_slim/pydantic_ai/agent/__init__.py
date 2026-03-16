@@ -701,7 +701,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
-        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
 
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
@@ -739,6 +738,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             instrumentation_settings = None
             tracer = NoOpTracer()
+
+        # Build initial RunContext for for_run lifecycle hook
+        initial_ctx = RunContext[AgentDepsT](
+            deps=deps,
+            model=model_used,
+            usage=usage,
+            prompt=user_prompt,
+            messages=state.message_history,
+            tracer=tracer,
+            run_step=0,
+        )
+        toolset = await toolset.for_run(initial_ctx)
+        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
@@ -1610,14 +1622,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets = [*toolsets, *additional_toolsets]
 
         toolset = CombinedToolset(toolsets)
-
-        def copy_dynamic_toolsets(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            if isinstance(toolset, DynamicToolset):
-                return toolset.copy()
-            else:
-                return toolset
-
-        toolset = toolset.visit_and_replace(copy_dynamic_toolsets)
 
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)

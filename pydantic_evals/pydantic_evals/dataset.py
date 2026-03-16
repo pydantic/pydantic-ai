@@ -1323,9 +1323,7 @@ def _get_evaluator_registry(
                 f'All custom {label} classes must be subclasses of {base_class.__name__}, but {cls} is not'
             )
         if '__dataclass_fields__' not in cls.__dict__:
-            raise ValueError(
-                f'All custom {label} classes must be decorated with `@dataclass`, but {cls} is not'
-            )
+            raise ValueError(f'All custom {label} classes must be decorated with `@dataclass`, but {cls} is not')
 
     return build_registry(
         custom_types=custom_types,

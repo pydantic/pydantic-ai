@@ -136,8 +136,7 @@ def _load_agent_from_spec_file(path: Path) -> Agent[Any, Any] | None:
             import yaml
         except ImportError:
             raise ImportError(
-                'PyYAML is required to load YAML agent specs. '
-                'Install it with: pip install "pydantic-ai-slim[cli]"'
+                'PyYAML is required to load YAML agent specs. Install it with: pip install "pydantic-ai-slim[cli]"'
             ) from None
         spec = yaml.safe_load(content)
 

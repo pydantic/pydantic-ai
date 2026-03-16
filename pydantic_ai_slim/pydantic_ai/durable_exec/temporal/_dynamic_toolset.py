@@ -7,7 +7,7 @@ from typing import Any, Literal
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai import ToolsetTool
+from pydantic_ai import AbstractToolset, ToolsetTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -52,12 +52,19 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
+        async def _prepare_toolset(ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+            """Evaluate the dynamic toolset factory for use in an activity."""
+            toolset = await self.wrapped.for_run(ctx)
+            toolset = await toolset.for_run_step(ctx)
+            return toolset
+
         async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> dict[str, _ToolInfo]:
             """Activity that calls the dynamic function and returns tool definitions."""
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
 
-            async with self.wrapped:
-                tools = await self.wrapped.get_tools(ctx)
+            run_toolset = await _prepare_toolset(ctx)
+            async with run_toolset:
+                tools = await run_toolset.get_tools(ctx)
                 return {
                     name: _ToolInfo(tool_def=tool.tool_def, max_retries=tool.max_retries)
                     for name, tool in tools.items()
@@ -73,8 +80,9 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             """Activity that instantiates the dynamic toolset and calls the tool."""
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
 
-            async with self.wrapped:
-                tools = await self.wrapped.get_tools(ctx)
+            run_toolset = await _prepare_toolset(ctx)
+            async with run_toolset:
+                tools = await run_toolset.get_tools(ctx)
                 tool = tools.get(params.name)
                 if tool is None:  # pragma: no cover
                     raise UserError(

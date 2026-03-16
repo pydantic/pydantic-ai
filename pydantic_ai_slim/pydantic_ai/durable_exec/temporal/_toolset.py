@@ -76,6 +76,14 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
     def temporal_activities(self) -> list[Callable[..., Any]]:
         raise NotImplementedError
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        # Temporal-wrapped toolsets manage their own lifecycle
+        return self
+
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        # Temporal-wrapped toolsets manage their own lifecycle
+        return self
+
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:

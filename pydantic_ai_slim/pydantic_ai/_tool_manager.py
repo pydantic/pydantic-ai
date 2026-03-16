@@ -104,10 +104,16 @@ class ToolManager(Generic[AgentDepsT]):
             }
             ctx = replace(ctx, retries=retries)
 
+        # Let the toolset produce a per-step instance if needed
+        new_toolset = await self.toolset.for_run_step(ctx)
+        if new_toolset is not self.toolset:
+            await self.toolset.__aexit__(None, None, None)
+            await new_toolset.__aenter__()
+
         return self.__class__(
-            toolset=self.toolset,
+            toolset=new_toolset,
             ctx=ctx,
-            tools=await self.toolset.get_tools(ctx),
+            tools=await new_toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
         )
 

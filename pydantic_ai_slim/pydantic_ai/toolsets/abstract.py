@@ -103,6 +103,22 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """A hint for how to avoid name conflicts with other toolsets for use in error messages."""
         return 'Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts.'
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """Return the toolset to use for this agent run.
+
+        Called once per run, before `__aenter__`. Override this to return a fresh instance
+        for per-run state isolation. Default: return `self` (shared across runs).
+        """
+        return self
+
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """Return the toolset to use for this run step.
+
+        Called at the start of each step. If a different toolset is returned,
+        the framework manages the `__aexit__`/`__aenter__` transition. Default: return `self`.
+        """
+        return self
+
     async def __aenter__(self) -> Self:
         """Enter the toolset context.
 

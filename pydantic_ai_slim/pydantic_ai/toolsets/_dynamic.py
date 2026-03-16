@@ -37,7 +37,6 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         self.per_run_step = per_run_step
         self._id = id
         self._toolset: AbstractToolset[AgentDepsT] | None = None
-        self._run_step: int | None = None
 
     @property
     def id(self) -> str | None:
@@ -51,45 +50,63 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
             and self._id == other._id
         )
 
-    def copy(self) -> DynamicToolset[AgentDepsT]:
-        """Create a copy of this toolset for use in a new agent run."""
-        return DynamicToolset(
+    async def _evaluate_factory(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
+        """Evaluate the toolset factory function."""
+        toolset = self.toolset_func(ctx)
+        if inspect.isawaitable(toolset):
+            toolset = await toolset
+        return toolset
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """Create a per-run copy with the factory evaluated.
+
+        For `per_run_step=False`, evaluates the factory now (only chance).
+        For `per_run_step=True`, defers factory evaluation to `for_run_step`.
+        """
+        new = DynamicToolset(
             self.toolset_func,
             per_run_step=self.per_run_step,
             id=self._id,
         )
+        if not self.per_run_step:
+            new._toolset = await new._evaluate_factory(ctx)
+        return new
+
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        """If per_run_step, re-evaluate factory and manage internal transitions.
+
+        Manages the inner toolset lifecycle in-place and returns self.
+        """
+        if not self.per_run_step:
+            return self
+
+        new_toolset = await self._evaluate_factory(ctx)
+        if new_toolset is self._toolset:
+            return self
+
+        # Manage the transition in-place
+        if self._toolset is not None:
+            await self._toolset.__aexit__(None, None, None)
+        self._toolset = new_toolset
+        if self._toolset is not None:
+            await self._toolset.__aenter__()
+        return self
 
     async def __aenter__(self) -> Self:
+        if self._toolset is not None:
+            await self._toolset.__aenter__()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        try:
-            result = None
-            if self._toolset is not None:
-                result = await self._toolset.__aexit__(*args)
-        finally:
+        result = None
+        if self._toolset is not None:
+            result = await self._toolset.__aexit__(*args)
             self._toolset = None
-            self._run_step = None
         return result
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if self._toolset is None or (self.per_run_step and ctx.run_step != self._run_step):
-            if self._toolset is not None:
-                await self._toolset.__aexit__()
-
-            toolset = self.toolset_func(ctx)
-            if inspect.isawaitable(toolset):
-                toolset = await toolset
-
-            if toolset is not None:
-                await toolset.__aenter__()
-
-            self._toolset = toolset
-            self._run_step = ctx.run_step
-
         if self._toolset is None:
             return {}
-
         return await self._toolset.get_tools(ctx)
 
     async def call_tool(
@@ -110,7 +127,10 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         if self._toolset is None:
             return super().visit_and_replace(visitor)
         else:
-            new_toolset = self.copy()
-            new_toolset._toolset = self._toolset.visit_and_replace(visitor)
-            new_toolset._run_step = self._run_step
-            return new_toolset
+            new = DynamicToolset(
+                self.toolset_func,
+                per_run_step=self.per_run_step,
+                id=self._id,
+            )
+            new._toolset = self._toolset.visit_and_replace(visitor)
+            return new
