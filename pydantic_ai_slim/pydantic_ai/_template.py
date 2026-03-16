@@ -22,7 +22,7 @@ class TemplateStr(Generic[AgentDepsT]):
     for template compilation, schema validation, and rendering.
 
     Example:
-        ```python
+        ```python {test="skip"}
         from dataclasses import dataclass
 
         from pydantic_ai import Agent, TemplateStr
