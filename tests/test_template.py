@@ -237,3 +237,80 @@ async def test_agent_run_with_template_instructions() -> None:
     first_request = result.all_messages()[0]
     assert isinstance(first_request, ModelRequest)
     assert first_request.instructions == 'You are helping Alice, age 30.'
+
+
+# --- AgentSpec top-level template fields ---
+
+
+class TestAgentSpecTemplateFields:
+    def test_spec_instructions_template(self) -> None:
+        """Top-level instructions in spec support template strings."""
+        agent: Agent[MyDeps, str] = Agent.from_spec(
+            {'model': 'test', 'instructions': 'Hello {{name}}'},
+            deps_type=MyDeps,
+        )
+        assert len(agent._instructions) == 1  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(agent._instructions[0], TemplateStr)  # pyright: ignore[reportPrivateUsage]
+
+    def test_spec_instructions_plain_string(self) -> None:
+        """Plain strings in spec instructions stay as plain strings."""
+        agent = Agent.from_spec({'model': 'test', 'instructions': 'Hello world'})
+        assert len(agent._instructions) == 1  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(agent._instructions[0], str)  # pyright: ignore[reportPrivateUsage]
+        assert not isinstance(agent._instructions[0], TemplateStr)  # pyright: ignore[reportPrivateUsage]
+
+    def test_spec_instructions_list_with_templates(self) -> None:
+        """List of instructions can mix templates and plain strings."""
+        agent: Agent[MyDeps, str] = Agent.from_spec(
+            {'model': 'test', 'instructions': ['Hello {{name}}', 'Be helpful']},
+            deps_type=MyDeps,
+        )
+        instructions = agent._instructions  # pyright: ignore[reportPrivateUsage]
+        assert len(instructions) == 2
+        assert isinstance(instructions[0], TemplateStr)
+        assert isinstance(instructions[1], str)
+        assert not isinstance(instructions[1], TemplateStr)
+
+    def test_spec_description_template(self) -> None:
+        """Top-level description in spec supports template strings."""
+        agent: Agent[MyDeps, str] = Agent.from_spec(
+            {'model': 'test', 'description': 'Agent for {{name}}'},
+            deps_type=MyDeps,
+        )
+        # Property returns raw template source
+        assert agent.description == 'Agent for {{name}}'
+        # Internal storage is TemplateStr
+        assert isinstance(agent._description, TemplateStr)  # pyright: ignore[reportPrivateUsage]
+
+    def test_spec_description_plain_string(self) -> None:
+        """Plain string descriptions stay as plain strings."""
+        agent = Agent.from_spec({'model': 'test', 'description': 'A helpful agent'})
+        assert agent.description == 'A helpful agent'
+        assert isinstance(agent._description, str)  # pyright: ignore[reportPrivateUsage]
+
+    async def test_spec_instructions_template_renders_at_runtime(self) -> None:
+        """Template instructions from spec render correctly at runtime."""
+        agent: Agent[MyDeps, str] = Agent.from_spec(
+            {'model': 'test', 'instructions': 'You are {{name}}'},
+            deps_type=MyDeps,
+        )
+        result = await agent.run('hi', deps=MyDeps(name='Alice', age=30))
+        first_request = result.all_messages()[0]
+        assert isinstance(first_request, ModelRequest)
+        assert first_request.instructions == 'You are Alice'
+
+
+class TestTemplateStrRender:
+    def test_render_with_deps(self) -> None:
+        t: TemplateStr[MyDeps] = TemplateStr('Hello {{name}}', deps_type=MyDeps)
+        assert t.render(MyDeps(name='Alice', age=30)) == 'Hello Alice'
+
+    def test_render_without_deps(self) -> None:
+        t: TemplateStr[Any] = TemplateStr('Hello world')
+        assert t.render() == 'Hello world'
+
+    def test_render_matches_call(self) -> None:
+        t: TemplateStr[MyDeps] = TemplateStr('Hello {{name}}', deps_type=MyDeps)
+        deps = MyDeps(name='Bob', age=25)
+        ctx = _make_run_context(deps)
+        assert t.render(deps) == t(ctx)

@@ -64,18 +64,22 @@ class TemplateStr(Generic[AgentDepsT]):
             self._compiled_typed = None
             self._compiled_untyped = hbs.compile(source)
 
-    def __call__(self, ctx: RunContext[AgentDepsT]) -> str:
-        """Render the template against ``ctx.deps``."""
+    def render(self, deps: AgentDepsT | None = None) -> str:
+        """Render the template against the given deps object."""
         if self._compiled_typed is not None:
-            return self._compiled_typed.render(ctx.deps)
+            return self._compiled_typed.render(deps)
 
         assert self._compiled_untyped is not None
-        if ctx.deps is not None:
-            ta = TypeAdapter(type(ctx.deps))
-            deps_data = ta.dump_python(ctx.deps, mode='python')
+        if deps is not None:
+            ta = TypeAdapter(type(deps))
+            deps_data = ta.dump_python(deps, mode='python')
             if isinstance(deps_data, dict):
                 return self._compiled_untyped.render(deps_data)
         return self._compiled_untyped.render()
+
+    def __call__(self, ctx: RunContext[AgentDepsT]) -> str:
+        """Render the template against ``ctx.deps``."""
+        return self.render(ctx.deps)
 
     @classmethod
     def __get_pydantic_core_schema__(
