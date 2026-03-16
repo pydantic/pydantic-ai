@@ -666,11 +666,136 @@ class CachePoint:
     * Anthropic (automatically omitted for Bedrock, as it does not support explicit TTL). See https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information."""
 
 
-MULTI_MODAL_CONTENT_TYPES = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
+UploadedFileProviderName: TypeAlias = Literal['anthropic', 'openai', 'google-gla', 'google-vertex', 'bedrock', 'xai']
+"""Provider names supported by [`UploadedFile`][pydantic_ai.messages.UploadedFile]."""
+
+
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+class UploadedFile:
+    """A reference to a file uploaded to a provider's file storage by ID.
+
+    This allows referencing files that have been uploaded via provider-specific file APIs
+    rather than providing the file content directly.
+
+    Supported by:
+
+    - [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]
+    - [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]
+    - [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]
+    - [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
+    - [`GoogleModel`][pydantic_ai.models.google.GoogleModel]
+    - [`XaiModel`][pydantic_ai.models.xai.XaiModel]
+    """
+
+    file_id: str
+    """The provider-specific file identifier."""
+
+    provider_name: UploadedFileProviderName
+    """The provider this file belongs to.
+
+    This is required because file IDs are not portable across providers, and using a file ID
+    with the wrong provider will always result in an error.
+
+    Tip: Use `model.system` to get the provider name dynamically.
+    """
+
+    _: KW_ONLY
+
+    vendor_metadata: dict[str, Any] | None = None
+    """Vendor-specific metadata for the file.
+
+    The expected shape of this dictionary depends on the provider:
+
+    Supported by:
+    - `GoogleModel`: used as `video_metadata` for video files
+    """
+
+    _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
+
+    _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
+
+    kind: Literal['uploaded-file'] = 'uploaded-file'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `media_type` and `identifier` aliases.
+    def __init__(
+        self,
+        file_id: str,
+        provider_name: UploadedFileProviderName,
+        *,
+        media_type: str | None = None,
+        vendor_metadata: dict[str, Any] | None = None,
+        identifier: str | None = None,
+        kind: Literal['uploaded-file'] = 'uploaded-file',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
+        _identifier: str | None = None,
+    ) -> None: ...  # pragma: no cover
+
+    @pydantic.computed_field
+    @property
+    def media_type(self) -> str:
+        """Return the media type of the file, inferred from `file_id` if not explicitly provided.
+
+        Note: Inference relies on the file extension in `file_id`.
+        For opaque file IDs (e.g., `'file-abc123'`), the media type will default to `'application/octet-stream'`.
+        Inference relies on Python's `mimetypes` module, whose results may vary across platforms.
+
+        Required by some providers (e.g., Bedrock) for certain file types.
+        """
+        if self._media_type is not None:
+            return self._media_type
+        parsed = urlparse(self.file_id)
+        mime_type, _ = _mime_types.guess_type(parsed.path)
+        return mime_type or 'application/octet-stream'
+
+    @pydantic.computed_field
+    @property
+    def identifier(self) -> str:
+        """The identifier of the file, such as a unique ID.
+
+        This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+        and the tool can look up the file in question by iterating over the message history and finding the matching `UploadedFile`.
+
+        This identifier is only automatically passed to the model when the `UploadedFile` is returned by a tool.
+        If you're passing the `UploadedFile` as a user message, it's up to you to include a separate text part with the identifier,
+        e.g. "This is file <identifier>:" preceding the `UploadedFile`.
+        """
+        return self._identifier or _multi_modal_content_identifier(self.file_id)
+
+    @property
+    def format(self) -> str:
+        """A general-purpose media-type-to-format mapping.
+
+        Maps media types to format strings (e.g. `'image/png'` -> `'png'`). Covers image, video,
+        audio, and document types. Currently used by Bedrock, which requires explicit format strings.
+        """
+        media_type = self.media_type
+        try:
+            if media_type.startswith('image/'):
+                return _image_format_lookup[media_type]
+            elif media_type.startswith('video/'):
+                return _video_format_lookup[media_type]
+            elif media_type.startswith('audio/'):
+                return _audio_format_lookup[media_type]
+            else:
+                return _document_format_lookup[media_type]
+        except KeyError as e:
+            raise ValueError(f'Unknown media type: {media_type}') from e
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+MULTI_MODAL_CONTENT_TYPES = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)
 """Tuple of multi-modal content types for use with isinstance() checks."""
 
 MultiModalContent = Annotated[
-    ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent, pydantic.Discriminator('kind')
+    ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile, pydantic.Discriminator('kind')
 ]
 """Union of all multi-modal content types with a discriminator for Pydantic validation."""
 
@@ -837,6 +962,18 @@ class UserPromptPart:
                     )
             elif isinstance(part, BinaryContent):
                 parts.append(_convert_binary_to_otel_part(part.media_type, lambda p=part: p.base64, settings))
+            elif isinstance(part, UploadedFile):
+                # UploadedFile references provider-hosted files by file_id (OTel GenAI spec FilePart)
+                # Infer modality from media_type - OTel spec defines: image, video, audio (or any string)
+                category = part.media_type.split('/', 1)[0]
+                if category in ('image', 'audio', 'video'):
+                    modality = category
+                else:
+                    modality = 'document'  # default for PDFs, text, etc.
+                file_part = _otel_messages.FilePart(type='file', modality=modality, mime_type=part.media_type)
+                if settings.include_content:
+                    file_part['file_id'] = part.file_id
+                parts.append(file_part)
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel
                 pass
@@ -886,6 +1023,14 @@ class BaseToolReturnPart:
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
+
+    outcome: Literal['success', 'failed', 'denied'] = 'success'
+    """The outcome of the tool call.
+
+    - `'success'`: The tool executed successfully.
+    - `'failed'`: The tool raised an error during execution.
+    - `'denied'`: The tool call was denied by the approval mechanism.
+    """
 
     def model_response_str(self) -> str:
         """Return a string representation of the content for the model."""
@@ -1298,13 +1443,8 @@ class BaseToolCallPart:
         return pydantic_core.to_json(self.args).decode()
 
     def has_content(self) -> bool:
-        """Return `True` if the arguments contain any data."""
-        if isinstance(self.args, dict):
-            # TODO: This should probably return True if you have the value False, or 0, etc.
-            #   It makes sense to me to ignore empty strings, but not sure about empty lists or dicts
-            return any(self.args.values())
-        else:
-            return bool(self.args)
+        """Return `True` if the tool call has content."""
+        return self.args not in ('', {}, None)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1316,7 +1456,7 @@ class ToolCallPart(BaseToolCallPart):
     _: KW_ONLY
 
     part_kind: Literal['tool-call'] = 'tool-call'
-    """Part type identifier, this is available on all parts as a discriminator."""
+    """Part type identifier, this is available on all parts as a discriminator. Note that this is different from `ToolCallPartDelta.part_delta_kind`."""
 
 
 @dataclass(repr=False)
@@ -1794,7 +1934,7 @@ class ToolCallPartDelta:
     """
 
     part_delta_kind: Literal['tool_call'] = 'tool_call'
-    """Part delta type identifier, used as a discriminator."""
+    """Part delta type identifier, used as a discriminator. Note that this is different from `ToolCallPart.part_kind`."""
 
     def as_part(self) -> ToolCallPart | None:
         """Convert this delta to a fully formed `ToolCallPart` if possible, otherwise return `None`.

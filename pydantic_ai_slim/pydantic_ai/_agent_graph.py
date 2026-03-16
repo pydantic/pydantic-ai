@@ -76,6 +76,12 @@ class GraphAgentState:
     run_step: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
     metadata: dict[str, Any] | None = None
+    model_settings: Any = None
+    """Last-resolved model settings for the current step, used for error messages.
+
+    Typed as `Any` because `ModelSettings` contains types like `httpx.Timeout` that
+    Pydantic cannot generate a schema for, and this dataclass is used as graph state.
+    """
 
     def increment_retries(
         self,
@@ -547,6 +553,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
         messages = _clean_message_history(messages)
 
+        ctx.state.model_settings = model_settings
         usage = ctx.state.usage
         if ctx.deps.usage_limits.count_tokens_before_request:
             # Copy to avoid modifying the original usage object with the counted usage
@@ -638,7 +645,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 if not self.model_response.parts:
                     # Don't retry if the model returned an empty response because the token limit was exceeded, possibly during thinking.
                     if self.model_response.finish_reason == 'length':
-                        model_settings = ctx.deps.model_settings
+                        model_settings = ctx.state.model_settings
                         max_tokens = model_settings.get('max_tokens') if model_settings else None
                         raise exceptions.UnexpectedModelBehavior(
                             f'Model token limit ({max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
@@ -688,7 +695,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # resubmit the most recent request that resulted in an empty response,
                     # as the empty response and request will not create any items in the API payload,
                     # in the hope the model will return a non-empty response this time.
-                    ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
+                    ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.state.model_settings)
                     run_context = build_run_context(ctx)
                     instructions = await ctx.deps.get_instructions(run_context)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
@@ -758,7 +765,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     raise ToolRetryError(m)
                 except ToolRetryError as e:
                     ctx.state.increment_retries(
-                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
                     )
                     run_context = build_run_context(ctx)
                     instructions = await ctx.deps.get_instructions(run_context)
@@ -980,7 +987,7 @@ async def process_tool_calls(  # noqa: C901
                         yield event
                     continue
                 ctx.state.increment_retries(
-                    ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                    ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
                 )
                 raise  # pragma: lax no cover
 
@@ -996,7 +1003,7 @@ async def process_tool_calls(  # noqa: C901
                 ctx.state.increment_retries(
                     ctx.deps.max_result_retries,
                     error=validated.validation_error,
-                    model_settings=ctx.deps.model_settings,
+                    model_settings=ctx.state.model_settings,
                 )
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 output_parts.append(validated.validation_error.tool_retry)
@@ -1014,7 +1021,7 @@ async def process_tool_calls(  # noqa: C901
                         yield event
                     continue
                 ctx.state.increment_retries(
-                    ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                    ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
                 )
                 raise  # pragma: lax no cover
             except ToolRetryError as e:
@@ -1022,7 +1029,7 @@ async def process_tool_calls(  # noqa: C901
                 # This allows the run to succeed if at least one output tool returned a valid result
                 if not final_result:
                     ctx.state.increment_retries(
-                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
                     )
                 yield _messages.FunctionToolCallEvent(call, args_valid=True)
                 output_parts.append(e.tool_retry)
@@ -1281,7 +1288,14 @@ async def _call_tools(  # noqa: C901
             except asyncio.CancelledError as e:
                 for task in tasks:
                     task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
-
+                raise
+            except BaseException:
+                # Cancel any still-running sibling tasks so they don't become
+                # orphaned asyncio tasks when a non-CancelledError exception
+                # (e.g. RuntimeError, ConnectionError) propagates out of
+                # handle_call_or_result().
+                for task in tasks:
+                    task.cancel()
                 raise
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
@@ -1333,6 +1347,7 @@ async def _call_tool(
                 tool_name=call.tool_name,
                 content=tool_call_result.message,
                 tool_call_id=call.tool_call_id,
+                outcome='denied',
             ), None
         elif isinstance(tool_call_result, exceptions.ModelRetry):
             m = _messages.RetryPromptPart(
@@ -1505,11 +1520,13 @@ def _first_new_message_index(
     if resumed_request is not None:
         for index, message in enumerate(messages):
             if message is resumed_request:
-                return index + 1
+                # Include the resumed request in new_messages only if it was
+                # mapped/created during the current run (e.g., via adapters).
+                return index if message.run_id == run_id else index + 1
 
         for index in range(len(messages) - 1, -1, -1):
             if _is_same_request(messages[index], resumed_request):
-                return index + 1
+                return index if messages[index].run_id == run_id else index + 1
     return _first_run_id_index(messages, run_id)
 
 
@@ -1517,7 +1534,7 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
     if not isinstance(message, _messages.ModelRequest):
         return False
     if message is request:
-        return True
+        return True  # pragma: no cover
     # Intentionally excludes run_id: the resumed request may not have
     # run_id set yet when this comparison is performed.
     return (

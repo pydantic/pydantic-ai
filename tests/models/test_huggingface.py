@@ -27,6 +27,7 @@ from pydantic_ai import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -969,6 +970,7 @@ text 2\
         (AudioUrl(url='url'), 'AudioUrl is not supported for Hugging Face'),
         (DocumentUrl(url='url'), 'DocumentUrl is not supported for Hugging Face'),
         (VideoUrl(url='url'), 'VideoUrl is not supported for Hugging Face'),
+        (UploadedFile(file_id='file-123', provider_name='anthropic'), 'UploadedFile is not supported for Hugging Face'),
     ],
 )
 async def test_unsupported_media_types(allow_model_requests: None, content_item: Any, error_message: str):
