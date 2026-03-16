@@ -2818,6 +2818,21 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
         await agent.run('What day is today?')
 
 
+async def test_openai_chat_reasoning_effort_with_tools_not_supported(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIChatModel('gpt-5.4-2026-03-05', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        output_type=ToolOutput(BaseModel),
+        model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low'),
+    )
+
+    with pytest.raises(
+        UserError,
+        match=r"Function tools with reasoning_effort are not supported for 'gpt-5.4-2026-03-05'.*Responses API",
+    ):
+        await agent.run('test')
+
+
 async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o-search-preview', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
