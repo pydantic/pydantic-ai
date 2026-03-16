@@ -228,6 +228,10 @@ def build_schema_types(
         required_type_hints: dict[str, Any] = {}
 
         for p in inspect.signature(target).parameters.values():
+            # Skip *args and **kwargs — they can't be represented as typed dict fields
+            if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+                type_hints.pop(p.name, None)
+                continue
             type_hints.setdefault(p.name, Any)
             if p.default is not p.empty:
                 type_hints[p.name] = NotRequired[type_hints[p.name]]

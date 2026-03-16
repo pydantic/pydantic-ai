@@ -11,7 +11,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, RunContext
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, ToolsetFunc
 
 
 @dataclass
@@ -47,7 +47,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     # is capability stateful? can this cache a toolset in an ivar? or should it be a constant?
     # toolset state: https://github.com/pydantic/pydantic-ai/issues/4347
 
-    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
+    def get_toolset(self) -> AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT] | None:
         return None
 
     # builtin tools
