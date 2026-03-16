@@ -299,9 +299,10 @@ def test_agent_from_spec_instructions_merged():
 
 def test_agent_from_spec_model_settings():
     agent = Agent.from_spec({'model': 'test', 'model_settings': {'temperature': 0.5, 'max_tokens': 100}})
-    assert agent.model_settings is not None
-    assert agent.model_settings.get('temperature') == 0.5
-    assert agent.model_settings.get('max_tokens') == 100
+    ms = agent.model_settings
+    assert isinstance(ms, dict)
+    assert ms.get('temperature') == 0.5  # pyright: ignore[reportUnknownMemberType]
+    assert ms.get('max_tokens') == 100  # pyright: ignore[reportUnknownMemberType]
 
 
 def test_agent_from_spec_model_settings_merged():
@@ -309,9 +310,10 @@ def test_agent_from_spec_model_settings_merged():
         {'model': 'test', 'model_settings': {'temperature': 0.5, 'max_tokens': 100}},
         model_settings={'temperature': 0.9},
     )
-    assert agent.model_settings is not None
-    assert agent.model_settings.get('temperature') == 0.9
-    assert agent.model_settings.get('max_tokens') == 100
+    ms = agent.model_settings
+    assert isinstance(ms, dict)
+    assert ms.get('temperature') == 0.9  # pyright: ignore[reportUnknownMemberType]
+    assert ms.get('max_tokens') == 100  # pyright: ignore[reportUnknownMemberType]
 
 
 def test_agent_from_spec_retries():
@@ -470,6 +472,135 @@ def test_save_schema(tmp_path: str):
     mtime = schema_path.stat().st_mtime
     AgentSpec._save_schema(schema_path)  # pyright: ignore[reportPrivateUsage]
     assert schema_path.stat().st_mtime == mtime
+
+
+def test_from_file_yaml(tmp_path: str):
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('model: test\nname: my-agent\ninstructions: Be helpful\n', encoding='utf-8')
+    spec = AgentSpec.from_file(spec_path)
+    assert spec.model == 'test'
+    assert spec.name == 'my-agent'
+    assert spec.instructions == 'Be helpful'
+
+
+def test_from_file_json(tmp_path: str):
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec_path.write_text('{"model": "test", "name": "my-agent"}', encoding='utf-8')
+    spec = AgentSpec.from_file(spec_path)
+    assert spec.model == 'test'
+    assert spec.name == 'my-agent'
+
+
+def test_from_file_with_schema_field(tmp_path: str):
+    """$schema field in the file should be accepted and not cause validation errors."""
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('model: test\n', encoding='utf-8')
+
+    # YAML with $schema comment (ignored by yaml parser)
+    spec_with_schema = Path(tmp_path) / 'agent_with_schema.json'
+    spec_with_schema.write_text('{"$schema": "./agent_schema.json", "model": "test"}', encoding='utf-8')
+    spec = AgentSpec.from_file(spec_with_schema)
+    assert spec.model == 'test'
+    assert spec.json_schema_path == './agent_schema.json'
+
+
+def test_to_file_yaml(tmp_path: str):
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec = AgentSpec(model='test', name='my-agent', instructions='Be helpful')
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec.to_file(spec_path)
+
+    content = spec_path.read_text(encoding='utf-8')
+    # Should start with yaml-language-server schema comment
+    assert content.startswith('# yaml-language-server: $schema=')
+    assert 'model: test' in content
+    assert 'name: my-agent' in content
+
+    # Schema file should be generated
+    schema_path = Path(tmp_path) / 'agent_schema.json'
+    assert schema_path.exists()
+
+
+def test_to_file_json(tmp_path: str):
+    import json
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec = AgentSpec(model='test', name='my-agent')
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec.to_file(spec_path)
+
+    data = json.loads(spec_path.read_text(encoding='utf-8'))
+    assert data['$schema'] == 'agent_schema.json'
+    assert data['model'] == 'test'
+    assert data['name'] == 'my-agent'
+
+    # Schema file should be generated
+    schema_path = Path(tmp_path) / 'agent_schema.json'
+    assert schema_path.exists()
+
+
+def test_to_file_no_schema(tmp_path: str):
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec = AgentSpec(model='test')
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec.to_file(spec_path, schema_path=None)
+
+    content = spec_path.read_text(encoding='utf-8')
+    assert '# yaml-language-server' not in content
+
+    # No schema file should be generated
+    schema_path = Path(tmp_path) / 'agent_schema.json'
+    assert not schema_path.exists()
+
+
+def test_to_file_roundtrip_yaml(tmp_path: str):
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec = AgentSpec(model='test', name='roundtrip', instructions=['Be helpful', 'Be concise'])
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec.to_file(spec_path)
+
+    loaded = AgentSpec.from_file(spec_path)
+    assert loaded.model == 'test'
+    assert loaded.name == 'roundtrip'
+    assert loaded.instructions == ['Be helpful', 'Be concise']
+
+
+def test_to_file_roundtrip_json(tmp_path: str):
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec = AgentSpec(model='test', name='roundtrip', retries=3)
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec.to_file(spec_path)
+
+    loaded = AgentSpec.from_file(spec_path)
+    assert loaded.model == 'test'
+    assert loaded.name == 'roundtrip'
+    assert loaded.retries == 3
 
 
 @dataclass
