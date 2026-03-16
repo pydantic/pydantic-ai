@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     ExecutionEnvironment,
     Instructions,
-    ModelSettingsCapability,
+    ModelSettings,
     Thinking,
     WebSearch,
 )
@@ -41,7 +41,7 @@ def test_capability_types() -> None:
         {
             'ExecutionEnvironment': ExecutionEnvironment,
             'Instructions': Instructions,
-            'ModelSettings': ModelSettingsCapability,
+            'ModelSettings': ModelSettings,
             'Thinking': Thinking,
             'WebSearch': WebSearch,
         }

@@ -38,8 +38,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         # TODO: Use only the pre-request-hook based route instead of ctx.deps.get_instructions. How does override work? Just replace field instead of append?
         return None
 
-    # should this always return ModelSettings, or can it return None?
-    # TODO: Dynamic model settings functions? or just via hook
     def get_model_settings(self) -> ModelSettings | None:
         return None
 
