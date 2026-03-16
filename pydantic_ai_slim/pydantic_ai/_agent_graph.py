@@ -531,7 +531,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         message_history = await _process_message_history(
             ctx.state.message_history[:], ctx.deps.history_processors, run_context
         )
-        if message_history and message_history[-1].run_id is None:
+        if message_history and message_history[-1].run_id is None and not self.is_resuming_without_prompt:
             message_history[-1].run_id = ctx.state.run_id
 
         if self.is_resuming_without_prompt:

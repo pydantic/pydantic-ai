@@ -1288,8 +1288,8 @@ async def test_history_processor_resuming_without_prompt(
 ):
     """
     When running without a user prompt (resuming from history), new_messages()
-    should include the resumed request when that request has the current
-    run_id.
+    should exclude the resumed request — only messages generated during
+    the run should be returned.
     """
 
     def prepend_summary(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1340,7 +1340,6 @@ async def test_history_processor_resuming_without_prompt(
                     )
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1351,14 +1350,14 @@ async def test_history_processor_resuming_without_prompt(
             ),
         ]
     )
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
-async def test_resuming_without_prompt_with_tool_calls_includes_resumed_request_with_current_run_id():
+async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request():
     """
     When resuming without a user prompt and the model enters a tool-call loop,
-    new_messages() should include the resumed history request when it has
-    the current run_id.
+    new_messages() should exclude the resumed history request — only messages
+    generated during the run should be returned.
     """
 
     call_count = 0
@@ -1387,7 +1386,6 @@ async def test_resuming_without_prompt_with_tool_calls_includes_resumed_request_
             ModelRequest(
                 parts=[UserPromptPart(content='Original prompt', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')],
@@ -1418,7 +1416,7 @@ async def test_resuming_without_prompt_with_tool_calls_includes_resumed_request_
         ]
     )
 
-    assert result.new_messages() == result.all_messages()
+    assert result.new_messages() == result.all_messages()[1:]
 
 
 async def test_resuming_without_prompt_excludes_request_with_different_run_id(
@@ -1487,8 +1485,8 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
 ):
     """
     When a history processor deep-copies messages (breaking object identity),
-    new_messages() should still include the resumed request when it has the
-    current run_id.
+    new_messages() should still exclude the resumed request — only messages
+    generated during the run should be returned.
     """
 
     def deepcopy_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1514,7 +1512,6 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
                     )
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1526,7 +1523,7 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
         ]
     )
 
-    assert result.new_messages() == result.all_messages()
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 async def test_history_processor_rebuild_resuming_without_prompt(
@@ -1534,8 +1531,8 @@ async def test_history_processor_rebuild_resuming_without_prompt(
 ):
     """
     When a history processor rebuilds `ModelRequest` instances with equivalent
-    values, new_messages() should include the resumed request when it has the
-    current run_id.
+    values, new_messages() should exclude the resumed request — only messages
+    generated during the run should be returned.
     """
 
     def rebuild_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1589,7 +1586,6 @@ async def test_history_processor_rebuild_resuming_without_prompt(
                     )
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1601,7 +1597,7 @@ async def test_history_processor_rebuild_resuming_without_prompt(
         ]
     )
 
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 async def test_history_processor_replace_resumed_request_falls_through(
@@ -1609,8 +1605,8 @@ async def test_history_processor_replace_resumed_request_falls_through(
 ):
     """
     When a history processor replaces the resumed request with completely
-    different content, new_messages() falls back to run_id-based detection
-    to determine which messages belong to the current run.
+    different content, new_messages() should exclude the resumed request —
+    only messages generated during the run should be returned.
     """
 
     def replace_all_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1662,7 +1658,6 @@ async def test_history_processor_replace_resumed_request_falls_through(
                     )
                 ],
                 timestamp=IsDatetime(),
-                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -1674,6 +1669,23 @@ async def test_history_processor_replace_resumed_request_falls_through(
         ]
     )
 
-    # Falls back to run_id-based detection: the replaced request got run_id from
-    # the framework, so new_messages includes both it and the model response
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
+
+
+async def test_new_messages_excludes_history_prompt_without_user_prompt(
+    function_model: FunctionModel,
+):
+    """Regression test for #4669: new_messages() should not include the user
+    prompt from message_history when running without user_prompt."""
+    agent = Agent(function_model)
+
+    result = await agent.run(
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='hi')]),
+        ],
+    )
+
+    # The resumed request from history should NOT appear in new_messages
+    assert len(result.new_messages()) == 1
+    assert isinstance(result.new_messages()[0], ModelResponse)
+    assert result.new_messages() == result.all_messages()[-1:]
