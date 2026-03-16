@@ -1809,7 +1809,11 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content='{"results": [{"title": "Hello, world!", "url": "https://en.wikipedia.org/wiki/Hello,_world!"}]}',
+                        content={
+                            'results': [
+                                {'title': 'Hello, world!', 'url': 'https://en.wikipedia.org/wiki/Hello,_world!'}
+                            ]
+                        },
                         tool_call_id='search_1',
                         timestamp=IsDatetime(),
                         provider_name='function',
@@ -1846,6 +1850,120 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
             ),
         ]
     )
+
+
+async def test_builtin_tool_return_json_string_content_parsed() -> None:
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/4623.
+
+    AG-UI ToolMessage.content is always a string. For built-in tools the original
+    dict content gets JSON-serialized on the way out. The adapter must parse it
+    back so downstream model code (which checks isinstance(content, dict)) doesn't
+    silently drop the tool result.
+    """
+    messages: list[Message] = [
+        AssistantMessage(
+            id='msg_1',
+            tool_calls=[
+                ToolCall(
+                    id='pyd_ai_builtin|anthropic|srvtoolu_abc123',
+                    function=FunctionCall(
+                        name='web_fetch',
+                        arguments='{"url": "https://example.com"}',
+                    ),
+                ),
+            ],
+        ),
+        ToolMessage(
+            id='msg_2',
+            content='{"type": "web_fetch_result", "url": "https://example.com", "page_content": "hello"}',
+            tool_call_id='pyd_ai_builtin|anthropic|srvtoolu_abc123',
+        ),
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    response = result[0]
+    assert isinstance(response, ModelResponse)
+
+    return_part = response.parts[1]
+    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert return_part.tool_name == 'web_fetch'
+    assert return_part.tool_call_id == 'srvtoolu_abc123'
+    assert return_part.provider_name == 'anthropic'
+    content = return_part.content
+    assert content == {'type': 'web_fetch_result', 'url': 'https://example.com', 'page_content': 'hello'}
+
+
+async def test_builtin_tool_return_plain_string_content_preserved() -> None:
+    """Plain string content that isn't valid JSON stays as-is."""
+    messages: list[Message] = [
+        AssistantMessage(
+            id='msg_1',
+            tool_calls=[
+                ToolCall(
+                    id='pyd_ai_builtin|anthropic|srvtoolu_abc456',
+                    function=FunctionCall(
+                        name='web_fetch',
+                        arguments='{"url": "https://example.com"}',
+                    ),
+                ),
+            ],
+        ),
+        ToolMessage(
+            id='msg_2',
+            content='just a plain string, not JSON',
+            tool_call_id='pyd_ai_builtin|anthropic|srvtoolu_abc456',
+        ),
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    response = result[0]
+    assert isinstance(response, ModelResponse)
+
+    return_part = response.parts[1]
+    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert return_part.content == 'just a plain string, not JSON'
+
+
+async def test_builtin_tool_return_non_string_content_passthrough() -> None:
+    """When ToolMessage.content is already a non-string (e.g. dict), it passes through without JSON parsing."""
+    tool_msg = ToolMessage.model_construct(
+        id='msg_2',
+        content={'type': 'web_fetch_result', 'url': 'https://example.com'},
+        tool_call_id='pyd_ai_builtin|anthropic|srvtoolu_abc789',
+    )
+    messages: list[Message] = [
+        AssistantMessage(
+            id='msg_1',
+            tool_calls=[
+                ToolCall(
+                    id='pyd_ai_builtin|anthropic|srvtoolu_abc789',
+                    function=FunctionCall(
+                        name='web_fetch',
+                        arguments='{"url": "https://example.com"}',
+                    ),
+                ),
+            ],
+        ),
+        tool_msg,
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    response = result[0]
+    assert isinstance(response, ModelResponse)
+
+    return_part = response.parts[1]
+    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert return_part.content == {'type': 'web_fetch_result', 'url': 'https://example.com'}
+
+
+async def test_user_message_empty_content_list_skipped() -> None:
+    """A UserMessage with an empty content list produces no UserPromptPart."""
+    messages: list[Message] = [
+        UserMessage(id='msg_1', content=[]),
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    assert result == []
 
 
 async def test_builtin_tool_call() -> None:
