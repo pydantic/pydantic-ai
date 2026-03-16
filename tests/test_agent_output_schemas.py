@@ -702,3 +702,33 @@ async def test_output_type_description(output_type: type, expected_schema: dict[
 async def test_nested_output_type_description(output_type: type, expected_schema: dict[str, object]):
     agent: Agent[None, str] = Agent('test', output_type=output_type)
     assert agent.output_json_schema() == expected_schema
+
+
+async def test_tool_output_max_retries_passed_through():
+    """Test that ToolOutput(max_retries=N) is propagated to OutputToolset.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4678
+    """
+    from pydantic_ai._output import OutputToolset
+
+    toolset = OutputToolset.build([ToolOutput(Foo, max_retries=3)])
+    assert toolset is not None
+    assert toolset.max_retries == 3
+
+
+async def test_tool_output_max_retries_default():
+    """Test that OutputToolset uses default max_retries=1 when not specified."""
+    from pydantic_ai._output import OutputToolset
+
+    toolset = OutputToolset.build([ToolOutput(Foo)])
+    assert toolset is not None
+    assert toolset.max_retries == 1
+
+
+async def test_tool_output_max_retries_multiple_takes_max():
+    """Test that with multiple ToolOutputs, the highest max_retries wins."""
+    from pydantic_ai._output import OutputToolset
+
+    toolset = OutputToolset.build([ToolOutput(Foo, max_retries=2), ToolOutput(Bar, max_retries=5)])
+    assert toolset is not None
+    assert toolset.max_retries == 5
