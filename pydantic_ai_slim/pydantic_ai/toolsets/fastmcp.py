@@ -165,11 +165,17 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         # content block is annotated as user-only, the model should not see the
         # JSON-serialised equivalent either.
         filtered = [p for p in call_tool_result.content if _include_content_for_assistant(p)]
-        # If audience filtering removed all non-empty content, return a placeholder.
+        user_only = [p for p in call_tool_result.content if not _include_content_for_assistant(p)]
+
+        # If audience filtering removed all non-empty content, return a placeholder and
+        # expose the user-only content via ToolReturnPart.metadata for the application.
         # (This check must come before the structured_content check so that a tool
         # whose entire output is user-only doesn't expose its JSON-serialised equivalent.)
         if not filtered and call_tool_result.content:
-            return 'Tool executed successfully. (No model-visible content in result.)'
+            return messages.ToolReturn(
+                return_value='Tool executed successfully. (No model-visible content in result.)',
+                metadata={'mcp_user_content': [p.model_dump() for p in user_only]},
+            )
 
         # Prefer structured content when available — covers both the case where the tool
         # returned data directly (empty content + structured_content) and the normal case
@@ -181,7 +187,18 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         # that produced genuinely empty content (no content blocks at all).
         if not filtered:
             return []
-        return _map_fastmcp_tool_results(parts=filtered)
+
+        assistant_content = _map_fastmcp_tool_results(parts=filtered)
+
+        if user_only:
+            # Some blocks were filtered — expose them via metadata so the application can
+            # access user-only content while the model only sees assistant-visible content.
+            return messages.ToolReturn(
+                return_value=assistant_content,
+                metadata={'mcp_user_content': [p.model_dump() for p in user_only]},
+            )
+
+        return assistant_content
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
         return ToolsetTool[AgentDepsT](

@@ -24,6 +24,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai import messages as _messages
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import (
     ModelRetry,
@@ -102,7 +103,7 @@ async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(22)
+        assert len(tools) == snapshot(23)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
@@ -206,7 +207,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(22)
+        assert len(tools) == snapshot(23)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
@@ -2457,13 +2458,19 @@ async def test_server_capabilities_list_changed_fields() -> None:
 
 
 async def test_mcp_user_only_content_returns_placeholder(mcp_server: MCPServerStdio) -> None:
-    """A tool whose content is annotated audience=['user'] returns the assistant placeholder.
+    """A tool whose content is annotated audience=['user'] returns a ToolReturn with placeholder
+    for the model and the user-only content exposed via metadata.
 
     Uses the real ``get_user_only_content`` tool registered in tests/mcp_server.py.
     """
     async with mcp_server:
         result = await mcp_server.direct_call_tool('get_user_only_content', {})
-    assert result == 'Tool executed successfully. (No model-visible content in result.)'
+    assert isinstance(result, _messages.ToolReturn)
+    assert result.return_value == 'Tool executed successfully. (No model-visible content in result.)'
+    assert result.metadata is not None
+    user_content = result.metadata['mcp_user_content']
+    assert len(user_content) == 1
+    assert user_content[0]['text'] == 'This is for the user only.'
 
 
 async def test_mcp_no_annotation_content_passes_through(mcp_server: MCPServerStdio) -> None:
@@ -2486,3 +2493,25 @@ async def test_mcp_annotations_present_but_no_audience_passes_through(mcp_server
     # result comes back via the structured_content path as a list of dicts
     assert result != 'Tool executed successfully. (No model-visible content in result.)'
     assert 'Annotations present' in str(result)
+
+
+@pytest.mark.anyio
+async def test_mcp_mixed_audience_content_partial_filter(mcp_server: MCPServerStdio) -> None:
+    """A tool with mixed-audience content (some assistant, some user) returns a ToolReturn
+    where assistant-visible content is in return_value and user-only blocks are in metadata.
+
+    Uses the real ``get_mixed_audience_content`` tool registered in tests/mcp_server.py.
+    """
+    async with mcp_server:
+        result = await mcp_server.direct_call_tool('get_mixed_audience_content', {})
+    assert isinstance(result, _messages.ToolReturn)
+    # The assistant-visible block should be the return value
+    assert 'This is for the assistant.' in str(result.return_value)
+    # The user-only block should be in metadata
+    assert result.metadata is not None
+    user_content = result.metadata['mcp_user_content']
+    assert len(user_content) == 1
+    assert user_content[0]['text'] == 'This is for the user only.'
+
+
+

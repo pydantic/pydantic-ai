@@ -305,5 +305,26 @@ async def get_annotated_no_audience_content() -> list[TextContent]:
     ]
 
 
+@mcp.tool()
+async def get_mixed_audience_content() -> list[TextContent]:
+    """Return mixed content: one block for all audiences, one block for user only.
+
+    Used to test that partial audience filtering exposes the user-only blocks via
+    ToolReturnPart.metadata while the model only sees the assistant-visible block.
+    """
+    return [
+        TextContent(
+            type='text',
+            text='This is for the assistant.',
+            annotations=Annotations(audience=['assistant']),
+        ),
+        TextContent(
+            type='text',
+            text='This is for the user only.',
+            annotations=Annotations(audience=['user']),
+        ),
+    ]
+
+
 if __name__ == '__main__':
     mcp.run()

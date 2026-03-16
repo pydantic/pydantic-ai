@@ -546,14 +546,22 @@ class MCPServer(AbstractToolset[Any], ABC):
         # content block is annotated as user-only, the model should not see the
         # JSON-serialised equivalent either.
         content_for_assistant = [part for part in result.content if _include_content_for_assistant(part)]
+        user_only = [part for part in result.content if not _include_content_for_assistant(part)]
+
         if not content_for_assistant and result.content:
             # All content blocks were filtered out by audience annotations (audience=['user'] only).
-            # Return an informative placeholder so the model knows the tool ran.
-            return 'Tool executed successfully. (No model-visible content in result.)'
+            # Return an informative placeholder so the model knows the tool ran, and expose
+            # the user-only content via ToolReturnPart.metadata so the application can access it.
+            return messages.ToolReturn(
+                return_value='Tool executed successfully. (No model-visible content in result.)',
+                metadata={'mcp_user_content': [p.model_dump() for p in user_only]},
+            )
 
         # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
-        if (structured := result.structuredContent) and not any(
+        # Skip the structured content path when audience filtering was applied: structuredContent
+        # contains the unfiltered raw value and would expose user-only content to the model.
+        if not user_only and (structured := result.structuredContent) and not any(
             not isinstance(part, mcp_types.TextContent) for part in result.content
         ):
             # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want to use the raw value returned by the tool function.
@@ -563,7 +571,17 @@ class MCPServer(AbstractToolset[Any], ABC):
             return structured
 
         mapped = [await self._map_tool_result_part(part) for part in content_for_assistant]
-        return mapped[0] if len(mapped) == 1 else mapped
+        assistant_content: Any = mapped[0] if len(mapped) == 1 else mapped
+
+        if user_only:
+            # Some blocks were filtered out — expose them via metadata so the application
+            # can access user-only content while the model only sees assistant-visible content.
+            return messages.ToolReturn(
+                return_value=assistant_content,
+                metadata={'mcp_user_content': [p.model_dump() for p in user_only]},
+            )
+
+        return assistant_content
 
     async def call_tool(
         self,
@@ -1298,6 +1316,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
 ToolResult = (
     str
     | messages.BinaryContent
+    | messages.ToolReturn
     | dict[str, Any]
     | list[Any]
     | Sequence[str | messages.BinaryContent | dict[str, Any] | list[Any]]

@@ -624,7 +624,11 @@ class TestAudienceFiltering:
             result = await toolset.call_tool(
                 name='user_only_tool', tool_args={}, ctx=run_context, tool=tools['user_only_tool']
             )
-        assert result == 'Tool executed successfully. (No model-visible content in result.)'
+        from pydantic_ai.messages import ToolReturn
+        assert isinstance(result, ToolReturn)
+        assert result.return_value == 'Tool executed successfully. (No model-visible content in result.)'
+        assert result.metadata is not None
+        assert result.metadata['mcp_user_content'][0]['text'] == 'secret'
 
     async def test_call_tool_assistant_content_passes_through(self, run_context: RunContext[None]) -> None:
         """Content annotated for assistant (or with no annotation) passes through unchanged."""
