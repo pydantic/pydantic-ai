@@ -24,7 +24,9 @@ class TemplateStr(Generic[AgentDepsT]):
     Example:
         ```python
         from dataclasses import dataclass
+
         from pydantic_ai import Agent, TemplateStr
+
 
         @dataclass
         class MyDeps:
