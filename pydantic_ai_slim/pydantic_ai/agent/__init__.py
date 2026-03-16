@@ -383,7 +383,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._prepare_output_tools = prepare_output_tools
 
         self._output_toolset = self._output_schema.toolset
-        if self._output_toolset:
+        if self._output_toolset and not self._output_toolset.max_retries_set_by_output:
             self._output_toolset.max_retries = self._max_result_retries
 
         self._function_toolset = _AgentFunctionToolset(
@@ -646,7 +646,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if output_schema != self._output_schema or output_validators:
             output_toolset = output_schema.toolset
             if output_toolset:
-                output_toolset.max_retries = self._max_result_retries
+                if not output_toolset.max_retries_set_by_output:
+                    output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
         tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
