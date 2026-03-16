@@ -476,55 +476,50 @@ async def test_complex_agent_run_in_workflow(
                                 )
                             ],
                         ),
+                        BasicSpan(content='running tool: get_country'),
                         BasicSpan(
-                            content='running 2 tools',
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
                             children=[
-                                BasicSpan(content='running tool: get_country'),
                                 BasicSpan(
-                                    content='StartActivity:agent__complex_agent__event_stream_handler',
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content=IsStr(
+                                                regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                            )
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='running tool: get_product_name',
+                            children=[
+                                BasicSpan(
+                                    content='StartActivity:agent__complex_agent__mcp_server__mcp__call_tool',
                                     children=[
                                         BasicSpan(
-                                            content='RunActivity:agent__complex_agent__event_stream_handler',
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
-                                            ],
+                                            content='RunActivity:agent__complex_agent__mcp_server__mcp__call_tool'
                                         )
                                     ],
-                                ),
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
                                 BasicSpan(
-                                    content='running tool: get_product_name',
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
                                     children=[
+                                        BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='StartActivity:agent__complex_agent__mcp_server__mcp__call_tool',
-                                            children=[
-                                                BasicSpan(
-                                                    content='RunActivity:agent__complex_agent__mcp_server__mcp__call_tool'
-                                                )
-                                            ],
-                                        )
+                                            content=IsStr(
+                                                regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                            )
+                                        ),
                                     ],
-                                ),
-                                BasicSpan(
-                                    content='StartActivity:agent__complex_agent__event_stream_handler',
-                                    children=[
-                                        BasicSpan(
-                                            content='RunActivity:agent__complex_agent__event_stream_handler',
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=1'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
-                                            ],
-                                        )
-                                    ],
-                                ),
+                                )
                             ],
                         ),
                         BasicSpan(
@@ -582,37 +577,32 @@ async def test_complex_agent_run_in_workflow(
                             ],
                         ),
                         BasicSpan(
-                            content='running 1 tool',
+                            content='running tool: get_weather',
                             children=[
                                 BasicSpan(
-                                    content='running tool: get_weather',
+                                    content='StartActivity:agent__complex_agent__toolset__<agent>__call_tool',
                                     children=[
                                         BasicSpan(
-                                            content='StartActivity:agent__complex_agent__toolset__<agent>__call_tool',
-                                            children=[
-                                                BasicSpan(
-                                                    content='RunActivity:agent__complex_agent__toolset__<agent>__call_tool'
-                                                )
-                                            ],
+                                            content='RunActivity:agent__complex_agent__toolset__<agent>__call_tool'
                                         )
                                     ],
-                                ),
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
                                 BasicSpan(
-                                    content='StartActivity:agent__complex_agent__event_stream_handler',
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
                                     children=[
+                                        BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='RunActivity:agent__complex_agent__event_stream_handler',
-                                            children=[
-                                                BasicSpan(content='ctx.run_step=2'),
-                                                BasicSpan(
-                                                    content=IsStr(
-                                                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
-                                                    )
-                                                ),
-                                            ],
-                                        )
+                                            content=IsStr(
+                                                regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"content":null,"event_kind":"function_tool_result"}'
+                                            )
+                                        ),
                                     ],
-                                ),
+                                )
                             ],
                         ),
                         BasicSpan(
