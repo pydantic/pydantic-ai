@@ -2818,19 +2818,42 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
         await agent.run('What day is today?')
 
 
-async def test_openai_chat_reasoning_effort_with_tools_not_supported(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('gpt-5.4-2026-03-05', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_chat_reasoning_effort_with_function_tools_not_supported(
+    allow_model_requests: None, openai_api_key: str
+):
+    m = OpenAIChatModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
         m,
-        output_type=ToolOutput(BaseModel),
         model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low'),
     )
 
+    @agent.tool_plain
+    def my_tool() -> str:
+        return 'result'
+
     with pytest.raises(
         UserError,
-        match=r"Function tools with reasoning_effort are not supported for 'gpt-5.4-2026-03-05'.*Responses API",
+        match=r"Function tools with reasoning_effort are not supported for 'o3-mini'.*Responses API",
     ):
         await agent.run('test')
+
+
+def test_openai_chat_reasoning_effort_without_tools_no_user_error(openai_api_key: str):
+    """reasoning_effort without function tools should NOT raise UserError."""
+    m = OpenAIChatModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    # No function tools — validation should pass
+    m.prepare_request(
+        OpenAIChatModelSettings(openai_reasoning_effort='low'),
+        ModelRequestParameters(),
+    )
+
+
+def test_openai_chat_tools_without_reasoning_effort_no_user_error(openai_api_key: str):
+    """Function tools without reasoning_effort should NOT raise UserError."""
+    m = OpenAIChatModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    tool = ToolDefinition(name='my_tool', description='test', parameters_json_schema={'type': 'object'})
+    # Function tools but no reasoning_effort — validation should pass
+    m.prepare_request(None, ModelRequestParameters(function_tools=[tool]))
 
 
 async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key: str):

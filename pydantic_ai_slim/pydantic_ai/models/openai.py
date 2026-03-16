@@ -604,12 +604,13 @@ class OpenAIChatModel(Model):
                 f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
                 f'Please use `OpenAIResponsesModel` instead.'
             )
-        # Check for reasoning_effort + tools, which is not supported in Chat Completions API
+        # Check for reasoning_effort + function tools, which is not supported in Chat Completions API
+        # Only check function_tools (user-defined), not output_tools (internal structured output)
         reasoning_effort = (model_settings or {}).get('openai_reasoning_effort')
         if (
             reasoning_effort is not None
-            and model_request_parameters.tool_defs
-            and OpenAIModelProfile.from_profile(self.profile).openai_supports_reasoning
+            and model_request_parameters.function_tools
+            and OpenAIModelProfile.from_profile(self.profile).openai_supports_encrypted_reasoning_content
         ):
             raise UserError(
                 f'Function tools with reasoning_effort are not supported for {self.model_name!r} '
