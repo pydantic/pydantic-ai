@@ -455,6 +455,37 @@ def test_tool_output_function_retries():
     assert max_retries_log == [target_retries] * (target_retries + 1)
 
 
+def test_tool_output_max_retries_respected():
+    """Test that ToolOutput.max_retries is respected and not overridden by Agent defaults.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4678
+    """
+    from pydantic_ai.output import ToolOutput
+
+    class Foo(BaseModel):
+        bar: str
+
+    # ToolOutput with explicit max_retries should be respected
+    agent1 = Agent(TestModel(), output_type=ToolOutput(Foo, max_retries=5))
+    assert agent1._output_toolset is not None
+    assert agent1._output_toolset.max_retries == 5
+
+    # Without ToolOutput max_retries, agent retries should apply
+    agent2 = Agent(TestModel(), output_type=ToolOutput(Foo), retries=3)
+    assert agent2._output_toolset is not None
+    assert agent2._output_toolset.max_retries == 3
+
+    # Without ToolOutput, plain type should use agent retries
+    agent3 = Agent(TestModel(), output_type=Foo, retries=4)
+    assert agent3._output_toolset is not None
+    assert agent3._output_toolset.max_retries == 4
+
+    # ToolOutput max_retries should take priority over agent retries
+    agent4 = Agent(TestModel(), output_type=ToolOutput(Foo, max_retries=7), retries=2)
+    assert agent4._output_toolset is not None
+    assert agent4._output_toolset.max_retries == 7
+
+
 class TestPartialOutput:
     """Tests for `ctx.partial_output` flag in output validators and output functions."""
 
