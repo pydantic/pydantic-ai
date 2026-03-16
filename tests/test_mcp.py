@@ -23,8 +23,8 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    messages as _messages,
 )
-from pydantic_ai import messages as _messages
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import (
     ModelRetry,
@@ -115,9 +115,8 @@ async def test_stdio_server(run_context: RunContext[int]):
 
 async def test_reentrant_context_manager():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        async with server:
-            pass
+    async with server, server:
+        pass
 
 
 async def test_context_manager_initialization_error() -> None:
@@ -125,10 +124,9 @@ async def test_context_manager_initialization_error() -> None:
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     from mcp.client.session import ClientSession
 
-    with patch.object(ClientSession, 'initialize', side_effect=Exception):
-        with pytest.raises(Exception):
-            async with server:
-                pass
+    with patch.object(ClientSession, 'initialize', side_effect=Exception), pytest.raises(Exception):
+        async with server:
+            pass
 
     assert server._read_stream._closed  # pyright: ignore[reportPrivateUsage]
     assert server._write_stream._closed  # pyright: ignore[reportPrivateUsage]
@@ -353,7 +351,7 @@ async def test_agent_with_conflict_tool_name(agent: Agent):
     @agent.tool_plain
     def get_none() -> None:  # pragma: no cover
         """Return nothing"""
-        return None
+        return
 
     async with agent:
         with pytest.raises(
@@ -376,7 +374,7 @@ async def test_agent_with_prefix_tool_name(openai_api_key: str):
     @agent.tool_plain
     def get_none() -> None:  # pragma: no cover
         """Return nothing"""
-        return None
+        return
 
     async with agent:
         # This means that we passed the _prepare_request_parameters check and there is no conflict in the tool name
@@ -2512,6 +2510,3 @@ async def test_mcp_mixed_audience_content_partial_filter(mcp_server: MCPServerSt
     user_content = result.metadata['mcp_user_content']
     assert len(user_content) == 1
     assert user_content[0]['text'] == 'This is for the user only.'
-
-
-

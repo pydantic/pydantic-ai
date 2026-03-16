@@ -625,6 +625,7 @@ class TestAudienceFiltering:
                 name='user_only_tool', tool_args={}, ctx=run_context, tool=tools['user_only_tool']
             )
         from pydantic_ai.messages import ToolReturn
+
         assert isinstance(result, ToolReturn)
         assert result.return_value == 'Tool executed successfully. (No model-visible content in result.)'
         assert result.metadata is not None

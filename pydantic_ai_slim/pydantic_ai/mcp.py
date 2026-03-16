@@ -46,17 +46,17 @@ except ImportError as _import_error:
 from . import _mcp, _utils, exceptions, messages, models
 
 __all__ = (
+    'MCPError',
     'MCPServer',
-    'MCPServerStdio',
     'MCPServerHTTP',
     'MCPServerSSE',
+    'MCPServerStdio',
     'MCPServerStreamableHTTP',
-    'load_mcp_servers',
-    'MCPError',
     'Resource',
     'ResourceAnnotations',
     'ResourceTemplate',
     'ServerCapabilities',
+    'load_mcp_servers',
 )
 
 
@@ -561,8 +561,10 @@ class MCPServer(AbstractToolset[Any], ABC):
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
         # Skip the structured content path when audience filtering was applied: structuredContent
         # contains the unfiltered raw value and would expose user-only content to the model.
-        if not user_only and (structured := result.structuredContent) and not any(
-            not isinstance(part, mcp_types.TextContent) for part in result.content
+        if (
+            not user_only
+            and (structured := result.structuredContent)
+            and not any(not isinstance(part, mcp_types.TextContent) for part in result.content)
         ):
             # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want to use the raw value returned by the tool function.
             # See https://github.com/modelcontextprotocol/python-sdk#structured-output
@@ -740,7 +742,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             self._running_count += 1
         return self
 
-    async def __aexit__(self, *args: Any) -> bool | None:
+    async def __aexit__(self, *args: object) -> bool | None:
         async with self._enter_lock:
             if self._running_count == 0:
                 raise ValueError('MCPServer.__aexit__ called more times than __aenter__')
