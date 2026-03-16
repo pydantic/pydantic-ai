@@ -135,6 +135,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _model: models.Model | models.KnownModelName | str | None
 
     _name: str | None
+    _description: str | None
     end_strategy: EndStrategy
     """The strategy for handling multiple tool calls when a final result is found.
 
@@ -194,6 +195,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
+        description: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
@@ -225,6 +227,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
+        description: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
@@ -254,6 +257,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
+        description: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
@@ -291,6 +295,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 or add a type hint `: Agent[None, <return type>]`.
             name: The name of the agent, used for logging. If `None`, we try to infer the agent name from the call frame
                 when the agent is first run.
+            description: A human-readable description of the agent, attached to the agent run span as
+                `gen_ai.agent.description` when instrumentation is enabled.
             model_settings: Optional model request settings to use for this agent's runs, by default.
             retries: The default number of retries to allow for tool calls and output validation, before raising an error.
                 For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
@@ -352,6 +358,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._model = models.infer_model(model)
 
         self._name = name
+        self._description = description
         self.end_strategy = end_strategy
 
         capabilities = list(capabilities or [])
@@ -605,6 +612,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def name(self, value: str | None) -> None:
         """Set the name of the agent, used for logging."""
         self._name = value
+
+    @property
+    def description(self) -> str | None:
+        """A human-readable description of the agent."""
+        return self._description
+
+    @description.setter
+    def description(self, value: str | None) -> None:
+        """Set the description of the agent."""
+        self._description = value
 
     @property
     def deps_type(self) -> type:
@@ -863,14 +880,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings.version if instrumentation_settings else DEFAULT_INSTRUMENTATION_VERSION
         )
 
+        span_attributes: dict[str, str] = {
+            'model_name': model_used.model_name if model_used else 'no-model',
+            'agent_name': agent_name,
+            'gen_ai.agent.name': agent_name,
+            'logfire.msg': f'{agent_name} run',
+        }
+        if self._description is not None:
+            span_attributes['gen_ai.agent.description'] = self._description
+
         run_span = tracer.start_span(
             instrumentation_names.get_agent_run_span_name(agent_name),
-            attributes={
-                'model_name': model_used.model_name if model_used else 'no-model',
-                'agent_name': agent_name,
-                'gen_ai.agent.name': agent_name,
-                'logfire.msg': f'{agent_name} run',
-            },
+            attributes=span_attributes,
         )
 
         run_metadata: dict[str, Any] | None = None
