@@ -9,6 +9,8 @@ from .model_settings import ModelSettings
 
 
 class Thinking(ModelSettings[AgentDepsT]):
+    """Capability that enables model thinking/reasoning."""
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         return 'Thinking'

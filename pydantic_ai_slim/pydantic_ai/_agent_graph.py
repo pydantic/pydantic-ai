@@ -535,9 +535,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
 
         if messages and messages[-1].run_id is None:
-            is_resumed_tail = self.is_resuming_without_prompt and _is_same_request(messages[-1], self.request)
-            if not is_resumed_tail:
-                messages[-1].run_id = ctx.state.run_id
+            messages[-1].run_id = ctx.state.run_id
 
         if self.is_resuming_without_prompt:
             ctx.deps.resumed_request = self.request

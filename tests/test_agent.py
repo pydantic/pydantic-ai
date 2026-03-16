@@ -7777,12 +7777,7 @@ async def test_message_history():
         assert run.new_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='Hello',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                 ),

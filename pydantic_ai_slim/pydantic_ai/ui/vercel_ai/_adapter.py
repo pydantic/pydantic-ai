@@ -73,8 +73,9 @@ if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response
 
+    from ..._instructions import Instructions
     from ...agent import AbstractAgent
-    from ...agent.abstract import AgentMetadata, Instructions
+    from ...agent.abstract import AgentMetadata
     from ...builtin_tools import AbstractBuiltinTool
     from ...models import KnownModelName, Model
     from ...output import OutputSpec
