@@ -15,7 +15,6 @@ from .._json_schema import JsonSchema
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun
-from ..settings import ModelSettings
 from ..tools import (
     AgentDepsT,
     BuiltinToolFunc,
@@ -24,7 +23,7 @@ from ..tools import (
     ToolFuncEither,
 )
 from ..toolsets import AbstractToolset
-from .abstract import AbstractAgent, AgentMetadata, EventStreamHandler, RunOutputDataT
+from .abstract import AbstractAgent, AgentMetadata, AgentModelSettings, EventStreamHandler, RunOutputDataT
 
 
 class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
@@ -92,7 +91,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -112,7 +111,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -132,7 +131,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: _instructions.Instructions[AgentDepsT] = None,
         deps: AgentDepsT = None,
-        model_settings: ModelSettings | None = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
@@ -249,6 +248,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.Instructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent name, dependencies, model, toolsets, tools, or instructions.
 
@@ -262,6 +262,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            model_settings: The model settings to use instead of the model settings passed to the agent constructor.
+                When set, any per-run `model_settings` argument is ignored.
         """
         with self.wrapped.override(
             name=name,
@@ -270,5 +272,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             tools=tools,
             instructions=instructions,
+            model_settings=model_settings,
         ):
             yield

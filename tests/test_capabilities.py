@@ -3,12 +3,13 @@ from dataclasses import dataclass
 
 import pytest
 
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     ExecutionEnvironment,
     Instructions,
-    ModelSettingsCapability,
+    ModelSettings,
     Thinking,
     WebSearch,
 )
@@ -23,6 +24,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets._dynamic import ToolsetFunc
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
@@ -38,7 +41,7 @@ def test_capability_types() -> None:
         {
             'ExecutionEnvironment': ExecutionEnvironment,
             'Instructions': Instructions,
-            'ModelSettings': ModelSettingsCapability,
+            'ModelSettings': ModelSettings,
             'Thinking': Thinking,
             'WebSearch': WebSearch,
         }
@@ -388,3 +391,157 @@ def test_agent_from_spec_capabilities_merged():
     children = agent.root_capability.capabilities
     assert any(isinstance(c, Instructions) for c in children)
     assert any(isinstance(c, ExtraCap) for c in children)
+
+
+def test_model_json_schema_with_capabilities():
+    from pydantic_ai.agent.spec import AgentSpec
+
+    schema = AgentSpec.model_json_schema_with_capabilities()
+
+    assert schema['type'] == 'object'
+    assert 'model' in schema['properties']
+    assert 'capabilities' in schema['properties']
+    assert '$schema' in schema['properties']
+
+    # Capabilities should be a list with anyOf containing default types
+    cap_schema = schema['properties']['capabilities']
+    assert cap_schema['type'] == 'array'
+    any_of = cap_schema['items']['anyOf']
+
+    # Collect all capability names referenced in the schema (both const literals and object keys)
+    capability_names: set[str] = set()
+    for entry in any_of:
+        if 'const' in entry:
+            capability_names.add(entry['const'])
+        elif '$ref' in entry:
+            # Extract the name from refs like '#/$defs/spec_ExecutionEnvironment'
+            ref = entry['$ref']
+            ref_name = ref.rsplit('/', 1)[-1]
+            for prefix in ('spec_', 'short_spec_'):
+                if ref_name.startswith(prefix):
+                    capability_names.add(ref_name[len(prefix) :])
+
+    assert capability_names == {'ExecutionEnvironment', 'Instructions', 'ModelSettings', 'Thinking', 'WebSearch'}
+
+
+def test_model_json_schema_with_custom_capabilities():
+    from pydantic_ai.agent.spec import AgentSpec
+
+    schema = AgentSpec.model_json_schema_with_capabilities(
+        custom_capability_types=[CustomCapability],
+    )
+
+    any_of = schema['properties']['capabilities']['items']['anyOf']
+
+    capability_names: set[str] = set()
+    for entry in any_of:
+        if 'const' in entry:
+            capability_names.add(entry['const'])
+        elif '$ref' in entry:
+            ref = entry['$ref']
+            ref_name = ref.rsplit('/', 1)[-1]
+            for prefix in ('spec_', 'short_spec_'):
+                if ref_name.startswith(prefix):
+                    capability_names.add(ref_name[len(prefix) :])
+
+    assert 'CustomCapability' in capability_names
+    # Default capabilities should still be present
+    assert 'Thinking' in capability_names
+    assert 'WebSearch' in capability_names
+
+
+def test_save_schema(tmp_path: str):
+    from pathlib import Path
+
+    from pydantic_ai.agent.spec import AgentSpec
+
+    schema_path = Path(tmp_path) / 'agent_spec.schema.json'
+    AgentSpec._save_schema(schema_path)  # pyright: ignore[reportPrivateUsage]
+
+    assert schema_path.exists()
+    import json
+
+    schema = json.loads(schema_path.read_text(encoding='utf-8'))
+    assert schema['type'] == 'object'
+    assert 'model' in schema['properties']
+    assert 'capabilities' in schema['properties']
+
+    # Calling again should not rewrite if content matches
+    mtime = schema_path.stat().st_mtime
+    AgentSpec._save_schema(schema_path)  # pyright: ignore[reportPrivateUsage]
+    assert schema_path.stat().st_mtime == mtime
+
+
+@dataclass
+class ToolsetFuncCapability(AbstractCapability[None]):
+    """A capability that returns a ToolsetFunc instead of an AbstractToolset."""
+
+    def get_toolset(self) -> ToolsetFunc[None]:
+        def make_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
+            toolset = FunctionToolset[None]()
+
+            @toolset.tool
+            def greet(name: str) -> str:
+                """Greet someone by name."""
+                return f'Hello, {name}!'
+
+            return toolset
+
+        return make_toolset
+
+
+async def test_capability_returning_toolset_func():
+    """Test that a capability returning a ToolsetFunc works with an agent."""
+    from pydantic_ai.models.test import TestModel
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[ToolsetFuncCapability()],
+    )
+    result = await agent.run('Greet Alice')
+
+    tool_calls = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert len(tool_calls) == 1
+    assert tool_calls[0].tool_name == 'greet'
+
+    tool_returns = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    assert isinstance(tool_returns[0].content, str)
+    assert tool_returns[0].content.startswith('Hello, ')
+
+
+async def test_capability_returning_toolset_func_combined():
+    """Test that a ToolsetFunc capability works alongside other capabilities via CombinedCapability."""
+    from pydantic_ai.models.test import TestModel
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            Instructions('You are a helpful greeter.'),
+            ToolsetFuncCapability(),
+        ],
+    )
+    result = await agent.run('Greet Bob')
+
+    tool_returns = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    assert isinstance(tool_returns[0].content, str)
+    assert tool_returns[0].content.startswith('Hello, ')

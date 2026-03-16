@@ -11,7 +11,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, RunContext
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, ToolsetFunc
 
 
 @dataclass
@@ -38,8 +38,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         # TODO: Use only the pre-request-hook based route instead of ctx.deps.get_instructions. How does override work? Just replace field instead of append?
         return None
 
-    # should this always return ModelSettings, or can it return None?
-    # TODO: Dynamic model settings functions? or just via hook
     def get_model_settings(self) -> ModelSettings | None:
         return None
 
@@ -47,7 +45,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     # is capability stateful? can this cache a toolset in an ivar? or should it be a constant?
     # toolset state: https://github.com/pydantic/pydantic-ai/issues/4347
 
-    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
+    def get_toolset(self) -> AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT] | None:
         return None
 
     # builtin tools

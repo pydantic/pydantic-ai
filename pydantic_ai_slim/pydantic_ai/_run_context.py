@@ -17,6 +17,7 @@ from . import _utils, messages as _messages
 if TYPE_CHECKING:
     from .models import Model
     from .result import RunUsage
+    from .settings import ModelSettings
 
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
@@ -78,6 +79,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """"Unique identifier for the agent run."""
     metadata: dict[str, Any] | None = None
     """Metadata associated with this agent run, if configured."""
+    model_settings: ModelSettings | None = None
+    """The current model settings, available during dynamic model settings resolution."""
 
     @property
     def last_attempt(self) -> bool:

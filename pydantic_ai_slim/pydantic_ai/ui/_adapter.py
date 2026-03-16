@@ -20,8 +20,9 @@ from pydantic import BaseModel, ValidationError
 from typing_extensions import Self, TypeVar
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults
+from pydantic_ai._instructions import Instructions
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.agent.abstract import AgentMetadata, Instructions
+from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import KnownModelName, Model
