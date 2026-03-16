@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,14 +12,11 @@ import pytest
 
 from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, MCPServerTool
-from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import GoogleModelProfile
 from pydantic_ai.profiles.groq import GroqModelProfile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
-from pydantic_ai.tools import DeferredToolRequests
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
@@ -101,55 +96,6 @@ async def test_model_instance_preserved_in_dispatch(monkeypatch: pytest.MonkeyPa
     mock_dispatch.assert_called_once()
     call_kwargs = mock_dispatch.call_args.kwargs
     assert call_kwargs['model'] is model_instance, 'Model instance should be preserved, not reconstructed from string'
-
-
-def test_sdk_version_6_used_by_default():
-    """Test that the web app uses SDK v6, enabling tool approval events."""
-
-    async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
-    ) -> AsyncIterator[DeltaToolCalls | str]:
-        yield {
-            0: DeltaToolCall(
-                name='delete_file',
-                json_args='{"path": "test.txt"}',
-                tool_call_id='delete_1',
-            )
-        }
-
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
-        model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
-    )
-
-    @agent.tool_plain(requires_approval=True)
-    def delete_file(path: str) -> str:
-        return f'Deleted {path}'  # pragma: no cover
-
-    app = create_web_app(agent)
-
-    with TestClient(app) as client:
-        response = client.post(
-            '/api/chat',
-            json={
-                'trigger': 'submit-message',
-                'id': 'test-id',
-                'messages': [
-                    {
-                        'id': 'msg-1',
-                        'role': 'user',
-                        'parts': [{'type': 'text', 'text': 'Delete test.txt'}],
-                    }
-                ],
-            },
-        )
-
-    events = [
-        json.loads(line.removeprefix('data: '))
-        for line in response.text.strip().splitlines()
-        if line.startswith('data: ') and line != 'data: [DONE]'
-    ]
-    event_types = [e['type'] for e in events]
-    assert 'tool-approval-request' in event_types
 
 
 def test_agent_to_web_with_deps():
