@@ -24,6 +24,7 @@ class AgentSpec(BaseModel):
 
     model: str
     name: str | None = None
+    description: str | None = None
     instructions: str | list[str] | None = None
     model_settings: dict[str, Any] | None = None
     retries: int = 1

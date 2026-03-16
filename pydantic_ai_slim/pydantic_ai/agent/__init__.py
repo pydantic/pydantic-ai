@@ -463,6 +463,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[Any] = NoneType,
         name: str | None = None,
+        description: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int | None = None,
         validation_context: Any = None,
@@ -499,6 +500,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             system_prompt: Static system prompts.
             deps_type: The type used for dependency injection.
             name: The agent name, overrides spec `name` if provided.
+            description: The agent description, overrides spec `description` if provided.
             model_settings: Model request settings.
             retries: Default retries for tool calls and output validation, overrides spec `retries` if provided.
             validation_context: Pydantic validation context for tool arguments and outputs.
@@ -558,6 +560,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             system_prompt=system_prompt,
             deps_type=deps_type,
             name=name or validated_spec.name,
+            description=description or validated_spec.description,
             model_settings=merge_model_settings(
                 cast(ModelSettings, validated_spec.model_settings),
                 model_settings,
