@@ -5,7 +5,7 @@ from .combined import CombinedCapability
 from .execution_environment import ExecutionEnvironment
 from .history_processor import HistoryProcessorCapability
 from .instructions import Instructions
-from .model_settings import ModelSettingsCapability
+from .model_settings import ModelSettings
 from .thinking import Thinking
 from .toolset import Toolset
 from .web_search import WebSearch
@@ -13,7 +13,7 @@ from .web_search import WebSearch
 DEFAULT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
     ExecutionEnvironment,
     Instructions,
-    ModelSettingsCapability,
+    ModelSettings,
     Thinking,
     WebSearch,
 )
@@ -26,7 +26,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         ExecutionEnvironment,
         HistoryProcessorCapability,
         Instructions,
-        ModelSettingsCapability,
+        ModelSettings,
         Thinking,
         Toolset,
         WebSearch,
@@ -40,7 +40,7 @@ __all__ = [
     'DEFAULT_CAPABILITY_TYPES',
     'Instructions',
     'HistoryProcessorCapability',
-    'ModelSettingsCapability',
+    'ModelSettings',
     'Thinking',
     'Toolset',
     'WebSearch',
