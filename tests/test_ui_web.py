@@ -103,8 +103,8 @@ async def test_model_instance_preserved_in_dispatch(monkeypatch: pytest.MonkeyPa
     assert call_kwargs['model'] is model_instance, 'Model instance should be preserved, not reconstructed from string'
 
 
-def test_sdk_version_passed_through():
-    """Test that sdk_version=6 enables tool approval events in the streamed response."""
+def test_sdk_version_6_used_by_default():
+    """Test that the web app uses SDK v6, enabling tool approval events."""
 
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -125,7 +125,7 @@ def test_sdk_version_passed_through():
     def delete_file(path: str) -> str:
         return f'Deleted {path}'  # pragma: no cover
 
-    app = create_web_app(agent, sdk_version=6)
+    app = create_web_app(agent)
 
     with TestClient(app) as client:
         response = client.post(

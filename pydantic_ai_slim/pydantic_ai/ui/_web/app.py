@@ -4,7 +4,7 @@ import hashlib
 import os
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import TypeVar
 
 import httpx
 
@@ -25,7 +25,7 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `web` optional group — `pip install "pydantic-ai-slim[web]"`'
     ) from _import_error
 
-CHAT_UI_VERSION = '1.0.0'
+CHAT_UI_VERSION = '2.0.0'
 DEFAULT_HTML_URL = f'https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@{CHAT_UI_VERSION}/dist/index.html'
 
 AgentDepsT = TypeVar('AgentDepsT')
@@ -114,7 +114,6 @@ def create_web_app(
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
-    sdk_version: Literal[5, 6] = 5,
     html_source: str | Path | None = None,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
@@ -135,8 +134,6 @@ def create_web_app(
         deps: Optional dependencies to use for all requests.
         model_settings: Optional settings to use for all model requests.
         instructions: Optional extra instructions to pass to each agent run.
-        sdk_version: The Vercel AI SDK version to use for the chat protocol. Version 6 is
-            required for tool approval (`requires_approval=True`) and denied tool states.
         html_source: Path or URL for the chat UI HTML. Can be:
             - None (default): Fetches from CDN and caches locally
             - A Path instance: Reads from the local file
@@ -153,7 +150,6 @@ def create_web_app(
         deps=deps,
         model_settings=model_settings,
         instructions=instructions,
-        sdk_version=sdk_version,
     )
 
     routes = [Mount('/api', app=api_app)]

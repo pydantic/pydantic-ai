@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequen
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
+from typing import TYPE_CHECKING, Any, ClassVar, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -1666,7 +1666,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         instructions: str | None = None,
-        sdk_version: Literal[5, 6] = 5,
         html_source: str | Path | None = None,
     ) -> Starlette:
         """Create a Starlette app that serves a web chat UI for this agent.
@@ -1694,8 +1693,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for all requests.
             model_settings: Optional settings to use for all model requests.
             instructions: Optional extra instructions to pass to each agent run.
-            sdk_version: The Vercel AI SDK version to use for the chat protocol. Version 6 is
-                required for tool approval (`requires_approval=True`) and denied tool states.
             html_source: Path or URL for the chat UI HTML. Can be:
                 - None (default): Fetches from CDN and caches locally
                 - A Path instance: Reads from the local file
@@ -1730,7 +1727,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             instructions=instructions,
-            sdk_version=sdk_version,
             html_source=html_source,
         )
 
