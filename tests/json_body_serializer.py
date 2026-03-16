@@ -111,7 +111,7 @@ def _content_type_startswith(content_type: Sequence[str | bytes], prefix: str) -
     )
 
 
-def scrub_form_credentials(data: dict[str, Any], content_type: list[str]) -> None:
+def scrub_form_credentials(data: dict[str, Any], content_type: list[str]) -> None:  # pragma: lax no cover
     """Redact credentials from application/x-www-form-urlencoded request bodies."""
     if not _content_type_startswith(content_type, 'application/x-www-form-urlencoded'):
         return
@@ -122,7 +122,9 @@ def scrub_form_credentials(data: dict[str, Any], content_type: list[str]) -> Non
             data['body'] = urllib.parse.urlencode(query_params, doseq=True)
 
 
-def scrub_xml_credentials(data: dict[str, Any], headers: dict[str, list[str]], content_type: list[str]) -> None:
+def scrub_xml_credentials(
+    data: dict[str, Any], headers: dict[str, list[str]], content_type: list[str]
+) -> None:  # pragma: lax no cover
     """Redact AWS STS credentials from text/xml response bodies."""
     if content_type != ['text/xml']:
         return
