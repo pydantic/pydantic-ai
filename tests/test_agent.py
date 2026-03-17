@@ -6055,7 +6055,7 @@ def test_deprecated_kwargs_still_work():
 def test_override_toolsets():
     foo_toolset = FunctionToolset()
 
-    @foo_toolset.tool
+    @foo_toolset.tool_plain
     def foo() -> str:
         return 'Hello from foo'
 
@@ -6078,7 +6078,7 @@ def test_override_toolsets():
 
     bar_toolset = FunctionToolset()
 
-    @bar_toolset.tool
+    @bar_toolset.tool_plain
     def bar() -> str:
         return 'Hello from bar'
 
@@ -6136,7 +6136,7 @@ def test_override_tools():
 def test_toolset_factory():
     toolset = FunctionToolset()
 
-    @toolset.tool
+    @toolset.tool_plain
     def foo() -> str:
         return 'Hello from foo'
 
@@ -6191,7 +6191,7 @@ def test_adding_tools_during_run():
     def foo() -> str:
         return 'Hello from foo'
 
-    @toolset.tool
+    @toolset.tool_plain
     def add_foo_tool() -> str:
         toolset.add_function(foo)
         return 'foo tool added'
@@ -6507,23 +6507,23 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
 
     integer_holder: int = 1
 
-    @sequential_toolset.tool
+    @sequential_toolset.tool_plain
     def call_first():
         nonlocal integer_holder
         assert integer_holder == 1
 
-    @sequential_toolset.tool(sequential=mode == 'argument')
+    @sequential_toolset.tool_plain(sequential=mode == 'argument')
     def increment_integer_holder():
         nonlocal integer_holder
         integer_holder = 2
 
-    @sequential_toolset.tool
+    @sequential_toolset.tool_plain
     def requires_approval():
         from pydantic_ai.exceptions import ApprovalRequired
 
         raise ApprovalRequired()
 
-    @sequential_toolset.tool
+    @sequential_toolset.tool_plain
     def call_second():
         nonlocal integer_holder
         assert integer_holder == 2
@@ -6583,7 +6583,7 @@ def test_set_mcp_sampling_model():
 def test_toolsets():
     toolset = FunctionToolset()
 
-    @toolset.tool
+    @toolset.tool_plain
     def foo() -> str:
         return 'Hello from foo'  # pragma: no cover
 
@@ -6602,7 +6602,7 @@ async def test_wrapper_agent():
 
     foo_toolset = FunctionToolset()
 
-    @foo_toolset.tool
+    @foo_toolset.tool_plain
     def foo() -> str:
         return 'Hello from foo'  # pragma: no cover
 
@@ -6631,7 +6631,7 @@ async def test_wrapper_agent():
 
     bar_toolset = FunctionToolset()
 
-    @bar_toolset.tool
+    @bar_toolset.tool_plain
     def bar() -> str:
         return 'Hello from bar'
 
