@@ -1077,7 +1077,9 @@ class TestBedrock:
         )
 
     async def test_inference_profile_embed(self, bedrock_provider: BedrockProvider):
-        inference_profile_arn = 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/otnfa2ysixqd'
+        # When re-recording, set AWS_ACCOUNT_ID to your real account ID
+        account_id = os.getenv('AWS_ACCOUNT_ID', '123456789012')
+        inference_profile_arn = f'arn:aws:bedrock:us-east-1:{account_id}:application-inference-profile/otnfa2ysixqd'
         settings: BedrockEmbeddingSettings = {'bedrock_inference_profile': inference_profile_arn}
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider, settings=settings)
 

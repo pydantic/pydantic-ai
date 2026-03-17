@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import os
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -251,11 +252,24 @@ async def test_bedrock_count_tokens_non_http_error():
     )
 
 
+def _bedrock_arn(resource: str) -> str:
+    """Build a Bedrock ARN, using AWS_ACCOUNT_ID env var or a placeholder.
+
+    The placeholder works for VCR replay (the path matcher scrubs account IDs).
+    When re-recording, set AWS_ACCOUNT_ID to your real account ID:
+
+        AWS_ACCOUNT_ID=... uv run pytest ... --record-mode=new_episodes
+    """
+    account_id = os.getenv('AWS_ACCOUNT_ID', '123456789012')
+    region = os.getenv('AWS_REGION', 'us-east-1')
+    return f'arn:aws:bedrock:{region}:{account_id}:{resource}'
+
+
 async def test_bedrock_inference_profile_converse(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
 ):
-    inference_profile_arn = 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/mi1dadi0g15f'
+    inference_profile_arn = _bedrock_arn('application-inference-profile/mi1dadi0g15f')
     settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=bedrock_provider, settings=settings)
     agent = Agent(model)
@@ -291,7 +305,7 @@ async def test_bedrock_inference_profile_count_tokens(
     # count_tokens only uses model_name (not the inference profile), so the ARN doesn't
     # matter here. Claude Sonnet is used because it's one of the few Bedrock models that
     # supports the count_tokens API.
-    inference_profile_arn = 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/mi1dadi0g15f'
+    inference_profile_arn = _bedrock_arn('application-inference-profile/mi1dadi0g15f')
     settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
     model = BedrockConverseModel(
         'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
