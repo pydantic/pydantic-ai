@@ -1407,6 +1407,49 @@ def test_activity_message_other_types_ignored() -> None:
     assert messages == snapshot([ModelResponse(parts=[TextPart(content='Response')], timestamp=IsDatetime())])
 
 
+@pytest.mark.parametrize(
+    'encrypted_value',
+    [
+        pytest.param('not valid json{{{', id='invalid-json'),
+        pytest.param('"just a string"', id='non-dict-string'),
+        pytest.param('[1, 2, 3]', id='non-dict-list'),
+        pytest.param('42', id='non-dict-number'),
+    ],
+)
+def test_reasoning_message_malformed_encrypted_value(encrypted_value: str) -> None:
+    """Test that malformed or non-dict encrypted_value is handled gracefully."""
+    messages = AGUIAdapter.load_messages(
+        [
+            ReasoningMessage(id='r-1', content='Thinking...', encrypted_value=encrypted_value),
+            AssistantMessage(id='msg-1', content='Done'),
+        ]
+    )
+
+    assert messages == snapshot(
+        [
+            ModelResponse(
+                parts=[ThinkingPart(content='Thinking...'), TextPart(content='Done')],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+def test_activity_message_file_part_missing_url() -> None:
+    """Test that ActivityMessage(pydantic_ai_file) with empty url raises ValueError."""
+    with pytest.raises(ValueError, match='must have a non-empty url'):
+        AGUIAdapter.load_messages(
+            [
+                ActivityMessage(
+                    id='activity-1',
+                    activity_type='pydantic_ai_file',
+                    content={'url': '', 'media_type': 'image/png'},
+                ),
+            ],
+            include_file_parts=True,
+        )
+
+
 _TIMESTAMPED_PARTS = (UserPromptPart, RetryPromptPart, ToolReturnPart, BuiltinToolReturnPart, SystemPromptPart)
 
 

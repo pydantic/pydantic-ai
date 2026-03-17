@@ -303,6 +303,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         metadata: dict[str, Any] = (
                             json.loads(reasoning_msg.encrypted_value) if reasoning_msg.encrypted_value else {}
                         )
+                        if not isinstance(metadata, dict):
+                            metadata = {}
                     except json.JSONDecodeError:
                         metadata = {}
                     builder.add(
