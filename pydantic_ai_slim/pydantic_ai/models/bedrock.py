@@ -1016,7 +1016,11 @@ class BedrockConverseModel(Model):
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
         return {
-            'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
+            'toolUse': {
+                'toolUseId': _utils.guard_tool_call_id(t=t),
+                'name': _utils.sanitize_tool_name(t.tool_name),
+                'input': t.args_as_dict(),
+            }
         }
 
     @staticmethod
