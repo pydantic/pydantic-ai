@@ -70,7 +70,6 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
-OUTPUT_TOOL_NAME_SANITIZER = _utils.TOOL_NAME_SANITIZER
 
 
 async def execute_traced_output_function(
@@ -909,7 +908,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 name = default_name
                 if multiple:
                     # strip unsupported characters like "[" and "]" from generic class names
-                    safe_name = OUTPUT_TOOL_NAME_SANITIZER.sub('', object_def.name or '')
+                    safe_name = _utils.TOOL_NAME_SANITIZER.sub('', object_def.name or '')
                     name += f'_{safe_name}'
 
             i = 1
