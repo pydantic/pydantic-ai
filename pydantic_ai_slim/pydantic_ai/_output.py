@@ -129,7 +129,7 @@ async def execute_traced_output_function(
         }
     )
 
-    from .exceptions import ApprovalRequired, CallDeferred, ModelRetry
+
 
     with run_context.tracer.start_as_current_span(
         instrumentation_names.get_output_tool_span_name(tool_name), attributes=attributes
@@ -154,7 +154,7 @@ async def execute_traced_output_function(
                 # Re-raise outside the with block to avoid the span being marked as an error
                 captured_exc = r
         except (CallDeferred, ApprovalRequired) as e:
-            if span.is_recording():
+            if span.is_recording():  # pragma: no branch
                 span.set_attribute('logfire.level_num', 17)
             # Re-raise outside the with block to avoid the span being marked as an error
             captured_exc = e
