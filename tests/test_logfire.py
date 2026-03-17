@@ -3279,6 +3279,10 @@ async def test_tool_retry_span_status(otel_setup: tuple[TracerProvider, InMemory
                 assert exc_type not in ('ModelRetry', 'ToolRetryError', 'pydantic_ai.exceptions.ToolRetryError')
 
 
+class MyOutput(BaseModel):
+    pass
+
+
 @pytest.mark.skipif(
     not logfire_installed or not otel_installed_func(), reason='logfire or opentelemetry-sdk not installed'
 )
@@ -3286,25 +3290,25 @@ async def test_tool_retry_span_status(otel_setup: tuple[TracerProvider, InMemory
 async def test_output_function_retry_span_status(otel_setup: tuple[TracerProvider, InMemorySpanExporter]):
     provider, exporter = otel_setup
 
-    async def my_output_function(x: int) -> BaseModel:
+    async def my_output_function(x: int) -> MyOutput:
         if x < 10:
             raise ModelRetry('Too small')
-        return BaseModel()
+        return MyOutput()
 
     async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if not any(isinstance(m, ModelResponse) for m in messages):
-            # Model calls the output tool
+        if len(messages) == 1:
+            # First call: return a tool call that will fail validation (x=5 < 10)
             return ModelResponse(parts=[ToolCallPart('final_result', {'x': 5}, 'call_1')])
-        return ModelResponse(parts=[TextPart('Done')])
+        else:
+            # Second call: return a tool call that will pass validation (x=15 >= 10)
+            return ModelResponse(parts=[ToolCallPart('final_result', {'x': 15}, 'call_2')])
 
     model = FunctionModel(model_logic)
     agent = Agent(model=model, output_type=my_output_function)
 
     agent.instrument = InstrumentationSettings(tracer_provider=provider)
-    try:
-        await agent.run('Run output tool')
-    except Exception:
-        pass
+    result = await agent.run('Run output tool')
+    assert result.output == MyOutput()
 
     spans = exporter.get_finished_spans()
     found = False

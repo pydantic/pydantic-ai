@@ -17,7 +17,7 @@ from pydantic_ai._instrumentation import InstrumentationNames
 
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UserError
+from .exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolRetryError, UserError
 from .output import (
     DeferredToolRequests,
     NativeOutput,
@@ -129,7 +129,6 @@ async def execute_traced_output_function(
         }
     )
 
-    from .exceptions import ApprovalRequired, CallDeferred, ModelRetry
 
     with run_context.tracer.start_as_current_span(
         instrumentation_names.get_output_tool_span_name(tool_name), attributes=attributes
