@@ -233,3 +233,29 @@ def test_model_profile_opus():
     profile = anthropic_model_profile('claude-opus-4-1')
     assert profile is not None
     assert profile.supports_json_schema_output is True
+
+
+def test_model_profile_openrouter_dot_notation():
+    """OpenRouter uses dots in version numbers (e.g., claude-sonnet-4.5).
+    These should be normalized to hyphens and still match supported models."""
+    # Dotted version numbers (OpenRouter format)
+    profile = anthropic_model_profile('claude-sonnet-4.5')
+    assert profile is not None
+    assert profile.supports_json_schema_output is True
+
+    profile = anthropic_model_profile('claude-haiku-4.5')
+    assert profile is not None
+    assert profile.supports_json_schema_output is True
+
+    profile = anthropic_model_profile('claude-opus-4.5')
+    assert profile is not None
+    assert profile.supports_json_schema_output is True
+
+    profile = anthropic_model_profile('claude-opus-4.6')
+    assert profile is not None
+    assert profile.supports_json_schema_output is True
+
+    # Unsupported model should still return False
+    profile = anthropic_model_profile('claude-sonnet-4.0')
+    assert profile is not None
+    assert profile.supports_json_schema_output is False
