@@ -159,7 +159,7 @@ _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
     GoogleFinishReason.NO_IMAGE: 'error',
 }
 
-_GOOGLE_IMAGE_SIZE = Literal['1K', '2K', '4K']
+_GOOGLE_IMAGE_SIZE = Literal['512', '1K', '2K', '4K']
 _GOOGLE_IMAGE_SIZES: tuple[_GOOGLE_IMAGE_SIZE, ...] = _utils.get_args(_GOOGLE_IMAGE_SIZE)
 
 _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
