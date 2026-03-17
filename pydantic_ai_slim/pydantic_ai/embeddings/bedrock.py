@@ -178,8 +178,6 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     embedding client only accepts text input.
     """
 
-    # ==================== Concurrency Settings ====================
-
     bedrock_inference_profile: str
     """An [inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) ARN to use as the `modelId` in API requests.
 
@@ -188,6 +186,8 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     as `model_name` for detecting model capabilities, while routing requests through an inference profile
     for cost tracking or cross-region inference.
     """
+
+    # ==================== Concurrency Settings ====================
 
     bedrock_max_concurrency: int
     """Maximum number of concurrent requests for models that don't support batch embedding.
