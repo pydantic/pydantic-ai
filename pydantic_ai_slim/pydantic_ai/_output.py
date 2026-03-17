@@ -887,6 +887,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         default_strict = strict
 
         multiple = len(outputs) > 1
+        max_retries: int | None = None
         for output in outputs:
             name = None
             description = None
@@ -896,6 +897,9 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 name = output.name
                 description = output.description
                 strict = output.strict
+                # Extract max_retries from the first ToolOutput that has it set
+                if max_retries is None and output.max_retries is not None:
+                    max_retries = output.max_retries
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -936,7 +940,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             processors[name] = processor
             tool_defs.append(tool_def)
 
-        return cls(processors=processors, tool_defs=tool_defs)
+        return cls(processors=processors, tool_defs=tool_defs, max_retries=max_retries or 1)
 
     def __init__(
         self,
