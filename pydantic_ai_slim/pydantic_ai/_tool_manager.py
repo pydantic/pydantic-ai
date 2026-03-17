@@ -441,13 +441,18 @@ class ToolManager(Generic[AgentDepsT]):
                 span.set_status(StatusCode.ERROR)
                 raise
 
-            if include_content and span.is_recording():
-                span.set_attribute(
-                    instrumentation_names.tool_result_attr,
-                    tool_result
-                    if isinstance(tool_result, str)
-                    else _messages.tool_return_ta.dump_json(tool_result).decode(),
-                )
+            try:
+                if include_content and span.is_recording():
+                    span.set_attribute(
+                        instrumentation_names.tool_result_attr,
+                        tool_result
+                        if isinstance(tool_result, str)
+                        else _messages.tool_return_ta.dump_json(tool_result).decode(),
+                    )
+            except BaseException as e:
+                span.record_exception(e)
+                span.set_status(StatusCode.ERROR)
+                raise
 
         return tool_result
 
