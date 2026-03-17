@@ -117,18 +117,18 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    async def get_description(self, ctx: RunContext[AgentDepsT]) -> str | list[str] | None:
-        r"""Return a description of how to use this toolset's tools.
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | list[str] | None:
+        r"""Return instructions for how to use this toolset's tools.
 
-        Override this method to provide a description that helps the agent understand
+        Override this method to provide instructions that help the agent understand
         how to use the tools in this toolset effectively.
 
         Args:
             ctx: The run context for this agent run.
 
         Returns:
-            Description string (or list of strings) to add to the agent's instructions, or None if
-            no description. A list of strings will be joined with `\n\n` by the agent.
+            Instruction string (or list of strings) to add to the agent's instructions, or None if
+            no instructions. A list of strings will be joined with `\n\n` by the agent.
         """
         return None
 

@@ -256,7 +256,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             elif isinstance(last_message, _messages.ModelResponse):
                 if self.user_prompt is None:
                     run_context = build_run_context(ctx)
-                    # Resolve dynamic toolsets before fetching instructions, so DynamicToolset.get_description()
+                    # Resolve dynamic toolsets before fetching instructions, so DynamicToolset.get_instructions()
                     # can delegate to the resolved inner toolset instead of returning None
                     ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
                     instructions = await ctx.deps.get_instructions(run_context)

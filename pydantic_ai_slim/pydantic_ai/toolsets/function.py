@@ -547,7 +547,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool
 
-    async def get_description(self, ctx: RunContext[AgentDepsT]) -> list[str] | None:
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[str] | None:
         if not self._instructions:
             return None
         parts: list[str] = []

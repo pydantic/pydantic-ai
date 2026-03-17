@@ -58,7 +58,7 @@ class MockToolsetWithInstructions(AbstractToolset[Any]):
     def id(self) -> str | None:
         return self._id
 
-    async def get_description(self, ctx: RunContext[Any]) -> str | None:
+    async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         return self.custom_instructions
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
@@ -84,7 +84,7 @@ async def test_function_toolset_instructions():
     """Test that FunctionToolset returns None for instructions by default."""
     toolset = FunctionToolset[None]()
     ctx = build_run_context(None)
-    instructions = await toolset.get_description(ctx)
+    instructions = await toolset.get_instructions(ctx)
     assert instructions is None
 
 
@@ -194,7 +194,7 @@ async def test_abstract_toolset_instructions_default():
     """Test that the default instructions method returns None."""
     toolset = MockToolsetWithInstructions(instructions=None)
     ctx = build_run_context(None)
-    instructions = await toolset.get_description(ctx)
+    instructions = await toolset.get_instructions(ctx)
     assert instructions is None
 
 
@@ -203,7 +203,7 @@ async def test_abstract_toolset_instructions_custom():
     custom_instructions = 'Use these tools carefully and always validate inputs.'
     toolset = MockToolsetWithInstructions(instructions=custom_instructions)
     ctx = build_run_context(None)
-    instructions = await toolset.get_description(ctx)
+    instructions = await toolset.get_instructions(ctx)
     assert instructions == custom_instructions
 
 
@@ -211,7 +211,7 @@ async def test_abstract_toolset_instructions_empty_string():
     """Test that instructions can return an empty string."""
     toolset = MockToolsetWithInstructions(instructions='')
     ctx = build_run_context(None)
-    instructions = await toolset.get_description(ctx)
+    instructions = await toolset.get_instructions(ctx)
     assert instructions == ''
 
 
@@ -938,7 +938,7 @@ async def test_wrapper_toolsets_delegate_instructions():
 
     # Test PrefixedToolset delegation
     prefixed_toolset = base_toolset.prefixed('test')
-    assert await prefixed_toolset.get_description(ctx) == base_instructions
+    assert await prefixed_toolset.get_instructions(ctx) == base_instructions
 
     # Test FilteredToolset delegation
     def allow_all_filter(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
@@ -946,16 +946,16 @@ async def test_wrapper_toolsets_delegate_instructions():
 
     assert allow_all_filter(ctx, ToolDefinition(name='test', description='', parameters_json_schema={})) is True
     filtered_toolset = base_toolset.filtered(allow_all_filter)
-    assert await filtered_toolset.get_description(ctx) == base_instructions
+    assert await filtered_toolset.get_instructions(ctx) == base_instructions
 
     # Test RenamedToolset delegation
     rename_map = {'old_name': 'new_name'}
     renamed_toolset = base_toolset.renamed(rename_map)
-    assert await renamed_toolset.get_description(ctx) == base_instructions
+    assert await renamed_toolset.get_instructions(ctx) == base_instructions
 
     # Test ApprovalRequiredToolset delegation
     approval_toolset = base_toolset.approval_required()
-    assert await approval_toolset.get_description(ctx) == base_instructions
+    assert await approval_toolset.get_instructions(ctx) == base_instructions
 
     # Test PreparedToolset delegation
     async def prepare_func(ctx: RunContext[Any], tools: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -963,7 +963,7 @@ async def test_wrapper_toolsets_delegate_instructions():
 
     assert await prepare_func(ctx, []) == []
     prepared_toolset = base_toolset.prepared(prepare_func)
-    assert await prepared_toolset.get_description(ctx) == base_instructions
+    assert await prepared_toolset.get_instructions(ctx) == base_instructions
 
 
 async def test_combined_toolset_instructions():
@@ -979,7 +979,7 @@ async def test_combined_toolset_instructions():
     ctx = build_run_context(None)
 
     # CombinedToolset aggregates non-None instructions from all contained toolsets as a list
-    instructions = await combined.get_description(ctx)
+    instructions = await combined.get_instructions(ctx)
     assert instructions == ['Instructions from toolset 1.', 'Instructions from toolset 2.']
 
 
@@ -991,7 +991,7 @@ async def test_combined_toolset_instructions_all_none():
     combined = CombinedToolset([toolset1, toolset2])
     ctx = build_run_context(None)
 
-    instructions = await combined.get_description(ctx)
+    instructions = await combined.get_instructions(ctx)
     assert instructions is None
 
 
@@ -1000,7 +1000,7 @@ async def test_combined_toolset_instructions_empty():
     combined = CombinedToolset([])
     ctx = build_run_context(None)
 
-    instructions = await combined.get_description(ctx)
+    instructions = await combined.get_instructions(ctx)
     assert instructions is None
 
 
@@ -1034,25 +1034,25 @@ def test_agent_toolset_decorator_id():
     assert toolsets[2].id == 'custom_id'
 
 
-async def test_function_toolset_get_description_string():
-    """FunctionToolset with a string instruction returns it via get_description."""
+async def test_function_toolset_get_instructions_string():
+    """FunctionToolset with a string instruction returns it via get_instructions."""
     toolset = FunctionToolset(instructions='Always use tool X for math.')
 
     ctx = build_run_context(None)
-    result = await toolset.get_description(ctx)
+    result = await toolset.get_instructions(ctx)
     assert result == ['Always use tool X for math.']
 
 
-async def test_function_toolset_get_description_function():
-    """FunctionToolset with a function instruction calls it via get_description."""
+async def test_function_toolset_get_instructions_function():
+    """FunctionToolset with a function instruction calls it via get_instructions."""
     toolset = FunctionToolset(instructions=lambda: 'Use search for lookups.')
 
     ctx = build_run_context(None)
-    result = await toolset.get_description(ctx)
+    result = await toolset.get_instructions(ctx)
     assert result == ['Use search for lookups.']
 
 
-async def test_function_toolset_get_description_with_ctx():
+async def test_function_toolset_get_instructions_with_ctx():
     """FunctionToolset instruction function can access RunContext."""
 
     def my_instructions(ctx: RunContext[str]) -> str:
@@ -1061,11 +1061,11 @@ async def test_function_toolset_get_description_with_ctx():
     toolset = FunctionToolset[str](instructions=my_instructions)
 
     ctx = build_run_context('hello')
-    result = await toolset.get_description(ctx)
+    result = await toolset.get_instructions(ctx)
     assert result == ['Deps are: hello']
 
 
-async def test_function_toolset_get_description_async():
+async def test_function_toolset_get_instructions_async():
     """FunctionToolset with an async instruction function works."""
 
     async def my_instructions() -> str:
@@ -1074,25 +1074,25 @@ async def test_function_toolset_get_description_async():
     toolset = FunctionToolset(instructions=my_instructions)
 
     ctx = build_run_context(None)
-    result = await toolset.get_description(ctx)
+    result = await toolset.get_instructions(ctx)
     assert result == ['Async instructions here.']
 
 
-async def test_function_toolset_get_description_multiple():
+async def test_function_toolset_get_instructions_multiple():
     """FunctionToolset with a sequence of instructions returns them as a list."""
     toolset = FunctionToolset(instructions=['First instruction.', lambda: 'Second instruction.'])
 
     ctx = build_run_context(None)
-    result = await toolset.get_description(ctx)
+    result = await toolset.get_instructions(ctx)
     assert result == ['First instruction.', 'Second instruction.']
 
 
-async def test_function_toolset_get_description_none_default():
+async def test_function_toolset_get_instructions_none_default():
     """FunctionToolset without instructions returns None."""
     toolset = FunctionToolset()
 
     ctx = build_run_context(None)
-    result = await toolset.get_description(ctx)
+    result = await toolset.get_instructions(ctx)
     assert result is None
 
 
@@ -1105,7 +1105,7 @@ async def test_function_toolset_instructions_decorator():
         return 'Use tool Y for data processing.'
 
     ctx = build_run_context(None)
-    result = await toolset.get_description(ctx)
+    result = await toolset.get_instructions(ctx)
     assert result == ['Use tool Y for data processing.']
 
 
@@ -1118,7 +1118,7 @@ async def test_function_toolset_instructions_decorator_with_ctx():
         return f'Dep value: {ctx.deps}'
 
     ctx = build_run_context(42)
-    result = await toolset.get_description(ctx)
+    result = await toolset.get_instructions(ctx)
     assert result == ['Dep value: 42']
 
 
@@ -1131,7 +1131,7 @@ async def test_function_toolset_instructions_decorator_combined_with_constructor
         return 'From decorator.'
 
     ctx = build_run_context(None)
-    result = await toolset.get_description(ctx)
+    result = await toolset.get_instructions(ctx)
     assert result == ['From constructor.', 'From decorator.']
 
 
@@ -1140,7 +1140,7 @@ async def test_function_toolset_instructions_none_filtered():
     toolset = FunctionToolset(instructions=[lambda: None, 'Only this.'])
 
     ctx = build_run_context(None)
-    result = await toolset.get_description(ctx)
+    result = await toolset.get_instructions(ctx)
     assert result == ['Only this.']
 
 
@@ -1149,7 +1149,7 @@ async def test_function_toolset_empty_string_instructions():
     toolset = FunctionToolset(instructions='')
 
     ctx = build_run_context(None)
-    result = await toolset.get_description(ctx)
+    result = await toolset.get_instructions(ctx)
     assert result is None
 
 
@@ -1158,17 +1158,17 @@ async def test_function_toolset_whitespace_only_instructions():
     toolset = FunctionToolset(instructions='   \n\n  ')
 
     ctx = build_run_context(None)
-    result = await toolset.get_description(ctx)
+    result = await toolset.get_instructions(ctx)
     assert result is None
 
 
 async def test_wrapper_toolset_passes_through_instructions():
-    """WrapperToolset delegates get_description to wrapped toolset."""
+    """WrapperToolset delegates get_instructions to wrapped toolset."""
     inner = FunctionToolset(instructions='Inner instructions.')
     wrapped = inner.prefixed('my')
 
     ctx = build_run_context(None)
-    result = await wrapped.get_description(ctx)
+    result = await wrapped.get_instructions(ctx)
     assert result == ['Inner instructions.']
 
 
@@ -1179,7 +1179,7 @@ async def test_combined_toolset_aggregates_instructions():
     combined = CombinedToolset([ts1, ts2])
 
     ctx = build_run_context(None)
-    result = await combined.get_description(ctx)
+    result = await combined.get_instructions(ctx)
     assert result == ['Toolset 1 instructions.', 'Toolset 2 instructions.']
 
 
@@ -1190,7 +1190,7 @@ async def test_combined_toolset_skips_none_instructions():
     combined = CombinedToolset([ts1, ts2])
 
     ctx = build_run_context(None)
-    result = await combined.get_description(ctx)
+    result = await combined.get_instructions(ctx)
     assert result == ['Only from ts1.']
 
 
@@ -1201,7 +1201,7 @@ async def test_combined_toolset_all_none_returns_none():
     combined = CombinedToolset([ts1, ts2])
 
     ctx = build_run_context(None)
-    result = await combined.get_description(ctx)
+    result = await combined.get_instructions(ctx)
     assert result is None
 
 
@@ -1215,7 +1215,7 @@ async def test_combined_toolset_with_nested_list_instructions():
     outer = CombinedToolset([inner, ts3])
     ctx = build_run_context(None)
 
-    result = await outer.get_description(ctx)
+    result = await outer.get_instructions(ctx)
     assert result == ['Instruction A.', 'Instruction B.', 'Instruction C.']
 
 
@@ -1225,7 +1225,7 @@ async def test_dynamic_toolset_instructions_before_resolution():
 
     ctx = build_run_context(None)
     # Before get_tools is called, _toolset is None
-    result = await dynamic.get_description(ctx)
+    result = await dynamic.get_instructions(ctx)
     assert result is None
 
 
@@ -1240,7 +1240,7 @@ async def test_dynamic_toolset_instructions_after_resolution():
     ctx = build_run_context(None)
     # get_tools triggers resolution
     await dynamic.get_tools(ctx)
-    result = await dynamic.get_description(ctx)
+    result = await dynamic.get_instructions(ctx)
     assert result == ['Dynamic instructions.']
 
 
