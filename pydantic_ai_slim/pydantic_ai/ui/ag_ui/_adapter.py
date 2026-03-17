@@ -279,7 +279,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         if isinstance(content, str):
                             try:
                                 content = json.loads(content)
-                            except (json.JSONDecodeError, ValueError):
+                            except json.JSONDecodeError:
                                 pass
                         builder.add(
                             BuiltinToolReturnPart(
