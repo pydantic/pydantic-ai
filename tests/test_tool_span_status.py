@@ -3,11 +3,12 @@ from __future__ import annotations as _annotations
 
 import pytest
 from pydantic import BaseModel
+
 from pydantic_ai import Agent, ModelRetry
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.result import DeferredToolRequests
 
 from .conftest import try_import
