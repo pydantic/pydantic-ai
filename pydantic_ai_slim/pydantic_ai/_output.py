@@ -129,6 +129,7 @@ async def execute_traced_output_function(
         }
     )
 
+    from .exceptions import ApprovalRequired, CallDeferred, ModelRetry
 
     with run_context.tracer.start_as_current_span(
         instrumentation_names.get_output_tool_span_name(tool_name), attributes=attributes
