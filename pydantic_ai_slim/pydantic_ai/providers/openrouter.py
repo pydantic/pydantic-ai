@@ -91,6 +91,24 @@ def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
     return replace(profile, json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer)
 
 
+def _openrouter_anthropic_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an Anthropic model accessed via OpenRouter.
+
+    OpenRouter uses dots in model version numbers (e.g., 'claude-sonnet-4.5'),
+    but anthropic_model_profile() expects hyphenated names (e.g., 'claude-sonnet-4-5').
+    This function normalizes the model name before delegation by converting dots
+    to hyphens in the version suffix pattern (e.g., '-4.5' -> '-4-5').
+
+    See: https://github.com/pydantic/pydantic-ai/issues/4689
+    """
+    # Normalize model name: replace version pattern like '-4.5' with '-4-5'
+    # to match Anthropic's naming convention for structured output support
+    import re
+
+    normalized_name = re.sub(r'-(\d)\.(\d)$', r'-\1-\2', model_name)
+    return anthropic_model_profile(normalized_name)
+
+
 class OpenRouterProvider(Provider[AsyncOpenAI]):
     """Provider for OpenRouter API."""
 
@@ -111,7 +129,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         provider_to_profile = {
             'google': _openrouter_google_model_profile,
             'openai': openai_model_profile,
-            'anthropic': anthropic_model_profile,
+            'anthropic': _openrouter_anthropic_model_profile,
             'mistralai': mistral_model_profile,
             'qwen': qwen_model_profile,
             'x-ai': grok_model_profile,

@@ -129,6 +129,18 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     assert anthropic_profile is not None
     assert anthropic_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
+    # Test Anthropic model name normalization for version numbers with dots (issue #4689)
+    # OpenRouter uses dots (e.g., 'claude-sonnet-4.5') but Anthropic expects hyphens (e.g., 'claude-sonnet-4-5')
+    anthropic_profile = provider.model_profile('anthropic/claude-sonnet-4.5')
+    anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5')
+    assert anthropic_profile is not None
+    assert anthropic_profile.supports_json_schema_output is True
+
+    anthropic_profile = provider.model_profile('anthropic/claude-opus-4.6')
+    anthropic_model_profile_mock.assert_called_with('claude-opus-4-6')
+    assert anthropic_profile is not None
+    assert anthropic_profile.supports_json_schema_output is True
+
     mistral_profile = provider.model_profile('mistralai/mistral-large-2407')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
     assert mistral_profile is not None
