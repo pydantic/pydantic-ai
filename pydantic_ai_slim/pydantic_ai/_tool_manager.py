@@ -436,7 +436,7 @@ class ToolManager(Generic[AgentDepsT]):
                 span.record_exception(e)
                 span.set_status(StatusCode.ERROR)
                 raise
-            except Exception as e:
+            except BaseException as e:
                 span.record_exception(e)
                 span.set_status(StatusCode.ERROR)
                 raise
