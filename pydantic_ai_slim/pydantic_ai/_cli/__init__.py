@@ -122,24 +122,12 @@ def load_agent(agent_path: str) -> Agent[Any, Any] | None:
 
 def _load_agent_from_spec_file(path: Path) -> Agent[Any, Any] | None:
     """Load an agent from a YAML or JSON spec file using Agent.from_spec."""
-    import json
+    from pydantic_ai.agent.spec import AgentSpec
 
     if not path.is_file():
         return None
 
-    content = path.read_text(encoding='utf-8')
-
-    if path.suffix == '.json':
-        spec = json.loads(content)
-    else:
-        try:
-            import yaml
-        except ImportError:
-            raise ImportError(
-                'PyYAML is required to load YAML agent specs. Install it with: pip install "pydantic-ai-slim[cli]"'
-            ) from None
-        spec = yaml.safe_load(content)
-
+    spec = AgentSpec.from_file(path)
     return Agent.from_spec(spec)
 
 
