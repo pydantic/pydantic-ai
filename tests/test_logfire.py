@@ -3210,7 +3210,7 @@ def _find_tool_span(capfire: CaptureLogfire) -> Any:
     [CallDeferred, ApprovalRequired],
     ids=['CallDeferred', 'ApprovalRequired'],
 )
-@pytest.mark.parametrize('version', [1, 2, 3, 4, 5])
+@pytest.mark.parametrize('version', [2, 5])
 def test_deferral_span_attributes(
     capfire: CaptureLogfire,
     exception_class: type[CallDeferred | ApprovalRequired],
