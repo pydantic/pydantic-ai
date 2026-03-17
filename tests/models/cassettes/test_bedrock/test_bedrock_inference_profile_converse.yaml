@@ -1,0 +1,44 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Say \"hello\" and nothing else."}]}], "system": [], "inferenceConfig":
+      {}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        OTY2NDVkMDgtNjgzYS00MmE1LTkxNjctOTVhMTkzMDMxMzc3
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '127'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/arn%3Aaws%3Abedrock%3Aus-east-1%3A353014496775%3Aapplication-inference-profile%2Fmi1dadi0g15f/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '225'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 250
+      output:
+        message:
+          content:
+          - text: Hello
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 8
+        outputTokens: 2
+        serverToolUsage: {}
+        totalTokens: 10
+    status:
+      code: 200
+      message: OK
+version: 1

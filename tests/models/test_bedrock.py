@@ -251,6 +251,39 @@ async def test_bedrock_count_tokens_non_http_error():
     )
 
 
+async def test_bedrock_inference_profile_converse(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    inference_profile_arn = 'arn:aws:bedrock:us-east-1:353014496775:application-inference-profile/mi1dadi0g15f'
+    settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
+    model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=bedrock_provider, settings=settings)
+    agent = Agent(model)
+
+    result = await agent.run('Say "hello" and nothing else.')
+    assert 'hello' in result.output.lower()
+    assert model.model_name == 'amazon.nova-micro-v1:0'
+
+
+async def test_bedrock_inference_profile_count_tokens(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    # count_tokens only uses model_name (not the inference profile), so the ARN doesn't
+    # matter here. Claude Sonnet is used because it's one of the few Bedrock models that
+    # supports the count_tokens API.
+    inference_profile_arn = 'arn:aws:bedrock:us-east-1:353014496775:application-inference-profile/mi1dadi0g15f'
+    settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
+    )
+    params = ModelRequestParameters()
+
+    result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
+    assert result.input_tokens > 0
+    assert model.model_name == 'us.anthropic.claude-sonnet-4-20250514-v1:0'
+
+
 async def test_bedrock_stream_non_http_error():
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
     model = _bedrock_model_with_client_error(error)
