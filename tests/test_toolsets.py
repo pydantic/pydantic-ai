@@ -1250,7 +1250,7 @@ async def test_toolset_instructions_in_agent():
 
     toolset = FunctionToolset(instructions='Always use my_tool correctly.')
 
-    @toolset.tool
+    @toolset.tool_plain
     def my_tool() -> str:
         """A simple tool."""
         return 'done'
@@ -1268,7 +1268,7 @@ async def test_dynamic_toolset_instructions_on_first_request():
     def make_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
         ts = FunctionToolset[None](instructions='Dynamic tool instructions.')
 
-        @ts.tool
+        @ts.tool_plain
         def my_dynamic_tool() -> str:
             """A tool inside the dynamic toolset."""
             return 'done'
@@ -1287,7 +1287,7 @@ async def test_toolset_instructions_combined_with_agent_instructions():
 
     toolset = FunctionToolset(instructions='Use search for lookups.')
 
-    @toolset.tool
+    @toolset.tool_plain
     def search() -> str:
         """Search for information."""
         return 'results'
@@ -1304,14 +1304,14 @@ async def test_multiple_toolset_instructions_in_agent():
 
     ts1 = FunctionToolset(instructions='Use calculator for math.')
 
-    @ts1.tool
+    @ts1.tool_plain
     def calculator() -> str:
         """Evaluate a math expression."""
         return '4'
 
     ts2 = FunctionToolset(instructions='Use search for lookups.')
 
-    @ts2.tool
+    @ts2.tool_plain
     def search() -> str:
         """Search for information."""
         return 'results'
@@ -1328,7 +1328,7 @@ async def test_toolset_instructions_alone_satisfy_validation():
 
     toolset = FunctionToolset(instructions='Always use my_tool correctly.')
 
-    @toolset.tool
+    @toolset.tool_plain
     def my_tool() -> str:
         """A simple tool."""
         return 'done'
