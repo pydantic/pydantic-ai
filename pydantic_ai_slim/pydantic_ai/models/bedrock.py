@@ -335,7 +335,7 @@ class BedrockModelSettings(ModelSettings, total=False):
 
     When set, this value is used as the `modelId` in `converse` and `converse_stream` API calls instead of the
     base `model_name`. This allows you to pass the base model name (e.g. `'anthropic.claude-sonnet-4-5-20250929-v1:0'`)
-    as `model_name` for profile detection and token counting, while routing requests through an inference profile
+    as `model_name` for detecting model capabilities and token counting, while routing requests through an inference profile
     for cost tracking or cross-region inference.
     """
 

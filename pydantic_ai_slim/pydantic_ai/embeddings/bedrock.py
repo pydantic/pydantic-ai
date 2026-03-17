@@ -185,7 +185,7 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
 
     When set, this value is used as the `modelId` in `invoke_model` API calls instead of the
     base `model_name`. This allows you to pass the base model name (e.g. `'amazon.titan-embed-text-v2:0'`)
-    as `model_name` for handler detection, while routing requests through an inference profile
+    as `model_name` for detecting model capabilities, while routing requests through an inference profile
     for cost tracking or cross-region inference.
     """
 
