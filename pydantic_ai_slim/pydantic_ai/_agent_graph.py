@@ -658,10 +658,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                         pass
                     return False
 
-                is_thinking_only_response = bool(self.model_response.parts) and all(
-                    isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
-                )
-
                 if not self.model_response.parts:
                     # Don't retry if the model returned an empty response because the token limit was exceeded, possibly during thinking.
                     if self.model_response.finish_reason == 'length':
@@ -705,10 +701,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                     return
 
-                # For thinking-only responses, first try to recover text from an earlier model response
-                # (e.g. text that came with a tool call). If recovery fails, fall back to normal retry prompting.
-                if is_thinking_only_response and await _recover_text_from_previous_response():
-                    return
+                # For thinking-only responses, try to recover text from a previous model response
+                # (e.g. text that was discarded alongside a tool call). If no text is recoverable,
+                # fall through to the normal retry prompt below.
+                if all(isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts):
+                    if await _recover_text_from_previous_response():
+                        return
 
                 text = ''
                 tool_calls: list[_messages.ToolCallPart] = []
