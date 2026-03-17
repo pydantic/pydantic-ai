@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TypeVar
+from typing import TypeVar
 
 import pytest
 from inline_snapshot import snapshot
@@ -82,6 +82,34 @@ async def test_searchable_toolset_filters_deferred_tools():
     assert 'crypto_price' not in tool_names
 
 
+async def test_search_tool_def_description_and_schema():
+    """Test that the search tool definition includes deferred count and TypeAdapter-generated schema."""
+    toolset = create_function_toolset()
+    searchable = SearchableToolset(wrapped=toolset)
+    ctx = build_run_context(None)
+
+    tools = await searchable.get_tools(ctx)
+    search_tool = tools[_SEARCH_TOOLS_NAME]
+
+    assert search_tool.tool_def.description == snapshot(
+        'There are 3 additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by keyword to discover and activate relevant tools.'
+    )
+    assert search_tool.tool_def.parameters_json_schema == snapshot(
+        {
+            'properties': {
+                'query': {
+                    'description': 'A keyword to match against tool names and descriptions.',
+                    'title': 'Query',
+                    'type': 'string',
+                }
+            },
+            'required': ['query'],
+            'title': '_SearchToolArgs',
+            'type': 'object',
+        }
+    )
+
+
 async def test_searchable_toolset_search_returns_matching_tools():
     """Test that search_tools returns matching deferred tools."""
     toolset = create_function_toolset()
@@ -94,10 +122,7 @@ async def test_searchable_toolset_search_returns_matching_tools():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'mortgage'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     assert result.return_value == snapshot(
-        {
-            'message': "Found 1 tool(s) matching 'mortgage'",
-            'tools': [{'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}],
-        }
+        [{'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}]
     )
     assert result.metadata == snapshot({'discovered_tools': ['calculate_mortgage']})
 
@@ -113,9 +138,9 @@ async def test_searchable_toolset_search_is_case_insensitive():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'STOCK'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    rv: dict[str, Any] = result.return_value  # pyright: ignore[reportAssignmentType]
-    assert len(rv['tools']) == 1
-    assert rv['tools'][0]['name'] == 'stock_price'
+    rv: list[dict[str, str | None]] = result.return_value  # pyright: ignore[reportAssignmentType]
+    assert len(rv) == 1
+    assert rv[0]['name'] == 'stock_price'
 
 
 async def test_searchable_toolset_search_matches_description():
@@ -129,9 +154,9 @@ async def test_searchable_toolset_search_matches_description():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'cryptocurrency'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    rv: dict[str, Any] = result.return_value  # pyright: ignore[reportAssignmentType]
-    assert len(rv['tools']) == 1
-    assert rv['tools'][0]['name'] == 'crypto_price'
+    rv: list[dict[str, str | None]] = result.return_value  # pyright: ignore[reportAssignmentType]
+    assert len(rv) == 1
+    assert rv[0]['name'] == 'crypto_price'
 
 
 async def test_searchable_toolset_search_returns_no_matches():
@@ -145,7 +170,7 @@ async def test_searchable_toolset_search_returns_no_matches():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'nonexistent'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    assert result.return_value == snapshot({'message': "No tools found matching 'nonexistent'", 'tools': []})
+    assert result.return_value == snapshot([])
     assert result.metadata == snapshot({'discovered_tools': []})
 
 
@@ -181,8 +206,8 @@ async def test_searchable_toolset_max_results():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'tool'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    rv: dict[str, Any] = result.return_value  # pyright: ignore[reportAssignmentType]
-    assert len(rv['tools']) == 10
+    rv: list[dict[str, str | None]] = result.return_value  # pyright: ignore[reportAssignmentType]
+    assert len(rv) == 10
 
 
 async def test_searchable_toolset_discovered_tools_available():
@@ -323,9 +348,7 @@ async def test_searchable_toolset_tool_with_none_description():
 
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'no_desc'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    assert result.return_value == snapshot(
-        {'message': "Found 1 tool(s) matching 'no_desc'", 'tools': [{'name': 'no_desc_tool', 'description': None}]}
-    )
+    assert result.return_value == snapshot([{'name': 'no_desc_tool', 'description': None}])
 
 
 async def test_searchable_toolset_multiple_searches_accumulate():
@@ -502,12 +525,9 @@ async def test_call_tool_returns_tool_return_with_metadata():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'mortgage'}, ctx, search_tool)
     assert result == snapshot(
         ToolReturn(
-            return_value={
-                'message': "Found 1 tool(s) matching 'mortgage'",
-                'tools': [
-                    {'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}
-                ],
-            },
+            return_value=[
+                {'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}
+            ],
             metadata={'discovered_tools': ['calculate_mortgage']},
         )
     )

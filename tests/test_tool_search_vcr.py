@@ -38,6 +38,51 @@ def _mock_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.setenv(key, default)
 
 
+def _build_agent() -> Agent[None, str]:
+    """Build an agent with a visible tool and several deferred tools for testing."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:  # pragma: no cover
+        """Get the current weather for a city."""
+        return f'The weather in {city} is sunny and 72°F.'
+
+    @agent.tool_plain(defer_loading=True)
+    def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+        """Look up the current exchange rate between two currencies."""
+        rates: dict[str, float] = {
+            'USD_EUR': 0.92,
+            'EUR_USD': 1.09,
+            'USD_GBP': 0.79,
+            'GBP_USD': 1.27,
+        }
+        key = f'{from_currency}_{to_currency}'
+        rate = rates.get(key, 1.0)
+        return f'1 {from_currency} = {rate} {to_currency}'
+
+    @agent.tool_plain(defer_loading=True)
+    def stock_lookup(symbol: str) -> str:  # pragma: no cover
+        """Look up stock price by ticker symbol."""
+        return f'Stock {symbol}: $150.00'
+
+    @agent.tool_plain(defer_loading=True)
+    def mortgage_calculator(principal: float, rate: float, years: int) -> str:  # pragma: no cover
+        """Calculate monthly mortgage payment for a home loan."""
+        monthly_rate = rate / 12 / 100
+        num_payments = years * 12
+        if monthly_rate == 0:
+            payment = principal / num_payments
+        else:
+            payment = (
+                principal
+                * (monthly_rate * (1 + monthly_rate) ** num_payments)
+                / ((1 + monthly_rate) ** num_payments - 1)
+            )
+        return f'Monthly payment: ${payment:.2f}'
+
+    return agent
+
+
 @dataclass
 class Case:
     model_name: str
@@ -50,9 +95,7 @@ class Case:
         pytest.param(
             Case(
                 model_name='openai:gpt-5-mini',
-                expected_output=snapshot(
-                    'I searched for "mortgage" and found the mortgage_calculator tool. Using it for a $400,000 loan at 6.5% interest over 30 years gives a monthly payment of $2,528.27.'
-                ),
+                expected_output=snapshot('The current exchange rate is 1 USD = 0.92 EUR.'),
             ),
             id='openai',
         ),
@@ -60,17 +103,9 @@ class Case:
             Case(
                 model_name='anthropic:claude-sonnet-4-5',
                 expected_output=snapshot("""\
-Perfect! Here are the results:
+The current exchange rate from USD to EUR is **1 USD = 0.92 EUR**.
 
-**Search Results:** Found 1 tool matching "mortgage" - the mortgage_calculator tool for calculating monthly mortgage payments.
-
-**Mortgage Calculation:**
-- Loan Amount (Principal): $400,000
-- Interest Rate: 6.5%
-- Loan Term: 30 years
-- **Monthly Payment: $2,528.27**
-
-This monthly payment includes principal and interest. Keep in mind that your actual monthly housing payment may be higher when you add property taxes, homeowners insurance, and potentially PMI (Private Mortgage Insurance) if applicable.\
+This means that 1 US Dollar is equivalent to 0.92 Euros.\
 """),
             ),
             id='anthropic',
@@ -79,9 +114,7 @@ This monthly payment includes principal and interest. Keep in mind that your act
         pytest.param(
             Case(
                 model_name='google-gla:gemini-3-flash-preview',
-                expected_output=snapshot(
-                    'OK. I searched for "mortgage" and found the `mortgage_calculator` tool. Using that tool for a $400,000 loan at 6.5% interest over 30 years, the calculated monthly payment is $2,528.27.'
-                ),
+                expected_output=snapshot('The current exchange rate from USD to EUR is 1 USD = 0.92 EUR.'),
             ),
             id='google',
             marks=pytest.mark.skipif(not google_available(), reason='google-genai not installed'),
@@ -89,45 +122,15 @@ This monthly payment includes principal and interest. Keep in mind that your act
     ],
 )
 async def test_tool_search_discovers_and_uses_tool(allow_model_requests: None, case: Case) -> None:
-    """Test that an agent can discover a deferred tool via search and use it.
+    """Test that a model naturally discovers and uses a deferred tool via search.
 
-    This test verifies the complete tool search flow:
-    1. Agent is created with deferred tools (not initially visible to model)
-    2. Model uses search_tools to find the mortgage_calculator tool
-    3. Model calls the discovered tool with the correct arguments
-    4. Tool returns the calculated result
+    The prompt asks a question that requires a tool the model can't see.
+    The model must figure out on its own that it should use search_tools to find it.
     """
-    agent: Agent[None, str] = Agent(case.model_name)
+    agent = _build_agent()
+    agent.model = case.model_name
 
-    @agent.tool_plain
-    def get_weather(city: str) -> str:  # pragma: no cover
-        """Get the current weather for a city."""
-        return f'The weather in {city} is sunny and 72°F.'
-
-    @agent.tool_plain(defer_loading=True)
-    def mortgage_calculator(principal: float, rate: float, years: int) -> str:
-        """Mortgage calculator - calculate monthly mortgage payment for a home loan."""
-        monthly_rate = rate / 12 / 100
-        num_payments = years * 12
-        if monthly_rate == 0:
-            payment = principal / num_payments  # pragma: no cover
-        else:
-            payment = (
-                principal
-                * (monthly_rate * (1 + monthly_rate) ** num_payments)
-                / ((1 + monthly_rate) ** num_payments - 1)
-            )
-        return f'Monthly payment: ${payment:.2f}'
-
-    @agent.tool_plain(defer_loading=True)
-    def stock_lookup(symbol: str) -> str:  # pragma: no cover
-        """Look up stock price by ticker symbol."""
-        return f'Stock {symbol}: $150.00'
-
-    result = await agent.run(
-        'Use search_tools to search for "mortgage", then use the mortgage_calculator tool '
-        'to calculate the monthly payment for a $400,000 loan at 6.5% interest for 30 years.'
-    )
+    result = await agent.run('What is the current exchange rate from USD to EUR?')
 
     assert result.output == case.expected_output
 
@@ -139,4 +142,4 @@ async def test_tool_search_discovers_and_uses_tool(allow_model_requests: None, c
                     tool_calls.append(part.tool_name)
 
     assert 'search_tools' in tool_calls
-    assert 'mortgage_calculator' in tool_calls
+    assert 'get_exchange_rate' in tool_calls

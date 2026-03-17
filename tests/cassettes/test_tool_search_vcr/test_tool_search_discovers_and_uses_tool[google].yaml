@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '862'
+      - '834'
       content-type:
       - application/json
       host:
@@ -17,20 +17,20 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Use search_tools to search for "mortgage", then use the mortgage_calculator tool to calculate the monthly
-            payment for a $400,000 loan at 6.5% interest for 30 years.
+        - text: What is the current exchange rate from USD to EUR?
         role: user
       generationConfig:
         responseModalities:
         - TEXT
       tools:
       - functionDeclarations:
-        - description: Search for available tools by keyword. Returns matching tool names and descriptions.
+        - description: There are 3 additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by keyword to discover and activate relevant tools.
           name: search_tools
           parameters_json_schema:
             properties:
               query:
-                description: The search query to match against tool names and descriptions.
+                description: A keyword to match against tool names and descriptions.
                 type: string
             required:
             - query
@@ -51,11 +51,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '2392'
+      - '1019'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3297
+      - gfet4t7; dur=1605
       transfer-encoding:
       - chunked
       vary:
@@ -68,23 +68,24 @@ interactions:
           parts:
           - functionCall:
               args:
-                query: mortgage
+                query: currency exchange rate
+              id: ch7mn786
               name: search_tools
-            thoughtSignature: EvcKCvQKAXLI2nxFHET50n44QdIawvCwOR3eYTVdGd2/nRmatP5xjONXyIC9flOUbtOYTwuoTop5ckixDDSql+SALU1Vc8Acj02DhECMU2q9dZuK0D1ejZtEAtNQDtQCXF3O9gUctqE9c84pCSTk+OQOhJmJcODHdfsXRqRpdocgrBWQrRDl3Ug5Wjm8gtf41sVbFwx62TAX2gPceOx+0DMrawUhcxHVNXrJGXwui6UgYTF3w4g41N0GCdvFvvl2I1DRIA0aDvrbhcTaxsM/A8PoTkueroamjSQPlfpSrdkqQqW3zAUmRs3HEctRxFhPRBu7V21diFOBRraG82e2+whpxD3ZYzL2tKx0z7QiMlolf0U0mGRWTcz4na+HuU7uO5qFGu25v10I1r6hmJ7qiz/+oEdDpTuj9Z1qZuFhPAOZ3QWMWj1FeuFS8d5rKK3ISUPNRap+r0Eu/q7hJ6yy616MNwCSY62lm9IbUWUjNyxuXvZ0jEJPp8Fe9yUudwMw4khoAjReWINTpti5qPoFoD5THW6Sku5o8r7dOLrHEDtVQxQhOfYR3H9UAgj36FsP/n9pBBcNQcFDkf8PCZ5R/uMUIAI4ea2bI7RWB98ths7uwHCc6SSWbtS5BsjrlKQXF1NMwpqrND3+MpIrZ+DpEurBFMAd9n+FEecrYtLtffx2TzhodTIghVAEJ6HuTqXsX+mlAkiP7Oy16axGRPoiGM1R2vzTX4ah6DELt/2MvM5XNqOjtLkInlFEAedqMf7LZcd1S3Jt9lE+Io3M/xc6S6Yq83BR9HwwcloHx2hqMG9pDpZL8u5vZlbt2zqNxQUhIXvALvcNmQfT22+L3RH83Ln8yoJlzI6SA9AoC7R2bB1DrWyhhmr4iX6sebjmiBXCFh2LefcZ/Yfr5BZ9u4e+F66pNeO/f1DzD5ZXBCRSrngLChGJEcGQij72nrybKkONiExzZ9u+XUJaUJko31x7PNJd9SaS4SeMLjwnfKIbwpTX/KCqTc+EiS8tgOJkRMT41vJKFYehlbbL0CSvF97pQOBbfLyulO3GOUrGKP29bAZPaoedQadPSuwbkx1IylzyOZXNjH3uh59xaDb2oNLuyJagUUIJYXm/WRO1lNvyJaN+vZrVJ2h3zb0uDJR8iHhy+6WBAquvWo06rhRHl3249zZJsBHMnBATE2VuO2CUTQmGgUHTKDEhdDkoliGZrL2npGDFDsbJYPKCMXPFImIia09UiteFOtO9v/YuvRreVvAlPpVdYKluQz4dp5tnHHUPnCetksO7BR5riD4KWgd288V3efgdO8qRc5CYTetmPNfrXe0IqMX0sbJT3FqvQaJnS4OSZ1p7fpPJ2bUL2s9WNY6+z+K/n08E/gP1hgPxmlm+AzPT2gRkqou5oDCfInLfUhcAGGWNwjUR9udeNJcfNa/l6RL8NFxqkO1OydRyhQFthVj7pd5H3Hy7PbnmGUJ/LpfTejfzUw+ipKWG/8TTzb1BdZU3dZsmmQSIsSK8SIBB4COP1OOAH8ZkFdcA23UTHda5G+cFdTDh4Z0ysPp+NFG0JZzMI0UiNnLfHX6WVO1vKQSkeZdNx8/sGexqg5DdHAPnWyJCfaNc/vY5yKOL+4VoG2a0K/732Yyo1+UjtoZZPeTPnuTH0hcEzh9/ndBK6XPABIbkzFoL67GQHtHNE+xj3XbP+9tV9lPukhlMx7DjRQMq9kuayw0gdYnzXA6TyOwMFI85NU8RUgiOLQnrKLuMpUseRoRijp+h7vq/J2NGAbInw2TZ4WbHbIaBj8g6auE+v3lsherOMncVj2OFA0Mp5ppv0oa86d69rQc4Ipg8flPVGz6rpDsb16LTLRoZg0TbHDf3kGKPqA==
+            thoughtSignature: EtsCCtgCAb4+9vtAhixbmPvx1vPAi8PVNkgcLw17fRo6Sj2UnUwOFhGiPfUohD49QRSrRMtzyxKR1eLws54J9a4FG33ZXIzwCRqLeW2PPSCjPaurPMHClxNfikd+idfaDxZXaAlosW28zBG6vN1Fiyo+6k4azNhYX1b42uV4PatgcUOAQZH7Z8i0kwJhSO3iyPkhdGWq0FTrDAaKdglkIN41ccsIcZrggq9vLc27l3PLMm9Usq2mEbcxi4KXJhZ/zYOC8tAdob2eXkYDDV7RiN5XL4+L4vTvkjMF8x4FCmXctENfaxlWqkC+2A18asRQDHfT/ixhVfJUWEkI5eC/SYlVIKohMRrg9yZICYx+tORBu0uRCkRFikVddChz9b+tITZe0uBssfBuG/AKPY17Gxwam07Mdat8x4ztOnQ7MVSkACtK7PFRSYUKdff6KMdDr0dcTkrq5HUkG+HbMMI=
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: iGiCadCqK6avqtsP0OaT0Qk
+      responseId: vHm5afz6COrVz7IP_pnAyQY
       usageMetadata:
-        candidatesTokenCount: 17
-        promptTokenCount: 160
+        candidatesTokenCount: 18
+        promptTokenCount: 144
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 160
-        thoughtsTokenCount: 365
-        totalTokenCount: 542
+          tokenCount: 144
+        thoughtsTokenCount: 61
+        totalTokenCount: 223
     status:
       code: 200
       message: OK
@@ -97,7 +98,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '3591'
+      - '2015'
       content-type:
       - application/json
       host:
@@ -106,38 +107,37 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Use search_tools to search for "mortgage", then use the mortgage_calculator tool to calculate the monthly
-            payment for a $400,000 loan at 6.5% interest for 30 years.
+        - text: What is the current exchange rate from USD to EUR?
         role: user
       - parts:
         - functionCall:
             args:
-              query: mortgage
-            id: pyd_ai_0e21026d84674baabbf2689c85a6b108
+              query: currency exchange rate
+            id: ch7mn786
             name: search_tools
-          thoughtSignature: EvcKCvQKAXLI2nxFHET50n44QdIawvCwOR3eYTVdGd2_nRmatP5xjONXyIC9flOUbtOYTwuoTop5ckixDDSql-SALU1Vc8Acj02DhECMU2q9dZuK0D1ejZtEAtNQDtQCXF3O9gUctqE9c84pCSTk-OQOhJmJcODHdfsXRqRpdocgrBWQrRDl3Ug5Wjm8gtf41sVbFwx62TAX2gPceOx-0DMrawUhcxHVNXrJGXwui6UgYTF3w4g41N0GCdvFvvl2I1DRIA0aDvrbhcTaxsM_A8PoTkueroamjSQPlfpSrdkqQqW3zAUmRs3HEctRxFhPRBu7V21diFOBRraG82e2-whpxD3ZYzL2tKx0z7QiMlolf0U0mGRWTcz4na-HuU7uO5qFGu25v10I1r6hmJ7qiz_-oEdDpTuj9Z1qZuFhPAOZ3QWMWj1FeuFS8d5rKK3ISUPNRap-r0Eu_q7hJ6yy616MNwCSY62lm9IbUWUjNyxuXvZ0jEJPp8Fe9yUudwMw4khoAjReWINTpti5qPoFoD5THW6Sku5o8r7dOLrHEDtVQxQhOfYR3H9UAgj36FsP_n9pBBcNQcFDkf8PCZ5R_uMUIAI4ea2bI7RWB98ths7uwHCc6SSWbtS5BsjrlKQXF1NMwpqrND3-MpIrZ-DpEurBFMAd9n-FEecrYtLtffx2TzhodTIghVAEJ6HuTqXsX-mlAkiP7Oy16axGRPoiGM1R2vzTX4ah6DELt_2MvM5XNqOjtLkInlFEAedqMf7LZcd1S3Jt9lE-Io3M_xc6S6Yq83BR9HwwcloHx2hqMG9pDpZL8u5vZlbt2zqNxQUhIXvALvcNmQfT22-L3RH83Ln8yoJlzI6SA9AoC7R2bB1DrWyhhmr4iX6sebjmiBXCFh2LefcZ_Yfr5BZ9u4e-F66pNeO_f1DzD5ZXBCRSrngLChGJEcGQij72nrybKkONiExzZ9u-XUJaUJko31x7PNJd9SaS4SeMLjwnfKIbwpTX_KCqTc-EiS8tgOJkRMT41vJKFYehlbbL0CSvF97pQOBbfLyulO3GOUrGKP29bAZPaoedQadPSuwbkx1IylzyOZXNjH3uh59xaDb2oNLuyJagUUIJYXm_WRO1lNvyJaN-vZrVJ2h3zb0uDJR8iHhy-6WBAquvWo06rhRHl3249zZJsBHMnBATE2VuO2CUTQmGgUHTKDEhdDkoliGZrL2npGDFDsbJYPKCMXPFImIia09UiteFOtO9v_YuvRreVvAlPpVdYKluQz4dp5tnHHUPnCetksO7BR5riD4KWgd288V3efgdO8qRc5CYTetmPNfrXe0IqMX0sbJT3FqvQaJnS4OSZ1p7fpPJ2bUL2s9WNY6-z-K_n08E_gP1hgPxmlm-AzPT2gRkqou5oDCfInLfUhcAGGWNwjUR9udeNJcfNa_l6RL8NFxqkO1OydRyhQFthVj7pd5H3Hy7PbnmGUJ_LpfTejfzUw-ipKWG_8TTzb1BdZU3dZsmmQSIsSK8SIBB4COP1OOAH8ZkFdcA23UTHda5G-cFdTDh4Z0ysPp-NFG0JZzMI0UiNnLfHX6WVO1vKQSkeZdNx8_sGexqg5DdHAPnWyJCfaNc_vY5yKOL-4VoG2a0K_732Yyo1-UjtoZZPeTPnuTH0hcEzh9_ndBK6XPABIbkzFoL67GQHtHNE-xj3XbP-9tV9lPukhlMx7DjRQMq9kuayw0gdYnzXA6TyOwMFI85NU8RUgiOLQnrKLuMpUseRoRijp-h7vq_J2NGAbInw2TZ4WbHbIaBj8g6auE-v3lsherOMncVj2OFA0Mp5ppv0oa86d69rQc4Ipg8flPVGz6rpDsb16LTLRoZg0TbHDf3kGKPqA==
+          thoughtSignature: EtsCCtgCAb4-9vtAhixbmPvx1vPAi8PVNkgcLw17fRo6Sj2UnUwOFhGiPfUohD49QRSrRMtzyxKR1eLws54J9a4FG33ZXIzwCRqLeW2PPSCjPaurPMHClxNfikd-idfaDxZXaAlosW28zBG6vN1Fiyo-6k4azNhYX1b42uV4PatgcUOAQZH7Z8i0kwJhSO3iyPkhdGWq0FTrDAaKdglkIN41ccsIcZrggq9vLc27l3PLMm9Usq2mEbcxi4KXJhZ_zYOC8tAdob2eXkYDDV7RiN5XL4-L4vTvkjMF8x4FCmXctENfaxlWqkC-2A18asRQDHfT_ixhVfJUWEkI5eC_SYlVIKohMRrg9yZICYx-tORBu0uRCkRFikVddChz9b-tITZe0uBssfBuG_AKPY17Gxwam07Mdat8x4ztOnQ7MVSkACtK7PFRSYUKdff6KMdDr0dcTkrq5HUkG-HbMMI=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_0e21026d84674baabbf2689c85a6b108
+            id: ch7mn786
             name: search_tools
             response:
-              message: Found 1 tool(s) matching 'mortgage'
-              tools:
-              - description: Mortgage calculator - calculate monthly mortgage payment for a home loan.
-                name: mortgage_calculator
+              return_value:
+              - description: Look up the current exchange rate between two currencies.
+                name: get_exchange_rate
         role: user
       generationConfig:
         responseModalities:
         - TEXT
       tools:
       - functionDeclarations:
-        - description: Search for available tools by keyword. Returns matching tool names and descriptions.
+        - description: There are 3 additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by keyword to discover and activate relevant tools.
           name: search_tools
           parameters_json_schema:
             properties:
               query:
-                description: The search query to match against tool names and descriptions.
+                description: A keyword to match against tool names and descriptions.
                 type: string
             required:
             - query
@@ -152,21 +152,18 @@ interactions:
             required:
             - city
             type: object
-        - description: Mortgage calculator - calculate monthly mortgage payment for a home loan.
-          name: mortgage_calculator
+        - description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
           parameters_json_schema:
             additionalProperties: false
             properties:
-              principal:
-                type: number
-              rate:
-                type: number
-              years:
-                type: integer
+              from_currency:
+                type: string
+              to_currency:
+                type: string
             required:
-            - principal
-            - rate
-            - years
+            - from_currency
+            - to_currency
             type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
   response:
@@ -174,11 +171,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '856'
+      - '775'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1538
+      - gfet4t7; dur=1151
       transfer-encoding:
       - chunked
       vary:
@@ -191,25 +188,25 @@ interactions:
           parts:
           - functionCall:
               args:
-                principal: 400000
-                rate: 6.5
-                years: 30
-              name: mortgage_calculator
-            thoughtSignature: EuABCt0BAXLI2nyOxwOJx1ebD4j9ghPG1s7ptlQ617ewAcuQRC3tqfIr/Jah/5f3QuIn7lx1bw33dmMoIn8jZ0P6ItQaIBD4xS+NiHO/EJJVe001jDT9OQO5BWCq4so2V+6X9d5kzZ/cpZsvgfb3p8SlxQUT1C8GeTUGufIuCiKU0eETzZB6q1krCVtKUY+3yQKs3CqS5ZI6hG3IaDW2kR+O1QPGhAA8b8HZP3/rKgzI7e9w6dufSc8CtBz6Z5TJTp0e3Dufz3y5Q+LLTitT5hZ3l8SwGEQwezYf++iEQkQDs2U=
+                from_currency: USD
+                to_currency: EUR
+              id: wp88jsdi
+              name: get_exchange_rate
+            thoughtSignature: EpcBCpQBAb4+9vu/YiqIYu0qMfSSAm4US++QrT3a7S7ylk4CKOQatXOCzdczYzgpwqBNOqw4YqZlR0m+qrTWt17RBlWKAvjfIrm/l7P9PucFnGfeWStJ+FXRszWO0odl6GC7ARJ2kUczljLjFWu95omEJV3Mxg0Ndp0hLtpVEyynxtEo5U1gKnBGNHvRlbECTvOPCIptVCJ8GA==
           role: model
         finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: imiCacrUFNqLqtsP0abpsQk
+      responseId: vXm5aaTnHYjpz7IPpr_y0Q8
       usageMetadata:
-        candidatesTokenCount: 31
-        promptTokenCount: 672
+        candidatesTokenCount: 28
+        promptTokenCount: 330
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 672
-        thoughtsTokenCount: 57
-        totalTokenCount: 760
+          tokenCount: 330
+        thoughtsTokenCount: 26
+        totalTokenCount: 384
     status:
       code: 200
       message: OK
@@ -222,7 +219,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '4298'
+      - '2550'
       content-type:
       - application/json
       host:
@@ -231,55 +228,53 @@ interactions:
     parsed_body:
       contents:
       - parts:
-        - text: Use search_tools to search for "mortgage", then use the mortgage_calculator tool to calculate the monthly
-            payment for a $400,000 loan at 6.5% interest for 30 years.
+        - text: What is the current exchange rate from USD to EUR?
         role: user
       - parts:
         - functionCall:
             args:
-              query: mortgage
-            id: pyd_ai_0e21026d84674baabbf2689c85a6b108
+              query: currency exchange rate
+            id: ch7mn786
             name: search_tools
-          thoughtSignature: EvcKCvQKAXLI2nxFHET50n44QdIawvCwOR3eYTVdGd2_nRmatP5xjONXyIC9flOUbtOYTwuoTop5ckixDDSql-SALU1Vc8Acj02DhECMU2q9dZuK0D1ejZtEAtNQDtQCXF3O9gUctqE9c84pCSTk-OQOhJmJcODHdfsXRqRpdocgrBWQrRDl3Ug5Wjm8gtf41sVbFwx62TAX2gPceOx-0DMrawUhcxHVNXrJGXwui6UgYTF3w4g41N0GCdvFvvl2I1DRIA0aDvrbhcTaxsM_A8PoTkueroamjSQPlfpSrdkqQqW3zAUmRs3HEctRxFhPRBu7V21diFOBRraG82e2-whpxD3ZYzL2tKx0z7QiMlolf0U0mGRWTcz4na-HuU7uO5qFGu25v10I1r6hmJ7qiz_-oEdDpTuj9Z1qZuFhPAOZ3QWMWj1FeuFS8d5rKK3ISUPNRap-r0Eu_q7hJ6yy616MNwCSY62lm9IbUWUjNyxuXvZ0jEJPp8Fe9yUudwMw4khoAjReWINTpti5qPoFoD5THW6Sku5o8r7dOLrHEDtVQxQhOfYR3H9UAgj36FsP_n9pBBcNQcFDkf8PCZ5R_uMUIAI4ea2bI7RWB98ths7uwHCc6SSWbtS5BsjrlKQXF1NMwpqrND3-MpIrZ-DpEurBFMAd9n-FEecrYtLtffx2TzhodTIghVAEJ6HuTqXsX-mlAkiP7Oy16axGRPoiGM1R2vzTX4ah6DELt_2MvM5XNqOjtLkInlFEAedqMf7LZcd1S3Jt9lE-Io3M_xc6S6Yq83BR9HwwcloHx2hqMG9pDpZL8u5vZlbt2zqNxQUhIXvALvcNmQfT22-L3RH83Ln8yoJlzI6SA9AoC7R2bB1DrWyhhmr4iX6sebjmiBXCFh2LefcZ_Yfr5BZ9u4e-F66pNeO_f1DzD5ZXBCRSrngLChGJEcGQij72nrybKkONiExzZ9u-XUJaUJko31x7PNJd9SaS4SeMLjwnfKIbwpTX_KCqTc-EiS8tgOJkRMT41vJKFYehlbbL0CSvF97pQOBbfLyulO3GOUrGKP29bAZPaoedQadPSuwbkx1IylzyOZXNjH3uh59xaDb2oNLuyJagUUIJYXm_WRO1lNvyJaN-vZrVJ2h3zb0uDJR8iHhy-6WBAquvWo06rhRHl3249zZJsBHMnBATE2VuO2CUTQmGgUHTKDEhdDkoliGZrL2npGDFDsbJYPKCMXPFImIia09UiteFOtO9v_YuvRreVvAlPpVdYKluQz4dp5tnHHUPnCetksO7BR5riD4KWgd288V3efgdO8qRc5CYTetmPNfrXe0IqMX0sbJT3FqvQaJnS4OSZ1p7fpPJ2bUL2s9WNY6-z-K_n08E_gP1hgPxmlm-AzPT2gRkqou5oDCfInLfUhcAGGWNwjUR9udeNJcfNa_l6RL8NFxqkO1OydRyhQFthVj7pd5H3Hy7PbnmGUJ_LpfTejfzUw-ipKWG_8TTzb1BdZU3dZsmmQSIsSK8SIBB4COP1OOAH8ZkFdcA23UTHda5G-cFdTDh4Z0ysPp-NFG0JZzMI0UiNnLfHX6WVO1vKQSkeZdNx8_sGexqg5DdHAPnWyJCfaNc_vY5yKOL-4VoG2a0K_732Yyo1-UjtoZZPeTPnuTH0hcEzh9_ndBK6XPABIbkzFoL67GQHtHNE-xj3XbP-9tV9lPukhlMx7DjRQMq9kuayw0gdYnzXA6TyOwMFI85NU8RUgiOLQnrKLuMpUseRoRijp-h7vq_J2NGAbInw2TZ4WbHbIaBj8g6auE-v3lsherOMncVj2OFA0Mp5ppv0oa86d69rQc4Ipg8flPVGz6rpDsb16LTLRoZg0TbHDf3kGKPqA==
+          thoughtSignature: EtsCCtgCAb4-9vtAhixbmPvx1vPAi8PVNkgcLw17fRo6Sj2UnUwOFhGiPfUohD49QRSrRMtzyxKR1eLws54J9a4FG33ZXIzwCRqLeW2PPSCjPaurPMHClxNfikd-idfaDxZXaAlosW28zBG6vN1Fiyo-6k4azNhYX1b42uV4PatgcUOAQZH7Z8i0kwJhSO3iyPkhdGWq0FTrDAaKdglkIN41ccsIcZrggq9vLc27l3PLMm9Usq2mEbcxi4KXJhZ_zYOC8tAdob2eXkYDDV7RiN5XL4-L4vTvkjMF8x4FCmXctENfaxlWqkC-2A18asRQDHfT_ixhVfJUWEkI5eC_SYlVIKohMRrg9yZICYx-tORBu0uRCkRFikVddChz9b-tITZe0uBssfBuG_AKPY17Gxwam07Mdat8x4ztOnQ7MVSkACtK7PFRSYUKdff6KMdDr0dcTkrq5HUkG-HbMMI=
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_0e21026d84674baabbf2689c85a6b108
+            id: ch7mn786
             name: search_tools
             response:
-              message: Found 1 tool(s) matching 'mortgage'
-              tools:
-              - description: Mortgage calculator - calculate monthly mortgage payment for a home loan.
-                name: mortgage_calculator
+              return_value:
+              - description: Look up the current exchange rate between two currencies.
+                name: get_exchange_rate
         role: user
       - parts:
         - functionCall:
             args:
-              principal: 400000
-              rate: 6.5
-              years: 30
-            id: pyd_ai_e828a9cbfb044a459bd01724a1a27d0e
-            name: mortgage_calculator
-          thoughtSignature: EuABCt0BAXLI2nyOxwOJx1ebD4j9ghPG1s7ptlQ617ewAcuQRC3tqfIr_Jah_5f3QuIn7lx1bw33dmMoIn8jZ0P6ItQaIBD4xS-NiHO_EJJVe001jDT9OQO5BWCq4so2V-6X9d5kzZ_cpZsvgfb3p8SlxQUT1C8GeTUGufIuCiKU0eETzZB6q1krCVtKUY-3yQKs3CqS5ZI6hG3IaDW2kR-O1QPGhAA8b8HZP3_rKgzI7e9w6dufSc8CtBz6Z5TJTp0e3Dufz3y5Q-LLTitT5hZ3l8SwGEQwezYf--iEQkQDs2U=
+              from_currency: USD
+              to_currency: EUR
+            id: wp88jsdi
+            name: get_exchange_rate
+          thoughtSignature: EpcBCpQBAb4-9vu_YiqIYu0qMfSSAm4US--QrT3a7S7ylk4CKOQatXOCzdczYzgpwqBNOqw4YqZlR0m-qrTWt17RBlWKAvjfIrm_l7P9PucFnGfeWStJ-FXRszWO0odl6GC7ARJ2kUczljLjFWu95omEJV3Mxg0Ndp0hLtpVEyynxtEo5U1gKnBGNHvRlbECTvOPCIptVCJ8GA==
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_e828a9cbfb044a459bd01724a1a27d0e
-            name: mortgage_calculator
+            id: wp88jsdi
+            name: get_exchange_rate
             response:
-              return_value: 'Monthly payment: $2528.27'
+              return_value: 1 USD = 0.92 EUR
         role: user
       generationConfig:
         responseModalities:
         - TEXT
       tools:
       - functionDeclarations:
-        - description: Search for available tools by keyword. Returns matching tool names and descriptions.
+        - description: There are 3 additional tools not yet visible to you. When you need a capability not provided by your
+            current tools, search here by keyword to discover and activate relevant tools.
           name: search_tools
           parameters_json_schema:
             properties:
               query:
-                description: The search query to match against tool names and descriptions.
+                description: A keyword to match against tool names and descriptions.
                 type: string
             required:
             - query
@@ -294,21 +289,18 @@ interactions:
             required:
             - city
             type: object
-        - description: Mortgage calculator - calculate monthly mortgage payment for a home loan.
-          name: mortgage_calculator
+        - description: Look up the current exchange rate between two currencies.
+          name: get_exchange_rate
           parameters_json_schema:
             additionalProperties: false
             properties:
-              principal:
-                type: number
-              rate:
-                type: number
-              years:
-                type: integer
+              from_currency:
+                type: string
+              to_currency:
+                type: string
             required:
-            - principal
-            - rate
-            - years
+            - from_currency
+            - to_currency
             type: object
     uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
   response:
@@ -316,11 +308,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '540'
+      - '416'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1428
+      - gfet4t7; dur=992
       transfer-encoding:
       - chunked
       vary:
@@ -331,20 +323,19 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: OK. I searched for "mortgage" and found the `mortgage_calculator` tool. Using that tool for a $400,000 loan
-              at 6.5% interest over 30 years, the calculated monthly payment is $2,528.27.
+          - text: The current exchange rate from USD to EUR is 1 USD = 0.92 EUR.
           role: model
         finishReason: STOP
         index: 0
       modelVersion: gemini-3-flash-preview
-      responseId: i2iCaY_gM9SkmtkP-7SzyQc
+      responseId: vnm5aZ36JrTRz7IPks-ogAM
       usageMetadata:
-        candidatesTokenCount: 62
-        promptTokenCount: 787
+        candidatesTokenCount: 20
+        promptTokenCount: 410
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 787
-        totalTokenCount: 849
+          tokenCount: 410
+        totalTokenCount: 430
     status:
       code: 200
       message: OK

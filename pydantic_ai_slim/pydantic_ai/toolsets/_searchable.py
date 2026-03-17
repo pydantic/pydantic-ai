@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic_core import SchemaValidator, core_schema
+from pydantic import Field, TypeAdapter
+from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import ModelRetry, UserError
@@ -18,29 +19,12 @@ _DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
 
 _MAX_SEARCH_RESULTS = 10
 
-_SEARCH_TOOLS_VALIDATOR = SchemaValidator(
-    schema=core_schema.typed_dict_schema(
-        {
-            'query': core_schema.typed_dict_field(core_schema.str_schema(), required=True),
-        }
-    )
-)
 
-_SEARCH_TOOL_DEF = ToolDefinition(
-    name=_SEARCH_TOOLS_NAME,
-    description='Search for available tools by keyword. Returns matching tool names and descriptions.',
-    parameters_json_schema={
-        'type': 'object',
-        'properties': {
-            'query': {
-                'type': 'string',
-                'description': 'The search query to match against tool names and descriptions.',
-            }
-        },
-        'required': ['query'],
-        'additionalProperties': False,
-    },
-)
+class _SearchToolArgs(TypedDict):
+    query: Annotated[str, Field(description='A keyword to match against tool names and descriptions.')]
+
+
+_search_tool_args_ta = TypeAdapter(_SearchToolArgs)
 
 
 @dataclass(kw_only=True)
@@ -99,11 +83,21 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
             for name, tool in deferred.items()
         ]
 
+        search_tool_def = ToolDefinition(
+            name=_SEARCH_TOOLS_NAME,
+            description=(
+                f'There are {len(deferred)} additional tools not yet visible to you.'
+                ' When you need a capability not provided by your current tools,'
+                ' search here by keyword to discover and activate relevant tools.'
+            ),
+            parameters_json_schema=_search_tool_args_ta.json_schema(),
+        )
+
         search_tool = _SearchTool(
             toolset=self,
-            tool_def=_SEARCH_TOOL_DEF,
+            tool_def=search_tool_def,
             max_retries=1,
-            args_validator=_SEARCH_TOOLS_VALIDATOR,
+            args_validator=_search_tool_args_ta.validator,  # pyright: ignore[reportArgumentType]
             deferred_tools=deferred,
             search_index=search_index,
         )
@@ -140,31 +134,29 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
     async def _search_tools(self, tool_args: dict[str, Any], search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
-        """Search for tools matching the query."""
+        """Search for tools matching the query.
+
+        Splits the query into individual terms and matches any term against
+        tool names and descriptions. This handles natural multi-word queries
+        like "exchange rate currency" matching a tool named "get_exchange_rate".
+        """
         query = tool_args['query']
         if not query:
             raise ModelRetry('Please provide a search query.')
 
-        query_lower = query.lower()
+        terms = query.lower().split()
 
         matches: list[dict[str, str | None]] = []
         for entry in search_tool.search_index:
-            name_match = query_lower in entry.name_lower
-            desc_match = query_lower in entry.description_lower if entry.description_lower else False
-
-            if name_match or desc_match:
+            searchable = entry.name_lower + (' ' + entry.description_lower if entry.description_lower else '')
+            if any(term in searchable for term in terms):
                 matches.append({'name': entry.name, 'description': entry.description})
                 if len(matches) >= _MAX_SEARCH_RESULTS:
                     break
 
-        if matches:
-            message = f"Found {len(matches)} tool(s) matching '{query}'"
-        else:
-            message = f"No tools found matching '{query}'"
-
         tool_names = [match['name'] for match in matches]
 
         return ToolReturn(
-            return_value={'message': message, 'tools': matches},
+            return_value=matches,
             metadata={_DISCOVERED_TOOLS_METADATA_KEY: tool_names},
         )

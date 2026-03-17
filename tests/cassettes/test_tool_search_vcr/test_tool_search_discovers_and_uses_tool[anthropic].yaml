@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '878'
+      - '829'
       content-type:
       - application/json
       host:
@@ -18,8 +18,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Use search_tools to search for "mortgage", then use the mortgage_calculator tool to calculate the monthly
-            payment for a $400,000 loan at 6.5% interest for 30 years.
+        - text: What is the current exchange rate from USD to EUR?
           type: text
         role: user
       model: claude-sonnet-4-5
@@ -27,11 +26,12 @@ interactions:
       tool_choice:
         type: auto
       tools:
-      - description: Search for available tools by keyword. Returns matching tool names and descriptions.
+      - description: There are 3 additional tools available but not yet loaded. Use this tool to search for them by keyword.
+          Matching tools will be made available for you to call.
         input_schema:
           properties:
             query:
-              description: The search query to match against tool names and descriptions.
+              description: A keyword to match against tool names and descriptions.
               type: string
           required:
           - query
@@ -53,25 +53,31 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '636'
+      - '701'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      server-timing:
+      - proxy;dur=4944
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       content:
-      - text: I'll help you search for mortgage tools and then calculate the monthly payment.
+      - text: I'll search for a tool that can help with currency exchange rates.
         type: text
-      - id: toolu_01PkrswL8gAqbJVT4oaWTPCU
+      - caller:
+          type: direct
+        id: toolu_01TPu5AsVNgTdNroE9yQXYxZ
         input:
-          query: mortgage
+          query: exchange rate currency
         name: search_tools
         type: tool_use
-      id: msg_016N7ohDUpcLS397rXi8T628
+      id: msg_01Ted72CDfzexa93KMjXEBtp
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -83,8 +89,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 684
-        output_tokens: 69
+        inference_geo: not_available
+        input_tokens: 672
+        output_tokens: 70
         service_tier: standard
     status:
       code: 200
@@ -98,7 +105,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1817'
+      - '1652'
       content-type:
       - application/json
       host:
@@ -108,24 +115,22 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Use search_tools to search for "mortgage", then use the mortgage_calculator tool to calculate the monthly
-            payment for a $400,000 loan at 6.5% interest for 30 years.
+        - text: What is the current exchange rate from USD to EUR?
           type: text
         role: user
       - content:
-        - text: I'll help you search for mortgage tools and then calculate the monthly payment.
+        - text: I'll search for a tool that can help with currency exchange rates.
           type: text
-        - id: toolu_01PkrswL8gAqbJVT4oaWTPCU
+        - id: toolu_01TPu5AsVNgTdNroE9yQXYxZ
           input:
-            query: mortgage
+            query: exchange rate currency
           name: search_tools
           type: tool_use
         role: assistant
       - content:
-        - content: '{"message":"Found 1 tool(s) matching ''mortgage''","tools":[{"name":"mortgage_calculator","description":"Mortgage
-            calculator - calculate monthly mortgage payment for a home loan."}]}'
+        - content: '[{"name":"get_exchange_rate","description":"Look up the current exchange rate between two currencies."}]'
           is_error: false
-          tool_use_id: toolu_01PkrswL8gAqbJVT4oaWTPCU
+          tool_use_id: toolu_01TPu5AsVNgTdNroE9yQXYxZ
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -133,11 +138,12 @@ interactions:
       tool_choice:
         type: auto
       tools:
-      - description: Search for available tools by keyword. Returns matching tool names and descriptions.
+      - description: There are 3 additional tools available but not yet loaded. Use this tool to search for them by keyword.
+          Matching tools will be made available for you to call.
         input_schema:
           properties:
             query:
-              description: The search query to match against tool names and descriptions.
+              description: A keyword to match against tool names and descriptions.
               type: string
           required:
           - query
@@ -153,49 +159,49 @@ interactions:
           - city
           type: object
         name: get_weather
-      - description: Mortgage calculator - calculate monthly mortgage payment for a home loan.
+      - description: Look up the current exchange rate between two currencies.
         input_schema:
           additionalProperties: false
           properties:
-            principal:
-              type: number
-            rate:
-              type: number
-            years:
-              type: integer
+            from_currency:
+              type: string
+            to_currency:
+              type: string
           required:
-          - principal
-          - rate
-          - years
+          - from_currency
+          - to_currency
           type: object
-        name: mortgage_calculator
+        name: get_exchange_rate
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '700'
+      - '621'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      server-timing:
+      - proxy;dur=2088
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       content:
-      - text: 'Great! The search found the mortgage_calculator tool. Now let me calculate the monthly payment for your loan:'
-        type: text
-      - id: toolu_01J2KsNN2afqMiUJmNaX8hoQ
+      - caller:
+          type: direct
+        id: toolu_01N467abxabeAHTRmZAp8VR1
         input:
-          principal: 400000
-          rate: 6.5
-          years: 30
-        name: mortgage_calculator
+          from_currency: USD
+          to_currency: EUR
+        name: get_exchange_rate
         type: tool_use
-      id: msg_016X7RSMyWa5XYng45ZZ9VcC
+      id: msg_01D11W8NP6G2R5TxpixiYjD2
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -207,8 +213,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 902
-        output_tokens: 113
+        inference_geo: not_available
+        input_tokens: 864
+        output_tokens: 76
         service_tier: standard
     status:
       code: 200
@@ -222,7 +229,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2307'
+      - '1991'
       content-type:
       - application/json
       host:
@@ -232,41 +239,36 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - text: Use search_tools to search for "mortgage", then use the mortgage_calculator tool to calculate the monthly
-            payment for a $400,000 loan at 6.5% interest for 30 years.
+        - text: What is the current exchange rate from USD to EUR?
           type: text
         role: user
       - content:
-        - text: I'll help you search for mortgage tools and then calculate the monthly payment.
+        - text: I'll search for a tool that can help with currency exchange rates.
           type: text
-        - id: toolu_01PkrswL8gAqbJVT4oaWTPCU
+        - id: toolu_01TPu5AsVNgTdNroE9yQXYxZ
           input:
-            query: mortgage
+            query: exchange rate currency
           name: search_tools
           type: tool_use
         role: assistant
       - content:
-        - content: '{"message":"Found 1 tool(s) matching ''mortgage''","tools":[{"name":"mortgage_calculator","description":"Mortgage
-            calculator - calculate monthly mortgage payment for a home loan."}]}'
+        - content: '[{"name":"get_exchange_rate","description":"Look up the current exchange rate between two currencies."}]'
           is_error: false
-          tool_use_id: toolu_01PkrswL8gAqbJVT4oaWTPCU
+          tool_use_id: toolu_01TPu5AsVNgTdNroE9yQXYxZ
           type: tool_result
         role: user
       - content:
-        - text: 'Great! The search found the mortgage_calculator tool. Now let me calculate the monthly payment for your loan:'
-          type: text
-        - id: toolu_01J2KsNN2afqMiUJmNaX8hoQ
+        - id: toolu_01N467abxabeAHTRmZAp8VR1
           input:
-            principal: 400000
-            rate: 6.5
-            years: 30
-          name: mortgage_calculator
+            from_currency: USD
+            to_currency: EUR
+          name: get_exchange_rate
           type: tool_use
         role: assistant
       - content:
-        - content: 'Monthly payment: $2528.27'
+        - content: 1 USD = 0.92 EUR
           is_error: false
-          tool_use_id: toolu_01J2KsNN2afqMiUJmNaX8hoQ
+          tool_use_id: toolu_01N467abxabeAHTRmZAp8VR1
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -274,11 +276,12 @@ interactions:
       tool_choice:
         type: auto
       tools:
-      - description: Search for available tools by keyword. Returns matching tool names and descriptions.
+      - description: There are 3 additional tools available but not yet loaded. Use this tool to search for them by keyword.
+          Matching tools will be made available for you to call.
         input_schema:
           properties:
             query:
-              description: The search query to match against tool names and descriptions.
+              description: A keyword to match against tool names and descriptions.
               type: string
           required:
           - query
@@ -294,53 +297,46 @@ interactions:
           - city
           type: object
         name: get_weather
-      - description: Mortgage calculator - calculate monthly mortgage payment for a home loan.
+      - description: Look up the current exchange rate between two currencies.
         input_schema:
           additionalProperties: false
           properties:
-            principal:
-              type: number
-            rate:
-              type: number
-            years:
-              type: integer
+            from_currency:
+              type: string
+            to_currency:
+              type: string
           required:
-          - principal
-          - rate
-          - years
+          - from_currency
+          - to_currency
           type: object
-        name: mortgage_calculator
+        name: get_exchange_rate
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '989'
+      - '599'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      server-timing:
+      - proxy;dur=1667
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       content:
       - text: |-
-          Perfect! Here are the results:
+          The current exchange rate from USD to EUR is **1 USD = 0.92 EUR**.
 
-          **Search Results:** Found 1 tool matching "mortgage" - the mortgage_calculator tool for calculating monthly mortgage payments.
-
-          **Mortgage Calculation:**
-          - Loan Amount (Principal): $400,000
-          - Interest Rate: 6.5%
-          - Loan Term: 30 years
-          - **Monthly Payment: $2,528.27**
-
-          This monthly payment includes principal and interest. Keep in mind that your actual monthly housing payment may be higher when you add property taxes, homeowners insurance, and potentially PMI (Private Mortgage Insurance) if applicable.
+          This means that 1 US Dollar is equivalent to 0.92 Euros.
         type: text
-      id: msg_015ZQgNyW9KUz7sD8sVUTfUH
+      id: msg_01L9itAxUHXdoyFpN1G8mChz
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -352,8 +348,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 1035
-        output_tokens: 132
+        inference_geo: not_available
+        input_tokens: 962
+        output_tokens: 44
         service_tier: standard
     status:
       code: 200
