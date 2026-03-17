@@ -14,7 +14,7 @@ import pytest
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+    from pydantic_ai.profiles.openai import OpenAIModelProfile, OpenAIJsonSchemaTransformer, openai_model_profile
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -67,6 +67,32 @@ def test_sampling_params_support(case: SamplingParamsCase):
     assert isinstance(profile, OpenAIModelProfile)
     assert profile.openai_supports_reasoning is case.supports_reasoning
     assert profile.openai_supports_reasoning_effort_none is case.supports_reasoning_effort_none
+
+
+
+
+def test_bare_list_items_sets_strict_incompatible():
+    """Array with empty items (bare list) is not strict-compatible.
+
+    OpenAI strict mode requires items schema to have a 'type' key.
+    Bare list (e.g. def foo(items: list)) produces items: {} which is invalid.
+    See https://github.com/pydantic/pydantic-ai/issues/4425
+    """
+    schema = {
+        'properties': {
+            'items': {
+                'items': {},
+                'title': 'Items',
+                'type': 'array',
+            },
+        },
+        'required': ['items'],
+        'title': 'Test',
+        'type': 'object',
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is False
 
 
 class TestEncryptedReasoningContent:
