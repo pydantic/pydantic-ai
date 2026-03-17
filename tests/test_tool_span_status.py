@@ -2,19 +2,26 @@
 from __future__ import annotations as _annotations
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from opentelemetry.trace import StatusCode
 from pydantic import BaseModel
-
 from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.result import DeferredToolRequests
 
+from .conftest import try_import
+
+with try_import() as otel_installed:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.trace import StatusCode
+
+pytestmark = [
+    pytest.mark.skipif(not otel_installed(), reason='opentelemetry-sdk not installed'),
+    pytest.mark.anyio,
+]
 
 @pytest.fixture
 def otel_setup():
@@ -24,7 +31,6 @@ def otel_setup():
     provider.add_span_processor(processor)
     return provider, exporter
 
-@pytest.mark.anyio
 async def test_tool_retry_span_status(otel_setup):
     provider, exporter = otel_setup
 
@@ -50,7 +56,6 @@ async def test_tool_retry_span_status(otel_setup):
     assert len(tool_spans) > 0
     for span in tool_spans:
         assert span.status.status_code != StatusCode.ERROR
-        # Also ensure no exception events are recorded for ModelRetry/ToolRetryError
         for event in span.events:
             if event.name == 'exception':
                 exc_type = event.attributes.get('exception.type')
@@ -59,7 +64,6 @@ async def test_tool_retry_span_status(otel_setup):
 class MyOutput(BaseModel):
     x: int
 
-@pytest.mark.anyio
 async def test_output_function_retry_span_status(otel_setup):
     provider, exporter = otel_setup
 
@@ -91,7 +95,6 @@ async def test_output_function_retry_span_status(otel_setup):
             assert span.status.status_code != StatusCode.ERROR
     assert found
 
-@pytest.mark.anyio
 async def test_tool_deferred_span_status(otel_setup):
     provider, exporter = otel_setup
 
@@ -115,7 +118,6 @@ async def test_tool_deferred_span_status(otel_setup):
     for span in tool_spans:
         assert span.status.status_code != StatusCode.ERROR
 
-@pytest.mark.anyio
 async def test_tool_approval_span_status(otel_setup):
     provider, exporter = otel_setup
 
