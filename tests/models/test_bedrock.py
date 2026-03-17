@@ -255,7 +255,7 @@ async def test_bedrock_inference_profile_converse(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
 ):
-    inference_profile_arn = 'arn:aws:bedrock:us-east-1:353014496775:application-inference-profile/mi1dadi0g15f'
+    inference_profile_arn = 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/mi1dadi0g15f'
     settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=bedrock_provider, settings=settings)
     agent = Agent(model)
@@ -291,7 +291,7 @@ async def test_bedrock_inference_profile_count_tokens(
     # count_tokens only uses model_name (not the inference profile), so the ARN doesn't
     # matter here. Claude Sonnet is used because it's one of the few Bedrock models that
     # supports the count_tokens API.
-    inference_profile_arn = 'arn:aws:bedrock:us-east-1:353014496775:application-inference-profile/mi1dadi0g15f'
+    inference_profile_arn = 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/mi1dadi0g15f'
     settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
     model = BedrockConverseModel(
         'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
