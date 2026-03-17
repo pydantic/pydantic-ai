@@ -30,6 +30,12 @@ from .usage import RequestUsage
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
 
+# Key used to wrap malformed tool-call arguments so they can still be round-tripped
+# through a model API without crashing.  The specific string 'INVALID_JSON' is the
+# value recommended by the Anthropic docs for this situation:
+# https://docs.anthropic.com/en/docs/build-with-claude/tool-use/overview#handling-tool-use-errors
+INVALID_JSON_KEY = 'INVALID_JSON'
+
 _mime_types = MimeTypes()
 # Replicate what is being done in `mimetypes.init()`
 _mime_types.read_windows_registry()
@@ -1557,18 +1563,31 @@ class BaseToolCallPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
-    def args_as_dict(self) -> dict[str, Any]:
+    def args_as_dict(self, *, raise_if_invalid: bool = False) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
 
         This is just for convenience with models that require dicts as input.
+
+        Args:
+            raise_if_invalid: If `True`, a `ValueError` or `AssertionError`
+                caused by malformed JSON in `args` will be re-raised.  When
+                `False` (the default), malformed JSON is handled gracefully by
+                returning `{'INVALID_JSON': '<raw args>'}` so that the value
+                can still be sent to a model API (e.g. during a retry flow)
+                without crashing.
         """
         if not self.args:
             return {}
         if isinstance(self.args, dict):
             return self.args
-        args = pydantic_core.from_json(self.args)
-        assert isinstance(args, dict), 'args should be a dict'
-        return cast(dict[str, Any], args)
+        try:
+            args = pydantic_core.from_json(self.args)
+            assert isinstance(args, dict), 'args should be a dict'
+            return cast(dict[str, Any], args)
+        except (ValueError, AssertionError):
+            if raise_if_invalid:
+                raise
+            return {INVALID_JSON_KEY: self.args}
 
     def args_as_json_str(self) -> str:
         """Return the arguments as a JSON string.
