@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import pytest
-from dirty_equals import IsInt, IsJson, IsList
+from dirty_equals import IsJson, IsList
 from pydantic import BaseModel
 from typing_extensions import NotRequired, Self, TypedDict
 
@@ -23,7 +23,7 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsInt, IsStr
 
 try:
     import logfire
@@ -110,7 +110,7 @@ def test_logfire(
 
     toolset = FunctionToolset()
 
-    @toolset.tool
+    @toolset.tool_plain
     async def my_ret(x: int) -> str:
         return str(x + 1)
 
@@ -144,25 +144,14 @@ def test_logfire(
                         {'id': 2, 'name': 'chat test', 'message': 'chat test'},
                         {
                             'id': 3,
-                            'name': 'running tools',
-                            'message': 'running 1 tool',
+                            'name': 'execute_tool my_ret',
+                            'message': 'running tool: my_ret',
                             'children': [
-                                {
-                                    'id': 4,
-                                    'name': 'execute_tool my_ret',
-                                    'message': 'running tool: my_ret',
-                                    'children': [
-                                        {
-                                            'id': 5,
-                                            'name': 'toolset_call_tool {name}',
-                                            'message': 'toolset_call_tool my_ret',
-                                        }
-                                    ],
-                                }
+                                {'id': 4, 'name': 'toolset_call_tool {name}', 'message': 'toolset_call_tool my_ret'}
                             ],
                         },
-                        {'id': 6, 'name': 'chat test', 'message': 'chat test'},
-                        {'id': 7, 'name': 'toolset_exit', 'message': 'toolset_exit'},
+                        {'id': 5, 'name': 'chat test', 'message': 'chat test'},
+                        {'id': 6, 'name': 'toolset_exit', 'message': 'toolset_exit'},
                     ],
                 }
             ]
@@ -179,25 +168,14 @@ def test_logfire(
                         {'id': 2, 'name': 'chat test', 'message': 'chat test'},
                         {
                             'id': 3,
-                            'name': 'running tools',
-                            'message': 'running 1 tool',
+                            'name': 'running tool',
+                            'message': 'running tool: my_ret',
                             'children': [
-                                {
-                                    'id': 4,
-                                    'name': 'running tool',
-                                    'message': 'running tool: my_ret',
-                                    'children': [
-                                        {
-                                            'id': 5,
-                                            'name': 'toolset_call_tool {name}',
-                                            'message': 'toolset_call_tool my_ret',
-                                        }
-                                    ],
-                                }
+                                {'id': 4, 'name': 'toolset_call_tool {name}', 'message': 'toolset_call_tool my_ret'}
                             ],
                         },
-                        {'id': 6, 'name': 'chat test', 'message': 'chat test'},
-                        {'id': 7, 'name': 'toolset_exit', 'message': 'toolset_exit'},
+                        {'id': 5, 'name': 'chat test', 'message': 'chat test'},
+                        {'id': 6, 'name': 'toolset_exit', 'message': 'toolset_exit'},
                     ],
                 }
             ]
@@ -217,25 +195,14 @@ def test_logfire(
                             {'id': 2, 'name': 'chat test', 'message': 'chat test'},
                             {
                                 'id': 3,
-                                'name': 'running tools',
-                                'message': 'running 1 tool',
+                                'name': 'running tool',
+                                'message': 'running tool: my_ret',
                                 'children': [
-                                    {
-                                        'id': 4,
-                                        'name': 'running tool',
-                                        'message': 'running tool: my_ret',
-                                        'children': [
-                                            {
-                                                'id': 5,
-                                                'name': 'toolset_call_tool {name}',
-                                                'message': 'toolset_call_tool my_ret',
-                                            }
-                                        ],
-                                    }
+                                    {'id': 4, 'name': 'toolset_call_tool {name}', 'message': 'toolset_call_tool my_ret'}
                                 ],
                             },
-                            {'id': 6, 'name': 'chat test', 'message': 'chat test'},
-                            {'id': 7, 'name': 'toolset_exit', 'message': 'toolset_exit'},
+                            {'id': 5, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 6, 'name': 'toolset_exit', 'message': 'toolset_exit'},
                         ],
                     }
                 ]
@@ -252,25 +219,14 @@ def test_logfire(
                             {'id': 2, 'name': 'chat test', 'message': 'chat test'},
                             {
                                 'id': 3,
-                                'name': 'running tools',
-                                'message': 'running 1 tool',
+                                'name': 'execute_tool my_ret',
+                                'message': 'running tool: my_ret',
                                 'children': [
-                                    {
-                                        'id': 4,
-                                        'name': 'execute_tool my_ret',
-                                        'message': 'running tool: my_ret',
-                                        'children': [
-                                            {
-                                                'id': 5,
-                                                'name': 'toolset_call_tool {name}',
-                                                'message': 'toolset_call_tool my_ret',
-                                            }
-                                        ],
-                                    }
+                                    {'id': 4, 'name': 'toolset_call_tool {name}', 'message': 'toolset_call_tool my_ret'}
                                 ],
                             },
-                            {'id': 6, 'name': 'chat test', 'message': 'chat test'},
-                            {'id': 7, 'name': 'toolset_exit', 'message': 'toolset_exit'},
+                            {'id': 5, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 6, 'name': 'toolset_exit', 'message': 'toolset_exit'},
                         ],
                     }
                 ]
@@ -2681,13 +2637,8 @@ def test_dynamic_function_instructions_in_agent_run_span(
                         'message': 'my_agent run',
                         'children': [
                             {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 2,
-                                'name': 'running tools',
-                                'message': 'running 1 tool',
-                                'children': [{'id': 3, 'name': 'running tool', 'message': 'running tool: my_tool'}],
-                            },
-                            {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 2, 'name': 'running tool', 'message': 'running tool: my_tool'},
+                            {'id': 3, 'name': 'chat test', 'message': 'chat test'},
                         ],
                     }
                 ]
@@ -2701,15 +2652,8 @@ def test_dynamic_function_instructions_in_agent_run_span(
                         'message': 'my_agent run',
                         'children': [
                             {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                            {
-                                'id': 2,
-                                'name': 'running tools',
-                                'message': 'running 1 tool',
-                                'children': [
-                                    {'id': 3, 'name': 'execute_tool my_tool', 'message': 'running tool: my_tool'}
-                                ],
-                            },
-                            {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                            {'id': 2, 'name': 'execute_tool my_tool', 'message': 'running tool: my_tool'},
+                            {'id': 3, 'name': 'chat test', 'message': 'chat test'},
                         ],
                     }
                 ]
@@ -3247,3 +3191,37 @@ async def test_run_stream(
                 ]
             )
         )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_agent_description(capfire: CaptureLogfire) -> None:
+    agent = Agent(
+        model=TestModel(),
+        name='my_agent',
+        description='An agent that greets users',
+        instrument=True,
+    )
+    assert agent.description == 'An agent that greets users'
+
+    await agent.run('Hello')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_run_span = next(s for s in spans if s['name'] == 'agent run')
+    assert agent_run_span['attributes']['gen_ai.agent.description'] == 'An agent that greets users'
+
+    agent.description = 'Updated description'
+    assert agent.description == 'Updated description'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_agent_description_absent_when_none(capfire: CaptureLogfire) -> None:
+    agent = Agent(model=TestModel(), name='my_agent', instrument=True)
+    assert agent.description is None
+
+    await agent.run('Hello')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_run_span = next(s for s in spans if s['name'] == 'agent run')
+    assert 'gen_ai.agent.description' not in agent_run_span['attributes']

@@ -1,6 +1,7 @@
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from pydantic import TypeAdapter
@@ -19,6 +20,7 @@ from pydantic_ai import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    MultiModalContent,
     RequestUsage,
     TextPart,
     ThinkingPart,
@@ -29,7 +31,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.messages import INVALID_JSON_KEY
+from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
@@ -1158,6 +1160,187 @@ def test_tool_return_content_nested_multimodal():
     assert reloaded_content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
 
 
+def test_multi_modal_content_types_matches_union():
+    """Validate that MULTI_MODAL_CONTENT_TYPES matches the MultiModalContent union members,
+    and that is_multi_modal_content correctly narrows types."""
+    union_members = set(get_args(get_args(MultiModalContent)[0]))
+    assert set(MULTI_MODAL_CONTENT_TYPES) == union_members
+
+    # Positive cases: each multimodal type is recognized
+    assert is_multi_modal_content(ImageUrl(url='https://example.com/image.png'))
+    assert is_multi_modal_content(AudioUrl(url='https://example.com/audio.mp3'))
+    assert is_multi_modal_content(DocumentUrl(url='https://example.com/doc.pdf'))
+    assert is_multi_modal_content(VideoUrl(url='https://example.com/video.mp4'))
+    assert is_multi_modal_content(BinaryContent(data=b'\x89PNG', media_type='image/png'))
+
+    # Negative cases: non-multimodal types
+    assert not is_multi_modal_content('a string')
+    assert not is_multi_modal_content({'key': 'value'})
+    assert not is_multi_modal_content(42)
+
+
+def test_tool_return_part_binary_content_serialization():
+    png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
+    binary_content = BinaryContent(png_data, media_type='image/png')
+    tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
+    assert tool_return.model_response_object() == snapshot({})
+
+
+def test_tool_return_part_list_structure_preserved():
+    single_dict = {'result': 'found'}
+    single_item_list = [{'result': 'found'}]
+    multi_item_list = [{'a': 1}, {'b': 2}]
+
+    tool_return_dict = ToolReturnPart(tool_name='test', content=single_dict, tool_call_id='tc1')
+    assert tool_return_dict.model_response_object() == snapshot({'result': 'found'})
+    assert tool_return_dict.model_response_str() == snapshot('{"result":"found"}')
+
+    tool_return_single_list = ToolReturnPart(tool_name='test', content=single_item_list, tool_call_id='tc2')
+    assert tool_return_single_list.model_response_object() == snapshot({'return_value': [{'result': 'found'}]})
+    assert tool_return_single_list.model_response_str() == snapshot('[{"result":"found"}]')
+
+    tool_return_multi_list = ToolReturnPart(tool_name='test', content=multi_item_list, tool_call_id='tc3')
+    assert tool_return_multi_list.model_response_object() == snapshot({'return_value': [{'a': 1}, {'b': 2}]})
+    assert tool_return_multi_list.model_response_str() == snapshot('[{"a":1},{"b":2}]')
+
+
+def test_tool_return_part_content_items():
+    img = ImageUrl(url='https://example.com/img.png')
+    binary = BinaryContent(data=b'\x89PNG', media_type='image/png')
+
+    p_str = ToolReturnPart(tool_name='t', content='hello', tool_call_id='c1')
+    assert p_str.content_items() == snapshot(['hello'])
+    assert p_str.content_items(mode='raw') == snapshot(['hello'])
+    assert p_str.content_items(mode='str') == snapshot(['hello'])
+    assert p_str.content_items(mode='jsonable') == snapshot(['hello'])
+
+    p_dict = ToolReturnPart(tool_name='t', content={'key': 'val'}, tool_call_id='c2')
+    assert p_dict.content_items() == snapshot([{'key': 'val'}])
+    assert p_dict.content_items(mode='str') == snapshot(['{"key":"val"}'])
+    assert p_dict.content_items(mode='jsonable') == snapshot([{'key': 'val'}])
+
+    p_int = ToolReturnPart(tool_name='t', content=42, tool_call_id='c3')
+    assert p_int.content_items() == snapshot([42])
+    assert p_int.content_items(mode='str') == snapshot(['42'])
+    assert p_int.content_items(mode='jsonable') == snapshot([42])
+
+    p_file = ToolReturnPart(tool_name='t', content=img, tool_call_id='c4')
+    assert p_file.content_items(mode='str') == snapshot([ImageUrl(url='https://example.com/img.png')])
+    assert p_file.content_items(mode='jsonable') == snapshot([ImageUrl(url='https://example.com/img.png')])
+
+    p_mixed = ToolReturnPart(tool_name='t', content=['text result', img, binary], tool_call_id='c5')
+    assert p_mixed.content_items() == snapshot(
+        [
+            'text result',
+            ImageUrl(url='https://example.com/img.png'),
+            BinaryContent(data=b'\x89PNG', media_type='image/png'),
+        ]
+    )
+    assert p_mixed.content_items(mode='str') == snapshot(
+        [
+            'text result',
+            ImageUrl(url='https://example.com/img.png'),
+            BinaryContent(data=b'\x89PNG', media_type='image/png'),
+        ]
+    )
+    assert p_mixed.content_items(mode='jsonable') == snapshot(
+        [
+            'text result',
+            ImageUrl(url='https://example.com/img.png'),
+            BinaryContent(data=b'\x89PNG', media_type='image/png'),
+        ]
+    )
+
+    p_list = ToolReturnPart(tool_name='t', content=[{'a': 1}, {'b': 2}], tool_call_id='c6')
+    assert p_list.content_items(mode='str') == snapshot(['{"a":1}', '{"b":2}'])
+    assert p_list.content_items(mode='jsonable') == snapshot([{'a': 1}, {'b': 2}])
+
+
+def test_tool_return_part_files_property():
+    img = ImageUrl(url='https://example.com/img.png')
+    audio = AudioUrl(url='https://example.com/audio.mp3')
+    binary = BinaryContent(data=b'\x89PNG', media_type='image/png')
+
+    p_str = ToolReturnPart(tool_name='t', content='hello', tool_call_id='c1')
+    assert p_str.files == snapshot([])
+
+    p_dict = ToolReturnPart(tool_name='t', content={'key': 'val'}, tool_call_id='c2')
+    assert p_dict.files == snapshot([])
+
+    p_file = ToolReturnPart(tool_name='t', content=img, tool_call_id='c3')
+    assert p_file.files == snapshot([ImageUrl(url='https://example.com/img.png')])
+
+    p_mixed = ToolReturnPart(tool_name='t', content=['text', img, {'data': 1}, audio, binary], tool_call_id='c4')
+    assert p_mixed.files == snapshot(
+        [
+            ImageUrl(url='https://example.com/img.png'),
+            AudioUrl(url='https://example.com/audio.mp3'),
+            BinaryContent(data=b'\x89PNG', media_type='image/png'),
+        ]
+    )
+
+    p_no_files = ToolReturnPart(tool_name='t', content=['a', 'b'], tool_call_id='c5')
+    assert p_no_files.files == snapshot([])
+
+
+def test_tool_return_part_response_methods_with_files():
+    img = ImageUrl(url='https://example.com/img.png')
+
+    p_text_file = ToolReturnPart(tool_name='t', content=['hello', img], tool_call_id='c1')
+    assert p_text_file.model_response_str() == snapshot('hello')
+    assert p_text_file.model_response_object() == snapshot({'return_value': 'hello'})
+
+    p_dict_file = ToolReturnPart(tool_name='t', content=[{'key': 'val'}, img], tool_call_id='c2')
+    assert p_dict_file.model_response_str() == snapshot('{"key":"val"}')
+    assert p_dict_file.model_response_object() == snapshot({'key': 'val'})
+
+    p_single_list = ToolReturnPart(tool_name='t', content=['hello'], tool_call_id='c3')
+    assert p_single_list.model_response_str() == snapshot('["hello"]')
+    assert p_single_list.model_response_object() == snapshot({'return_value': ['hello']})
+
+    p_file_only = ToolReturnPart(tool_name='t', content=img, tool_call_id='c4')
+    assert p_file_only.model_response_str() == snapshot('')
+    assert p_file_only.model_response_object() == snapshot({})
+
+    p_multi = ToolReturnPart(tool_name='t', content=['a', 'b', img], tool_call_id='c5')
+    assert p_multi.model_response_str() == snapshot('["a","b"]')
+    assert p_multi.model_response_object() == snapshot({'return_value': ['a', 'b']})
+
+
+def test_tool_return_part_model_response_str_and_user_content():
+    img = ImageUrl(url='https://example.com/img.png')
+
+    # Scalar string, no files → fast path returns model_response_str
+    p_no_files = ToolReturnPart(tool_name='t', content='hello', tool_call_id='c1')
+    text, user_content = p_no_files.model_response_str_and_user_content()
+    assert text == snapshot('hello')
+    assert user_content == snapshot([])
+
+    # Single-element list, no files → list structure preserved
+    p_single_list = ToolReturnPart(tool_name='t', content=['hello'], tool_call_id='c1b')
+    text, user_content = p_single_list.model_response_str_and_user_content()
+    assert text == snapshot('["hello"]')
+    assert user_content == snapshot([])
+
+    # Single text + file → scalar text, not JSON array
+    p_text_file = ToolReturnPart(tool_name='t', content=['hello', img], tool_call_id='c2')
+    text, user_content = p_text_file.model_response_str_and_user_content()
+    assert text == snapshot('["hello","See file d5a901."]')
+    assert user_content == snapshot(['This is file d5a901:', ImageUrl(url='https://example.com/img.png')])
+
+    # Multiple text items + file → JSON array preserves list structure
+    p_multi = ToolReturnPart(tool_name='t', content=['text1', img, 'text2'], tool_call_id='c3')
+    text, user_content = p_multi.model_response_str_and_user_content()
+    assert text == snapshot('["text1","See file d5a901.","text2"]')
+    assert user_content == snapshot(['This is file d5a901:', ImageUrl(url='https://example.com/img.png')])
+
+    # File-only content
+    p_file_only = ToolReturnPart(tool_name='t', content=img, tool_call_id='c4')
+    text, user_content = p_file_only.model_response_str_and_user_content()
+    assert text == snapshot('See file d5a901.')
+    assert user_content == snapshot(['This is file d5a901:', ImageUrl(url='https://example.com/img.png')])
+
+
 def test_args_as_dict_valid_json():
     """args_as_dict should return parsed dict for valid JSON args."""
     part = ToolCallPart(tool_name='test_tool', args='{"key": "value"}')
@@ -1178,15 +1361,29 @@ def test_args_as_dict_malformed_json_returns_invalid_json_wrapper():
     assert result == {INVALID_JSON_KEY: malformed}
 
 
+def test_args_as_dict_non_dict_json_returns_invalid_json_wrapper():
+    """args_as_dict should return INVALID_JSON wrapper for valid JSON that's not a dict."""
+    json_list = '[1, 2, 3]'
+    part = ToolCallPart(tool_name='test_tool', args=json_list)
+    assert part.args_as_dict() == {INVALID_JSON_KEY: json_list}
+
+
 def test_args_as_dict_empty_args():
     """args_as_dict should return {} when args is None/empty."""
     part = ToolCallPart(tool_name='test_tool', args=None)
     assert part.args_as_dict() == {}
 
 
-def test_args_as_dict_raise_if_invalid():
-    """args_as_dict(raise_if_invalid=True) should raise on malformed JSON."""
+def test_args_as_dict_raise_if_invalid_malformed_json():
+    """args_as_dict(raise_if_invalid=True) should raise ValueError on malformed JSON."""
     malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
     part = ToolCallPart(tool_name='test_tool', args=malformed)
     with pytest.raises(ValueError):
+        part.args_as_dict(raise_if_invalid=True)
+
+
+def test_args_as_dict_raise_if_invalid_non_dict_json():
+    """args_as_dict(raise_if_invalid=True) should raise AssertionError on non-dict JSON."""
+    part = ToolCallPart(tool_name='test_tool', args='[1, 2, 3]')
+    with pytest.raises(AssertionError):
         part.args_as_dict(raise_if_invalid=True)

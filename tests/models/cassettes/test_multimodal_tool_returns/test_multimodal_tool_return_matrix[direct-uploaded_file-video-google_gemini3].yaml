@@ -1,0 +1,308 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '370'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1598'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1930
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                type: VIDEO
+              name: get_file
+            thoughtSignature: EqsGCqgGAb4+9vuxujRauksrKxwbAwyM5ihum5Sl9zrZDMK98JcOH9KnoA2SgDfhj2CFC3Pke/xZUpgm+F9r5j3WWER0rQfwMhhI95PzM8t0GcexXU8bwF0If/KbIDgSxt5lJNGSn5G7iwcUfwBA9+2qiyT3SvijCDtt8bHwsD0lmX/yhSOOa1sK9pZ5lx1Gjq4O/nt1NBEszKjdvEjsPzebZV+3g3NDF3WQQVNuKUB19UbUVRHqtYqDgTOz6QHNNl4H1nq9miGaXRcdtgAB7/W5hCozzi/JY6xg4w5yPClyZN8h9fnvpn3suM3p5VX7FmFNQNZ/pzka+9z5EaEhY+xBPMWbTndeuk5Hlv8oH8O4V2ATaSeaEoa3dR4QKpnEKxyAJBqPo08sOBketDGntDWsgnj3HzAacPmQBnrQH/fKsq83sE7bWfSm1gICFgUIHIxReZK979gdPUwo2ByAmyo5P7Rt5auW5GPV9KhjDBDeWmdPBjD46is1V8DKFVptFSQs6931/RNFSNJaedeRd41fXFmVZn7TzFFhNBfJRj6FboTTOGzVMhSyR7m6ob2qWu5SNPiHtbTETvddPtPUuiJriY4lhDhGcP0DvP4O34J+Um0WqHO8T0wXrnhCnyeGQ0s5tBR8waWWEL3LLcDqu3cCOTycV7qAMZFLld9+UPxVkNwD8G+USF1sQEiBkWz7lf1RbbrJztepWQHfVxqQIiFdKKDUmkxU2T0sE9VKKy+irQ9lF+JMVfasFInexU/aFeaOMShu3O0f4vzcpliPzcrGQQRzA7HnW1Ubx7ZzkWSo0RGgqxa5xMmp02JrR4w0wLbTxkgSgQFlpmvigZf+RSYVNP8m8UoaKL6kYyKi/6rDP0Av57lefNdWE/Sdw38E55l/MXOT+EQOQNzMoHXBCe8onGcj20/ldQyc2dwdNJUF3/44jkvE88Lirh1y9P4fyZ1c0FCWfpqsE3Hxyf9eLoSj/7z4E5vWzVHuiJKlCmdRmYMj9WIcGHL9mQS3REA0b4EUYN0n6cA3orFt4aoXu1FfW9s0RkSn5GXzXlB3Gtc5amvElyXvjpVZhrw+EQ==
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: DJmoaeqBA57nz7IPjL3OmAc
+      usageMetadata:
+        candidatesTokenCount: 16
+        promptTokenCount: 36
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 36
+        thoughtsTokenCount: 207
+        totalTokenCount: 259
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2011'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              type: VIDEO
+            id: pyd_ai_f0806fbbae8f4507851d0c84c3ed3d8b
+            name: get_file
+          thoughtSignature: EqsGCqgGAb4-9vuxujRauksrKxwbAwyM5ihum5Sl9zrZDMK98JcOH9KnoA2SgDfhj2CFC3Pke_xZUpgm-F9r5j3WWER0rQfwMhhI95PzM8t0GcexXU8bwF0If_KbIDgSxt5lJNGSn5G7iwcUfwBA9-2qiyT3SvijCDtt8bHwsD0lmX_yhSOOa1sK9pZ5lx1Gjq4O_nt1NBEszKjdvEjsPzebZV-3g3NDF3WQQVNuKUB19UbUVRHqtYqDgTOz6QHNNl4H1nq9miGaXRcdtgAB7_W5hCozzi_JY6xg4w5yPClyZN8h9fnvpn3suM3p5VX7FmFNQNZ_pzka-9z5EaEhY-xBPMWbTndeuk5Hlv8oH8O4V2ATaSeaEoa3dR4QKpnEKxyAJBqPo08sOBketDGntDWsgnj3HzAacPmQBnrQH_fKsq83sE7bWfSm1gICFgUIHIxReZK979gdPUwo2ByAmyo5P7Rt5auW5GPV9KhjDBDeWmdPBjD46is1V8DKFVptFSQs6931_RNFSNJaedeRd41fXFmVZn7TzFFhNBfJRj6FboTTOGzVMhSyR7m6ob2qWu5SNPiHtbTETvddPtPUuiJriY4lhDhGcP0DvP4O34J-Um0WqHO8T0wXrnhCnyeGQ0s5tBR8waWWEL3LLcDqu3cCOTycV7qAMZFLld9-UPxVkNwD8G-USF1sQEiBkWz7lf1RbbrJztepWQHfVxqQIiFdKKDUmkxU2T0sE9VKKy-irQ9lF-JMVfasFInexU_aFeaOMShu3O0f4vzcpliPzcrGQQRzA7HnW1Ubx7ZzkWSo0RGgqxa5xMmp02JrR4w0wLbTxkgSgQFlpmvigZf-RSYVNP8m8UoaKL6kYyKi_6rDP0Av57lefNdWE_Sdw38E55l_MXOT-EQOQNzMoHXBCe8onGcj20_ldQyc2dwdNJUF3_44jkvE88Lirh1y9P4fyZ1c0FCWfpqsE3Hxyf9eLoSj_7z4E5vWzVHuiJKlCmdRmYMj9WIcGHL9mQS3REA0b4EUYN0n6cA3orFt4aoXu1FfW9s0RkSn5GXzXlB3Gtc5amvElyXvjpVZhrw-EQ==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_f0806fbbae8f4507851d0c84c3ed3d8b
+            name: get_file
+            response:
+              error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "extra_forbidden",
+                    "loc": [
+                      "type"
+                    ],
+                    "msg": "Extra inputs are not permitted",
+                    "input": "VIDEO"
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1297'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1577
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              name: get_file
+            thoughtSignature: EtQECtEEAb4+9vuMr1iH84s8OsWADbS9FXyeO79F20sjKzsYxVtlk1YD02cwLN3Y9luHFekoAOqR8oBvXbSt27nynDLA1BIbH0eD3I7CqSk6FjMw0QBoGQJe8w9EMgC5H20km7WPMYBec4YDJIqo6uJUeI+3fhP/Y210QmyaMpTX9XBDuPlEtRhHZv0XiUrLXCJfgUpKdsy4vXIbzl1nAYFogxhaIu4xFGm9fxATiXAHUCMNf5sEGuQoFmo5dkgNr9MsKPLqQCRKF2ARmdAlxBNpkRJlPMw173fMh3CM3dBRK1BIOekeR6pwKcyi/We0miXDGa2bmvlEw+VTY7kPlS47F31LKJLugxCdiuz90FLbQVEy6o6pIjBVFByq97lv3nSYH37GbvD0S5ChraJTu6rwfIwVHRWD07vUUVmM+4DlUELFasdTqm9PZcZiR0PFS8vQCjkrL9DDwQ2xtqdI3413sU5s9NkuKTHkN+V/+C3Wq/4mqt4kQiJqTrtAizBr/rTVGbxo2Lag9YEbSHUOWDwsvxl/oZAgMdfnJY6PvpAWU1ymiabi6f820U1LWbmEdQOQdBnXnvNaLTzjT/iPn54iSRsCyi+umBxHRPHaHOqNp6upKCtqEGCLmqF7eFzMLybMw6HrT1YB5k18lBNHsrlE4phQ5WlSEjAJLefuiR7Z38MQsS5y3v5lUI1D1sboqCi9jV0gxfiVCLzEUybNmuqBFrwZfHN6QhpCR0L400kb79w+kLgUzFUkrl2Kj/u1f2OOJCcbD2BYbAO+DmUTe+h7clX66jk=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: DZmoaeudMeXkz7IP-PnH-A4
+      usageMetadata:
+        candidatesTokenCount: 10
+        promptTokenCount: 343
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 343
+        thoughtsTokenCount: 132
+        totalTokenCount: 485
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3324'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              type: VIDEO
+            id: pyd_ai_f0806fbbae8f4507851d0c84c3ed3d8b
+            name: get_file
+          thoughtSignature: EqsGCqgGAb4-9vuxujRauksrKxwbAwyM5ihum5Sl9zrZDMK98JcOH9KnoA2SgDfhj2CFC3Pke_xZUpgm-F9r5j3WWER0rQfwMhhI95PzM8t0GcexXU8bwF0If_KbIDgSxt5lJNGSn5G7iwcUfwBA9-2qiyT3SvijCDtt8bHwsD0lmX_yhSOOa1sK9pZ5lx1Gjq4O_nt1NBEszKjdvEjsPzebZV-3g3NDF3WQQVNuKUB19UbUVRHqtYqDgTOz6QHNNl4H1nq9miGaXRcdtgAB7_W5hCozzi_JY6xg4w5yPClyZN8h9fnvpn3suM3p5VX7FmFNQNZ_pzka-9z5EaEhY-xBPMWbTndeuk5Hlv8oH8O4V2ATaSeaEoa3dR4QKpnEKxyAJBqPo08sOBketDGntDWsgnj3HzAacPmQBnrQH_fKsq83sE7bWfSm1gICFgUIHIxReZK979gdPUwo2ByAmyo5P7Rt5auW5GPV9KhjDBDeWmdPBjD46is1V8DKFVptFSQs6931_RNFSNJaedeRd41fXFmVZn7TzFFhNBfJRj6FboTTOGzVMhSyR7m6ob2qWu5SNPiHtbTETvddPtPUuiJriY4lhDhGcP0DvP4O34J-Um0WqHO8T0wXrnhCnyeGQ0s5tBR8waWWEL3LLcDqu3cCOTycV7qAMZFLld9-UPxVkNwD8G-USF1sQEiBkWz7lf1RbbrJztepWQHfVxqQIiFdKKDUmkxU2T0sE9VKKy-irQ9lF-JMVfasFInexU_aFeaOMShu3O0f4vzcpliPzcrGQQRzA7HnW1Ubx7ZzkWSo0RGgqxa5xMmp02JrR4w0wLbTxkgSgQFlpmvigZf-RSYVNP8m8UoaKL6kYyKi_6rDP0Av57lefNdWE_Sdw38E55l_MXOT-EQOQNzMoHXBCe8onGcj20_ldQyc2dwdNJUF3_44jkvE88Lirh1y9P4fyZ1c0FCWfpqsE3Hxyf9eLoSj_7z4E5vWzVHuiJKlCmdRmYMj9WIcGHL9mQS3REA0b4EUYN0n6cA3orFt4aoXu1FfW9s0RkSn5GXzXlB3Gtc5amvElyXvjpVZhrw-EQ==
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_f0806fbbae8f4507851d0c84c3ed3d8b
+            name: get_file
+            response:
+              error: |-
+                1 validation error:
+                ```json
+                [
+                  {
+                    "type": "extra_forbidden",
+                    "loc": [
+                      "type"
+                    ],
+                    "msg": "Extra inputs are not permitted",
+                    "input": "VIDEO"
+                  }
+                ]
+                ```
+
+                Fix the errors and try again.
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: pyd_ai_3a305efd55804c148d32c6aee6cb845b
+            name: get_file
+          thoughtSignature: EtQECtEEAb4-9vuMr1iH84s8OsWADbS9FXyeO79F20sjKzsYxVtlk1YD02cwLN3Y9luHFekoAOqR8oBvXbSt27nynDLA1BIbH0eD3I7CqSk6FjMw0QBoGQJe8w9EMgC5H20km7WPMYBec4YDJIqo6uJUeI-3fhP_Y210QmyaMpTX9XBDuPlEtRhHZv0XiUrLXCJfgUpKdsy4vXIbzl1nAYFogxhaIu4xFGm9fxATiXAHUCMNf5sEGuQoFmo5dkgNr9MsKPLqQCRKF2ARmdAlxBNpkRJlPMw173fMh3CM3dBRK1BIOekeR6pwKcyi_We0miXDGa2bmvlEw-VTY7kPlS47F31LKJLugxCdiuz90FLbQVEy6o6pIjBVFByq97lv3nSYH37GbvD0S5ChraJTu6rwfIwVHRWD07vUUVmM-4DlUELFasdTqm9PZcZiR0PFS8vQCjkrL9DDwQ2xtqdI3413sU5s9NkuKTHkN-V_-C3Wq_4mqt4kQiJqTrtAizBr_rTVGbxo2Lag9YEbSHUOWDwsvxl_oZAgMdfnJY6PvpAWU1ymiabi6f820U1LWbmEdQOQdBnXnvNaLTzjT_iPn54iSRsCyi-umBxHRPHaHOqNp6upKCtqEGCLmqF7eFzMLybMw6HrT1YB5k18lBNHsrlE4phQ5WlSEjAJLefuiR7Z38MQsS5y3v5lUI1D1sboqCi9jV0gxfiVCLzEUybNmuqBFrwZfHN6QhpCR0L400kb79w-kLgUzFUkrl2Kj_u1f2OOJCcbD2BYbAO-DmUTe-h7clX66jk=
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_3a305efd55804c148d32c6aee6cb845b
+            name: get_file
+            response:
+              output:
+              - {}
+              - See file 468a13.
+        role: user
+      - parts:
+        - text: 'This is file 468a13:'
+        - fileData:
+            fileUri: https://generativelanguage.googleapis.com/v1beta/files/nvp2l539zsmd
+            mimeType: video/mp4
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      tools:
+      - functionDeclarations:
+        - description: ''
+          name: get_file
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '4624'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=5498
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: "This video features a professional camera setup in a desert landscape during the golden hour. \n\nA field
+              monitor, mounted on a camera and tripod, is the central focus. It displays a live view of a narrow, rocky canyon,
+              with one side of the canyon walls brilliantly lit by the setting (or rising) sun. The actual environment surrounding
+              the camera is a similar desert scene, which is softly blurred in the background, showing large rock formations
+              bathed in a warm, orange glow. The scene conveys a sense of cinematic filmmaking or professional landscape photography
+              in a dramatic natural setting."
+            thoughtSignature: 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
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: E5moaan8HtWGz7IPzuiM4As
+      usageMetadata:
+        candidatesTokenCount: 114
+        promptTokenCount: 246
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 182
+        - modality: VIDEO
+          tokenCount: 64
+        thoughtsTokenCount: 615
+        totalTokenCount: 975
+    status:
+      code: 200
+      message: OK
+version: 1
