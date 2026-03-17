@@ -286,49 +286,25 @@ agent = Agent(model)
 
 ## Using AWS Application Inference Profiles
 
-AWS Bedrock supports [custom application inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html) for cost tracking and resource management. Set [`bedrock_inference_profile`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_inference_profile] to route requests through an inference profile while keeping the base model name for profile detection and token counting:
+AWS Bedrock supports [custom application inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html) for cost tracking and resource management. Set [`bedrock_inference_profile`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_inference_profile] to route requests through an inference profile while keeping the base model name for detecting model capabilities:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+from pydantic_ai.models.bedrock import BedrockConverseModel
 from pydantic_ai.providers.bedrock import BedrockProvider
 
 provider = BedrockProvider(region_name='us-east-2')
 
-settings: BedrockModelSettings = {
-    'bedrock_inference_profile': 'arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/my-profile',
-}
-
 model = BedrockConverseModel(
     'us.anthropic.claude-opus-4-5-20251101-v1:0',
     provider=provider,
-    settings=settings,
+    settings={
+        'bedrock_inference_profile': 'arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/my-profile',
+    },
 )
 
 agent = Agent(model)
 ```
-
-This approach keeps the base model name available for features that don't support ARNs, like [`count_tokens`](https://docs.aws.amazon.com/bedrock/latest/userguide/count-tokens.html).
-
-!!! note
-    As an alternative to `bedrock_inference_profile`, you can pass the inference profile ARN directly as the `model_name` and use the `profile` parameter for feature detection. However, this approach does not support `count_tokens` since the ARN is used as-is for that endpoint.
-
-    ```python
-    from pydantic_ai import Agent
-    from pydantic_ai.models.bedrock import BedrockConverseModel
-    from pydantic_ai.providers.bedrock import BedrockProvider
-
-    provider = BedrockProvider(region_name='us-east-2')
-    profile = provider.model_profile('us.anthropic.claude-opus-4-5-20251101-v1:0')
-
-    model = BedrockConverseModel(
-        'arn:aws:bedrock:us-east-2:123456789012:application-inference-profile/my-profile',
-        provider=provider,
-        profile=profile,
-    )
-
-    agent = Agent(model)
-    ```
 
 ## Configuring Retries
 

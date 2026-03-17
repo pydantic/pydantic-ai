@@ -552,26 +552,21 @@ embedder = Embedder('bedrock:us.amazon.titan-embed-text-v2:0')
 
 #### Using AWS Application Inference Profiles
 
-Set [`bedrock_inference_profile`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings.bedrock_inference_profile] to route requests through an inference profile while keeping the base model name for handler detection:
+Set [`bedrock_inference_profile`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings.bedrock_inference_profile] to route requests through an inference profile while keeping the base model name for detecting model capabilities:
 
 ```python {title="bedrock_inference_profile.py"}
 from pydantic_ai import Embedder
-from pydantic_ai.embeddings.bedrock import (
-    BedrockEmbeddingModel,
-    BedrockEmbeddingSettings,
-)
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
 from pydantic_ai.providers.bedrock import BedrockProvider
 
 provider = BedrockProvider(region_name='us-east-1')
 
-settings: BedrockEmbeddingSettings = {
-    'bedrock_inference_profile': 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-embed-profile',
-}
-
 model = BedrockEmbeddingModel(
     'amazon.titan-embed-text-v2:0',
     provider=provider,
-    settings=settings,
+    settings={
+        'bedrock_inference_profile': 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-embed-profile',
+    },
 )
 embedder = Embedder(model)
 ```
