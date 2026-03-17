@@ -5,7 +5,7 @@ interactions:
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        OTY2NDVkMDgtNjgzYS00MmE1LTkxNjctOTVhMTkzMDMxMzc3
+        MmQzNDY2YzMtYjk4OS00Njk1LTkzZTEtMWQyY2FhNTI3NjFk
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -15,7 +15,7 @@ interactions:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
     method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/arn%3Aaws%3Abedrock%3Aus-east-1%3A353014496775%3Aapplication-inference-profile%2Fmi1dadi0g15f/converse
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/arn%3Aaws%3Abedrock%3Aus-east-1%3A123456789012%3Aapplication-inference-profile%2Fmi1dadi0g15f/converse
   response:
     headers:
       connection:
@@ -26,7 +26,7 @@ interactions:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 250
+        latencyMs: 257
       output:
         message:
           content:

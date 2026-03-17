@@ -1076,7 +1076,7 @@ class TestBedrock:
             )
         )
 
-    async def test_inference_profile_embed(self, allow_model_requests: None, bedrock_provider: BedrockProvider):
+    async def test_inference_profile_embed(self, bedrock_provider: BedrockProvider):
         inference_profile_arn = 'arn:aws:bedrock:us-east-1:353014496775:application-inference-profile/otnfa2ysixqd'
         settings: BedrockEmbeddingSettings = {'bedrock_inference_profile': inference_profile_arn}
         model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider, settings=settings)
