@@ -407,6 +407,8 @@ class ToolManager(Generic[AgentDepsT]):
             ),
         }
 
+        from .exceptions import ApprovalRequired, CallDeferred, ModelRetry
+
         with tracer.start_as_current_span(
             instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=span_attributes,
@@ -415,18 +417,29 @@ class ToolManager(Generic[AgentDepsT]):
                 tool_result = await self._execute_tool_call_impl(validated, usage=usage)
             except ToolRetryError as e:
                 part = e.tool_retry
+                if span.is_recording():
+                    if include_content:
+                        span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
+                    span.set_attribute('logfire.level_num', 17)
+                # Re-raise outside the with block to avoid the span being marked as an error
+                captured_exc = e
+            except (ModelRetry, CallDeferred, ApprovalRequired) as e:
+                if span.is_recording():
+                    span.set_attribute('logfire.level_num', 17)
+                # Re-raise outside the with block to avoid the span being marked as an error
+                captured_exc = e
+            else:
+                captured_exc = None
                 if include_content and span.is_recording():
-                    span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
-                raise
+                    span.set_attribute(
+                        instrumentation_names.tool_result_attr,
+                        tool_result
+                        if isinstance(tool_result, str)
+                        else _messages.tool_return_ta.dump_json(tool_result).decode(),
+                    )
 
-            if include_content and span.is_recording():
-                span.set_attribute(
-                    instrumentation_names.tool_result_attr,
-                    tool_result
-                    if isinstance(tool_result, str)
-                    else _messages.tool_return_ta.dump_json(tool_result).decode(),
-                )
-
+        if captured_exc:
+            raise captured_exc
         return tool_result
 
     async def handle_call(

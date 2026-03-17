@@ -129,12 +129,16 @@ async def execute_traced_output_function(
         }
     )
 
+    from .exceptions import ApprovalRequired, CallDeferred, ModelRetry
+
     with run_context.tracer.start_as_current_span(
         instrumentation_names.get_output_tool_span_name(tool_name), attributes=attributes
     ) as span:
         try:
             output = await function_schema.call(args, run_context)
         except ModelRetry as r:
+            if span.is_recording():
+                span.set_attribute('logfire.level_num', 17)
             if wrap_validation_errors:
                 m = _messages.RetryPromptPart(
                     content=r.message,
@@ -142,20 +146,30 @@ async def execute_traced_output_function(
                 )
                 if run_context.tool_call_id:
                     m.tool_call_id = run_context.tool_call_id  # pragma: no cover
-                raise ToolRetryError(m) from r
+                # Re-raise outside the with block to avoid the span being marked as an error
+                captured_exc = ToolRetryError(m)
             else:
-                raise
+                # Re-raise outside the with block to avoid the span being marked as an error
+                captured_exc = r
+        except (CallDeferred, ApprovalRequired) as e:
+            if span.is_recording():
+                span.set_attribute('logfire.level_num', 17)
+            # Re-raise outside the with block to avoid the span being marked as an error
+            captured_exc = e
+        else:
+            captured_exc = None
+            # Record response if content inclusion is enabled
+            if run_context.trace_include_content and span.is_recording():
+                from .models.instrumented import InstrumentedModel
 
-        # Record response if content inclusion is enabled
-        if run_context.trace_include_content and span.is_recording():
-            from .models.instrumented import InstrumentedModel
+                span.set_attribute(
+                    instrumentation_names.tool_result_attr,
+                    output if isinstance(output, str) else json.dumps(InstrumentedModel.serialize_any(output)),
+                )
 
-            span.set_attribute(
-                instrumentation_names.tool_result_attr,
-                output if isinstance(output, str) else json.dumps(InstrumentedModel.serialize_any(output)),
-            )
-
-        return output
+    if captured_exc:
+        raise captured_exc
+    return output
 
 
 @dataclass
