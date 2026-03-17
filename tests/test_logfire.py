@@ -3369,3 +3369,59 @@ async def test_tool_approval_span_status(otel_setup: tuple[TracerProvider, InMem
     assert len(tool_spans) > 0
     for span in tool_spans:
         assert span.status.status_code != StatusCode.ERROR
+
+
+@pytest.mark.skipif(
+    not logfire_installed or not otel_installed_func(), reason='logfire or opentelemetry-sdk not installed'
+)
+@pytest.mark.anyio
+async def test_output_function_deferred_span_status(otel_setup: tuple[TracerProvider, InMemorySpanExporter]):
+    provider, exporter = otel_setup
+
+    async def output_func(ctx: RunContext[None], result: str) -> str:
+        raise CallDeferred()
+
+    agent = Agent(model=TestModel(), output_type=output_func)
+    agent.instrument = InstrumentationSettings(tracer_provider=provider)
+
+    with pytest.raises(CallDeferred):
+        await agent.run('Hello')
+
+    spans = exporter.get_finished_spans()
+    output_spans = [
+        s
+        for s in spans
+        if s.name in ('running output function', 'execute_tool:output_func', 'execute_tool output_func')
+    ]
+    assert len(output_spans) > 0
+    for span in output_spans:
+        assert span.status.status_code != StatusCode.ERROR
+        assert (span.attributes or {}).get('logfire.level_num') == 17
+
+
+@pytest.mark.skipif(
+    not logfire_installed or not otel_installed_func(), reason='logfire or opentelemetry-sdk not installed'
+)
+@pytest.mark.anyio
+async def test_output_function_approval_span_status(otel_setup: tuple[TracerProvider, InMemorySpanExporter]):
+    provider, exporter = otel_setup
+
+    async def output_func(ctx: RunContext[None], result: str) -> str:
+        raise ApprovalRequired({'test': 'data'})
+
+    agent = Agent(model=TestModel(), output_type=output_func)
+    agent.instrument = InstrumentationSettings(tracer_provider=provider)
+
+    with pytest.raises(ApprovalRequired):
+        await agent.run('Hello')
+
+    spans = exporter.get_finished_spans()
+    output_spans = [
+        s
+        for s in spans
+        if s.name in ('running output function', 'execute_tool:output_func', 'execute_tool output_func')
+    ]
+    assert len(output_spans) > 0
+    for span in output_spans:
+        assert span.status.status_code != StatusCode.ERROR
+        assert (span.attributes or {}).get('logfire.level_num') == 17
