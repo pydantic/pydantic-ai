@@ -148,6 +148,7 @@ async def execute_traced_output_function(
                     m.tool_call_id = run_context.tool_call_id  # pragma: no cover
                 # Re-raise outside the with block to avoid the span being marked as an error
                 captured_exc = ToolRetryError(m)
+                captured_exc.__cause__ = r
             else:
                 # Re-raise outside the with block to avoid the span being marked as an error
                 captured_exc = r
