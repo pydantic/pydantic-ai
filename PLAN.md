@@ -6,6 +6,8 @@ When using `FallbackModel` or testing across models, agents with builtin tools (
 
 **Core insight**: send BOTH the builtin tool AND its fallback function tool in `ModelRequestParameters`. Each model's `prepare_request` independently decides which to keep via `self.profile.supported_builtin_tools`. Zero changes to `FallbackModel` — each inner model makes the right choice.
 
+**Important**: `prefer_builtin` on a function tool does NOT auto-register the corresponding builtin tool with the agent. The user must still include it in `builtin_tools=[...]`. This is by design — the upcoming `capabilities=[WebSearch()]` API (see Relationship to Deferred Loading below) will handle both sides automatically via `get_toolset()` + `get_builtin_tools()`. This PR provides the low-level primitive that capabilities will build on.
+
 ## Changes
 
 ### 1. `ToolDefinition` — add `prefer_builtin` field
@@ -77,12 +79,21 @@ if params.builtin_tools:
 - `AbstractBuiltinTool` — no `fallback` param (deferred)
 - `ModelProfile` — already has `supported_builtin_tools`
 
+## Relationship to deferred tool loading (#4090, #4167, #3666)
+
+DouweM notes that deferred tool loading (Anthropic tool search) needs the ability to send fundamentally different tool lists depending on model support — e.g. all tools with `defer_loading=True` for native support vs a `search_tools` meta-tool + already-discovered tools for framework-level support. `prefer_builtin` alone doesn't cover that case because it's a 1:1 swap (one function tool ↔ one builtin), not a structural transformation of the entire tool list.
+
+**Why this is fine for our scope**: `prefer_builtin` is the right primitive for builtin-to-custom fallback (web search, code execution, etc.). Deferred tool loading will need an additional mechanism (likely `defer_loading: bool` on `ToolDefinition` + model-level list restructuring), which is a separate feature. These are complementary, not conflicting — both follow the same architectural pattern of model-level resolution in `prepare_request`.
+
+**Forward compatibility**: the `capabilities=[WebSearch()]` API will compose both: `WebSearch.get_toolset()` returns function tools with `prefer_builtin` set, `WebSearch.get_builtin_tools()` returns the builtin. For deferred loading, `SearchableToolset` will add its own fields. Our `prepare_request` swap logic is additive and won't conflict with future deferred loading logic.
+
 ## Deferred to follow-up PRs
 
 - `AbstractBuiltinTool(fallback=...)` — builtin carries its own fallback
 - `MCPServer`/`FastMCPToolset` `prefer_builtin` — toolset-level support
 - `TavilySearchTool(prefer_builtin=True)` — convenience on common tools
 - `BuiltinToolset` — wrapping builtins in the toolset system
+- Deferred tool loading / `SearchableToolset` (#4090, #4167)
 
 ## Testing
 
