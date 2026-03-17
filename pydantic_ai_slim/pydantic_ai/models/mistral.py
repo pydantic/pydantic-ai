@@ -15,9 +15,11 @@ from .._run_context import RunContext
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..exceptions import ModelAPIError
 from ..messages import (
+    AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -34,6 +36,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
 )
@@ -500,15 +503,18 @@ class MistralModel(Model):
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
+        file_content: list[UserContent] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield MistralSystemMessage(content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
+                tool_text, files = part.model_response_str_and_user_content()
+                file_content.extend(files)
                 yield MistralToolMessage(
                     tool_call_id=part.tool_call_id,
-                    content=part.model_response_str(),
+                    content=tool_text,
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
@@ -520,6 +526,8 @@ class MistralModel(Model):
                     )
             else:
                 assert_never(part)
+        if file_content:
+            yield await self._map_user_prompt(UserPromptPart(content=file_content))
 
     async def _map_messages(  # noqa: C901
         self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
@@ -573,7 +581,7 @@ class MistralModel(Model):
 
         return processed_messages
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:
+    async def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:  # noqa: C901
         content: str | list[MistralContentChunk]
         if isinstance(part.content, str):
             content = part.content
@@ -596,7 +604,9 @@ class MistralModel(Model):
                     elif item.media_type == 'application/pdf':
                         content.append(MistralDocumentURLChunk(document_url=item.data_uri, type='document_url'))
                     else:
-                        raise RuntimeError('BinaryContent other than image or PDF is not supported in Mistral.')
+                        raise NotImplementedError(
+                            'BinaryContent other than image or PDF is not supported in Mistral user prompts'
+                        )
                 elif isinstance(item, DocumentUrl):
                     if item.media_type == 'application/pdf':
                         if item.force_download:
@@ -607,13 +617,17 @@ class MistralModel(Model):
                         else:
                             content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
                     else:
-                        raise RuntimeError('DocumentUrl other than PDF is not supported in Mistral.')
+                        raise NotImplementedError('DocumentUrl other than PDF is not supported in Mistral user prompts')
+                elif isinstance(item, AudioUrl):
+                    raise NotImplementedError('AudioUrl is not supported in Mistral user prompts')
                 elif isinstance(item, VideoUrl):
-                    raise RuntimeError('VideoUrl is not supported in Mistral.')
+                    raise NotImplementedError('VideoUrl is not supported in Mistral user prompts')
                 elif isinstance(item, UploadedFile):
-                    raise RuntimeError('UploadedFile is not supported by Mistral.')
-                else:  # pragma: no cover
-                    raise RuntimeError(f'Unsupported content type: {type(item)}')
+                    raise NotImplementedError('UploadedFile is not supported in Mistral user prompts')
+                elif isinstance(item, CachePoint):
+                    pass
+                else:
+                    assert_never(item)
         return MistralUserMessage(content=content)
 
 
