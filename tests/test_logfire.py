@@ -3300,6 +3300,6 @@ def test_deferral_non_serializable_metadata(capfire: CaptureLogfire) -> None:
     tool_span = _find_tool_span(capfire)
 
     assert tool_span.attributes['pydantic_ai.tool.deferral.name'] == 'CallDeferred'
-    # Falls back to str() since CustomObj is not JSON-serializable
+    # Falls back to repr() since CustomObj is not JSON-serializable
     assert tool_span.attributes['pydantic_ai.tool.deferral.metadata'] == "{'obj': <CustomObj>}"
     assert tool_span.status.status_code == _StatusCode.OK

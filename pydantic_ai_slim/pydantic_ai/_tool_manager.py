@@ -421,7 +421,7 @@ class ToolManager(Generic[AgentDepsT]):
                     try:
                         metadata_str = json.dumps(exc.metadata)
                     except (TypeError, ValueError):
-                        metadata_str = str(exc.metadata)
+                        metadata_str = repr(exc.metadata)
                     span.set_attribute(instrumentation_names.tool_deferral_metadata_attr, metadata_str)
                 if instrumentation_version >= 5:
                     span.set_status(StatusCode.OK)
