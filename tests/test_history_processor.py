@@ -1288,8 +1288,8 @@ async def test_history_processor_resuming_without_prompt(
 ):
     """
     When running without a user prompt (resuming from history), new_messages()
-    should include the resumed request when that request has the current
-    run_id.
+    should exclude the resumed request — it was provided as prior context,
+    not generated during the current run.
     """
 
     def prepend_summary(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1351,14 +1351,17 @@ async def test_history_processor_resuming_without_prompt(
             ),
         ]
     )
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
-async def test_resuming_without_prompt_with_tool_calls_includes_resumed_request_with_current_run_id():
+async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request_with_no_run_id():
     """
-    When resuming without a user prompt and the model enters a tool-call loop,
-    new_messages() should include the resumed history request when it has
-    the current run_id.
+    When resuming without a user prompt and the resumed request has no run_id
+    (i.e., it was provided by the user as message_history, not created during
+    the current run), new_messages() should exclude it — only messages
+    generated during the run should be returned.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4669.
     """
 
     call_count = 0
@@ -1418,7 +1421,8 @@ async def test_resuming_without_prompt_with_tool_calls_includes_resumed_request_
         ]
     )
 
-    assert result.new_messages() == result.all_messages()
+    # The resumed request had no run_id (user-provided), so it should be excluded
+    assert result.new_messages() == result.all_messages()[1:]
 
 
 async def test_resuming_without_prompt_excludes_request_with_different_run_id(
@@ -1482,13 +1486,45 @@ async def test_resuming_without_prompt_excludes_request_with_different_run_id(
     assert result.new_messages()[0].run_id != previous_run_id
 
 
+async def test_new_messages_excludes_user_prompt_from_message_history(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/4669.
+
+    When calling agent.run() with message_history containing a trailing
+    ModelRequest (and without user_prompt), new_messages() should only
+    return messages generated during the run, not the user prompt that
+    was provided as part of the history.
+    """
+    agent = Agent(function_model)
+
+    result = await agent.run(
+        message_history=[
+            ModelRequest(
+                parts=[UserPromptPart(content='hi')]
+            )
+        ],
+    )
+
+    # The user prompt 'hi' was provided in message_history, so it should
+    # NOT appear in new_messages(). Only the model response is new.
+    new = result.new_messages()
+    assert len(new) == 1
+    assert isinstance(new[0], ModelResponse)
+
+    # all_messages() should still contain both the request and the response
+    assert len(result.all_messages()) == 2
+    assert isinstance(result.all_messages()[0], ModelRequest)
+    assert isinstance(result.all_messages()[1], ModelResponse)
+
+
 async def test_history_processor_deepcopy_resuming_without_prompt(
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
     """
     When a history processor deep-copies messages (breaking object identity),
-    new_messages() should still include the resumed request when it has the
-    current run_id.
+    new_messages() should still exclude the resumed request — it was provided
+    as prior context, not generated during the current run.
     """
 
     def deepcopy_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1526,7 +1562,7 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
         ]
     )
 
-    assert result.new_messages() == result.all_messages()
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 async def test_history_processor_rebuild_resuming_without_prompt(
@@ -1534,8 +1570,8 @@ async def test_history_processor_rebuild_resuming_without_prompt(
 ):
     """
     When a history processor rebuilds `ModelRequest` instances with equivalent
-    values, new_messages() should include the resumed request when it has the
-    current run_id.
+    values, new_messages() should exclude the resumed request — it was provided
+    as prior context, not generated during the current run.
     """
 
     def rebuild_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1601,7 +1637,7 @@ async def test_history_processor_rebuild_resuming_without_prompt(
         ]
     )
 
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 async def test_history_processor_replace_resumed_request_falls_through(

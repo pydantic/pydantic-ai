@@ -1500,17 +1500,23 @@ def _first_new_message_index(
     *,
     resumed_request: _messages.ModelRequest | None,
 ) -> int:
-    """Return the first index that should be included in `new_messages()`."""
+    """Return the first index that should be included in `new_messages()`.
+
+    The resumed request (the trailing ModelRequest from message_history that is
+    re-used when no user_prompt is provided) is always excluded from
+    new_messages(), because it was supplied by the caller as prior context —
+    not generated during the current run.
+
+    See https://github.com/pydantic/pydantic-ai/issues/4669.
+    """
     if resumed_request is not None:
         for index, message in enumerate(messages):
             if message is resumed_request:
-                # Include the resumed request in new_messages only if it was
-                # mapped/created during the current run (e.g., via adapters).
-                return index if message.run_id == run_id else index + 1
+                return index + 1
 
         for index in range(len(messages) - 1, -1, -1):
             if _is_same_request(messages[index], resumed_request):
-                return index if messages[index].run_id == run_id else index + 1
+                return index + 1
     return _first_run_id_index(messages, run_id)
 
 

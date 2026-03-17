@@ -1590,7 +1590,10 @@ async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
     assert messages[1].run_id is None
     assert messages[2].run_id == run_result.run_id
     assert messages[3].run_id == run_result.run_id
-    assert run_result.new_messages() == messages[-2:]
+    # The trailing mapped request came from the adapter's message_history,
+    # so it's excluded from new_messages() even though it has the current run_id.
+    # See https://github.com/pydantic/pydantic-ai/issues/4669
+    assert run_result.new_messages() == messages[-1:]
 
 
 async def test_callback_async() -> None:
