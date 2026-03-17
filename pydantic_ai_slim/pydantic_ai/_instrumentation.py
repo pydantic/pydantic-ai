@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -27,8 +27,8 @@ class InstrumentationNames:
     output_tool_span_name: str
 
     # Deferral span attributes
-    tool_deferral_name_attr: str
-    tool_deferral_metadata_attr: str
+    tool_deferral_name_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.name'
+    tool_deferral_metadata_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.metadata'
 
     @classmethod
     def for_version(cls, version: int) -> Self:
@@ -48,8 +48,6 @@ class InstrumentationNames:
                 tool_arguments_attr='tool_arguments',
                 tool_result_attr='tool_response',
                 output_tool_span_name='running output function',
-                tool_deferral_name_attr='pydantic_ai.tool.deferral.name',
-                tool_deferral_metadata_attr='pydantic_ai.tool.deferral.metadata',
             )
         else:
             return cls(
@@ -59,8 +57,6 @@ class InstrumentationNames:
                 tool_arguments_attr='gen_ai.tool.call.arguments',
                 tool_result_attr='gen_ai.tool.call.result',
                 output_tool_span_name='execute_tool',
-                tool_deferral_name_attr='pydantic_ai.tool.deferral.name',
-                tool_deferral_metadata_attr='pydantic_ai.tool.deferral.metadata',
             )
 
     def get_agent_run_span_name(self, agent_name: str) -> str:
