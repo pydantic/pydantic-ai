@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
-import logging
 import mimetypes
 import os
 from abc import ABC, abstractmethod
@@ -30,8 +29,6 @@ from .usage import RequestUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
-
-_logger = logging.getLogger(__name__)
 
 # Key used to wrap malformed tool-call arguments so they can still be round-tripped
 # through a model API without crashing.  The specific string 'INVALID_JSON' is the
@@ -1572,10 +1569,10 @@ class BaseToolCallPart:
         This is just for convenience with models that require dicts as input.
 
         Args:
-            raise_if_invalid: If ``True``, a ``ValueError`` or ``AssertionError``
-                caused by malformed JSON in ``args`` will be re-raised.  When
-                ``False`` (the default), malformed JSON is handled gracefully by
-                returning ``{'INVALID_JSON': '<raw args>'}`` so that the value
+            raise_if_invalid: If `True`, a `ValueError` or `AssertionError`
+                caused by malformed JSON in `args` will be re-raised.  When
+                `False` (the default), malformed JSON is handled gracefully by
+                returning `{'INVALID_JSON': '<raw args>'}` so that the value
                 can still be sent to a model API (e.g. during a retry flow)
                 without crashing.
         """
@@ -1590,11 +1587,6 @@ class BaseToolCallPart:
         except (ValueError, AssertionError):
             if raise_if_invalid:
                 raise
-            _logger.debug(
-                'Malformed tool call args for %r, falling back to INVALID_JSON wrapper: %s',
-                self.tool_name,
-                self.args,
-            )
             return {INVALID_JSON_KEY: self.args}
 
     def args_as_json_str(self) -> str:

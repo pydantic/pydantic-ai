@@ -8514,7 +8514,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
     tool call's args are parsed via args_as_dict() which raises ValueError on
     invalid JSON, crashing the retry flow before the model can self-correct.
     """
-    BAD_ARGS = '{"query": "bad query", "file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    bad_args = '{"query": "bad query", "file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
 
     # First response: the model "fixes" the tool call and returns text
     fixed_response = completion_message(
@@ -8533,7 +8533,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                 ToolCallPart(
                     tool_name='search_knowledge',
                     tool_call_id='toolu_123',
-                    args=BAD_ARGS,
+                    args=bad_args,
                 ),
             ],
             timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
