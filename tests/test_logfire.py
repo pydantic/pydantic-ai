@@ -110,7 +110,7 @@ def test_logfire(
 
     toolset = FunctionToolset()
 
-    @toolset.tool
+    @toolset.tool_plain
     async def my_ret(x: int) -> str:
         return str(x + 1)
 

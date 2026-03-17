@@ -1208,7 +1208,7 @@ dynamic_toolset_agent = Agent(TestModel(), name='dynamic_toolset_agent', deps_ty
 def my_dynamic_toolset(ctx: RunContext[DynamicToolsetDeps]) -> FunctionToolset[DynamicToolsetDeps]:
     toolset = FunctionToolset[DynamicToolsetDeps](id='dynamic_weather')
 
-    @toolset.tool
+    @toolset.tool_plain
     def get_dynamic_weather(location: str) -> str:
         """Get the weather for a location."""
         user = ctx.deps.user_name
