@@ -21,6 +21,8 @@ node_modules/
 /test_tmp/
 .mcp.json
 .claude/*
+# need to add because of local setup, + waiting on https://github.com/pydantic/pydantic-ai/pull/4211 to merge
+.agents/*
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/address-feedback
