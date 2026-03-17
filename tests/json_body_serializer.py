@@ -5,6 +5,7 @@ import re
 import unicodedata
 import urllib.parse
 import zlib
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import brotli
@@ -109,37 +110,45 @@ def deserialize(cassette_string: str):
 
 _AWS_ARN_PATTERN = re.compile(r'arn:aws[^:]*:[^:]+:[^:]*:\d{12}:')
 
-_FORM_SCRUB_KEYS = ('assertion', 'client_id', 'client_secret', 'refresh_token', 'RoleArn', 'RoleSessionName')
+
+def _content_type_startswith(content_type: Sequence[str | bytes], prefix: str) -> bool:
+    return any(
+        (h if isinstance(h, str) else h.decode('utf-8') if isinstance(h, bytes) else '').startswith(prefix)
+        for h in content_type
+    )
 
 
-def _scrub_form_credentials(data: dict[str, Any]) -> None:
+def scrub_form_credentials(data: dict[str, Any], content_type: list[str]) -> None:  # pragma: lax no cover
+    """Redact credentials from application/x-www-form-urlencoded request bodies."""
+    if not _content_type_startswith(content_type, 'application/x-www-form-urlencoded'):
+        return
     query_params = urllib.parse.parse_qs(data['body'])
-    for key in _FORM_SCRUB_KEYS:  # pragma: no cover
+    for key in ['assertion', 'client_id', 'client_secret', 'refresh_token', 'RoleArn', 'RoleSessionName']:
         if key in query_params:
             query_params[key] = ['scrubbed']
             data['body'] = urllib.parse.urlencode(query_params, doseq=True)
 
 
-_XML_CREDENTIAL_SCRUB_PATTERNS = [
-    (re.compile(f'<{tag}>[^<]*</{tag}>'), f'<{tag}>scrubbed</{tag}>')
-    for tag in ('AccessKeyId', 'SecretAccessKey', 'SessionToken', 'Arn', 'AssumedRoleId')
-]
-
-
-def _scrub_xml_credentials(data: dict[str, Any], kind: str) -> None:
+def scrub_xml_credentials(
+    data: dict[str, Any], headers: dict[str, list[str]], content_type: list[str]
+) -> None:  # pragma: lax no cover
+    """Redact AWS STS credentials from text/xml response bodies."""
+    if content_type != ['text/xml']:
+        return
     body = data.get('body', None)
     if isinstance(body, dict):
         body = body.get('string', '')
-    if isinstance(body, str):
-        for pattern, replacement in _XML_CREDENTIAL_SCRUB_PATTERNS:
-            body = pattern.sub(replacement, body)
-        data['body'] = {'string': body} if kind == 'response' else body
-
-
-def _content_type_startswith(header: str | bytes, prefix: str) -> bool:
-    if isinstance(header, bytes):
-        header = header.decode('utf-8')
-    return header.startswith(prefix)
+    if not isinstance(body, str) or '<Credentials>' not in body:
+        return
+    body = re.sub(r'<AccessKeyId>[^<]+</AccessKeyId>', '<AccessKeyId>SCRUBBED</AccessKeyId>', body)
+    body = re.sub(r'<SecretAccessKey>[^<]+</SecretAccessKey>', '<SecretAccessKey>SCRUBBED</SecretAccessKey>', body)
+    body = re.sub(r'<SessionToken>[^<]+</SessionToken>', '<SessionToken>SCRUBBED</SessionToken>', body)
+    body = re.sub(r'<Expiration>[^<]+</Expiration>', '<Expiration>2099-01-01T00:00:00Z</Expiration>', body)
+    body = re.sub(r'<AssumedRoleId>[^<]+</AssumedRoleId>', '<AssumedRoleId>SCRUBBED</AssumedRoleId>', body)
+    body = re.sub(r'<Arn>[^<]+</Arn>', '<Arn>SCRUBBED</Arn>', body)
+    data['body'] = {'string': body}
+    if 'content-length' in headers:
+        headers['content-length'] = [str(len(body.encode('utf-8')))]
 
 
 def serialize(cassette_dict: Any):  # pragma: lax no cover
@@ -189,6 +198,8 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     data['parsed_body'] = normalize_body(parsed)
                     if 'access_token' in data['parsed_body']:
                         data['parsed_body']['access_token'] = 'scrubbed'
+                    if 'id_token' in data['parsed_body']:
+                        data['parsed_body']['id_token'] = 'scrubbed'
                     del data['body']
                     # Update content-length to match the body that will be produced during deserialize.
                     # This is necessary because decompression changes the body size, and botocore
@@ -196,10 +207,8 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     if 'content-length' in headers:
                         new_body = json.dumps(data['parsed_body'])
                         headers['content-length'] = [str(len(new_body.encode('utf-8')))]
-            if any(_content_type_startswith(header, 'application/x-www-form-urlencoded') for header in content_type):
-                _scrub_form_credentials(data)
-            if any(_content_type_startswith(header, 'text/xml') for header in content_type):
-                _scrub_xml_credentials(data, _kind)
+            scrub_form_credentials(data, content_type)
+            scrub_xml_credentials(data, headers, content_type)
 
     # Use our custom dumper
     return yaml.dump(cassette_dict, Dumper=LiteralDumper, allow_unicode=True, width=120)
