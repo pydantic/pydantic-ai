@@ -261,8 +261,27 @@ async def test_bedrock_inference_profile_converse(
     agent = Agent(model)
 
     result = await agent.run('Say "hello" and nothing else.')
-    assert 'hello' in result.output.lower()
-    assert model.model_name == 'amazon.nova-micro-v1:0'
+    assert result.output == snapshot('Hello')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Say "hello" and nothing else.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello')],
+                usage=RequestUsage(input_tokens=8, output_tokens=2),
+                model_name='amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_bedrock_inference_profile_count_tokens(
