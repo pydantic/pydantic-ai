@@ -7,19 +7,24 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, TypeVar, cast
 from uuid import uuid4
 
+from typing_extensions import assert_never
+
 from pydantic_ai import _utils
 
 from ..messages import (
     AgentStreamEvent,
+    BinaryContent,
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolCallPart,
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
     CompactionPart,
     FilePart,
+    FileUrl,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    MultiModalContent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -30,6 +35,7 @@ from ..messages import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UploadedFile,
 )
 from ..output import OutputDataT
 from ..run import AgentRunResult, AgentRunResultEvent
@@ -614,3 +620,19 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         """
         return
         yield  # Make this an async generator
+
+
+def describe_file(file: MultiModalContent) -> str:
+    """Return a text placeholder for a file in tool results.
+
+    Used by event stream protocols (Vercel AI, AG-UI) that don't support
+    multimodal content in tool results natively.
+    """
+    if isinstance(file, FileUrl):
+        return f'[File: {file.url}]'
+    elif isinstance(file, BinaryContent):
+        return f'[File: {file.media_type}]'
+    elif isinstance(file, UploadedFile):
+        return f'[File: {file.file_id}]'
+    else:
+        assert_never(file)
