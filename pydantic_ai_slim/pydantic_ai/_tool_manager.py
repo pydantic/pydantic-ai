@@ -449,7 +449,7 @@ class ToolManager(Generic[AgentDepsT]):
                         if isinstance(tool_result, str)
                         else _messages.tool_return_ta.dump_json(tool_result).decode(),
                     )
-            except BaseException as e:
+            except BaseException as e:  # pragma: no cover
                 span.record_exception(e)
                 span.set_status(StatusCode.ERROR)
                 raise
