@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import inspect
 import json
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -71,7 +70,7 @@ Usage `OutputValidatorFunc[AgentDepsT, T]`.
 
 DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
-OUTPUT_TOOL_NAME_SANITIZER = re.compile(r'[^a-zA-Z0-9-_]')
+OUTPUT_TOOL_NAME_SANITIZER = _utils.TOOL_NAME_SANITIZER
 
 
 async def execute_traced_output_function(
