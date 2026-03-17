@@ -129,7 +129,7 @@ search_toolset = FunctionToolset(
 )
 
 
-@search_toolset.tool
+@search_toolset.tool_plain
 def search(query: str) -> str:
     """Search for information."""
     return f'Results for: {query}'
@@ -158,7 +158,7 @@ def math_instructions(ctx: RunContext[str]) -> str:
     return f'You are helping: {ctx.deps}. Always show your work when using the calculator.'
 
 
-@math_toolset.tool
+@math_toolset.tool_plain
 def calculator(expression: str) -> str:
     """Evaluate a math expression."""
     return '4'
@@ -182,7 +182,7 @@ from pydantic_ai.models.test import TestModel
 toolset = FunctionToolset(instructions='Use the greeting tool for all greetings.')
 
 
-@toolset.tool
+@toolset.tool_plain
 def greeting(name: str) -> str:
     """Greet someone."""
     return f'Hello, {name}!'
@@ -214,7 +214,7 @@ from pydantic_ai.models.test import TestModel
 weather_toolset = FunctionToolset(instructions='Use weather tools for forecasts.')
 
 
-@weather_toolset.tool
+@weather_toolset.tool_plain
 def forecast(city: str) -> str:
     """Get weather forecast."""
     return 'Sunny'
@@ -223,7 +223,7 @@ def forecast(city: str) -> str:
 calendar_toolset = FunctionToolset(instructions='Use calendar tools for scheduling.')
 
 
-@calendar_toolset.tool
+@calendar_toolset.tool_plain
 def schedule(event: str) -> str:
     """Schedule an event."""
     return 'Scheduled'
