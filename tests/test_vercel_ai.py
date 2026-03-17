@@ -52,7 +52,6 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
-from pydantic_ai.ui.vercel_ai.request_types import DataUIPart
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
@@ -69,6 +68,7 @@ with try_import() as starlette_import_successful:
         load_provider_metadata,
     )
     from pydantic_ai.ui.vercel_ai.request_types import (
+        DataUIPart,
         DynamicToolApprovalRespondedPart,
         DynamicToolInputAvailablePart,
         DynamicToolInputStreamingPart,
