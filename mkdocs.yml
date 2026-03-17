@@ -35,6 +35,7 @@ nav:
           - models/cohere.md
           - models/groq.md
           - models/huggingface.md
+          - models/minimax.md
           - models/mistral.md
           - models/openrouter.md
           - models/outlines.md

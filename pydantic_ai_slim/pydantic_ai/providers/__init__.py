@@ -102,6 +102,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .anthropic import AnthropicProvider
 
         return AnthropicProvider
+    elif provider == 'minimax':
+        from .minimax import MiniMaxProvider
+
+        return MiniMaxProvider
     elif provider == 'mistral':
         from .mistral import MistralProvider
 
