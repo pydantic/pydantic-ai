@@ -3234,24 +3234,28 @@ with try_import() as otel_installed_func:
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     from opentelemetry.trace import StatusCode
 
+
 @pytest.fixture
-def otel_setup():
+def otel_setup() -> tuple[TracerProvider, InMemorySpanExporter]:
     exporter = InMemorySpanExporter()
     processor = SimpleSpanProcessor(exporter)
     provider = TracerProvider()
     provider.add_span_processor(processor)
     return provider, exporter
 
-@pytest.mark.skipif(not logfire_installed or not otel_installed_func(), reason='logfire or opentelemetry-sdk not installed')
+
+@pytest.mark.skipif(
+    not logfire_installed or not otel_installed_func(), reason='logfire or opentelemetry-sdk not installed'
+)
 @pytest.mark.anyio
-async def test_tool_retry_span_status(otel_setup):
+async def test_tool_retry_span_status(otel_setup: tuple[TracerProvider, InMemorySpanExporter]):
     provider, exporter = otel_setup
 
-    async def model_logic(messages, info):
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(parts=[ToolCallPart('retry_tool', {'x': 5}, 'call_1')])
         return ModelResponse(parts=[TextPart('Done')])
-    
+
     model = FunctionModel(model_logic)
     agent = Agent(model=model)
 
@@ -3270,26 +3274,29 @@ async def test_tool_retry_span_status(otel_setup):
     for span in tool_spans:
         assert span.status.status_code != StatusCode.ERROR
         for event in span.events:
-            if event.name == 'exception':
+            if event.name == 'exception' and event.attributes:
                 exc_type = event.attributes.get('exception.type')
                 assert exc_type not in ('ModelRetry', 'ToolRetryError', 'pydantic_ai.exceptions.ToolRetryError')
 
-@pytest.mark.skipif(not logfire_installed or not otel_installed_func(), reason='logfire or opentelemetry-sdk not installed')
+
+@pytest.mark.skipif(
+    not logfire_installed or not otel_installed_func(), reason='logfire or opentelemetry-sdk not installed'
+)
 @pytest.mark.anyio
-async def test_output_function_retry_span_status(otel_setup):
+async def test_output_function_retry_span_status(otel_setup: tuple[TracerProvider, InMemorySpanExporter]):
     provider, exporter = otel_setup
 
     async def my_output_function(x: int) -> BaseModel:
         if x < 10:
-             raise ModelRetry('Too small')
+            raise ModelRetry('Too small')
         return BaseModel()
 
-    async def model_logic(messages, info):
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if not any(isinstance(m, ModelResponse) for m in messages):
             # Model calls the output tool
             return ModelResponse(parts=[ToolCallPart('final_result', {'x': 5}, 'call_1')])
         return ModelResponse(parts=[TextPart('Done')])
-    
+
     model = FunctionModel(model_logic)
     agent = Agent(model=model, output_type=my_output_function)
 
@@ -3307,14 +3314,17 @@ async def test_output_function_retry_span_status(otel_setup):
             assert span.status.status_code != StatusCode.ERROR
     assert found
 
-@pytest.mark.skipif(not logfire_installed or not otel_installed_func(), reason='logfire or opentelemetry-sdk not installed')
+
+@pytest.mark.skipif(
+    not logfire_installed or not otel_installed_func(), reason='logfire or opentelemetry-sdk not installed'
+)
 @pytest.mark.anyio
-async def test_tool_deferred_span_status(otel_setup):
+async def test_tool_deferred_span_status(otel_setup: tuple[TracerProvider, InMemorySpanExporter]):
     provider, exporter = otel_setup
 
-    async def model_logic(messages, info):
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('deferred_tool', {'x': 5}, 'call_1')])
-    
+
     model = FunctionModel(model_logic)
     agent = Agent(model=model, output_type=str | DeferredToolRequests)
 
@@ -3332,14 +3342,17 @@ async def test_tool_deferred_span_status(otel_setup):
     for span in tool_spans:
         assert span.status.status_code != StatusCode.ERROR
 
-@pytest.mark.skipif(not logfire_installed or not otel_installed_func(), reason='logfire or opentelemetry-sdk not installed')
+
+@pytest.mark.skipif(
+    not logfire_installed or not otel_installed_func(), reason='logfire or opentelemetry-sdk not installed'
+)
 @pytest.mark.anyio
-async def test_tool_approval_span_status(otel_setup):
+async def test_tool_approval_span_status(otel_setup: tuple[TracerProvider, InMemorySpanExporter]):
     provider, exporter = otel_setup
 
-    async def model_logic(messages, info):
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('approval_tool', {'x': 5}, 'call_1')])
-    
+
     model = FunctionModel(model_logic)
     agent = Agent(model=model, output_type=str | DeferredToolRequests)
 

@@ -413,6 +413,7 @@ class ToolManager(Generic[AgentDepsT]):
             instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=span_attributes,
         ) as span:
+            tool_result: Any = None
             try:
                 tool_result = await self._execute_tool_call_impl(validated, usage=usage)
             except ToolRetryError as e:
