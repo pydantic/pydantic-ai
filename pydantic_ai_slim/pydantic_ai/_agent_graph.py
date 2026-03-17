@@ -16,11 +16,12 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
-from pydantic_ai._function_schema import _takes_ctx  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager, ValidatedToolCall
-from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, now_utc, run_in_executor
+from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, now_utc
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
@@ -64,23 +65,6 @@ EndStrategy = Literal['early', 'exhaustive']
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
-_HistoryProcessorSync = Callable[[list[_messages.ModelMessage]], list[_messages.ModelMessage]]
-_HistoryProcessorAsync = Callable[[list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]]
-_HistoryProcessorSyncWithCtx = Callable[[RunContext[DepsT], list[_messages.ModelMessage]], list[_messages.ModelMessage]]
-_HistoryProcessorAsyncWithCtx = Callable[
-    [RunContext[DepsT], list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]
-]
-HistoryProcessor = (
-    _HistoryProcessorSync
-    | _HistoryProcessorAsync
-    | _HistoryProcessorSyncWithCtx[DepsT]
-    | _HistoryProcessorAsyncWithCtx[DepsT]
-)
-"""A function that processes a list of model messages and returns a list of model messages.
-
-Can optionally accept a `RunContext` as a parameter.
-"""
-
 
 @dataclasses.dataclass(kw_only=True)
 class GraphAgentState:
@@ -92,6 +76,12 @@ class GraphAgentState:
     run_step: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
     metadata: dict[str, Any] | None = None
+    model_settings: Any = None
+    """Last-resolved model settings for the current step, used for error messages.
+
+    Typed as `Any` because `ModelSettings` contains types like `httpx.Timeout` that
+    Pydantic cannot generate a schema for, and this dataclass is used as graph state.
+    """
 
     def increment_retries(
         self,
@@ -135,7 +125,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     resumed_request: _messages.ModelRequest | None
 
     model: models.Model
-    model_settings: ModelSettings | None
+    get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
     usage_limits: _usage.UsageLimits
     max_result_retries: int
     end_strategy: EndStrategy
@@ -145,7 +135,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     output_validators: list[_output.OutputValidator[DepsT, OutputDataT]]
     validation_context: Any | Callable[[RunContext[DepsT]], Any]
 
-    history_processors: Sequence[HistoryProcessor[DepsT]]
+    root_capability: AbstractCapability[DepsT]
 
     builtin_tools: list[AbstractBuiltinTool | BuiltinToolFunc[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -497,7 +487,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_response = streamed_response.get()
 
-        self._finish_handling(ctx, model_response)
+        await self._finish_handling(ctx, model_response)
         assert self._result is not None  # this should be set by the previous line
 
     async def _make_request(
@@ -511,7 +501,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.requests += 1
 
-        return self._finish_handling(ctx, model_response)
+        return await self._finish_handling(ctx, model_response)
 
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -528,47 +518,62 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        message_history = await _process_message_history(
-            ctx.state.message_history[:], ctx.deps.history_processors, run_context
+        model_request_parameters = await _prepare_request_parameters(ctx)
+        model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
+
+        messages, model_settings, model_request_parameters = await ctx.deps.root_capability.before_model_request(
+            run_context,
+            messages=ctx.state.message_history[:],
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
         )
-        if message_history and message_history[-1].run_id is None:
-            message_history[-1].run_id = ctx.state.run_id
+
+        if len(messages) == 0:
+            raise exceptions.UserError('Processed history cannot be empty.')
+
+        if not isinstance(messages[-1], _messages.ModelRequest):
+            raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
+
+        if messages and messages[-1].run_id is None:
+            messages[-1].run_id = ctx.state.run_id
 
         if self.is_resuming_without_prompt:
             ctx.deps.resumed_request = self.request
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
-        ctx.state.message_history[:] = message_history
+        ctx.state.message_history[:] = messages
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = _first_new_message_index(
-            message_history, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
+            messages, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
         )
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
-        message_history = _clean_message_history(message_history)
+        messages = _clean_message_history(messages)
 
-        model_request_parameters = await _prepare_request_parameters(ctx)
-
-        model_settings = ctx.deps.model_settings
+        ctx.state.model_settings = model_settings
         usage = ctx.state.usage
         if ctx.deps.usage_limits.count_tokens_before_request:
             # Copy to avoid modifying the original usage object with the counted usage
             usage = deepcopy(usage)
 
-            counted_usage = await ctx.deps.model.count_tokens(message_history, model_settings, model_request_parameters)
+            counted_usage = await ctx.deps.model.count_tokens(messages, model_settings, model_request_parameters)
             usage.incr(counted_usage)
 
         ctx.deps.usage_limits.check_before_request(usage)
 
-        return model_settings, model_request_parameters, message_history, run_context
+        return model_settings or None, model_request_parameters, messages, run_context
 
-    def _finish_handling(
+    async def _finish_handling(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
     ) -> CallToolsNode[DepsT, NodeRunEndT]:
         response.run_id = response.run_id or ctx.state.run_id
+
+        run_context = build_run_context(ctx)
+        response = await ctx.deps.root_capability.after_model_request(run_context, response=response)
+
         # Update usage
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
@@ -638,7 +643,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 if not self.model_response.parts:
                     # Don't retry if the model returned an empty response because the token limit was exceeded, possibly during thinking.
                     if self.model_response.finish_reason == 'length':
-                        model_settings = ctx.deps.model_settings
+                        model_settings = ctx.state.model_settings
                         max_tokens = model_settings.get('max_tokens') if model_settings else None
                         raise exceptions.UnexpectedModelBehavior(
                             f'Model token limit ({max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
@@ -688,7 +693,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     # resubmit the most recent request that resulted in an empty response,
                     # as the empty response and request will not create any items in the API payload,
                     # in the hope the model will return a non-empty response this time.
-                    ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
+                    ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.state.model_settings)
                     run_context = build_run_context(ctx)
                     instructions = await ctx.deps.get_instructions(run_context)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
@@ -758,7 +763,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     raise ToolRetryError(m)
                 except ToolRetryError as e:
                     ctx.state.increment_retries(
-                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
                     )
                     run_context = build_run_context(ctx)
                     instructions = await ctx.deps.get_instructions(run_context)
@@ -980,7 +985,7 @@ async def process_tool_calls(  # noqa: C901
                         yield event
                     continue
                 ctx.state.increment_retries(
-                    ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                    ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
                 )
                 raise  # pragma: lax no cover
 
@@ -996,7 +1001,7 @@ async def process_tool_calls(  # noqa: C901
                 ctx.state.increment_retries(
                     ctx.deps.max_result_retries,
                     error=validated.validation_error,
-                    model_settings=ctx.deps.model_settings,
+                    model_settings=ctx.state.model_settings,
                 )
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 output_parts.append(validated.validation_error.tool_retry)
@@ -1014,7 +1019,7 @@ async def process_tool_calls(  # noqa: C901
                         yield event
                     continue
                 ctx.state.increment_retries(
-                    ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                    ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
                 )
                 raise  # pragma: lax no cover
             except ToolRetryError as e:
@@ -1022,7 +1027,7 @@ async def process_tool_calls(  # noqa: C901
                 # This allows the run to succeed if at least one output tool returned a valid result
                 if not final_result:
                     ctx.state.increment_retries(
-                        ctx.deps.max_result_retries, error=e, model_settings=ctx.deps.model_settings
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
                     )
                 yield _messages.FunctionToolCallEvent(call, args_valid=True)
                 output_parts.append(e.tool_retry)
@@ -1056,7 +1061,7 @@ async def process_tool_calls(  # noqa: C901
 
     # Then, we handle unknown tool calls
     if tool_calls_by_kind['unknown']:
-        ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.deps.model_settings)
+        ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.state.model_settings)
         calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     calls_to_run_results: dict[str, DeferredToolResult] = {}
@@ -1117,6 +1122,7 @@ async def process_tool_calls(  # noqa: C901
             tool_calls=calls_to_run,
             tool_call_results=calls_to_run_results,
             validated_calls=validated_calls,
+            tracer=ctx.deps.tracer,
             output_parts=output_parts,
             output_deferred_calls=deferred_calls,
             output_deferred_metadata=deferred_metadata,
@@ -1184,6 +1190,7 @@ async def _call_tools(  # noqa: C901
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult],
     validated_calls: dict[str, ValidatedToolCall[DepsT]],
+    tracer: Tracer,
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
     output_deferred_metadata: dict[str, dict[str, Any]],
@@ -1193,89 +1200,101 @@ async def _call_tools(  # noqa: C901
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
     deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
-    async def handle_call_or_result(
-        coro_or_task: Awaitable[
-            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]
-        ]
-        | Task[
-            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]
-        ],
-        index: int,
-    ) -> _messages.HandleResponseEvent | None:
-        try:
-            tool_part, tool_user_content = (
-                (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
-            )
-        except exceptions.CallDeferred as e:
-            deferred_calls_by_index[index] = 'external'
-            deferred_metadata_by_index[index] = e.metadata
-        except exceptions.ApprovalRequired as e:
-            deferred_calls_by_index[index] = 'unapproved'
-            deferred_metadata_by_index[index] = e.metadata
-        else:
-            tool_parts_by_index[index] = tool_part
-            if tool_user_content:
-                user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
+    with tracer.start_as_current_span(
+        'running tools',
+        attributes={
+            'tools': [call.tool_name for call in tool_calls],
+            'logfire.msg': f'running {len(tool_calls)} tool{"" if len(tool_calls) == 1 else "s"}',
+        },
+    ):
 
-            return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
-
-    parallel_execution_mode = tool_manager.get_parallel_execution_mode(tool_calls)
-    if parallel_execution_mode == 'sequential':
-        for index, call in enumerate(tool_calls):
-            if event := await handle_call_or_result(
-                _call_tool(
-                    tool_manager,
-                    validated_calls.get(call.tool_call_id, call),
-                    tool_call_results.get(call.tool_call_id),
-                ),
-                index,
-            ):
-                yield event
-
-    else:
-        tasks = [
-            asyncio.create_task(
-                _call_tool(
-                    tool_manager,
-                    validated_calls.get(call.tool_call_id, call),
-                    tool_call_results.get(call.tool_call_id),
-                ),
-                name=call.tool_name,
-            )
-            for call in tool_calls
-        ]
-        try:
-            if parallel_execution_mode == 'parallel_ordered_events':
-                # Wait for all tasks to complete before yielding any events
-                await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
-                for index, task in enumerate(tasks):
-                    if event := await handle_call_or_result(coro_or_task=task, index=index):
-                        yield event
+        async def handle_call_or_result(
+            coro_or_task: Awaitable[
+                tuple[
+                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
+                ]
+            ]
+            | Task[
+                tuple[
+                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
+                ]
+            ],
+            index: int,
+        ) -> _messages.HandleResponseEvent | None:
+            try:
+                tool_part, tool_user_content = (
+                    (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
+                )
+            except exceptions.CallDeferred as e:
+                deferred_calls_by_index[index] = 'external'
+                deferred_metadata_by_index[index] = e.metadata
+            except exceptions.ApprovalRequired as e:
+                deferred_calls_by_index[index] = 'unapproved'
+                deferred_metadata_by_index[index] = e.metadata
             else:
-                pending: set[
-                    asyncio.Task[
-                        tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
-                    ]
-                ] = set(tasks)  # pyright: ignore[reportAssignmentType]
-                while pending:
-                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                    for task in done:
-                        index = tasks.index(task)  # pyright: ignore[reportArgumentType]
-                        if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
-                            yield event
+                tool_parts_by_index[index] = tool_part
+                if tool_user_content:
+                    user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
 
-        except asyncio.CancelledError as e:
-            for task in tasks:
-                task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
-            raise
-        except BaseException:
-            # Cancel any still-running sibling tasks so they don't become
-            # orphaned asyncio tasks when a non-CancelledError exception
-            # (e.g. RuntimeError, ConnectionError) propagates out of
-            # handle_call_or_result().
-            for task in tasks:
-                task.cancel()
-            raise
+                return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
+
+        parallel_execution_mode = tool_manager.get_parallel_execution_mode(tool_calls)
+        if parallel_execution_mode == 'sequential':
+            for index, call in enumerate(tool_calls):
+                if event := await handle_call_or_result(
+                    _call_tool(
+                        tool_manager,
+                        validated_calls.get(call.tool_call_id, call),
+                        tool_call_results.get(call.tool_call_id),
+                    ),
+                    index,
+                ):
+                    yield event
+
+        else:
+            tasks = [
+                asyncio.create_task(
+                    _call_tool(
+                        tool_manager,
+                        validated_calls.get(call.tool_call_id, call),
+                        tool_call_results.get(call.tool_call_id),
+                    ),
+                    name=call.tool_name,
+                )
+                for call in tool_calls
+            ]
+            try:
+                if parallel_execution_mode == 'parallel_ordered_events':
+                    # Wait for all tasks to complete before yielding any events
+                    await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
+                    for index, task in enumerate(tasks):
+                        if event := await handle_call_or_result(coro_or_task=task, index=index):
+                            yield event
+                else:
+                    pending: set[
+                        asyncio.Task[
+                            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
+                        ]
+                    ] = set(tasks)  # pyright: ignore[reportAssignmentType]
+                    while pending:
+                        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                        for task in done:
+                            index = tasks.index(task)  # pyright: ignore[reportArgumentType]
+                            if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
+                                yield event
+
+            except asyncio.CancelledError as e:
+                for task in tasks:
+                    task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+                raise
+            except BaseException:
+                # Cancel any still-running sibling tasks so they don't become
+                # orphaned asyncio tasks when a non-CancelledError exception
+                # (e.g. RuntimeError, ConnectionError) propagates out of
+                # handle_call_or_result().
+                for task in tasks:
+                    task.cancel()
+                raise
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
     # This is mostly just to simplify testing
@@ -1449,41 +1468,6 @@ def build_agent_graph(
         ),
     )
     return g.build(validate_graph_structure=False)
-
-
-async def _process_message_history(
-    messages: list[_messages.ModelMessage],
-    processors: Sequence[HistoryProcessor[DepsT]],
-    run_context: RunContext[DepsT],
-) -> list[_messages.ModelMessage]:
-    """Process message history through a sequence of processors."""
-    for processor in processors:
-        takes_ctx = _takes_ctx(processor)
-
-        if is_async_callable(processor):
-            if takes_ctx:
-                messages = await processor(run_context, messages)
-            else:
-                messages = await processor(messages)
-        else:
-            if takes_ctx:
-                sync_processor_with_ctx = cast(_HistoryProcessorSyncWithCtx[DepsT], processor)
-                messages = await run_in_executor(sync_processor_with_ctx, run_context, messages)
-            else:
-                sync_processor = cast(_HistoryProcessorSync, processor)
-                messages = await run_in_executor(sync_processor, messages)
-
-    if len(messages) == 0:
-        raise exceptions.UserError('Processed history cannot be empty.')
-
-    if not isinstance(messages[-1], _messages.ModelRequest):
-        raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
-
-    # Ensure the last request has a timestamp (history processors may create new ModelRequest objects without one)
-    if messages[-1].timestamp is None:
-        messages[-1].timestamp = now_utc()
-
-    return messages
 
 
 def _first_run_id_index(messages: list[_messages.ModelMessage], run_id: str) -> int:

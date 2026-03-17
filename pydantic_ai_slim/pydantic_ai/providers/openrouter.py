@@ -127,8 +127,6 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         provider, model_name = model_name.split('/', 1)
         if provider in provider_to_profile:
             model_name, *_ = model_name.split(':', 1)  # drop tags
-            if provider == 'anthropic':
-                model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
 
         # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,

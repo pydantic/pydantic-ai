@@ -306,15 +306,6 @@ def guard_tool_call_id(
     return t.tool_call_id or generate_tool_call_id()
 
 
-TOOL_NAME_SANITIZER = re.compile(r'[^a-zA-Z0-9_-]')
-"""Regex matching characters not allowed in tool names by most providers."""
-
-
-def sanitize_tool_name(name: str) -> str:
-    """Replace characters outside `[a-zA-Z0-9_-]` with `_`."""
-    return TOOL_NAME_SANITIZER.sub('_', name)
-
-
 def generate_tool_call_id() -> str:
     """Generate a tool call id.
 

@@ -94,14 +94,22 @@ _import_string_adapter: TypeAdapter[Any] = TypeAdapter(ImportString)
 
 
 def load_agent(agent_path: str) -> Agent[Any, Any] | None:
-    """Load an agent from module path in uvicorn style.
+    """Load an agent from a module path or a YAML/JSON spec file.
+
+    Supports two formats:
+    - Module path in uvicorn style: ``'module:variable'``, e.g. ``'test_agent:my_agent'``
+    - File path to a YAML or JSON agent spec: e.g. ``'agent.yml'``, ``'agent.yaml'``, ``'agent.json'``
 
     Args:
-        agent_path: Path in format 'module:variable', e.g. 'test_agent:my_agent'
+        agent_path: Module path or file path to load the agent from.
 
     Returns:
-        Agent instance or None if loading fails
+        Agent instance or None if loading fails.
     """
+    path = Path(agent_path)
+    if path.suffix in ('.yaml', '.yml', '.json'):
+        return _load_agent_from_spec_file(path)
+
     sys.path.insert(0, str(Path.cwd()))
     try:
         obj = _import_string_adapter.validate_python(agent_path)
@@ -110,6 +118,17 @@ def load_agent(agent_path: str) -> Agent[Any, Any] | None:
         return obj  # pyright: ignore[reportUnknownVariableType]
     except ValidationError:
         return None
+
+
+def _load_agent_from_spec_file(path: Path) -> Agent[Any, Any] | None:
+    """Load an agent from a YAML or JSON spec file using Agent.from_spec."""
+    from pydantic_ai.agent.spec import AgentSpec
+
+    if not path.is_file():
+        return None
+
+    spec = AgentSpec.from_file(path)
+    return Agent.from_spec(spec)
 
 
 @cli_agent.system_prompt
@@ -152,7 +171,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
     parser.add_argument(
         '--agent',
         '-a',
-        help='Agent to serve, in format "module:variable" (e.g., "mymodule:agent"). '
+        help='Agent to serve: a module path like "module:variable" or a YAML/JSON spec file like "agent.yml". '
         'If omitted, creates a generic agent with the first specified model as default.',
     )
     model_arg = parser.add_argument(
@@ -239,7 +258,7 @@ subcommands:
     parser.add_argument(
         '-a',
         '--agent',
-        help='Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
+        help='Custom Agent to use: a module path like "module:variable" or a YAML/JSON spec file like "agent.yml"',
     )
     parser.add_argument(
         '-t',
