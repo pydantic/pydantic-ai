@@ -1,11 +1,55 @@
 interactions:
 - request:
+    body: Action=AssumeRole&Version=2011-06-15&RoleArn=scrubbed&RoleSessionName=scrubbed
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZjAwODlkNzgtNWFhMS00ZGRmLTk1M2ItZjVlNjdjYTM5Nzg2
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '149'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24veC13d3ctZm9ybS11cmxlbmNvZGVkOyBjaGFyc2V0PXV0Zi04
+    method: POST
+    uri: https://sts.us-east-1.amazonaws.com/
+  response:
+    body:
+      string: |
+        <AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+          <AssumeRoleResult>
+            <AssumedRoleUser>
+              <AssumedRoleId>scrubbed</AssumedRoleId>
+              <Arn>scrubbed</Arn>
+            </AssumedRoleUser>
+            <Credentials>
+              <AccessKeyId>scrubbed</AccessKeyId>
+              <SecretAccessKey>scrubbed</SecretAccessKey>
+              <SessionToken>scrubbed</SessionToken>
+              <Expiration>2026-03-07T22:56:31Z</Expiration>
+            </Credentials>
+          </AssumeRoleResult>
+          <ResponseMetadata>
+            <RequestId>65b92098-546c-4214-ae0c-ac901d9aee62</RequestId>
+          </ResponseMetadata>
+        </AssumeRoleResponse>
+    headers:
+      content-length:
+      - '1490'
+      content-type:
+      - text/xml
+    status:
+      code: 200
+      message: OK
+- request:
     body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France? Give me an answer that contains
       the word \"Paris\", but is not the first word."}]}], "system": [], "inferenceConfig": {"stopSequences": ["Paris"]}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        YWEyMWExMDYtNjJjMy00MmNiLTlkNjUtYTEwYzYzYTIxNGFk
+        OTg5ZjcyYjQtNzQyYi00ODlhLTlhMjItODQ3YjVmYTIxMGYx
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
@@ -21,22 +65,23 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '197'
+      - '226'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 189
+        latencyMs: 241
       output:
         message:
           content:
-          - text: The city of Paris
+          - text: Paris
           role: assistant
       stopReason: end_turn
       usage:
         inputTokens: 25
-        outputTokens: 4
-        totalTokens: 29
+        outputTokens: 1
+        serverToolUsage: {}
+        totalTokens: 26
     status:
       code: 200
       message: OK

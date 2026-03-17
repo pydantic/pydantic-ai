@@ -690,28 +690,6 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
     )
 
 
-async def test_google_model_max_tokens(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'max_tokens': 5})
-    result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('The capital of France is')
-
-
-async def test_google_model_top_p(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'top_p': 0.5})
-    result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('The capital of France is Paris.\n')
-
-
-async def test_google_model_thinking_config(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=google_provider)
-    settings = GoogleModelSettings(google_thinking_config={'include_thoughts': False})
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
-    result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('The capital of France is **Paris**.')
-
-
 async def test_google_model_gla_labels_raises_value_error(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash', provider=google_provider)
     settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
@@ -720,25 +698,6 @@ async def test_google_model_gla_labels_raises_value_error(allow_model_requests: 
     # Raises before any request is made.
     with pytest.raises(ValueError, match='labels parameter is not supported in Gemini API.'):
         await agent.run('What is the capital of France?')
-
-
-async def test_google_model_vertex_provider(
-    allow_model_requests: None, vertex_provider: GoogleProvider
-):  # pragma: lax no cover
-    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.')
-    result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('The capital of France is Paris.\n')
-
-
-async def test_google_model_vertex_labels(
-    allow_model_requests: None, vertex_provider: GoogleProvider
-):  # pragma: lax no cover
-    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
-    settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
-    result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('The capital of France is Paris.\n')
 
 
 async def test_google_model_iter_stream(allow_model_requests: None, google_provider: GoogleProvider):

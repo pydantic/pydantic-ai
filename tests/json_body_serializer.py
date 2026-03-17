@@ -1,6 +1,7 @@
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 import gzip
 import json
+import re
 import unicodedata
 import urllib.parse
 import zlib
@@ -36,10 +37,14 @@ def normalize_smart_chars(text: str) -> str:
     return unicodedata.normalize('NFKC', text)
 
 
+def _scrub_aws_arns(text: str) -> str:
+    return _AWS_ARN_PATTERN.sub(lambda m: re.sub(r'\d{12}', '000000000000', m.group()), text)
+
+
 def normalize_body(obj: Any) -> Any:
-    """Recursively normalize smart characters in all strings within a data structure."""
+    """Recursively normalize smart characters and scrub sensitive identifiers in all strings."""
     if isinstance(obj, str):
-        return normalize_smart_chars(obj)
+        return _scrub_aws_arns(normalize_smart_chars(obj))
     elif isinstance(obj, dict):
         return {k: normalize_body(v) for k, v in obj.items()}
     elif isinstance(obj, list):  # pragma: no cover
@@ -102,6 +107,41 @@ def deserialize(cassette_string: str):
     return cassette_dict
 
 
+_AWS_ARN_PATTERN = re.compile(r'arn:aws[^:]*:[^:]+:[^:]*:\d{12}:')
+
+_FORM_SCRUB_KEYS = ('assertion', 'client_id', 'client_secret', 'refresh_token', 'RoleArn', 'RoleSessionName')
+
+
+def _scrub_form_credentials(data: dict[str, Any]) -> None:
+    query_params = urllib.parse.parse_qs(data['body'])
+    for key in _FORM_SCRUB_KEYS:  # pragma: no cover
+        if key in query_params:
+            query_params[key] = ['scrubbed']
+            data['body'] = urllib.parse.urlencode(query_params, doseq=True)
+
+
+_XML_CREDENTIAL_SCRUB_PATTERNS = [
+    (re.compile(f'<{tag}>[^<]*</{tag}>'), f'<{tag}>scrubbed</{tag}>')
+    for tag in ('AccessKeyId', 'SecretAccessKey', 'SessionToken', 'Arn', 'AssumedRoleId')
+]
+
+
+def _scrub_xml_credentials(data: dict[str, Any], kind: str) -> None:
+    body = data.get('body', None)
+    if isinstance(body, dict):
+        body = body.get('string', '')
+    if isinstance(body, str):
+        for pattern, replacement in _XML_CREDENTIAL_SCRUB_PATTERNS:
+            body = pattern.sub(replacement, body)
+        data['body'] = {'string': body} if kind == 'response' else body
+
+
+def _content_type_startswith(header: str | bytes, prefix: str) -> bool:
+    if isinstance(header, bytes):
+        header = header.decode('utf-8')
+    return header.startswith(prefix)
+
+
 def serialize(cassette_dict: Any):  # pragma: lax no cover
     for interaction in cassette_dict['interactions']:
         for _kind, data in interaction.items():
@@ -156,12 +196,10 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     if 'content-length' in headers:
                         new_body = json.dumps(data['parsed_body'])
                         headers['content-length'] = [str(len(new_body.encode('utf-8')))]
-            if content_type == ['application/x-www-form-urlencoded']:
-                query_params = urllib.parse.parse_qs(data['body'])
-                for key in ['assertion', 'client_id', 'client_secret', 'refresh_token']:  # pragma: no cover
-                    if key in query_params:
-                        query_params[key] = ['scrubbed']
-                        data['body'] = urllib.parse.urlencode(query_params, doseq=True)
+            if any(_content_type_startswith(header, 'application/x-www-form-urlencoded') for header in content_type):
+                _scrub_form_credentials(data)
+            if any(_content_type_startswith(header, 'text/xml') for header in content_type):
+                _scrub_xml_credentials(data, _kind)
 
     # Use our custom dumper
     return yaml.dump(cassette_dict, Dumper=LiteralDumper, allow_unicode=True, width=120)

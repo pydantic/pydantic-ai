@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '232'
+      - '134'
       content-type:
       - application/json
       host:
@@ -16,11 +16,10 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
+      - content: What is the capital of France?
         role: user
       model: command-a-03-2025
-      stop_sequences:
-      - Paris
+      p: 0.5
       stream: false
     uri: https://api.cohere.com/v2/chat
   response:
@@ -32,15 +31,15 @@ interactions:
       cache-control:
       - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
       content-length:
-      - '336'
+      - '528'
       content-type:
       - application/json
       expires:
       - Thu, 01 Jan 1970 00:00:00 GMT
       num_chars:
-      - '2685'
+      - '2608'
       num_tokens:
-      - '34'
+      - '55'
       pragma:
       - no-cache
       transfer-encoding:
@@ -48,21 +47,22 @@ interactions:
       vary:
       - Origin,Accept-Encoding
     parsed_body:
-      finish_reason: STOP_SEQUENCE
-      id: 0612a26b-3c4f-4834-b6fe-ef2827e6d99d
+      finish_reason: COMPLETE
+      id: a06c1c7c-0308-40ae-9db4-6c340e867ba9
       message:
         content:
-        - text: The capital of France is, of course,
+        - text: The capital of France is **Paris**. It is the country's largest city and main cultural, commercial, and industrial
+            center. Paris is known for its iconic landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral.
           type: text
         role: assistant
       usage:
         billed_units:
-          input_tokens: 25
-          output_tokens: 9
+          input_tokens: 7
+          output_tokens: 48
         cached_tokens: 0
         tokens:
-          input_tokens: 520
-          output_tokens: 55
+          input_tokens: 502
+          output_tokens: 50
     status:
       code: 200
       message: OK

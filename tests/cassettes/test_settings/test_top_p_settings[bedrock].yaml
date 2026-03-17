@@ -1,0 +1,47 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the capital of France?"}]}], "system": [], "inferenceConfig":
+      {"topP": 0.5}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MjI3ZTE4NzQtNDBkNC00MzU0LWE4NTItZGI1NTM4OWEzMWRm
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '137'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '680'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 674
+      output:
+        message:
+          content:
+          - text: The capital of France is Paris. Paris is not only the capital city but also the most populous city in France,
+              and it is a major center for culture, education, fashion, and the arts in Europe and the world. The city is
+              located in the northern central part of the country along the Seine River. Paris is known for its historical
+              and architectural landmarks, including the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 7
+        outputTokens: 96
+        serverToolUsage: {}
+        totalTokens: 103
+    status:
+      code: 200
+      message: OK
+version: 1

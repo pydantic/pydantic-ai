@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '254'
+      - '170'
       content-type:
       - application/json
       host:
@@ -16,13 +16,12 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
+      - content: What is the capital of France?
         role: user
       model: meta-llama/llama-4-scout-17b-16e-instruct
       n: 1
-      stop:
-      - Paris
       stream: false
+      top_p: 0.5
     uri: https://api.groq.com/openai/v1/chat/completions
   response:
     headers:
@@ -33,7 +32,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '708'
+      - '664'
       content-type:
       - application/json
       strict-transport-security:
@@ -48,26 +47,26 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: 'The iconic city known worldwide for its romantic charm and rich history, '
+          content: The capital of France is Paris.
           role: assistant
-      created: 1772841872
-      id: chatcmpl-46b4ace8-b88f-4f08-bd03-2ec969bfbd47
+      created: 1772841520
+      id: chatcmpl-02c710ba-fe22-4f24-a63e-4c07d6310169
       model: meta-llama/llama-4-scout-17b-16e-instruct
       object: chat.completion
       service_tier: on_demand
       system_fingerprint: fp_5bd1e7ad73
       usage:
-        completion_time: 0.052773092
-        completion_tokens: 22
-        prompt_time: 0.000965152
-        prompt_tokens: 35
-        queue_time: 0.068240711
-        total_time: 0.053738244
-        total_tokens: 57
+        completion_time: 0.018662279
+        completion_tokens: 8
+        prompt_time: 9.793e-05
+        prompt_tokens: 17
+        queue_time: 0.004214312
+        total_time: 0.018760209
+        total_tokens: 25
       usage_breakdown: null
       x_groq:
-        id: req_01kk2srb8efd5az44svqp50v5k
-        seed: 837228055
+        id: req_01kk2sdkrxfe1848tbd4nqdfpa
+        seed: 1457789235
     status:
       code: 200
       message: OK
