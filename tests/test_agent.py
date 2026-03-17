@@ -456,34 +456,61 @@ def test_tool_output_function_retries():
 
 
 def test_tool_output_max_retries_respected():
-    """Test that ToolOutput.max_retries is respected and not overridden by Agent defaults.
-
-    Regression test for https://github.com/pydantic/pydantic-ai/issues/4678
-    """
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/4678."""
+    from pydantic_ai._output import OutputToolset
     from pydantic_ai.output import ToolOutput
 
     class Foo(BaseModel):
         bar: str
 
-    # ToolOutput with explicit max_retries should be respected
-    agent1 = Agent(TestModel(), output_type=ToolOutput(Foo, max_retries=5))
-    assert agent1._output_toolset is not None
-    assert agent1._output_toolset.max_retries == 5
+    class Bar(BaseModel):
+        baz: int
 
-    # Without ToolOutput max_retries, agent retries should apply
-    agent2 = Agent(TestModel(), output_type=ToolOutput(Foo), retries=3)
-    assert agent2._output_toolset is not None
-    assert agent2._output_toolset.max_retries == 3
+    # ToolOutput with explicit max_retries is extracted by build()
+    toolset = OutputToolset.build([ToolOutput(Foo, max_retries=3)])
+    assert toolset is not None
+    assert toolset.max_retries == 3
 
-    # Without ToolOutput, plain type should use agent retries
-    agent3 = Agent(TestModel(), output_type=Foo, retries=4)
-    assert agent3._output_toolset is not None
-    assert agent3._output_toolset.max_retries == 4
+    # Without explicit max_retries, defaults to None (agent will fill in)
+    toolset2 = OutputToolset.build([ToolOutput(Foo)])
+    assert toolset2 is not None
+    assert toolset2.max_retries is None
 
-    # ToolOutput max_retries should take priority over agent retries
-    agent4 = Agent(TestModel(), output_type=ToolOutput(Foo, max_retries=7), retries=2)
-    assert agent4._output_toolset is not None
-    assert agent4._output_toolset.max_retries == 7
+    # Multiple ToolOutputs: highest max_retries wins
+    toolset3 = OutputToolset.build([ToolOutput(Foo, max_retries=2), ToolOutput(Bar, max_retries=5)])
+    assert toolset3 is not None
+    assert toolset3.max_retries == 5
+
+
+def test_tool_output_max_retries_overrides_agent_retries():
+    """ToolOutput.max_retries takes priority over Agent retries. Regression test for #4678."""
+    from pydantic_ai.output import ToolOutput
+
+    max_retries_seen: list[int] = []
+    target_retries = 5
+
+    def get_weather(ctx: RunContext[None], city: str) -> str:
+        max_retries_seen.append(ctx.max_retries)
+        if ctx.retry < target_retries:
+            raise ModelRetry(f'Retry {ctx.retry}')
+        return f'Weather in {city}'
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    # Agent retries=10 (high to not interfere), ToolOutput max_retries=5
+    # ctx.max_retries should reflect the ToolOutput value, not the agent default
+    agent = Agent(
+        FunctionModel(return_model),
+        output_type=ToolOutput(get_weather, max_retries=target_retries),
+        retries=10,
+    )
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Weather in Mexico City'
+    assert all(m == target_retries for m in max_retries_seen)
 
 
 class TestPartialOutput:

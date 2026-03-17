@@ -865,9 +865,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     """The tool definitions for the output tools in this toolset."""
     processors: dict[str, ObjectOutputProcessor[Any]]
     """The processors for the output tools in this toolset."""
-    max_retries: int
-    max_retries_set_by_output: bool
-    """Whether `max_retries` was explicitly set via a `ToolOutput` instance."""
+    max_retries: int | None
     output_validators: list[OutputValidator[AgentDepsT, Any]]
 
     @classmethod
@@ -901,7 +899,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 description = output.description
                 strict = output.strict
                 if output.max_retries is not None:
-                    max_retries = output.max_retries
+                    max_retries = max(max_retries or 0, output.max_retries)
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -942,24 +940,18 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             processors[name] = processor
             tool_defs.append(tool_def)
 
-        kwargs: dict[str, Any] = dict(processors=processors, tool_defs=tool_defs)
-        if max_retries is not None:
-            kwargs['max_retries'] = max_retries
-            kwargs['max_retries_set_by_output'] = True
-        return cls(**kwargs)
+        return cls(processors=processors, tool_defs=tool_defs, max_retries=max_retries)
 
     def __init__(
         self,
         tool_defs: list[ToolDefinition],
         processors: dict[str, ObjectOutputProcessor[Any]],
-        max_retries: int = 1,
-        max_retries_set_by_output: bool = False,
+        max_retries: int | None = None,
         output_validators: list[OutputValidator[AgentDepsT, Any]] | None = None,
     ):
         self.processors = processors
         self._tool_defs = tool_defs
         self.max_retries = max_retries
-        self.max_retries_set_by_output = max_retries_set_by_output
         self.output_validators = output_validators or []
 
     @property
@@ -975,7 +967,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             tool_def.name: ToolsetTool(
                 toolset=self,
                 tool_def=tool_def,
-                max_retries=self.max_retries,
+                max_retries=self.max_retries if self.max_retries is not None else 1,
                 args_validator=self.processors[tool_def.name].validator,
             )
             for tool_def in self._tool_defs
