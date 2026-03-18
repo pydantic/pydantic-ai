@@ -48,7 +48,7 @@ class TemplateStr(Generic[AgentDepsT]):
         *,
         deps_type: type[Any] | None = None,
         deps_schema: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> None:  # pragma: no cover — requires pydantic-handlebars
         self._source = source
         self._deps_type = deps_type
         self._deps_schema = deps_schema
@@ -64,7 +64,7 @@ class TemplateStr(Generic[AgentDepsT]):
             self._compiled_typed = None
             self._compiled_untyped = hbs.compile(source)
 
-    def render(self, deps: AgentDepsT | None = None) -> str:
+    def render(self, deps: AgentDepsT | None = None) -> str:  # pragma: no cover — requires pydantic-handlebars
         """Render the template against the given deps object."""
         if self._compiled_typed is not None:
             return self._compiled_typed.render(deps)
@@ -77,7 +77,7 @@ class TemplateStr(Generic[AgentDepsT]):
                 return self._compiled_untyped.render(deps_data)
         return self._compiled_untyped.render()
 
-    def __call__(self, ctx: RunContext[AgentDepsT]) -> str:
+    def __call__(self, ctx: RunContext[AgentDepsT]) -> str:  # pragma: no cover — requires pydantic-handlebars
         """Render the template against ``ctx.deps``."""
         return self.render(ctx.deps)
 
@@ -87,7 +87,9 @@ class TemplateStr(Generic[AgentDepsT]):
         source_type: type[Any],
         handler: GetCoreSchemaHandler,
     ) -> CoreSchema:
-        def validate(value: Any, info: core_schema.ValidationInfo) -> TemplateStr[Any]:
+        def validate(
+            value: Any, info: core_schema.ValidationInfo
+        ) -> TemplateStr[Any]:  # pragma: no cover — requires pydantic-handlebars
             if isinstance(value, TemplateStr):
                 return cast(TemplateStr[Any], value)
             if not isinstance(value, str):
@@ -110,10 +112,10 @@ class TemplateStr(Generic[AgentDepsT]):
             ),
         )
 
-    def __repr__(self) -> str:
+    def __repr__(self) -> str:  # pragma: no cover — requires pydantic-handlebars
         return f'TemplateStr({self._source!r})'
 
-    def __str__(self) -> str:
+    def __str__(self) -> str:  # pragma: no cover — requires pydantic-handlebars
         return self._source
 
 
@@ -135,7 +137,7 @@ def validate_from_spec_args(
 
     try:
         hints = _typing_extra.get_function_type_hints(cls.from_spec)
-    except Exception:
+    except Exception:  # pragma: no cover — defensive; depends on Pydantic internals
         return args, kwargs
 
     hints.pop('return', None)
@@ -148,7 +150,9 @@ def validate_from_spec_args(
     new_args = list(args)
     new_kwargs = dict(kwargs)
 
-    for i, param in enumerate(params):
+    for i, param in enumerate(
+        params
+    ):  # pragma: no cover — only hit when TemplateStr hints exist (requires pydantic-handlebars)
         hint = hints.get(param.name)
         if hint is None or not _hint_contains_template_str(hint):
             continue
@@ -173,7 +177,7 @@ def _hint_contains_template_str(hint: Any) -> bool:
     return False
 
 
-def _import_pydantic_handlebars() -> Any:
+def _import_pydantic_handlebars() -> Any:  # pragma: no cover — requires pydantic-handlebars
     """Lazily import pydantic-handlebars with a helpful error message."""
     try:
         import pydantic_handlebars

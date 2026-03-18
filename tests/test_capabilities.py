@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -9,15 +10,18 @@ from pydantic_ai.capabilities import (
     Instructions,
     ModelSettings,
     Thinking,
+    Toolset,
     WebSearch,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
 
@@ -611,3 +615,166 @@ async def test_capability_returning_toolset_func_combined():
     assert len(tool_returns) == 1
     assert isinstance(tool_returns[0].content, str)
     assert tool_returns[0].content.startswith('Hello, ')
+
+
+def test_model_settings_from_spec_positional():
+    """ModelSettings.from_spec with a single positional dict arg."""
+    cap = ModelSettings.from_spec({'max_tokens': 4096, 'temperature': 0.5})
+    assert cap.settings == {'max_tokens': 4096, 'temperature': 0.5}
+
+
+def test_model_settings_from_spec_kwargs():
+    """ModelSettings.from_spec with keyword arguments."""
+    cap = ModelSettings.from_spec(max_tokens=100)
+    assert cap.settings == {'max_tokens': 100}
+
+
+async def test_model_settings_callable_before_model_request():
+    """Callable ModelSettings resolves dynamically in before_model_request."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.result import RunUsage
+
+    def dynamic_settings(ctx: RunContext[None]) -> _ModelSettings:
+        return _ModelSettings(temperature=0.9)
+
+    cap = ModelSettings(settings=dynamic_settings)
+
+    # get_model_settings returns None for callable settings (they're resolved per-request)
+    assert cap.get_model_settings() is None
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
+    _, settings, _ = await cap.before_model_request(
+        ctx,
+        messages=[],
+        model_settings=_ModelSettings(max_tokens=100),
+        model_request_parameters=ModelRequestParameters(),
+    )
+    assert settings.get('temperature') == 0.9
+    assert settings.get('max_tokens') == 100
+
+
+async def test_model_settings_static_before_model_request():
+    """Static ModelSettings passes through before_model_request without modification."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.result import RunUsage
+
+    cap = ModelSettings(settings=_ModelSettings(max_tokens=200))
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
+    input_settings = _ModelSettings(temperature=0.5)
+    _, settings, _ = await cap.before_model_request(
+        ctx,
+        messages=[],
+        model_settings=input_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    # Static settings are handled by get_model_settings, not before_model_request
+    assert settings is input_settings
+
+
+def test_abstract_capability_get_model_settings_default():
+    """AbstractCapability.get_model_settings() returns None by default."""
+
+    @dataclass
+    class PlainCap(AbstractCapability[None]):
+        pass
+
+    cap = PlainCap()
+    assert cap.get_model_settings() is None
+
+
+def test_combined_capability_get_model_settings_merge():
+    """CombinedCapability.get_model_settings() merges settings from all sub-capabilities."""
+    caps = CombinedCapability(
+        capabilities=[
+            ModelSettings(settings=_ModelSettings(max_tokens=100)),
+            ModelSettings(settings=_ModelSettings(temperature=0.5)),
+        ]
+    )
+    merged = caps.get_model_settings()
+    assert merged is not None
+    assert merged.get('max_tokens') == 100
+    assert merged.get('temperature') == 0.5
+
+
+def test_combined_capability_get_model_settings_none():
+    """CombinedCapability.get_model_settings() returns None when no capabilities provide settings."""
+    caps = CombinedCapability(capabilities=[Instructions('hello')])
+    assert caps.get_model_settings() is None
+
+
+def test_toolset_capability_get_toolset():
+    """Toolset capability returns its toolset."""
+    ts = FunctionToolset[None]()
+    cap = Toolset(toolset=ts)
+    assert cap.get_toolset() is ts
+
+
+async def test_toolset_capability_in_agent():
+    """A Toolset capability's tools are available to the agent."""
+    from pydantic_ai.models.test import TestModel
+
+    ts = FunctionToolset[None]()
+
+    @ts.tool_plain
+    def greet(name: str) -> str:
+        """Greet someone by name."""
+        return f'Hello, {name}!'
+
+    agent = Agent(TestModel(), capabilities=[Toolset(toolset=ts)])
+    result = await agent.run('Greet Alice')
+
+    tool_returns = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    assert isinstance(tool_returns[0].content, str)
+    assert tool_returns[0].content.startswith('Hello, ')
+
+
+def test_infer_fmt_explicit():
+    """_infer_fmt returns the explicit fmt when provided."""
+    from pydantic_ai.agent.spec import _infer_fmt  # pyright: ignore[reportPrivateUsage]
+
+    assert _infer_fmt(Path('agent.txt'), 'json') == 'json'
+    assert _infer_fmt(Path('agent.txt'), 'yaml') == 'yaml'
+
+
+def test_infer_fmt_unknown_extension():
+    """_infer_fmt raises ValueError for unknown extension without explicit fmt."""
+    from pydantic_ai.agent.spec import _infer_fmt  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(ValueError, match="Could not infer format for filename 'agent.txt'"):
+        _infer_fmt(Path('agent.txt'), None)
+
+
+def test_invalid_custom_capability_type():
+    """Passing a non-AbstractCapability subclass to model_json_schema_with_capabilities raises ValueError."""
+    from pydantic_ai.agent.spec import AgentSpec
+
+    with pytest.raises(ValueError, match='must be subclasses of AbstractCapability'):
+        AgentSpec.model_json_schema_with_capabilities(
+            custom_capability_types=[str],  # type: ignore[list-item]
+        )
+
+
+def test_to_file_with_path_schema_path(tmp_path: str):
+    """to_file works when schema_path is passed as a relative Path (not str), triggering the non-str branch."""
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec = AgentSpec(model='test', name='path-schema')
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    # Pass a relative Path (not str) to exercise the isinstance(schema_path, str) == False branch
+    schema_path = Path('custom_schema.json')
+    spec.to_file(spec_path, schema_path=schema_path)
+
+    resolved_schema = Path(tmp_path) / 'custom_schema.json'
+    assert resolved_schema.exists()
+    content = spec_path.read_text(encoding='utf-8')
+    assert 'model: test' in content

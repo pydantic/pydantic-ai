@@ -1022,7 +1022,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             'logfire.msg': f'{agent_name} run',
         }
         if self._description is not None:
-            if isinstance(self._description, TemplateStr):
+            if isinstance(self._description, TemplateStr):  # pragma: no cover — requires pydantic-handlebars
                 span_attributes['gen_ai.agent.description'] = self._description.render(deps)
             else:
                 span_attributes['gen_ai.agent.description'] = self._description
