@@ -864,6 +864,8 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     processors: dict[str, ObjectOutputProcessor[Any]]
     """The processors for the output tools in this toolset."""
     max_retries: int
+    _tool_max_retries: dict[str, int]
+    """Per-tool max_retries overrides from ToolOutput(max_retries=...)."""
     output_validators: list[OutputValidator[AgentDepsT, Any]]
 
     @classmethod
@@ -879,6 +881,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
 
         processors: dict[str, ObjectOutputProcessor[Any]] = {}
         tool_defs: list[ToolDefinition] = []
+        tool_max_retries: dict[str, int] = {}
 
         default_name = name or DEFAULT_OUTPUT_TOOL_NAME
         default_description = description
@@ -889,11 +892,13 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             name = None
             description = None
             strict = None
+            max_retries: int | None = None
             if isinstance(output, ToolOutput):
                 # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
                 name = output.name
                 description = output.description
                 strict = output.strict
+                max_retries = output.max_retries
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -933,8 +938,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             )
             processors[name] = processor
             tool_defs.append(tool_def)
+            if max_retries is not None:
+                tool_max_retries[name] = max_retries
 
-        return cls(processors=processors, tool_defs=tool_defs)
+        return cls(processors=processors, tool_defs=tool_defs, tool_max_retries=tool_max_retries)
 
     def __init__(
         self,
@@ -942,10 +949,12 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         processors: dict[str, ObjectOutputProcessor[Any]],
         max_retries: int = 1,
         output_validators: list[OutputValidator[AgentDepsT, Any]] | None = None,
+        tool_max_retries: dict[str, int] | None = None,
     ):
         self.processors = processors
         self._tool_defs = tool_defs
         self.max_retries = max_retries
+        self._tool_max_retries = tool_max_retries or {}
         self.output_validators = output_validators or []
 
     @property
@@ -961,7 +970,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             tool_def.name: ToolsetTool(
                 toolset=self,
                 tool_def=tool_def,
-                max_retries=self.max_retries,
+                max_retries=self._tool_max_retries.get(tool_def.name, self.max_retries),
                 args_validator=self.processors[tool_def.name].validator,
             )
             for tool_def in self._tool_defs

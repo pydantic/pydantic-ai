@@ -702,3 +702,38 @@ async def test_output_type_description(output_type: type, expected_schema: dict[
 async def test_nested_output_type_description(output_type: type, expected_schema: dict[str, object]):
     agent: Agent[None, str] = Agent('test', output_type=output_type)
     assert agent.output_json_schema() == expected_schema
+
+
+async def test_tool_output_max_retries_single():
+    """Test that ToolOutput(max_retries=N) is propagated to the output toolset."""
+    agent = Agent('test', output_type=ToolOutput(Foo, max_retries=3))
+    toolset = agent._output_toolset
+    assert toolset is not None
+    # The per-tool override should be stored
+    assert toolset._tool_max_retries == {'final_result': 3}
+
+
+async def test_tool_output_max_retries_multiple():
+    """Test per-tool max_retries with multiple ToolOutput types."""
+    agent = Agent(
+        'test',
+        output_type=[
+            ToolOutput(Bar, max_retries=5),
+            ToolOutput(Foo, max_retries=2),
+        ],
+    )
+    toolset = agent._output_toolset
+    assert toolset is not None
+    assert toolset._tool_max_retries == {
+        'final_result_Bar': 5,
+        'final_result_Foo': 2,
+    }
+
+
+async def test_tool_output_max_retries_default_fallback():
+    """Test that tools without explicit max_retries fall back to the toolset default."""
+    agent = Agent('test', output_type=ToolOutput(Foo))
+    toolset = agent._output_toolset
+    assert toolset is not None
+    # No per-tool override should be stored when max_retries is not specified
+    assert toolset._tool_max_retries == {}
