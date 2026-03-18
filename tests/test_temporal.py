@@ -2652,6 +2652,40 @@ def test_temporal_run_context_serializes_usage():
     assert reconstructed.usage == ctx.usage
 
 
+def test_tool_return_metadata_survives_serialization():
+    """Test that _ToolReturn preserves metadata and content across wrap/unwrap."""
+    from pydantic_ai.durable_exec.temporal._toolset import _ToolReturn
+    from pydantic_ai.messages import ToolReturn
+
+    wrapped = _ToolReturn(
+        result='some value',
+        content=['extra context for the model'],
+        metadata={'debug_key': 'debug_value', 'count': 42},
+    )
+    assert wrapped.result == 'some value'
+    assert wrapped.content == ['extra context for the model']
+    assert wrapped.metadata == {'debug_key': 'debug_value', 'count': 42}
+
+    tool_return = ToolReturn(
+        return_value=wrapped.result,
+        content=wrapped.content,
+        metadata=wrapped.metadata,
+    )
+    assert tool_return.return_value == 'some value'
+    assert tool_return.content == ['extra context for the model']
+    assert tool_return.metadata == {'debug_key': 'debug_value', 'count': 42}
+
+
+def test_tool_return_without_metadata_stays_plain():
+    """Test that plain tool results (without ToolReturn) remain unwrapped."""
+    from pydantic_ai.durable_exec.temporal._toolset import _ToolReturn
+
+    wrapped = _ToolReturn(result='plain value')
+    assert wrapped.result == 'plain value'
+    assert wrapped.content is None
+    assert wrapped.metadata is None
+
+
 fastmcp_agent = Agent(
     model,
     name='fastmcp_agent',

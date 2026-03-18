@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
@@ -12,7 +12,7 @@ from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
-from pydantic_ai.messages import ToolReturnContent
+from pydantic_ai.messages import ToolReturn, ToolReturnContent, UserContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -55,6 +55,8 @@ class _ModelRetry:
 @dataclass
 class _ToolReturn:
     result: ToolReturnContent
+    content: str | Sequence[UserContent] | None = None
+    metadata: Any = None
     kind: Literal['tool_return'] = 'tool_return'
 
 
@@ -95,6 +97,12 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
     async def _wrap_call_tool_result(self, coro: Awaitable[Any]) -> CallToolResult:
         try:
             result = await coro
+            if isinstance(result, ToolReturn):
+                return _ToolReturn(
+                    result=result.return_value,
+                    content=result.content,
+                    metadata=result.metadata,
+                )
             return _ToolReturn(result=result)
         except ApprovalRequired as e:
             return _ApprovalRequired(metadata=e.metadata)
@@ -105,6 +113,12 @@ class TemporalWrapperToolset(WrapperToolset[AgentDepsT], ABC):
 
     def _unwrap_call_tool_result(self, result: CallToolResult) -> Any:
         if isinstance(result, _ToolReturn):
+            if result.metadata is not None or result.content is not None:
+                return ToolReturn(
+                    return_value=result.result,
+                    content=result.content,
+                    metadata=result.metadata,
+                )
             return result.result
         elif isinstance(result, _ApprovalRequired):
             raise ApprovalRequired(metadata=result.metadata)
