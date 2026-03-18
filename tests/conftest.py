@@ -311,6 +311,10 @@ def raise_if_exception(e: Any) -> None:
         raise e
 
 
+_AWS_ACCOUNT_ID_IN_ARN = re.compile(r'(arn(?:%3A|:)aws(?:%3A|:)bedrock(?:%3A|:)[^:%]*(?:%3A|:))\d{12}((?:%3A|:))')
+_SCRUBBED_AWS_ACCOUNT_ID = r'\g<1>123456789012\2'
+
+
 def pytest_recording_configure(config: Any, vcr: VCR):
     from . import json_body_serializer
 
@@ -320,7 +324,21 @@ def pytest_recording_configure(config: Any, vcr: VCR):
         if r1.method.upper() != r2.method.upper():
             raise AssertionError(f'{r1.method} != {r2.method}')
 
+    def path_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
+        """Match URL paths after scrubbing AWS account IDs from ARNs."""
+        path1 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r1.path)
+        path2 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r2.path)
+        if path1 != path2:
+            raise AssertionError(f'{path1} != {path2}')
+
     vcr.register_matcher('method', method_matcher)
+    vcr.register_matcher('path', path_matcher)
+
+    def scrub_aws_account_id(request: vcr_request.Request) -> vcr_request.Request:
+        request.uri = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, request.uri)
+        return request
+
+    vcr.before_record_request = scrub_aws_account_id
 
 
 def pytest_addoption(parser: Any) -> None:

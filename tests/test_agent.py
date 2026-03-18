@@ -3236,6 +3236,27 @@ def test_empty_response_with_finish_reason_length():
         agent.run_sync('Hello')
 
 
+def test_thinking_only_response_with_finish_reason_length():
+    def return_thinking_only(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        resp = ModelResponse(parts=[ThinkingPart(content='thinking...')])
+        resp.finish_reason = 'length'
+        return resp
+
+    agent = Agent(FunctionModel(return_thinking_only), output_type=str)
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match=r'Model token limit \(10\) exceeded before any response was generated.',
+    ):
+        agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match=r'Model token limit \(provider default\) exceeded before any response was generated.',
+    ):
+        agent.run_sync('Hello')
+
+
 def test_model_requests_blocked(env: TestEnv):
     try:
         env.set('GEMINI_API_KEY', 'foobar')
@@ -6718,7 +6739,7 @@ async def test_thinking_only_response_retry():
 
 
 async def test_retry_message_no_tools():
-    """Test that retry message triggered by thinking-only response, does not suggest 'call a tool' when no function tools are registered."""
+    """Test that thinking-only retry message does not suggest 'call a tool' when no function tools are registered."""
     call_count = 0
 
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -6733,15 +6754,198 @@ async def test_retry_message_no_tools():
     agent = Agent(FunctionModel(model_function))
     result = await agent.run('Hello')
 
-    retry_parts = [
-        part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart)
-    ]
-    assert len(retry_parts) == 1
-    assert retry_parts[0].content == 'Please return text.'
+    assert result.output == 'result'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='thinking...')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='result')],
+                usage=RequestUsage(input_tokens=63, output_tokens=3),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_thinking_only_response_retry_with_tool_output():
+    """Test that thinking-only responses retry with tool-output guidance when text output is not allowed."""
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools is not None
+
+        if call_count == 1:
+            return ModelResponse(parts=[ThinkingPart(content='thinking...')])
+        else:
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "ok"}')])
+
+    result = await Agent(FunctionModel(model_function), output_type=ToolOutput(Foo)).run('Hello')
+
+    assert result.output == Foo(a=1, b='ok')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='thinking...')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please include your response in a tool call.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"a": 1, "b": "ok"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=68, output_tokens=9),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_thinking_only_response_backward_looking_recovery():
+    """Test that thinking-only response after a tool call recovers text from prior model response."""
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # First call: return text alongside a tool call
+            return ModelResponse(
+                parts=[
+                    TextPart(content="Here's my analysis."),
+                    ToolCallPart(tool_name='save_progress', args='{"data": "test"}'),
+                ],
+            )
+        else:
+            # Second call (after tool return): return thinking-only
+            return ModelResponse(
+                parts=[ThinkingPart(content='Nothing more to say.')],
+            )
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def save_progress(data: str) -> str:
+        return 'saved'
+
+    result = await agent.run('Hello')
+
+    assert result.output == "Here's my analysis."
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content="Here's my analysis."),
+                    ToolCallPart(tool_name='save_progress', args='{"data": "test"}', tool_call_id=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=9),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='save_progress',
+                        content='saved',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='Nothing more to say.')],
+                usage=RequestUsage(input_tokens=52, output_tokens=14),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_hitl_tool_approval():
