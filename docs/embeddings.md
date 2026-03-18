@@ -364,7 +364,7 @@ export VOYAGE_API_KEY='your-api-key'
 
 You can then use the model:
 
-```python {title="voyageai_embeddings.py"}
+```python {title="voyageai_embeddings.py" max_py="3.13"}
 from pydantic_ai import Embedder
 
 embedder = Embedder('voyageai:voyage-3.5')
@@ -384,7 +384,7 @@ See the [VoyageAI Embeddings documentation](https://docs.voyageai.com/docs/embed
 
 VoyageAI models support additional settings via [`VoyageAIEmbeddingSettings`][pydantic_ai.embeddings.voyageai.VoyageAIEmbeddingSettings]:
 
-```python {title="voyageai_settings.py"}
+```python {title="voyageai_settings.py" max_py="3.13"}
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingSettings
 
@@ -550,6 +550,27 @@ from pydantic_ai import Embedder
 embedder = Embedder('bedrock:us.amazon.titan-embed-text-v2:0')
 ```
 
+#### Using AWS Application Inference Profiles
+
+Set [`bedrock_inference_profile`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings.bedrock_inference_profile] to route requests through an inference profile while keeping the base model name for detecting model capabilities:
+
+```python {title="bedrock_inference_profile.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
+from pydantic_ai.providers.bedrock import BedrockProvider
+
+provider = BedrockProvider(region_name='us-east-1')
+
+model = BedrockEmbeddingModel(
+    'amazon.titan-embed-text-v2:0',
+    provider=provider,
+    settings={
+        'bedrock_inference_profile': 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-embed-profile',
+    },
+)
+embedder = Embedder(model)
+```
+
 #### Using a Custom Provider
 
 For advanced configuration like explicit credentials or a custom boto3 client, you can create a [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] directly. See the [Bedrock provider documentation](models/bedrock.md#provider-argument) for more details.
@@ -590,7 +611,7 @@ pip/uv-add "pydantic-ai-slim[sentence-transformers]"
 
 #### Usage
 
-```python {title="sentence_transformers_embeddings.py"}
+```python {title="sentence_transformers_embeddings.py" max_py="3.13"}
 from pydantic_ai import Embedder
 
 # Model is downloaded from Hugging Face on first use
@@ -611,7 +632,7 @@ See the [Sentence-Transformers pretrained models](https://www.sbert.net/docs/sen
 
 Control which device to use for inference:
 
-```python {title="sentence_transformers_device.py"}
+```python {title="sentence_transformers_device.py" max_py="3.13"}
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.sentence_transformers import (
     SentenceTransformersEmbeddingSettings,
@@ -630,7 +651,7 @@ embedder = Embedder(
 
 If you need more control over model initialization:
 
-```python {title="sentence_transformers_instance.py"}
+```python {title="sentence_transformers_instance.py" max_py="3.13"}
 from sentence_transformers import SentenceTransformer
 
 from pydantic_ai import Embedder

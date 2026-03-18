@@ -1,6 +1,6 @@
 # Vercel AI Data Stream Protocol
 
-Pydantic AI natively supports the [Vercel AI Data Stream Protocol](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) to receive agent run input from, and stream events to, a [Vercel AI Elements](https://ai-sdk.dev/elements) frontend.
+Pydantic AI natively supports the [Vercel AI Data Stream Protocol](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#data-stream-protocol) to receive agent run input from, and stream events to, a frontend using [AI SDK UI](https://ai-sdk.dev/docs/ai-sdk-ui/overview) hooks like [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat). You can optionally use [AI Elements](https://ai-sdk.dev/elements) for pre-built UI components.
 
 !!! note
     By default, the adapter targets AI SDK v5 for backwards compatibility. To use features introduced in AI SDK v6, set `sdk_version=6` on the adapter.
@@ -123,3 +123,26 @@ async def search_docs(query: str) -> ToolReturn:
 
 !!! note
     Protocol-control chunks such as `StartChunk`, `FinishChunk`, `StartStepChunk`, or `FinishStepChunk` are automatically filtered out — only the four data-carrying chunk types listed above are forwarded to the stream and preserved in `dump_messages`.
+
+## Tool Approval
+
+!!! note
+    Tool approval requires AI SDK UI v6 or later on the frontend.
+
+Pydantic AI supports human-in-the-loop tool approval workflows with AI SDK UI, allowing users to approve or deny tool executions before they run. See the [deferred tool calls documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for details on setting up tools that require approval.
+
+To enable tool approval streaming, pass `sdk_version=6` to `dispatch_request`:
+
+```py {test="skip" lint="skip"}
+@app.post('/chat')
+async def chat(request: Request) -> Response:
+    return await VercelAIAdapter.dispatch_request(request, agent=agent, sdk_version=6)
+```
+
+When `sdk_version=6`, the adapter will:
+
+1. Emit `tool-approval-request` chunks when tools with `requires_approval=True` are called
+2. Automatically extract approval responses from follow-up requests
+3. Emit `tool-output-denied` chunks for rejected tools
+
+On the frontend, AI SDK UI's [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) hook handles the approval flow. You can use the [`Confirmation`](https://ai-sdk.dev/elements/components/confirmation) component from AI Elements for a pre-built approval UI, or build your own using the hook's `addToolApprovalResponse` function.

@@ -62,7 +62,7 @@ Then running `clai` will start an interactive session where you can chat with th
 You can specify which model to use with the `--model` flag:
 
 ```bash
-clai --model anthropic:claude-sonnet-4-5
+clai --model anthropic:claude-sonnet-4-6
 ```
 
 (a full list of models available can be printed with `clai --list-models`)
@@ -163,7 +163,7 @@ Launch the web UI:
 clai web --agent my_module:my_agent
 
 # With specific models (first is default when no --agent)
-clai web -m openai:gpt-5.2 -m anthropic:claude-sonnet-4-5
+clai web -m openai:gpt-5.2 -m anthropic:claude-sonnet-4-6
 
 # With builtin tools
 clai web -m openai:gpt-5.2 -t web_search -t code_execution

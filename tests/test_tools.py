@@ -48,6 +48,7 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.usage import RequestUsage
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr
 
 
@@ -1138,6 +1139,7 @@ def test_schema_generator():
                 'name': 'my_tool_2',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
+                    'additionalProperties': True,
                     'properties': {'x': {'default': None, 'type': 'string', 'title': 'X title'}},
                     'type': 'object',
                 },
@@ -2177,6 +2179,53 @@ def test_deferred_tool_call_approved_fails():
         )
 
 
+def test_unapproved_tool_invalid_args_retry():
+    """Test that invalid args on an unapproved tool produce a retry prompt."""
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 'not_an_int'}, tool_call_id='t1')])
+        else:
+            return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(retries=1, requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    result = agent.run_sync('test')
+    assert result.output == 'done'
+    retry_parts = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, RetryPromptPart)
+    ]
+    assert len(retry_parts) == 1
+    assert retry_parts[0].tool_name == 'my_tool'
+
+
+def test_unapproved_tool_invalid_args_max_retries_exceeded():
+    """Test that invalid args on an unapproved tool raises UnexpectedModelBehavior when retries exhausted."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 'not_an_int'}, tool_call_id='t1')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(retries=0, requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
+        agent.run_sync('test')
+
+
 async def test_approval_required_toolset():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -2196,11 +2245,11 @@ async def test_approval_required_toolset():
 
     toolset = FunctionToolset[None]()
 
-    @toolset.tool
+    @toolset.tool_plain
     def foo(x: int) -> int:
         return x * 2
 
-    @toolset.tool
+    @toolset.tool_plain
     def bar(x: int) -> int:
         return x * 3
 
@@ -2313,6 +2362,7 @@ async def test_approval_required_toolset():
                         content='The tool call was denied.',
                         tool_call_id='foo2',
                         timestamp=IsDatetime(),
+                        outcome='denied',
                     ),
                 ],
                 timestamp=IsDatetime(),
@@ -2419,7 +2469,7 @@ def test_tool_metadata():
     # Test with FunctionToolset.tool decorator
     toolset = FunctionToolset(metadata={'foo': 'bar'})
 
-    @toolset.tool
+    @toolset.tool_plain
     def toolset_plain_tool(a: str) -> str:
         return a.upper()  # pragma: no cover
 
@@ -3551,20 +3601,6 @@ distinguish multiple files.\
                             'type': 'object',
                         },
                         'RetryPromptPart': {
-                            'description': """\
-A message back to a model asking it to try again.
-
-This can be sent for a number of reasons:
-
-* Pydantic validation of tool arguments failed, here content is derived from a Pydantic
-  [`ValidationError`][pydantic_core.ValidationError]
-* a tool raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
-* no tool was found for the tool name
-* the model returned plain text when a structured response was expected
-* Pydantic validation of a structured response failed, here content is derived from a Pydantic
-  [`ValidationError`][pydantic_core.ValidationError]
-* an output validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception\
-""",
                             'properties': {
                                 'content': {
                                     'anyOf': [
@@ -3593,7 +3629,6 @@ This can be sent for a number of reasons:
                             'type': 'object',
                         },
                         'ToolDenied': {
-                            'description': 'Indicates that a tool call has been denied and that a denial message should be returned to the model.',
                             'properties': {
                                 'message': {'default': 'The tool call was denied.', 'type': 'string'},
                                 'kind': {'const': 'tool-denied', 'default': 'tool-denied', 'type': 'string'},
@@ -3602,14 +3637,6 @@ This can be sent for a number of reasons:
                             'type': 'object',
                         },
                         'ToolReturn': {
-                            'description': """\
-A structured return value for tools that need to provide both a return value and custom content to the model.
-
-This class allows tools to return complex responses that include:
-- A return value for actual tool return
-- Custom content (including multi-modal content) to be sent to the model as a UserPromptPart
-- Optional metadata for application use\
-""",
                             'properties': {
                                 'return_value': {'$ref': '#/$defs/ToolReturnContent'},
                                 'content': {
@@ -3626,6 +3653,7 @@ This class allows tools to return complex responses that include:
                                                                 'binary': '#/$defs/BinaryContent',
                                                                 'document-url': '#/$defs/DocumentUrl',
                                                                 'image-url': '#/$defs/ImageUrl',
+                                                                'uploaded-file': '#/$defs/UploadedFile',
                                                                 'video-url': '#/$defs/VideoUrl',
                                                             },
                                                             'propertyName': 'kind',
@@ -3636,6 +3664,7 @@ This class allows tools to return complex responses that include:
                                                             {'$ref': '#/$defs/DocumentUrl'},
                                                             {'$ref': '#/$defs/VideoUrl'},
                                                             {'$ref': '#/$defs/BinaryContent'},
+                                                            {'$ref': '#/$defs/UploadedFile'},
                                                         ],
                                                     },
                                                     {'$ref': '#/$defs/CachePoint'},
@@ -3663,6 +3692,7 @@ This class allows tools to return complex responses that include:
                                             'binary': '#/$defs/BinaryContent',
                                             'document-url': '#/$defs/DocumentUrl',
                                             'image-url': '#/$defs/ImageUrl',
+                                            'uploaded-file': '#/$defs/UploadedFile',
                                             'video-url': '#/$defs/VideoUrl',
                                         },
                                         'propertyName': 'kind',
@@ -3673,12 +3703,72 @@ This class allows tools to return complex responses that include:
                                         {'$ref': '#/$defs/DocumentUrl'},
                                         {'$ref': '#/$defs/VideoUrl'},
                                         {'$ref': '#/$defs/BinaryContent'},
+                                        {'$ref': '#/$defs/UploadedFile'},
                                     ],
                                 },
                                 {'items': {'$ref': '#/$defs/ToolReturnContent'}, 'type': 'array'},
                                 {'additionalProperties': {'$ref': '#/$defs/ToolReturnContent'}, 'type': 'object'},
                                 {},
                             ]
+                        },
+                        'UploadedFile': {
+                            'description': """\
+A reference to a file uploaded to a provider's file storage by ID.
+
+This allows referencing files that have been uploaded via provider-specific file APIs
+rather than providing the file content directly.
+
+Supported by:
+
+- [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]
+- [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]
+- [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]
+- [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]
+- [`GoogleModel`][pydantic_ai.models.google.GoogleModel] (GLA: [Files API](https://ai.google.dev/gemini-api/docs/files) URIs, Vertex: GCS `gs://` URIs)
+- [`XaiModel`][pydantic_ai.models.xai.XaiModel]\
+""",
+                            'properties': {
+                                'file_id': {'type': 'string'},
+                                'provider_name': {
+                                    'enum': ['anthropic', 'openai', 'google-gla', 'google-vertex', 'bedrock', 'xai'],
+                                    'type': 'string',
+                                },
+                                'vendor_metadata': {
+                                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                                    'default': None,
+                                },
+                                'kind': {'const': 'uploaded-file', 'default': 'uploaded-file', 'type': 'string'},
+                                'media_type': {
+                                    'description': """\
+Return the media type of the file, inferred from `file_id` if not explicitly provided.
+
+Note: Inference relies on the file extension in `file_id`.
+For opaque file IDs (e.g., `'file-abc123'`), the media type will default to `'application/octet-stream'`.
+Inference relies on Python's `mimetypes` module, whose results may vary across platforms.
+
+Required by some providers (e.g., Bedrock) for certain file types.\
+""",
+                                    'readOnly': True,
+                                    'type': 'string',
+                                },
+                                'identifier': {
+                                    'description': """\
+The identifier of the file, such as a unique ID.
+
+This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+and the tool can look up the file in question by iterating over the message history and finding the matching `UploadedFile`.
+
+This identifier is only automatically passed to the model when the `UploadedFile` is returned by a tool.
+If you're passing the `UploadedFile` as a user message, it's up to you to include a separate text part with the identifier,
+e.g. "This is file <identifier>:" preceding the `UploadedFile`.\
+""",
+                                    'readOnly': True,
+                                    'type': 'string',
+                                },
+                            },
+                            'required': ['file_id', 'provider_name', 'media_type', 'identifier'],
+                            'title': 'UploadedFile',
+                            'type': 'object',
                         },
                         'VideoUrl': {
                             'description': 'A URL to a video.',
@@ -4196,3 +4286,577 @@ def test_include_return_schema_warning_on_schema_generation_error():
 
     with pytest.warns(UserWarning, match=r"Failed to generate return schema for '.*my_tool'"):
         Tool(my_tool, include_return_schema=True)
+
+
+def test_args_validator_success():
+    """Test that args_validator runs before tool execution."""
+    validator_called = False
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_numbers',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"add_numbers":0}')],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_args_validator_not_configured():
+    """Test that tools work without a custom args_validator."""
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+
+@pytest.mark.anyio
+async def test_args_validator_async():
+    """Test async validator functions work correctly."""
+    validator_called = False
+
+    async def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator)
+    async def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    result = await agent.run('call add_numbers with x=1 and y=2', deps=42)
+
+    assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_numbers',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"add_numbers":0}')],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_args_validator_with_deps():
+    """Test that validator uses RunContext.deps."""
+    deps_value = None
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal deps_value
+        deps_value = ctx.deps
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert deps_value == 42
+
+
+def test_args_validator_tool_direct():
+    """Test via Tool() direct instantiation."""
+    validator_called = False
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    tool = Tool(add_numbers, args_validator=my_validator)
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+        tools=[tool],
+    )
+
+    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_numbers',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"add_numbers":0}')],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_args_validator_toolset():
+    """Test via FunctionToolset."""
+    validator_called = False
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    toolset = FunctionToolset[int]()
+
+    @toolset.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+        toolsets=[toolset],
+    )
+
+    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_numbers',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"add_numbers":0}')],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_args_validator_tool_plain():
+    """Test args_validator with tool_plain decorator."""
+    validator_called = False
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool_plain(args_validator=my_validator)
+    def add_numbers(x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    result = agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert validator_called
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=56, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_numbers',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"add_numbers":0}')],
+                usage=RequestUsage(input_tokens=57, output_tokens=9),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_args_validator_max_retries_exceeded():
+    """Test that UnexpectedModelBehavior is raised when validator always fails and max retries is exceeded."""
+
+    def always_fail_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        raise ModelRetry('Always fails')
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=always_fail_validator, retries=2)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:  # pragma: no cover
+        """Add two numbers."""
+        return x + y
+
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries'):
+        agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+
+def test_args_validator_tool_from_schema():
+    """Test Tool.from_schema() with args_validator parameter."""
+    validator_called = False
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    def add_numbers(ctx: RunContext[int], **kwargs: Any) -> int:
+        """Add two numbers."""
+        return kwargs['x'] + kwargs['y']
+
+    json_schema = {
+        'type': 'object',
+        'properties': {
+            'x': {'type': 'integer'},
+            'y': {'type': 'integer'},
+        },
+        'required': ['x', 'y'],
+    }
+
+    tool = Tool.from_schema(
+        add_numbers,
+        name='add_numbers',
+        description='Add two numbers',
+        json_schema=json_schema,
+        takes_ctx=True,
+        args_validator=my_validator,
+    )
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+        tools=[tool],
+    )
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert validator_called
+
+
+def test_args_validator_with_prepare():
+    """Test that args_validator works together with prepare function."""
+    validator_called = False
+    prepare_called = False
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal validator_called
+        validator_called = True
+
+    async def my_prepare(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition:
+        nonlocal prepare_called
+        prepare_called = True
+        return tool_def
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator, prepare=my_prepare)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert prepare_called
+    assert validator_called
+
+
+def test_args_validator_multiple_tools():
+    """Test that multiple tools can have different validators that work independently."""
+    add_validator_calls = 0
+    multiply_validator_calls = 0
+
+    def add_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal add_validator_calls
+        add_validator_calls += 1
+
+    def multiply_validator(ctx: RunContext[int], a: int, b: int) -> None:
+        nonlocal multiply_validator_calls
+        multiply_validator_calls += 1
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers', 'multiply_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=add_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    @agent.tool(args_validator=multiply_validator)
+    def multiply_numbers(ctx: RunContext[int], a: int, b: int) -> int:
+        """Multiply two numbers."""
+        return a * b
+
+    agent.run_sync('call both tools', deps=42)
+
+    assert add_validator_calls >= 1
+    assert multiply_validator_calls >= 1
+
+
+def test_args_validator_context_tool_name():
+    """Test that validator can access tool_name from RunContext."""
+    captured_tool_name = None
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        nonlocal captured_tool_name
+        captured_tool_name = ctx.tool_name
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    assert captured_tool_name == 'add_numbers'
+
+
+def test_args_validator_context_retry():
+    """Test that validator can access retry count from RunContext."""
+    retry_values: list[int] = []
+
+    def my_validator(ctx: RunContext[int], x: int, y: int) -> None:
+        retry_values.append(ctx.retry)
+        if len(retry_values) == 1:
+            raise ModelRetry('First attempt fails')
+
+    agent = Agent(
+        TestModel(call_tools=['add_numbers']),
+        deps_type=int,
+    )
+
+    @agent.tool(args_validator=my_validator, retries=2)
+    def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
+        """Add two numbers."""
+        return x + y
+
+    agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
+
+    # First attempt: retry=0, raises ModelRetry; Second attempt: retry=1, succeeds
+    assert retry_values == [0, 1]
+
+
+def test_args_validator_not_double_called_for_approved_tools():
+    """Test that args_validator is not double-called when re-running with ToolApproved.
+
+    The validator runs once per run: first with approved=False, then on re-run with
+    approved=True. On re-run, it should only be called in handle_call (not also upfront).
+    """
+    validator_calls: list[tuple[int, bool]] = []
+
+    def my_validator(ctx: RunContext[int], x: int) -> None:
+        validator_calls.append((ctx.retry, ctx.tool_call_approved))
+
+    agent = Agent(
+        TestModel(),
+        deps_type=int,
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext[int], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        return x * 42
+
+    # First run: tool requires approval, gets deferred
+    result = agent.run_sync('Hello', deps=42)
+    assert isinstance(result.output, DeferredToolRequests)
+    assert len(result.output.approvals) == 1
+    tool_call_id = result.output.approvals[0].tool_call_id
+
+    # Validator should have been called once during the first run
+    assert len(validator_calls) == 1
+    assert validator_calls[0] == (0, False)  # retry=0, approved=False
+
+    # Second run: re-run with ToolApproved
+    validator_calls.clear()
+    messages = result.all_messages()
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolApproved()}),
+        deps=42,
+    )
+
+    # Validator should have been called exactly once with approved=True
+    assert len(validator_calls) == 1
+    assert validator_calls[0] == (0, True)  # retry=0, approved=True
