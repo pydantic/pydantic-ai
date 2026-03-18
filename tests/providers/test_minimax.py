@@ -50,6 +50,6 @@ def test_minimax_pass_openai_client() -> None:
 
 def test_minimax_model_profile():
     provider = MiniMaxProvider(api_key='api-key')
-    model = OpenAIChatModel('MiniMax-M2.5', provider=provider)
+    model = OpenAIChatModel('MiniMax-M2.7', provider=provider)
     assert model.profile.supports_json_schema_output is False
     assert model.profile.supports_json_object_output is False

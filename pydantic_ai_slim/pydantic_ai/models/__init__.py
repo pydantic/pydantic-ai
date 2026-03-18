@@ -469,6 +469,8 @@ KnownModelName = TypeAliasType(
         'huggingface:Qwen/Qwen3-235B-A22B',
         'huggingface:Qwen/Qwen3-32B',
         'huggingface:Qwen/QwQ-32B',
+        'minimax:MiniMax-M2.7',
+        'minimax:MiniMax-M2.7-highspeed',
         'minimax:MiniMax-M2.5',
         'minimax:MiniMax-M2.5-highspeed',
         'mistral:codestral-latest',
