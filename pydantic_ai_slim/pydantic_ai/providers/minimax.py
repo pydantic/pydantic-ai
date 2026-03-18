@@ -4,7 +4,6 @@ import os
 from typing import overload
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -69,7 +68,7 @@ class MiniMaxProvider(Provider[AsyncOpenAI]):
         api_key = api_key or os.getenv('MINIMAX_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
-                'Set the `MINIMAX_API_KEY` environment variable or pass it via `MiniMaxProvider(api_key=...)`'
+                'Set the `MINIMAX_API_KEY` environment variable or pass it via `MiniMaxProvider(api_key=...)` '
                 'to use the MiniMax provider.'
             )
 

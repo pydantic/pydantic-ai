@@ -29,7 +29,7 @@ def test_minimax_provider_need_api_key(env: TestEnv) -> None:
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Set the `MINIMAX_API_KEY` environment variable or pass it via `MiniMaxProvider(api_key=...)`'
+            'Set the `MINIMAX_API_KEY` environment variable or pass it via `MiniMaxProvider(api_key=...)` '
             'to use the MiniMax provider.'
         ),
     ):
