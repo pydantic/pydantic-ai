@@ -260,6 +260,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 requires_approval=requires_approval,
                 metadata=metadata,
                 timeout=timeout,
+                defer_loading=defer_loading,
             )
             if not tool.function_schema.takes_ctx:
                 warnings.warn(
@@ -293,6 +294,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -313,6 +315,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
+        defer_loading: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -378,6 +381,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            defer_loading: Whether to hide this tool until it's discovered via tool search.
+                See [Tool Search](../tools-advanced.md#tool-search) for more info.
+                If `None`, the default value is determined by the toolset.
         """
 
         def tool_decorator(

@@ -83,10 +83,11 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
             for name, tool in deferred.items()
         ]
 
+        remaining = len(deferred) - len(discovered.intersection(deferred))
         search_tool_def = ToolDefinition(
             name=_SEARCH_TOOLS_NAME,
             description=(
-                f'There are {len(deferred)} additional tools not yet visible to you.'
+                f'There are {remaining} additional tools not yet visible to you.'
                 ' When you need a capability not provided by your current tools,'
                 ' search here by keyword to discover and activate relevant tools.'
             ),

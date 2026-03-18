@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '829'
+      - '850'
       content-type:
       - application/json
       host:
@@ -26,8 +26,8 @@ interactions:
       tool_choice:
         type: auto
       tools:
-      - description: There are 3 additional tools available but not yet loaded. Use this tool to search for them by keyword.
-          Matching tools will be made available for you to call.
+      - description: There are 3 additional tools not yet visible to you. When you need a capability not provided by your
+          current tools, search here by keyword to discover and activate relevant tools.
         input_schema:
           properties:
             query:
@@ -59,7 +59,7 @@ interactions:
       content-type:
       - application/json
       server-timing:
-      - proxy;dur=4944
+      - proxy;dur=1959
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -72,12 +72,12 @@ interactions:
         type: text
       - caller:
           type: direct
-        id: toolu_01TPu5AsVNgTdNroE9yQXYxZ
+        id: toolu_01Dpuenjn2WR5j5ZMgB9ok6S
         input:
           query: exchange rate currency
         name: search_tools
         type: tool_use
-      id: msg_01Ted72CDfzexa93KMjXEBtp
+      id: msg_01DsjkvF7HVgWtDLjFcZ5KSZ
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -90,7 +90,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 672
+        input_tokens: 673
         output_tokens: 70
         service_tier: standard
     status:
@@ -105,7 +105,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1652'
+      - '1699'
       content-type:
       - application/json
       host:
@@ -121,16 +121,18 @@ interactions:
       - content:
         - text: I'll search for a tool that can help with currency exchange rates.
           type: text
-        - id: toolu_01TPu5AsVNgTdNroE9yQXYxZ
+        - id: toolu_01Dpuenjn2WR5j5ZMgB9ok6S
           input:
             query: exchange rate currency
           name: search_tools
           type: tool_use
         role: assistant
       - content:
-        - content: '[{"name":"get_exchange_rate","description":"Look up the current exchange rate between two currencies."}]'
+        - content:
+          - text: '{"name":"get_exchange_rate","description":"Look up the current exchange rate between two currencies."}'
+            type: text
           is_error: false
-          tool_use_id: toolu_01TPu5AsVNgTdNroE9yQXYxZ
+          tool_use_id: toolu_01Dpuenjn2WR5j5ZMgB9ok6S
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -138,8 +140,8 @@ interactions:
       tool_choice:
         type: auto
       tools:
-      - description: There are 3 additional tools available but not yet loaded. Use this tool to search for them by keyword.
-          Matching tools will be made available for you to call.
+      - description: There are 2 additional tools not yet visible to you. When you need a capability not provided by your
+          current tools, search here by keyword to discover and activate relevant tools.
         input_schema:
           properties:
             query:
@@ -178,13 +180,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '621'
+      - '748'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       server-timing:
-      - proxy;dur=2088
+      - proxy;dur=1916
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -193,15 +195,17 @@ interactions:
       - Accept-Encoding
     parsed_body:
       content:
+      - text: Great! I can use the get_exchange_rate function to look up the current USD to EUR exchange rate.
+        type: text
       - caller:
           type: direct
-        id: toolu_01N467abxabeAHTRmZAp8VR1
+        id: toolu_01GKcgm8WNjg3tQTgUWVBCyZ
         input:
           from_currency: USD
           to_currency: EUR
         name: get_exchange_rate
         type: tool_use
-      id: msg_01D11W8NP6G2R5TxpixiYjD2
+      id: msg_01PJM4ibCYa9JfQ9Uv2xDHXu
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: tool_use
@@ -214,8 +218,8 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 864
-        output_tokens: 76
+        input_tokens: 863
+        output_tokens: 100
         service_tier: standard
     status:
       code: 200
@@ -229,7 +233,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1991'
+      - '2192'
       content-type:
       - application/json
       host:
@@ -245,20 +249,24 @@ interactions:
       - content:
         - text: I'll search for a tool that can help with currency exchange rates.
           type: text
-        - id: toolu_01TPu5AsVNgTdNroE9yQXYxZ
+        - id: toolu_01Dpuenjn2WR5j5ZMgB9ok6S
           input:
             query: exchange rate currency
           name: search_tools
           type: tool_use
         role: assistant
       - content:
-        - content: '[{"name":"get_exchange_rate","description":"Look up the current exchange rate between two currencies."}]'
+        - content:
+          - text: '{"name":"get_exchange_rate","description":"Look up the current exchange rate between two currencies."}'
+            type: text
           is_error: false
-          tool_use_id: toolu_01TPu5AsVNgTdNroE9yQXYxZ
+          tool_use_id: toolu_01Dpuenjn2WR5j5ZMgB9ok6S
           type: tool_result
         role: user
       - content:
-        - id: toolu_01N467abxabeAHTRmZAp8VR1
+        - text: Great! I can use the get_exchange_rate function to look up the current USD to EUR exchange rate.
+          type: text
+        - id: toolu_01GKcgm8WNjg3tQTgUWVBCyZ
           input:
             from_currency: USD
             to_currency: EUR
@@ -266,9 +274,11 @@ interactions:
           type: tool_use
         role: assistant
       - content:
-        - content: 1 USD = 0.92 EUR
+        - content:
+          - text: 1 USD = 0.92 EUR
+            type: text
           is_error: false
-          tool_use_id: toolu_01N467abxabeAHTRmZAp8VR1
+          tool_use_id: toolu_01GKcgm8WNjg3tQTgUWVBCyZ
           type: tool_result
         role: user
       model: claude-sonnet-4-5
@@ -276,8 +286,8 @@ interactions:
       tool_choice:
         type: auto
       tools:
-      - description: There are 3 additional tools available but not yet loaded. Use this tool to search for them by keyword.
-          Matching tools will be made available for you to call.
+      - description: There are 2 additional tools not yet visible to you. When you need a capability not provided by your
+          current tools, search here by keyword to discover and activate relevant tools.
         input_schema:
           properties:
             query:
@@ -316,13 +326,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '599'
+      - '591'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       server-timing:
-      - proxy;dur=1667
+      - proxy;dur=1411
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -331,12 +341,10 @@ interactions:
       - Accept-Encoding
     parsed_body:
       content:
-      - text: |-
-          The current exchange rate from USD to EUR is **1 USD = 0.92 EUR**.
-
-          This means that 1 US Dollar is equivalent to 0.92 Euros.
+      - text: The current exchange rate from USD to EUR is **1 USD = 0.92 EUR**. This means that 1 US Dollar is equal to 0.92
+          Euros.
         type: text
-      id: msg_01L9itAxUHXdoyFpN1G8mChz
+      id: msg_01SuAwurRxzH9Yk6qjmvWrzR
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -349,7 +357,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 962
+        input_tokens: 985
         output_tokens: 44
         service_tier: standard
     status:

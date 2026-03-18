@@ -102,11 +102,9 @@ class Case:
         pytest.param(
             Case(
                 model_name='anthropic:claude-sonnet-4-5',
-                expected_output=snapshot("""\
-The current exchange rate from USD to EUR is **1 USD = 0.92 EUR**.
-
-This means that 1 US Dollar is equivalent to 0.92 Euros.\
-"""),
+                expected_output=snapshot(
+                    'The current exchange rate from USD to EUR is **1 USD = 0.92 EUR**. This means that 1 US Dollar is equal to 0.92 Euros.'
+                ),
             ),
             id='anthropic',
             marks=pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed'),
