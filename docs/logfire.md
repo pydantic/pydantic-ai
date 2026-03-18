@@ -329,10 +329,9 @@ Note: The `modality` field is only included for image, audio, and video content 
 
 #### Version 5
 
-Builds on version 4 with improved handling of deferred tool calls:
+Builds on version 4 with deferral metadata recorded as span attributes when [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exceptions are raised:
 
-- **Deferral span status:** [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] and [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exceptions no longer produce ERROR spans in tool execution traces — spans are set to OK instead.
-- **Deferral span attributes:** `pydantic_ai.tool.deferral.name` and `pydantic_ai.tool.deferral.metadata` are recorded as span attributes (these attributes are also added on versions 1-4, but the span status remains ERROR for backward compatibility).
+- **Deferral span attributes:** `pydantic_ai.tool.deferral.name` and `pydantic_ai.tool.deferral.metadata` are recorded as span attributes on the tool execution span. Note: these attributes are also added on versions 1-4.
 
 ---
 
