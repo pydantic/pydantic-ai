@@ -415,6 +415,13 @@ class ToolManager(Generic[AgentDepsT]):
         ) as span:
             try:
                 tool_result = await self._execute_tool_call_impl(validated, usage=usage)
+                if include_content and span.is_recording():
+                    span.set_attribute(
+                        instrumentation_names.tool_result_attr,
+                        tool_result
+                        if isinstance(tool_result, str)
+                        else _messages.tool_return_ta.dump_json(tool_result).decode(),
+                    )
             except (CallDeferred, ApprovalRequired) as exc:
                 span.set_attribute(instrumentation_names.tool_deferral_name_attr, type(exc).__name__)
                 if exc.metadata is not None:
@@ -434,19 +441,6 @@ class ToolManager(Generic[AgentDepsT]):
                 span.set_status(StatusCode.ERROR)
                 raise
             except BaseException as e:
-                span.record_exception(e)
-                span.set_status(StatusCode.ERROR)
-                raise
-
-            try:
-                if include_content and span.is_recording():
-                    span.set_attribute(
-                        instrumentation_names.tool_result_attr,
-                        tool_result
-                        if isinstance(tool_result, str)
-                        else _messages.tool_return_ta.dump_json(tool_result).decode(),
-                    )
-            except BaseException as e:  # pragma: no cover
                 span.record_exception(e)
                 span.set_status(StatusCode.ERROR)
                 raise
