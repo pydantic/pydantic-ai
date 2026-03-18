@@ -2,33 +2,7 @@
 
 ## Text Input
 
-This is the most common and rudimentary form of input for LLMs, and is supported by all models in Pydantic AI.
-The most direct use of text input is a single user message:
-
-```py {title="text_input.py" test="skip" lint="skip"}
-from pydantic_ai import Agent
-
-agent = Agent(model='openai:gpt-5.2')
-result = agent.run_sync('What is the capital of India?')
-print(result.output)
-#> The capital of India is New Delhi.
-```
-
-Or a sequence of user messages:
-
-```py {title="text_sequence_input.py" test="skip" lint="skip"}
-from pydantic_ai import Agent
-
-agent = Agent(model='openai:gpt-5.2')
-result = agent.run_sync([
-    'What is the capital of India?',
-    'What is the capital of France?',
-])
-print(result.output)
-#> The capital of India is New Delhi. The capital of France is Paris.
-```
-
-You can also use [`TextContent`][pydantic_ai.TextContent] to provide text input with additional metadata:
+You can use [`TextContent`][pydantic_ai.TextContent] to provide text input with additional metadata:
 
 ```py {title="text_content_input.py" test="skip" lint="skip"}
 from pydantic_ai import Agent, TextContent
@@ -46,12 +20,10 @@ result = agent.run_sync([
 ])
 ```
 
-Note: The `content` field is treated as input to the model, but the **metadata is not sent to the model** but is
-preserved in the run messages and can be programmatically accessed.
+!!! note
+    The `content` field is treated as input to the model, but the `metadata` is **not sent to the model**.
+    It is preserved in messages for programmatic access and can be used in your agent logic.
 
----
-
-Some LLMs are now capable of understanding audio, video, image and document content.
 
 ## Image Input
 
