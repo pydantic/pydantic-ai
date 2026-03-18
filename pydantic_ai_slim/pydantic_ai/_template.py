@@ -93,6 +93,7 @@ class TemplateStr(Generic[AgentDepsT]):
             if not isinstance(value, str):
                 raise ValueError(f'Expected string, got {type(value).__name__}')
             if '{{' not in value:
+                # Intentional: in Union[TemplateStr, str], this validation failure causes Pydantic to fall through to the str branch
                 raise ValueError('Not a template string (no {{ found)')
 
             context: dict[str, Any] = info.context or {}

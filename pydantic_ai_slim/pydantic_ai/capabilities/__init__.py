@@ -4,6 +4,9 @@ from .abstract import AbstractCapability
 from .combined import CombinedCapability
 from .history_processor import HistoryProcessorCapability
 from .instructions import Instructions
+
+# Short name is intentional — passing a dict is enough to get type checking,
+# and users rarely need both this and settings.ModelSettings in the same scope.
 from .model_settings import ModelSettings
 from .thinking import Thinking
 from .toolset import Toolset

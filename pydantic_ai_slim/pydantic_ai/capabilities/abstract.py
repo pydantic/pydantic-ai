@@ -35,15 +35,19 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return cls(*args, **kwargs)
 
     def get_instructions(self) -> _instructions.Instructions[AgentDepsT] | None:
+        """Return static instructions to include in the system prompt, or None."""
         return None
 
     def get_model_settings(self) -> ModelSettings | None:
+        """Return static model settings to merge into the agent's defaults, or None."""
         return None
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT] | None:
+        """Return a toolset to register with the agent, or None."""
         return None
 
     def get_builtin_tools(self) -> Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]]:
+        """Return builtin tools to register with the agent."""
         return []
 
     async def before_model_request(
@@ -54,6 +58,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         model_settings: ModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ModelMessage], ModelSettings, ModelRequestParameters]:
+        """Called before each model request. Can modify messages, settings, and parameters."""
         return messages, model_settings, model_request_parameters
 
     async def after_model_request(
@@ -62,4 +67,5 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         response: ModelResponse,
     ) -> ModelResponse:
+        """Called after each model response. Can modify the response before further processing."""
         return response

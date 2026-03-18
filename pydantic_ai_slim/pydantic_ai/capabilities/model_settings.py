@@ -50,6 +50,9 @@ class ModelSettings(AbstractCapability[AgentDepsT]):
         model_settings: _ModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ModelMessage], _ModelSettings, ModelRequestParameters]:
-        resolved = self.settings(ctx) if callable(self.settings) else self.settings
-        model_settings = merge_model_settings(model_settings, resolved) or resolved
+        if callable(self.settings):
+            # Dynamic settings need to be resolved and merged per request;
+            # static settings are already handled by get_model_settings.
+            resolved = self.settings(ctx)
+            model_settings = merge_model_settings(model_settings, resolved) or resolved
         return messages, model_settings, model_request_parameters

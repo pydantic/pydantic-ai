@@ -19,6 +19,8 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+
+# TODO: Replace with public Pydantic API once available (similar to TODO on line 244 for with_config)
 from pydantic._internal import _typing_extra
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import NotRequired, TypedDict

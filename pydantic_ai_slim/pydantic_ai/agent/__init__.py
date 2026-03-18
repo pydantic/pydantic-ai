@@ -90,8 +90,6 @@ if TYPE_CHECKING:
     from ..ui._web import ModelsParam
     from .spec import AgentSpec
 
-Instructions = _instructions.Instructions
-
 __all__ = (
     'Agent',
     'AgentRun',
@@ -106,7 +104,6 @@ __all__ = (
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
-    'Instructions',
     'AgentModelSettings',
 )
 
@@ -672,7 +669,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             name=name or validated_spec.name,
             description=description or validated_spec.description,
             model_settings=merge_model_settings(
-                cast(ModelSettings, validated_spec.model_settings),
+                cast(ModelSettings, validated_spec.model_settings) if validated_spec.model_settings else None,
                 model_settings,
             ),
             retries=retries if retries is not None else validated_spec.retries,
