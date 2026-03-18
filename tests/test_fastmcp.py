@@ -702,3 +702,25 @@ class TestAudienceFiltering:
             )
         # content=[], structured_content=None → return []
         assert result == []
+
+    async def test_call_tool_mixed_audience_partial_filter(self, run_context: RunContext[None]) -> None:
+        """A tool with mixed audience returns ToolReturn with assistant content + user metadata."""
+        fastmcp_server = FastMCP('test_server')
+
+        @fastmcp_server.tool()
+        def mixed_tool() -> list[TextContent]:
+            return [
+                TextContent(type='text', text='for model', annotations=Annotations(audience=['assistant'])),
+                TextContent(type='text', text='for user', annotations=Annotations(audience=['user'])),
+            ]
+
+        toolset = FastMCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool(name='mixed_tool', tool_args={}, ctx=run_context, tool=tools['mixed_tool'])
+        from pydantic_ai.messages import ToolReturn
+
+        assert isinstance(result, ToolReturn)
+        assert result.return_value == 'for model'
+        assert result.metadata is not None
+        assert result.metadata['mcp_user_content'][0]['text'] == 'for user'
