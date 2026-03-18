@@ -238,7 +238,6 @@ class TestFastMCPToolsetInstructions:
         """When include_instructions is disabled, get_instructions returns None."""
         toolset = FastMCPToolset(fastmcp_client, include_instructions=False)
 
-        assert toolset.instructions is None
         assert await toolset.get_instructions(run_context) is None
 
     async def test_get_instructions_enabled_tracks_context_lifecycle(self, run_context: RunContext[None]):
@@ -248,15 +247,17 @@ class TestFastMCPToolsetInstructions:
         toolset = FastMCPToolset(instruction_client, include_instructions=True)
 
         # Before entering, no initialization has happened.
-        assert toolset.instructions is None
-        assert await toolset.get_instructions(run_context) is None
+        with pytest.raises(
+            AttributeError, match='The `FastMCPToolset.instructions` is only available after initialization.'
+        ):
+            await toolset.get_instructions(run_context)
 
         async with toolset:
             assert toolset.instructions == 'Be a helpful assistant.'
             assert await toolset.get_instructions(run_context) == 'Be a helpful assistant.'
 
         # After exiting, cached instructions are reset.
-        assert toolset.instructions is None
+        assert await toolset.get_instructions(run_context) is None
 
 
 class TestFastMCPToolsetToolDiscovery:
