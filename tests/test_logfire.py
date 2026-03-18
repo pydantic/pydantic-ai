@@ -3193,13 +3193,13 @@ async def test_run_stream(
         )
 
 
-def _get_tool_span_attributes(capfire: CaptureLogfire) -> dict[str, Any]:
-    """Get the attributes of the completed tool span from exported spans."""
+def _get_tool_span(capfire: CaptureLogfire) -> dict[str, Any]:
+    """Get the completed tool span from exported spans."""
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     tool_span = next(
         s for s in spans if s['attributes'].get('logfire.span_type') == 'span' and 'tool' in s['name'].lower()
     )
-    return tool_span['attributes']
+    return tool_span
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -3217,25 +3217,44 @@ def test_deferral_call_deferred_v2(capfire: CaptureLogfire) -> None:
 
     agent.run_sync('Hello')
 
-    assert _get_tool_span_attributes(capfire) == snapshot(
+    assert _get_tool_span(capfire) == snapshot(
         {
-            'gen_ai.tool.name': 'my_tool',
-            'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
-            'tool_arguments': {'x': 0},
-            'logfire.msg': 'running tool: my_tool',
-            'logfire.json_schema': {
-                'type': 'object',
-                'properties': {
-                    'tool_arguments': {'type': 'object'},
-                    'tool_response': {'type': 'object'},
-                    'gen_ai.tool.name': {},
-                    'gen_ai.tool.call.id': {},
+            'name': 'running tool',
+            'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+            'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+            'start_time': 4000000000,
+            'end_time': 6000000000,
+            'attributes': {
+                'gen_ai.tool.name': 'my_tool',
+                'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
+                'tool_arguments': {'x': 0},
+                'logfire.msg': 'running tool: my_tool',
+                'logfire.json_schema': {
+                    'type': 'object',
+                    'properties': {
+                        'tool_arguments': {'type': 'object'},
+                        'tool_response': {'type': 'object'},
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
                 },
+                'logfire.span_type': 'span',
+                'pydantic_ai.tool.deferral.name': 'CallDeferred',
+                'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
+                'logfire.level_num': 17,
             },
-            'logfire.span_type': 'span',
-            'pydantic_ai.tool.deferral.name': 'CallDeferred',
-            'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
-            'logfire.level_num': 17,
+            'events': [
+                {
+                    'name': 'exception',
+                    'timestamp': 5000000000,
+                    'attributes': {
+                        'exception.type': 'pydantic_ai.exceptions.CallDeferred',
+                        'exception.message': '',
+                        'exception.stacktrace': 'pydantic_ai.exceptions.CallDeferred',
+                        'exception.escaped': 'False',
+                    },
+                }
+            ],
         }
     )
 
@@ -3255,25 +3274,44 @@ def test_deferral_approval_required_v2(capfire: CaptureLogfire) -> None:
 
     agent.run_sync('Hello')
 
-    assert _get_tool_span_attributes(capfire) == snapshot(
+    assert _get_tool_span(capfire) == snapshot(
         {
-            'gen_ai.tool.name': 'my_tool',
-            'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
-            'tool_arguments': {'x': 0},
-            'logfire.msg': 'running tool: my_tool',
-            'logfire.json_schema': {
-                'type': 'object',
-                'properties': {
-                    'tool_arguments': {'type': 'object'},
-                    'tool_response': {'type': 'object'},
-                    'gen_ai.tool.name': {},
-                    'gen_ai.tool.call.id': {},
+            'name': 'running tool',
+            'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+            'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+            'start_time': 4000000000,
+            'end_time': 6000000000,
+            'attributes': {
+                'gen_ai.tool.name': 'my_tool',
+                'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
+                'tool_arguments': {'x': 0},
+                'logfire.msg': 'running tool: my_tool',
+                'logfire.json_schema': {
+                    'type': 'object',
+                    'properties': {
+                        'tool_arguments': {'type': 'object'},
+                        'tool_response': {'type': 'object'},
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
                 },
+                'logfire.span_type': 'span',
+                'pydantic_ai.tool.deferral.name': 'ApprovalRequired',
+                'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
+                'logfire.level_num': 17,
             },
-            'logfire.span_type': 'span',
-            'pydantic_ai.tool.deferral.name': 'ApprovalRequired',
-            'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
-            'logfire.level_num': 17,
+            'events': [
+                {
+                    'name': 'exception',
+                    'timestamp': 5000000000,
+                    'attributes': {
+                        'exception.type': 'pydantic_ai.exceptions.ApprovalRequired',
+                        'exception.message': '',
+                        'exception.stacktrace': 'pydantic_ai.exceptions.ApprovalRequired',
+                        'exception.escaped': 'False',
+                    },
+                }
+            ],
         }
     )
 
@@ -3293,24 +3331,44 @@ def test_deferral_call_deferred_v5(capfire: CaptureLogfire) -> None:
 
     agent.run_sync('Hello')
 
-    assert _get_tool_span_attributes(capfire) == snapshot(
+    assert _get_tool_span(capfire) == snapshot(
         {
-            'gen_ai.tool.name': 'my_tool',
-            'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
-            'gen_ai.tool.call.arguments': {'x': 0},
-            'logfire.msg': 'running tool: my_tool',
-            'logfire.json_schema': {
-                'type': 'object',
-                'properties': {
-                    'gen_ai.tool.call.arguments': {'type': 'object'},
-                    'gen_ai.tool.call.result': {'type': 'object'},
-                    'gen_ai.tool.name': {},
-                    'gen_ai.tool.call.id': {},
+            'name': 'execute_tool my_tool',
+            'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+            'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+            'start_time': 4000000000,
+            'end_time': 6000000000,
+            'attributes': {
+                'gen_ai.tool.name': 'my_tool',
+                'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
+                'gen_ai.tool.call.arguments': {'x': 0},
+                'logfire.msg': 'running tool: my_tool',
+                'logfire.json_schema': {
+                    'type': 'object',
+                    'properties': {
+                        'gen_ai.tool.call.arguments': {'type': 'object'},
+                        'gen_ai.tool.call.result': {'type': 'object'},
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
                 },
+                'logfire.span_type': 'span',
+                'pydantic_ai.tool.deferral.name': 'CallDeferred',
+                'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
+                'logfire.level_num': 17,
             },
-            'logfire.span_type': 'span',
-            'pydantic_ai.tool.deferral.name': 'CallDeferred',
-            'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
+            'events': [
+                {
+                    'name': 'exception',
+                    'timestamp': 5000000000,
+                    'attributes': {
+                        'exception.type': 'pydantic_ai.exceptions.CallDeferred',
+                        'exception.message': '',
+                        'exception.stacktrace': 'pydantic_ai.exceptions.CallDeferred',
+                        'exception.escaped': 'False',
+                    },
+                }
+            ],
         }
     )
 
@@ -3330,24 +3388,44 @@ def test_deferral_approval_required_v5(capfire: CaptureLogfire) -> None:
 
     agent.run_sync('Hello')
 
-    assert _get_tool_span_attributes(capfire) == snapshot(
+    assert _get_tool_span(capfire) == snapshot(
         {
-            'gen_ai.tool.name': 'my_tool',
-            'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
-            'gen_ai.tool.call.arguments': {'x': 0},
-            'logfire.msg': 'running tool: my_tool',
-            'logfire.json_schema': {
-                'type': 'object',
-                'properties': {
-                    'gen_ai.tool.call.arguments': {'type': 'object'},
-                    'gen_ai.tool.call.result': {'type': 'object'},
-                    'gen_ai.tool.name': {},
-                    'gen_ai.tool.call.id': {},
+            'name': 'execute_tool my_tool',
+            'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+            'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+            'start_time': 4000000000,
+            'end_time': 6000000000,
+            'attributes': {
+                'gen_ai.tool.name': 'my_tool',
+                'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
+                'gen_ai.tool.call.arguments': {'x': 0},
+                'logfire.msg': 'running tool: my_tool',
+                'logfire.json_schema': {
+                    'type': 'object',
+                    'properties': {
+                        'gen_ai.tool.call.arguments': {'type': 'object'},
+                        'gen_ai.tool.call.result': {'type': 'object'},
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
                 },
+                'logfire.span_type': 'span',
+                'pydantic_ai.tool.deferral.name': 'ApprovalRequired',
+                'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
+                'logfire.level_num': 17,
             },
-            'logfire.span_type': 'span',
-            'pydantic_ai.tool.deferral.name': 'ApprovalRequired',
-            'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
+            'events': [
+                {
+                    'name': 'exception',
+                    'timestamp': 5000000000,
+                    'attributes': {
+                        'exception.type': 'pydantic_ai.exceptions.ApprovalRequired',
+                        'exception.message': '',
+                        'exception.stacktrace': 'pydantic_ai.exceptions.ApprovalRequired',
+                        'exception.escaped': 'False',
+                    },
+                }
+            ],
         }
     )
 
@@ -3367,25 +3445,45 @@ def test_deferral_no_metadata(capfire: CaptureLogfire) -> None:
 
     agent.run_sync('Hello')
 
-    tool_attributes = _get_tool_span_attributes(capfire)
+    tool_span = _get_tool_span(capfire)
 
-    assert tool_attributes == snapshot(
+    assert tool_span == snapshot(
         {
-            'gen_ai.tool.name': 'my_tool',
-            'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
-            'gen_ai.tool.call.arguments': {'x': 0},
-            'logfire.msg': 'running tool: my_tool',
-            'logfire.json_schema': {
-                'type': 'object',
-                'properties': {
-                    'gen_ai.tool.call.arguments': {'type': 'object'},
-                    'gen_ai.tool.call.result': {'type': 'object'},
-                    'gen_ai.tool.name': {},
-                    'gen_ai.tool.call.id': {},
+            'name': 'execute_tool my_tool',
+            'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+            'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+            'start_time': 4000000000,
+            'end_time': 6000000000,
+            'attributes': {
+                'gen_ai.tool.name': 'my_tool',
+                'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
+                'gen_ai.tool.call.arguments': {'x': 0},
+                'logfire.msg': 'running tool: my_tool',
+                'logfire.json_schema': {
+                    'type': 'object',
+                    'properties': {
+                        'gen_ai.tool.call.arguments': {'type': 'object'},
+                        'gen_ai.tool.call.result': {'type': 'object'},
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
                 },
+                'logfire.span_type': 'span',
+                'pydantic_ai.tool.deferral.name': 'CallDeferred',
+                'logfire.level_num': 17,
             },
-            'logfire.span_type': 'span',
-            'pydantic_ai.tool.deferral.name': 'CallDeferred',
+            'events': [
+                {
+                    'name': 'exception',
+                    'timestamp': 5000000000,
+                    'attributes': {
+                        'exception.type': 'pydantic_ai.exceptions.CallDeferred',
+                        'exception.message': '',
+                        'exception.stacktrace': 'pydantic_ai.exceptions.CallDeferred',
+                        'exception.escaped': 'False',
+                    },
+                }
+            ],
         }
     )
 
@@ -3410,26 +3508,46 @@ def test_deferral_non_serializable_metadata(capfire: CaptureLogfire) -> None:
 
     agent.run_sync('Hello')
 
-    tool_attributes = _get_tool_span_attributes(capfire)
+    tool_span = _get_tool_span(capfire)
 
-    assert tool_attributes == snapshot(
+    assert tool_span == snapshot(
         {
-            'gen_ai.tool.name': 'my_tool',
-            'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
-            'gen_ai.tool.call.arguments': {'x': 0},
-            'logfire.msg': 'running tool: my_tool',
-            'logfire.json_schema': {
-                'type': 'object',
-                'properties': {
-                    'gen_ai.tool.call.arguments': {'type': 'object'},
-                    'gen_ai.tool.call.result': {'type': 'object'},
-                    'gen_ai.tool.name': {},
-                    'gen_ai.tool.call.id': {},
+            'name': 'execute_tool my_tool',
+            'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
+            'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+            'start_time': 4000000000,
+            'end_time': 6000000000,
+            'attributes': {
+                'gen_ai.tool.name': 'my_tool',
+                'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
+                'gen_ai.tool.call.arguments': {'x': 0},
+                'logfire.msg': 'running tool: my_tool',
+                'logfire.json_schema': {
+                    'type': 'object',
+                    'properties': {
+                        'gen_ai.tool.call.arguments': {'type': 'object'},
+                        'gen_ai.tool.call.result': {'type': 'object'},
+                        'gen_ai.tool.name': {},
+                        'gen_ai.tool.call.id': {},
+                    },
                 },
+                'logfire.span_type': 'span',
+                'pydantic_ai.tool.deferral.name': 'CallDeferred',
+                'pydantic_ai.tool.deferral.metadata': "{'obj': <CustomObj>}",
+                'logfire.level_num': 17,
             },
-            'logfire.span_type': 'span',
-            'pydantic_ai.tool.deferral.name': 'CallDeferred',
-            'pydantic_ai.tool.deferral.metadata': "{'obj': <CustomObj>}",
+            'events': [
+                {
+                    'name': 'exception',
+                    'timestamp': 5000000000,
+                    'attributes': {
+                        'exception.type': 'pydantic_ai.exceptions.CallDeferred',
+                        'exception.message': '',
+                        'exception.stacktrace': 'pydantic_ai.exceptions.CallDeferred',
+                        'exception.escaped': 'False',
+                    },
+                }
+            ],
         }
     )
 
