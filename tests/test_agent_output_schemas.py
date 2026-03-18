@@ -138,6 +138,37 @@ async def test_tool_output_json_schema():
     assert agent.output_json_schema() == snapshot({'type': 'boolean'})
 
 
+def test_tool_output_max_retries():
+    """Test that ToolOutput(max_retries=N) is propagated to the OutputToolset."""
+
+    class Foo(BaseModel):
+        bar: str
+
+    # max_retries should be passed through to the toolset
+    agent = Agent('test', output_type=[ToolOutput(Foo, max_retries=3)])
+    output_schema = agent.toolsets[0].output_schema
+    assert output_schema.toolset is not None
+    assert output_schema.toolset.max_retries == 3
+
+    # default max_retries should remain 1 when not specified
+    agent_default = Agent('test', output_type=[ToolOutput(Foo)])
+    output_schema_default = agent_default.toolsets[0].output_schema
+    assert output_schema_default.toolset is not None
+    assert output_schema_default.toolset.max_retries == 1
+
+    # with multiple outputs, the max value should be used
+    agent_multi = Agent('test', output_type=[ToolOutput(Foo, max_retries=5), ToolOutput(bool, max_retries=2)])
+    output_schema_multi = agent_multi.toolsets[0].output_schema
+    assert output_schema_multi.toolset is not None
+    assert output_schema_multi.toolset.max_retries == 5
+
+    # Agent-level output_retries should take priority over ToolOutput max_retries
+    agent_override = Agent('test', output_type=[ToolOutput(Foo, max_retries=3)], output_retries=7)
+    output_schema_override = agent_override.toolsets[0].output_schema
+    assert output_schema_override.toolset is not None
+    assert output_schema_override.toolset.max_retries == 7
+
+
 async def test_native_output_json_schema():
     agent = Agent(
         'test',

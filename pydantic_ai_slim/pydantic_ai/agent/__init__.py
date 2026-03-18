@@ -384,7 +384,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._output_toolset = self._output_schema.toolset
         if self._output_toolset:
-            self._output_toolset.max_retries = self._max_result_retries
+            # Respect max_retries from ToolOutput(...) when neither output_retries
+            # nor retries was explicitly changed at the Agent level. Agent-level
+            # output_retries always takes priority when explicitly set.
+            toolset_has_custom_retries = self._output_toolset.max_retries != 1
+            if output_retries is not None or not toolset_has_custom_retries:
+                self._output_toolset.max_retries = self._max_result_retries
 
         self._function_toolset = _AgentFunctionToolset(
             tools,
