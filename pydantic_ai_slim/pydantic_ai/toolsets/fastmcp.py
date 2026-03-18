@@ -114,7 +114,6 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         self._enter_lock: Lock = Lock()
         self._running_count: int = 0
         self._exit_stack: AsyncExitStack | None = None
-        self._instructions: str | None = None
 
     @property
     def id(self) -> str | None:
