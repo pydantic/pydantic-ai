@@ -33,7 +33,7 @@ class TemplateStr(Generic[AgentDepsT]):
             name: str
 
         agent = Agent(
-            'openai:gpt-4o',
+            'openai:gpt-5',
             deps_type=MyDeps,
             instructions=TemplateStr('Hello {{name}}', deps_type=MyDeps),
         )

@@ -26,7 +26,7 @@ class Thinking(ModelSettings[AgentDepsT]):
                 {
                     'openai_reasoning_effort': 'high',
                     'anthropic_thinking': {'type': 'adaptive'},
-                    # etc
+                    # TODO: Use unified thinking settings from #3894 once merged
                 },
             ),
         )

@@ -11,12 +11,7 @@ _BUILTIN_WEB_SEARCH_TOOL = WebSearchTool()
 class WebSearch(AbstractCapability[AgentDepsT]):
     """A capability that enables web search via builtin tools."""
 
-    # def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
-    #     return FunctionToolset([duckduckgo_search_tool()]).prepared(
-    #         lambda ctx, tool_defs: [
-    #             replace(tool_def, prefers_builtin=_BUILTIN_WEB_SEARCH_TOOL.unique_id) for tool_def in tool_defs
-    #         ],
-    #     )
+    # TODO: Add toolset-based fallback for models without builtin web search (#3212)
 
     def get_builtin_tools(self) -> Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]]:
         return [_BUILTIN_WEB_SEARCH_TOOL]

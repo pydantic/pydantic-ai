@@ -18,6 +18,10 @@ class ModelSettings(AbstractCapability[AgentDepsT]):
 
     When `settings` is a callable, it receives the [`RunContext`][pydantic_ai.tools.RunContext]
     and is called before each model request, allowing per-step settings.
+
+    Settings from this capability are merged on top of the agent's top-level `model_settings`
+    (same additive pattern as instructions), so capability settings take precedence over
+    agent-level defaults but can still be overridden by run-level settings.
     """
 
     settings: _ModelSettings | Callable[[RunContext[AgentDepsT]], _ModelSettings]

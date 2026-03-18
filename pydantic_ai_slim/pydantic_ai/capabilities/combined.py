@@ -26,10 +26,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return instructions or None
 
     def get_model_settings(self) -> ModelSettings | None:
-        model_settings = ModelSettings()
+        model_settings: ModelSettings | None = None
         for capability in self.capabilities:
-            model_settings = merge_model_settings(model_settings, capability.get_model_settings())
-        return model_settings or None
+            cap_settings = capability.get_model_settings()
+            if cap_settings is not None:
+                model_settings = merge_model_settings(model_settings, cap_settings)
+        return model_settings
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT] | None:
         toolsets: list[AbstractToolset[AgentDepsT]] = []
