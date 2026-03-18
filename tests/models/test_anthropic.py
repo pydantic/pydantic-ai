@@ -8532,6 +8532,8 @@ async def test_anthropic_tool_examples(allow_model_requests: None, anthropic_api
 
     result = await agent.run('Call the add_one tool with 5')
     assert result.output == snapshot('The result of calling `add_one` with 5 is **6**.')
+
+
 async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None):
     """Test that malformed JSON tool args don't crash the Anthropic retry path.
 
