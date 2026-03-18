@@ -622,7 +622,7 @@ async def test_extra_headers(allow_model_requests: None, groq_api_key: str):
     await agent.run('hello')
 
 
-async def test_map_text_content_input():
+async def test_map_text_content_input(allow_model_requests: None, groq_api_key: str):
     part = UserPromptPart(
         content=[
             'Hi',
@@ -632,7 +632,7 @@ async def test_map_text_content_input():
             ),
         ]
     )
-    m = GroqModel._map_user_prompt(part)  # pyright: ignore[reportPrivateUsage]
+    m = await GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key=groq_api_key))._map_user_prompt(part)  # pyright: ignore[reportPrivateUsage]
     assert m == snapshot(
         {
             'role': 'user',
@@ -687,7 +687,7 @@ async def test_image_as_binary_content_tool_response(
                 run_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='arq6emmq6')],
+                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='911ra51k8')],
                 usage=RequestUsage(input_tokens=712, output_tokens=20),
                 model_name='meta-llama/llama-4-maverick-17b-128e-instruct',
                 timestamp=IsDatetime(),
@@ -702,11 +702,10 @@ async def test_image_as_binary_content_tool_response(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 241a70',
-                        tool_call_id='arq6emmq6',
+                        content=IsInstance(BinaryImage),
+                        tool_call_id='911ra51k8',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(content=['This is file 241a70:', IsInstance(BinaryImage)], timestamp=IsDatetime()),
+                    )
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -736,7 +735,7 @@ async def test_audio_as_binary_content_input(allow_model_requests: None, media_t
 
     base64_content = b'//uQZ'
 
-    with pytest.raises(RuntimeError, match='Only images are supported for binary content in Groq.'):
+    with pytest.raises(NotImplementedError, match='Only images are supported for BinaryContent in Groq user prompts'):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type=media_type)])
 
 
@@ -746,7 +745,7 @@ async def test_uploaded_file_input(allow_model_requests: None):
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(RuntimeError, match='UploadedFile is not supported by Groq.'):
+    with pytest.raises(NotImplementedError, match='UploadedFile is not supported in Groq user prompts'):
         await agent.run(['hello', UploadedFile(file_id='file-123', provider_name='anthropic')])
 
 

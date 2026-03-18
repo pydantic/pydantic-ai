@@ -27,6 +27,7 @@ from typing import (
 
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
+from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import (
     ParamSpec,
@@ -305,6 +306,15 @@ def guard_tool_call_id(
     return t.tool_call_id or generate_tool_call_id()
 
 
+TOOL_NAME_SANITIZER = re.compile(r'[^a-zA-Z0-9_-]')
+"""Regex matching characters not allowed in tool names by most providers."""
+
+
+def sanitize_tool_name(name: str) -> str:
+    """Replace characters outside `[a-zA-Z0-9_-]` with `_`."""
+    return TOOL_NAME_SANITIZER.sub('_', name)
+
+
 def generate_tool_call_id() -> str:
     """Generate a tool call id.
 
@@ -423,6 +433,45 @@ def is_async_callable(obj: Any) -> Any:
         obj = obj.func
 
     return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))
+
+
+def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
+    """Get the type annotation of the first parameter of a callable.
+
+    Handles regular functions, methods, and callable classes with __call__.
+    Uses Pydantic internals to properly resolve type hints including forward references.
+
+    Args:
+        callable_obj: The callable to inspect.
+
+    Returns:
+        The type annotation of the first parameter, or None if it cannot be determined.
+    """
+    try:
+        sig = inspect.signature(callable_obj)
+    except ValueError:
+        return None
+
+    try:
+        first_param_name = next(iter(sig.parameters.keys()))
+    except StopIteration:
+        return None
+
+    # See https://github.com/pydantic/pydantic/pull/11451 for a similar implementation in Pydantic
+    callable_for_hints = callable_obj
+    if not isinstance(callable_obj, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
+        call_func = getattr(type(callable_obj), '__call__', None)
+        if call_func is not None:
+            callable_for_hints = call_func
+        else:
+            return None  # pragma: no cover
+
+    try:
+        type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_for_hints))
+    except (NameError, TypeError, AttributeError):
+        return None
+
+    return type_hints.get(first_param_name)
 
 
 def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
@@ -556,3 +605,8 @@ def get_event_loop():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
+    """Check if obj is a dict, narrowing the type to `dict[str, Any]`."""
+    return isinstance(obj, dict)

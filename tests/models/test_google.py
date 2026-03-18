@@ -4994,6 +4994,47 @@ async def test_http_video_url_uses_file_uri_on_google_vertex(mocker: MockerFixtu
     }
 
 
+# =============================================================================
+# _map_file_to_function_response_part tests for tool returns on Vertex
+#
+# These tests cover the FunctionResponsePartDict mapping for Gemini 3+ native
+# tool returns on google-vertex, which uses file_data for URLs instead of
+# downloading (unlike _map_file_to_part which is for user prompts).
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    'file_url,expected',
+    [
+        pytest.param(
+            VideoUrl(url='https://youtu.be/lCdaVNyHtjU'),
+            {'file_data': {'file_uri': 'https://youtu.be/lCdaVNyHtjU', 'mime_type': 'video/mp4'}},
+            id='youtube',
+        ),
+        pytest.param(
+            VideoUrl(url='gs://bucket/video.mp4'),
+            {'file_data': {'file_uri': 'gs://bucket/video.mp4', 'mime_type': 'video/mp4'}},
+            id='gcs',
+        ),
+        pytest.param(
+            ImageUrl(url='https://example.com/image.png'),
+            {'file_data': {'file_uri': 'https://example.com/image.png', 'mime_type': 'image/png'}},
+            id='http_file_url',
+        ),
+    ],
+)
+async def test_file_url_in_tool_return_on_vertex(
+    mocker: MockerFixture, file_url: VideoUrl | ImageUrl, expected: dict[str, Any]
+):
+    """Test file URLs use file_data (not download) in tool returns on Vertex."""
+    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+
+    result = await model._map_file_to_function_response_part(file_url)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == expected
+
+
 async def test_map_user_prompt_with_text_content(mocker: MockerFixture):
     """Test that _map_user_prompt correctly handles a mix of text content and str."""
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))

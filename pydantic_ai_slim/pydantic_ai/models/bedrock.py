@@ -45,6 +45,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, CodeExecutionTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
@@ -55,7 +56,9 @@ if TYPE_CHECKING:
     from botocore.client import BaseClient
     from botocore.eventstream import EventStream
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
-    from mypy_boto3_bedrock_runtime.literals import StopReasonType
+    from mypy_boto3_bedrock_runtime.literals import (
+        StopReasonType,
+    )
     from mypy_boto3_bedrock_runtime.type_defs import (
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
@@ -78,6 +81,7 @@ if TYPE_CHECKING:
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
         ToolResultBlockOutputTypeDef,
+        ToolResultContentBlockOutputTypeDef,
         ToolSpecificationTypeDef,
         ToolTypeDef,
         ToolUseBlockOutputTypeDef,
@@ -250,7 +254,7 @@ def _insert_cache_point_before_trailing_documents(
                 'due to Bedrock API restrictions. '
                 'Add text content before or after your document or video to enable caching.'
             )
-        return False
+        return False  # pragma: no cover
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -329,6 +333,15 @@ class BedrockModelSettings(ModelSettings, total=False):
     """Setting for optimizing performance and cost
 
     See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html>.
+    """
+
+    bedrock_inference_profile: str
+    """An [inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) ARN to use as the `modelId` in API requests.
+
+    When set, this value is used as the `modelId` in `converse` and `converse_stream` API calls instead of the
+    base `model_name`. This allows you to pass the base model name (e.g. `'anthropic.claude-sonnet-4-5-20250929-v1:0'`)
+    as `model_name` for detecting model capabilities and token counting, while routing requests through an inference profile
+    for cost tracking or cross-region inference.
     """
 
 
@@ -584,7 +597,7 @@ class BedrockConverseModel(Model):
         inference_config = self._map_inference_config(settings)
 
         params: ConverseRequestTypeDef = {
-            'modelId': self.model_name,
+            'modelId': settings.get('bedrock_inference_profile') or self.model_name,
             'messages': bedrock_messages,
             'system': system_prompt,
             'inferenceConfig': inference_config,
@@ -712,24 +725,67 @@ class BedrockConverseModel(Model):
                         )
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
-                        bedrock_messages.append(
-                            {
-                                'role': 'user',
-                                'content': [
-                                    {
-                                        'toolResult': {
-                                            'toolUseId': part.tool_call_id,
-                                            'content': [
-                                                {'text': part.model_response_str()}
-                                                if profile.bedrock_tool_result_format == 'text'
-                                                else {'json': part.model_response_object()}
-                                            ],
-                                            'status': 'success',
-                                        }
-                                    }
-                                ],
-                            }
+                        tool_result_content: list[Any] = []
+                        sibling_content: list[ContentBlockUnionTypeDef] = []
+
+                        content_mode: Literal['str', 'jsonable'] = (
+                            'str' if profile.bedrock_tool_result_format == 'text' else 'jsonable'
                         )
+                        for item in part.content_items(mode=content_mode):
+                            if isinstance(item, UploadedFile):
+                                if item.provider_name != self.system:
+                                    raise UserError(
+                                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with BedrockConverseModel. '
+                                        f'Expected `provider_name` to be `{self.system!r}`.'
+                                    )
+                                if not item.file_id.startswith('s3://'):
+                                    raise UserError(
+                                        f'UploadedFile for Bedrock must use an S3 URL (s3://bucket/key), got: {item.file_id}'
+                                    )
+                                uf_source = _parse_s3_source(item.file_id)
+                                try:
+                                    uf_format = item.format
+                                except ValueError as e:
+                                    raise UserError(
+                                        f'Unsupported media type for Bedrock UploadedFile: {item.media_type}'
+                                    ) from e
+                                if item.media_type.startswith('image/'):
+                                    tool_result_content.append(_make_image_block(uf_format, uf_source))
+                                elif item.media_type.startswith('video/'):
+                                    tool_result_content.append(_make_video_block(uf_format, uf_source))
+                                elif item.media_type.startswith('audio/'):
+                                    raise UserError('Audio files are not supported for Bedrock UploadedFile')
+                                else:
+                                    tool_result_content.append(
+                                        _make_document_block(f'Document {next(document_count)}', uf_format, uf_source)
+                                    )
+                            elif is_multi_modal_content(item):
+                                if isinstance(item, AudioUrl):
+                                    raise NotImplementedError('AudioUrl is not supported in Bedrock tool returns')
+                                file_block = await self._map_file_to_content_block(item, document_count)  # pyright: ignore[reportArgumentType]
+                                kind = next((k for k in ('image', 'document', 'video') if k in file_block), None)
+                                if kind in profile.bedrock_supported_media_kinds_in_tool_returns:
+                                    tool_result_content.append(file_block)
+                                else:
+                                    tool_result_content.append({'text': f'See file {item.identifier}.'})
+                                    sibling_content.append({'text': f'This is file {item.identifier}:'})
+                                    sibling_content.append(file_block)
+                            elif isinstance(item, str):
+                                tool_result_content.append({'text': item})
+                            else:
+                                tool_result_content.append({'json': item})
+
+                        user_content: list[ContentBlockUnionTypeDef] = [
+                            {
+                                'toolResult': {
+                                    'toolUseId': part.tool_call_id,
+                                    'content': tool_result_content,
+                                    'status': 'success',
+                                }
+                            }
+                        ]
+                        user_content.extend(sibling_content)
+                        bedrock_messages.append({'role': 'user', 'content': user_content})
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
@@ -762,12 +818,13 @@ class BedrockConverseModel(Model):
                             and item.signature
                             and BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts
                         ):
+                            reasoning_content: ReasoningContentBlockOutputTypeDef
                             if item.id == 'redacted_content':
-                                reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                reasoning_content = {
                                     'redactedContent': item.signature.encode('utf-8'),
                                 }
                             else:
-                                reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                reasoning_content = {
                                     'reasoningText': {
                                         'text': item.content,
                                         'signature': item.signature,
@@ -790,9 +847,12 @@ class BedrockConverseModel(Model):
                     elif isinstance(item, BuiltinToolReturnPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
+                                result_content: list[ToolResultContentBlockOutputTypeDef] = [
+                                    {'json': cast(dict[str, Any], item.content)}
+                                ]
                                 tool_result: ToolResultBlockOutputTypeDef = {
                                     'toolUseId': _utils.guard_tool_call_id(t=item),
-                                    'content': [{'json': cast(Any, item.content)}] if item.content else [],
+                                    'content': result_content,
                                     'type': 'nova_code_interpreter_result',
                                 }
                                 if item.provider_details and 'status' in item.provider_details:
@@ -865,6 +925,43 @@ class BedrockConverseModel(Model):
             return None
         return content
 
+    @staticmethod
+    async def _map_file_to_content_block(
+        file: ImageUrl | DocumentUrl | VideoUrl | BinaryContent,
+        document_count: Iterator[int],
+    ) -> ContentBlockUnionTypeDef:
+        """Map a multimodal file directly to a Bedrock content block."""
+        source: DocumentSourceTypeDef
+
+        if isinstance(file, BinaryContent):
+            source = {'bytes': file.data}
+            if file.is_image:
+                return _make_image_block(file.format, source)
+            elif file.is_document:
+                return _make_document_block(f'Document {next(document_count)}', file.format, source)
+            elif file.is_video:
+                return _make_video_block(file.format, source)
+            else:
+                raise NotImplementedError(f'Unsupported binary content type for Bedrock: {file.media_type}')
+        else:
+            if file.url.startswith('s3://'):
+                source = _parse_s3_source(file.url)
+            else:
+                downloaded = await download_item(file, data_format='bytes', type_format='extension')
+                source = {'bytes': downloaded['data']}
+
+            try:
+                format = file.format
+            except (KeyError, ValueError):
+                format = file.media_type.split('/', 1)[1]
+
+            if isinstance(file, ImageUrl):
+                return _make_image_block(format, source)
+            elif isinstance(file, DocumentUrl):
+                return _make_document_block(f'Document {next(document_count)}', format, source)
+            else:
+                return _make_video_block(format, source)
+
     async def _map_user_prompt(  # noqa: C901
         self,
         part: UserPromptPart,
@@ -879,52 +976,21 @@ class BedrockConverseModel(Model):
                 if isinstance(item, str | TextContent):
                     text = item if isinstance(item, str) else item.content
                     content.append({'text': text})
-                elif isinstance(item, BinaryContent):
-                    format = item.format
-                    source: DocumentSourceTypeDef = {'bytes': item.data}
-                    if item.is_document:
-                        content.append(_make_document_block(f'Document {next(document_count)}', format, source))
-                    elif item.is_image:
-                        content.append(_make_image_block(format, source))
-                    elif item.is_video:
-                        content.append(_make_video_block(format, source))
-                    else:
-                        raise NotImplementedError('Binary content is not supported yet.')
-                elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
-                    if item.url.startswith('s3://'):
-                        source = _parse_s3_source(item.url)
-                    else:
-                        downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
-                        source = {'bytes': downloaded_item['data']}
-
-                    try:
-                        format = item.format
-                    except (KeyError, ValueError):
-                        # Unknown media type — fall back to raw subtype so the
-                        # validation inside _make_*_block produces a clear UserError.
-                        format = item.media_type.split('/', 1)[1]
-
-                    if item.kind == 'image-url':
-                        content.append(_make_image_block(format, source))
-                    elif item.kind == 'document-url':
-                        content.append(_make_document_block(f'Document {next(document_count)}', format, source))
-                    elif item.kind == 'video-url':  # pragma: no branch
-                        content.append(_make_video_block(format, source))
-                elif isinstance(item, AudioUrl):  # pragma: no cover
-                    raise NotImplementedError('Audio is not supported yet.')
+                elif isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
+                    content.append(await BedrockConverseModel._map_file_to_content_block(item, document_count))
+                elif isinstance(item, AudioUrl):
+                    raise NotImplementedError('AudioUrl is not supported in Bedrock user prompts')
                 elif isinstance(item, UploadedFile):
-                    # Verify provider matches
                     if item.provider_name != self.system:
                         raise UserError(
                             f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with BedrockConverseModel. '
                             f'Expected `provider_name` to be `{self.system!r}`.'
                         )
-                    # UploadedFile.file_id should be an S3 URL for Bedrock
                     if not item.file_id.startswith('s3://'):
                         raise UserError(
                             f'UploadedFile for Bedrock must use an S3 URL (s3://bucket/key), got: {item.file_id}'
                         )
-                    source = _parse_s3_source(item.file_id)
+                    source: DocumentSourceTypeDef = _parse_s3_source(item.file_id)
 
                     try:
                         format = item.format
@@ -951,12 +1017,22 @@ class BedrockConverseModel(Model):
                     _insert_cache_point_before_trailing_documents(content, raise_if_cannot_insert=True)
                 else:
                     assert_never(item)
+        # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Message.html
+        # "If you include a ContentBlock with a document field, you must also include a ContentBlock with a text field."
+        has_document = any('document' in block for block in content)
+        has_text = any('text' in block for block in content)
+        if has_document and not has_text:
+            content.insert(0, {'text': 'See attached document(s).'})
         return [{'role': 'user', 'content': content}]
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
         return {
-            'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
+            'toolUse': {
+                'toolUseId': _utils.guard_tool_call_id(t=t),
+                'name': _utils.sanitize_tool_name(t.tool_name),
+                'input': t.args_as_dict(),
+            }
         }
 
     @staticmethod
