@@ -74,7 +74,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDef
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -1999,6 +1999,25 @@ def test_prompted_output_with_template():
     )
 
 
+def test_prompted_output_with_template_false():
+    def return_foo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.model_request_parameters.prompted_output_template is False
+        assert info.model_request_parameters.prompted_output_instructions is None
+        assert info.instructions is None
+        text = Foo(bar='baz').model_dump_json()
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    m = FunctionModel(return_foo)
+
+    class Foo(BaseModel):
+        bar: str
+
+    agent = Agent(m, output_type=PromptedOutput(Foo, template=False))
+
+    result = agent.run_sync('What is the capital of Mexico?')
+    assert result.output == snapshot(Foo(bar='baz'))
+
+
 def test_prompted_output_with_defs():
     class Foo(BaseModel):
         """Foo description"""
@@ -2591,6 +2610,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='New instructions',
+                run_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
@@ -2602,7 +2622,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
         ]
     )
 
-    assert result.new_messages() == result.all_messages()[-1:]
+    assert result.new_messages() == result.all_messages()[-2:]
 
 
 def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_prompt():
@@ -5304,24 +5324,6 @@ def test_image_url_serializable():
     assert messages == result.all_messages()
 
 
-def test_tool_return_part_binary_content_serialization():
-    """Test that ToolReturnPart can properly serialize BinaryContent."""
-    png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
-    binary_content = BinaryContent(png_data, media_type='image/png')
-
-    tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
-
-    assert tool_return.model_response_object() == snapshot(
-        {
-            'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzgAAAAASUVORK5CYII=',
-            'media_type': 'image/png',
-            'vendor_metadata': None,
-            'kind': 'binary',
-            'identifier': '14a01a',
-        }
-    )
-
-
 def test_tool_returning_binary_content_directly():
     """Test that a tool returning BinaryContent directly works correctly."""
 
@@ -5368,21 +5370,10 @@ def test_tool_returning_binary_content_with_identifier():
             parts=[
                 ToolReturnPart(
                     tool_name='get_image',
-                    content='See file image_id_1',
+                    content=IsInstance(BinaryContent),
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                UserPromptPart(
-                    content=[
-                        'This is file image_id_1:',
-                        BinaryContent(
-                            data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
-                            media_type='image/png',
-                            _identifier='image_id_1',
-                        ),
-                    ],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
+                    timestamp=IsDatetime(),
+                )
             ],
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
@@ -5417,25 +5408,15 @@ def test_tool_returning_file_url_with_identifier():
             parts=[
                 ToolReturnPart(
                     tool_name='get_files',
-                    content=['See file img_001', 'See file vid_002', 'See file aud_003', 'See file doc_004'],
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                UserPromptPart(
                     content=[
-                        'This is file img_001:',
-                        ImageUrl(url='https://example.com/image.jpg', _identifier='img_001', identifier='img_001'),
-                        'This is file vid_002:',
-                        VideoUrl(url='https://example.com/video.mp4', _identifier='vid_002', identifier='vid_002'),
-                        'This is file aud_003:',
-                        AudioUrl(url='https://example.com/audio.mp3', _identifier='aud_003', identifier='aud_003'),
-                        'This is file doc_004:',
-                        DocumentUrl(
-                            url='https://example.com/document.pdf', _identifier='doc_004', identifier='doc_004'
-                        ),
+                        ImageUrl(url='https://example.com/image.jpg', _identifier='img_001'),
+                        VideoUrl(url='https://example.com/video.mp4', _identifier='vid_002'),
+                        AudioUrl(url='https://example.com/audio.mp3', _identifier='aud_003'),
+                        DocumentUrl(url='https://example.com/document.pdf', _identifier='doc_004'),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                )
             ],
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
@@ -6041,40 +6022,6 @@ def test_many_multimodal_tool_response():
         agent.run_sync('Please analyze the data')
 
 
-def test_multimodal_tool_response_nested():
-    """Test ToolReturn with custom content and tool return."""
-
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
-        else:
-            return ModelResponse(  # pragma: no cover
-                parts=[
-                    TextPart('Analysis completed'),
-                ]
-            )
-
-    agent = Agent(FunctionModel(llm))
-
-    @agent.tool_plain
-    def analyze_data() -> ToolReturn:
-        return ToolReturn(
-            return_value=ImageUrl('https://example.com/chart.jpg'),
-            content=[
-                'Here are the analysis results:',
-                ImageUrl('https://example.com/chart.jpg'),
-                'The chart shows positive trends.',
-            ],
-            metadata={'foo': 'bar'},
-        )
-
-    with pytest.raises(
-        UserError,
-        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContent` objects. Please use `content` instead.",
-    ):
-        agent.run_sync('Please analyze the data')
-
-
 def test_deprecated_kwargs_validation_agent_init():
     """Test that invalid kwargs raise UserError in Agent constructor."""
     with pytest.raises(UserError, match='Unknown keyword arguments: `usage_limits`'):
@@ -6108,7 +6055,7 @@ def test_deprecated_kwargs_still_work():
 def test_override_toolsets():
     foo_toolset = FunctionToolset()
 
-    @foo_toolset.tool
+    @foo_toolset.tool_plain
     def foo() -> str:
         return 'Hello from foo'
 
@@ -6131,7 +6078,7 @@ def test_override_toolsets():
 
     bar_toolset = FunctionToolset()
 
-    @bar_toolset.tool
+    @bar_toolset.tool_plain
     def bar() -> str:
         return 'Hello from bar'
 
@@ -6189,7 +6136,7 @@ def test_override_tools():
 def test_toolset_factory():
     toolset = FunctionToolset()
 
-    @toolset.tool
+    @toolset.tool_plain
     def foo() -> str:
         return 'Hello from foo'
 
@@ -6244,7 +6191,7 @@ def test_adding_tools_during_run():
     def foo() -> str:
         return 'Hello from foo'
 
-    @toolset.tool
+    @toolset.tool_plain
     def add_foo_tool() -> str:
         toolset.add_function(foo)
         return 'foo tool added'
@@ -6479,6 +6426,58 @@ def test_parallel_mcp_calls():
     assert result.output == snapshot('finished')
 
 
+async def test_parallel_tool_exception_cancels_sibling_tasks():
+    """Non-CancelledError exceptions during parallel tool execution must cancel sibling tasks.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4423.
+    Previously only asyncio.CancelledError triggered cleanup; any other exception
+    left the remaining tasks running as orphaned asyncio tasks.
+    """
+    slow_tool_started = asyncio.Event()
+    slow_tool_cancelled = asyncio.Event()
+
+    async def call_two_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='fast_failing_tool'),
+                ToolCallPart(tool_name='slow_tool'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(call_two_tools))
+
+    @agent.tool_plain
+    async def fast_failing_tool() -> str:
+        # Yield control so slow_tool can start, then raise.
+        await asyncio.sleep(0)
+        raise RuntimeError('boom')
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        slow_tool_started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            slow_tool_cancelled.set()
+            raise
+        return 'done'  # pragma: no cover
+
+    tasks_before = asyncio.all_tasks()
+    with pytest.raises(RuntimeError, match='boom'):
+        await agent.run('call tools')
+
+    # Give the event loop a moment to process cancellations.
+    await asyncio.sleep(0)
+
+    # The slow tool must have started (confirming both tasks ran in parallel).
+    assert slow_tool_started.is_set(), 'slow_tool never started — not running in parallel'
+    # The slow tool must have been cancelled when fast_failing_tool raised.
+    assert slow_tool_cancelled.is_set(), 'slow_tool was not cancelled after RuntimeError'
+    # No new asyncio tasks should be left over from this run.
+    leaked = asyncio.all_tasks() - tasks_before
+    assert not leaked, f'Orphaned tasks remain: {leaked}'
+
+
 @pytest.mark.parametrize('mode', ['argument', 'contextmanager'])
 def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     """Test that tool calls are executed correctly when a `sequential` tool is present in the call."""
@@ -6508,23 +6507,23 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
 
     integer_holder: int = 1
 
-    @sequential_toolset.tool
+    @sequential_toolset.tool_plain
     def call_first():
         nonlocal integer_holder
         assert integer_holder == 1
 
-    @sequential_toolset.tool(sequential=mode == 'argument')
+    @sequential_toolset.tool_plain(sequential=mode == 'argument')
     def increment_integer_holder():
         nonlocal integer_holder
         integer_holder = 2
 
-    @sequential_toolset.tool
+    @sequential_toolset.tool_plain
     def requires_approval():
         from pydantic_ai.exceptions import ApprovalRequired
 
         raise ApprovalRequired()
 
-    @sequential_toolset.tool
+    @sequential_toolset.tool_plain
     def call_second():
         nonlocal integer_holder
         assert integer_holder == 2
@@ -6584,7 +6583,7 @@ def test_set_mcp_sampling_model():
 def test_toolsets():
     toolset = FunctionToolset()
 
-    @toolset.tool
+    @toolset.tool_plain
     def foo() -> str:
         return 'Hello from foo'  # pragma: no cover
 
@@ -6603,7 +6602,7 @@ async def test_wrapper_agent():
 
     foo_toolset = FunctionToolset()
 
-    @foo_toolset.tool
+    @foo_toolset.tool_plain
     def foo() -> str:
         return 'Hello from foo'  # pragma: no cover
 
@@ -6615,6 +6614,9 @@ async def test_wrapper_agent():
     assert wrapper_agent.name == agent.name
     wrapper_agent.name = 'wrapped'
     assert wrapper_agent.name == 'wrapped'
+    assert wrapper_agent.description == agent.description
+    wrapper_agent.description = 'wrapped description'
+    assert wrapper_agent.description == 'wrapped description'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
     assert wrapper_agent.output_json_schema() == snapshot(
@@ -6629,7 +6631,7 @@ async def test_wrapper_agent():
 
     bar_toolset = FunctionToolset()
 
-    @bar_toolset.tool
+    @bar_toolset.tool_plain
     def bar() -> str:
         return 'Hello from bar'
 
@@ -6893,6 +6895,7 @@ async def test_hitl_tool_approval():
                         content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
+                        outcome='denied',
                     ),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -6924,6 +6927,7 @@ async def test_hitl_tool_approval():
                         content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
+                        outcome='denied',
                     ),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -7702,6 +7706,16 @@ async def test_message_history():
             pass
         assert run.new_messages() == snapshot(
             [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Hello',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
                 ModelResponse(
                     parts=[TextPart(content='ok here is text')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
@@ -7711,7 +7725,7 @@ async def test_message_history():
                 ),
             ]
         )
-        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"ok here is text",')
+        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
         assert run.all_messages() == snapshot(
             [
                 ModelRequest(
@@ -7722,6 +7736,7 @@ async def test_message_history():
                         )
                     ],
                     timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='ok here is text')],

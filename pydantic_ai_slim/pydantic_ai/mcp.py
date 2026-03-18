@@ -714,9 +714,9 @@ class MCPServer(AbstractToolset[Any], ABC):
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        if self._running_count == 0:
-            raise ValueError('MCPServer.__aexit__ called more times than __aenter__')
         async with self._enter_lock:
+            if self._running_count == 0:
+                raise ValueError('MCPServer.__aexit__ called more times than __aenter__')
             self._running_count -= 1
             if self._running_count == 0 and self._exit_stack is not None:
                 await self._exit_stack.aclose()
