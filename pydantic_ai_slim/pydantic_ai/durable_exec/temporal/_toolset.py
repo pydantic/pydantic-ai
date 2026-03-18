@@ -5,14 +5,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, Discriminator, with_config
+from pydantic import ConfigDict, Discriminator, Tag, with_config
 from temporalio import workflow
 from temporalio.workflow import ActivityConfig
 from typing_extensions import Self, assert_never
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
-from pydantic_ai.messages import ToolReturnContent
+from pydantic_ai.messages import ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -52,9 +52,23 @@ class _ModelRetry:
     kind: Literal['model_retry'] = 'model_retry'
 
 
+def _result_discriminator(v: Any) -> str:
+    if isinstance(v, ToolReturn) or (isinstance(v, dict) and v.get('kind') == 'tool-return'):  # pyright: ignore[reportUnknownMemberType]
+        return 'tool-return'
+    return 'content'
+
+
+# Defined at module level so Pydantic resolves the Annotated metadata at runtime,
+# not as a string annotation (which would lose the discriminator under `from __future__ import annotations`).
+_ToolReturnResult = Annotated[
+    Annotated[ToolReturn, Tag('tool-return')] | Annotated[ToolReturnContent, Tag('content')],
+    Discriminator(_result_discriminator),
+]
+
+
 @dataclass
 class _ToolReturn:
-    result: ToolReturnContent
+    result: _ToolReturnResult
     kind: Literal['tool_return'] = 'tool_return'
 
 
