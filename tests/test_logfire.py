@@ -3318,7 +3318,7 @@ def test_deferral_approval_required_v2(capfire: CaptureLogfire) -> None:
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_deferral_call_deferred_v5(capfire: CaptureLogfire) -> None:
-    """Test that CallDeferred on v5 marks span as OK without exception event."""
+    """Test that CallDeferred on v5 marks span as ERROR with deferral attributes."""
     agent = Agent(
         TestModel(),
         output_type=[str, DeferredToolRequests],
@@ -3375,7 +3375,7 @@ def test_deferral_call_deferred_v5(capfire: CaptureLogfire) -> None:
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_deferral_approval_required_v5(capfire: CaptureLogfire) -> None:
-    """Test that ApprovalRequired on v5 marks span as OK without exception event."""
+    """Test that ApprovalRequired on v5 marks span as ERROR with deferral attributes."""
     agent = Agent(
         TestModel(),
         output_type=[str, DeferredToolRequests],
