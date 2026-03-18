@@ -3251,7 +3251,7 @@ def test_deferral_call_deferred_v2(capfire: CaptureLogfire) -> None:
                         'exception.type': 'pydantic_ai.exceptions.CallDeferred',
                         'exception.message': '',
                         'exception.stacktrace': 'pydantic_ai.exceptions.CallDeferred',
-                        'exception.escaped': 'False',
+                        'exception.escaped': 'True',
                     },
                 }
             ],
@@ -3308,7 +3308,7 @@ def test_deferral_approval_required_v2(capfire: CaptureLogfire) -> None:
                         'exception.type': 'pydantic_ai.exceptions.ApprovalRequired',
                         'exception.message': '',
                         'exception.stacktrace': 'pydantic_ai.exceptions.ApprovalRequired',
-                        'exception.escaped': 'False',
+                        'exception.escaped': 'True',
                     },
                 }
             ],
@@ -3365,7 +3365,7 @@ def test_deferral_call_deferred_v5(capfire: CaptureLogfire) -> None:
                         'exception.type': 'pydantic_ai.exceptions.CallDeferred',
                         'exception.message': '',
                         'exception.stacktrace': 'pydantic_ai.exceptions.CallDeferred',
-                        'exception.escaped': 'False',
+                        'exception.escaped': 'True',
                     },
                 }
             ],
@@ -3422,7 +3422,7 @@ def test_deferral_approval_required_v5(capfire: CaptureLogfire) -> None:
                         'exception.type': 'pydantic_ai.exceptions.ApprovalRequired',
                         'exception.message': '',
                         'exception.stacktrace': 'pydantic_ai.exceptions.ApprovalRequired',
-                        'exception.escaped': 'False',
+                        'exception.escaped': 'True',
                     },
                 }
             ],
@@ -3480,7 +3480,7 @@ def test_deferral_no_metadata(capfire: CaptureLogfire) -> None:
                         'exception.type': 'pydantic_ai.exceptions.CallDeferred',
                         'exception.message': '',
                         'exception.stacktrace': 'pydantic_ai.exceptions.CallDeferred',
-                        'exception.escaped': 'False',
+                        'exception.escaped': 'True',
                     },
                 }
             ],
@@ -3544,7 +3544,7 @@ def test_deferral_non_serializable_metadata(capfire: CaptureLogfire) -> None:
                         'exception.type': 'pydantic_ai.exceptions.CallDeferred',
                         'exception.message': '',
                         'exception.stacktrace': 'pydantic_ai.exceptions.CallDeferred',
-                        'exception.escaped': 'False',
+                        'exception.escaped': 'True',
                     },
                 }
             ],

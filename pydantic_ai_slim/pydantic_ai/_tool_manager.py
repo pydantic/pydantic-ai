@@ -430,18 +430,18 @@ class ToolManager(Generic[AgentDepsT]):
                     except (TypeError, ValueError):
                         metadata_str = repr(exc.metadata)
                     span.set_attribute(instrumentation_names.tool_deferral_metadata_attr, metadata_str)
-                span.record_exception(exc)
+                span.record_exception(exc, escaped=True)
                 span.set_status(StatusCode.ERROR)
                 raise
             except ToolRetryError as e:
                 part = e.tool_retry
                 if include_content and span.is_recording():
                     span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
-                span.record_exception(e)
+                span.record_exception(e, escaped=True)
                 span.set_status(StatusCode.ERROR)
                 raise
             except BaseException as e:
-                span.record_exception(e)
+                span.record_exception(e, escaped=True)
                 span.set_status(StatusCode.ERROR)
                 raise
 
