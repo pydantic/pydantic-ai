@@ -227,6 +227,38 @@ class TestFastMCPToolsetContextManagement:
             assert tools1 == tools3
 
 
+class TestFastMCPToolsetInstructions:
+    """Test FastMCP instructions handling and include_instructions behavior."""
+
+    async def test_get_instructions_disabled_returns_none(
+        self,
+        fastmcp_client: Client[FastMCPTransport],
+        run_context: RunContext[None],
+    ):
+        """When include_instructions is disabled, get_instructions returns None."""
+        toolset = FastMCPToolset(fastmcp_client, include_instructions=False)
+
+        assert toolset.instructions is None
+        assert await toolset.get_instructions(run_context) is None
+
+    async def test_get_instructions_enabled_tracks_context_lifecycle(self, run_context: RunContext[None]):
+        """When include_instructions is enabled, expose server instructions while entered only."""
+        instruction_server = FastMCP('instruction_server', instructions='Be a helpful assistant.')
+        instruction_client = Client(transport=instruction_server)
+        toolset = FastMCPToolset(instruction_client, include_instructions=True)
+
+        # Before entering, no initialization has happened.
+        assert toolset.instructions is None
+        assert await toolset.get_instructions(run_context) is None
+
+        async with toolset:
+            assert toolset.instructions == 'Be a helpful assistant.'
+            assert await toolset.get_instructions(run_context) == 'Be a helpful assistant.'
+
+        # After exiting, cached instructions are reset.
+        assert toolset.instructions is None
+
+
 class TestFastMCPToolsetToolDiscovery:
     """Test FastMCP Toolset tool discovery functionality."""
 
