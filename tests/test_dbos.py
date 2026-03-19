@@ -1578,7 +1578,7 @@ class _UninitializedInstructionsToolset(AbstractToolset[None]):
             raise AttributeError('instructions are only available after initialization')
         return 'step-resolved instructions'
 
-    async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+    async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:  # pragma: no cover
         return {}
 
     async def call_tool(
