@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Literal, overload
 import httpx
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.databricks import databricks_model_profile
 from pydantic_ai.providers import Provider
@@ -105,7 +106,7 @@ class DatabricksProvider(Provider['AsyncOpenAI']):
             self._client = AsyncOpenAI(
                 base_url=host,
                 api_key=api_key,
-                http_client=http_client or httpx.AsyncClient(),
+                http_client=http_client or cached_async_http_client(provider='databricks'),
             )
             return
 
@@ -116,27 +117,24 @@ class DatabricksProvider(Provider['AsyncOpenAI']):
             )
 
         use_sdk_auth = not api_key
-        ws: WorkspaceClient | None = None
 
-        if not base_url:
+        if not api_key:
+            # SDK handles both host discovery and authentication
+            try:
+                ws = WorkspaceClient(host=base_url or None)
+            except Exception as e:
+                if base_url:
+                    raise UserError(
+                        f"Failed to authenticate to databricks workspace. Couldn't retrieve credentials or profile: {e}"
+                    )
+                raise UserError(f"Failed to authenticate to databricks workspace. Couldn't find host url: {e}")
+            api_key = 'nop'
+        else:
+            # User provided api_key but not base_url; SDK used only for host discovery
             try:
                 ws = WorkspaceClient()
             except Exception as e:
                 raise UserError(f"Failed to authenticate to databricks workspace. Couldn't find host url: {e}")
-
-        # for situations where we're authenticated via databricks sdk in our dev env
-        if not api_key:
-            try:
-                ws = WorkspaceClient(host=base_url)
-            except Exception as e:
-                raise UserError(
-                    f"Failed to authenticate to databricks workspace. Couldn't retrieve credentials or profile: {e}"
-                )
-
-            # if successfully authed without api key, set a dummy key for openai client.
-            api_key = 'nop'
-
-        assert ws is not None, 'Failed to initialize Databricks SDK.'
 
         host = ws.config.host
         if not host:
@@ -145,11 +143,12 @@ class DatabricksProvider(Provider['AsyncOpenAI']):
         if not host.rstrip('/').endswith('serving-endpoints'):
             host = f'{host.rstrip("/")}/serving-endpoints'
 
-        if http_client is None:
-            http_client = httpx.AsyncClient()
-
         if use_sdk_auth:
+            if http_client is None:
+                http_client = httpx.AsyncClient()
             http_client.auth = DatabricksAuth(ws)
+        elif http_client is None:
+            http_client = cached_async_http_client(provider='databricks')
 
         self._client = AsyncOpenAI(
             base_url=host,

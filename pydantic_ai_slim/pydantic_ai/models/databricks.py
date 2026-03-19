@@ -108,8 +108,8 @@ class DatabricksModel(OpenAIChatModel):
 
     @override
     def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
-        profile = cast(DatabricksModelProfile, self.profile)
-        if not profile.databricks_stream_options:
+        profile = self.profile
+        if not isinstance(profile, DatabricksModelProfile) or not profile.databricks_stream_options:
             return cast(chat.ChatCompletionStreamOptionsParam, OMIT)
         return super()._get_stream_options(model_settings)
 
@@ -260,7 +260,7 @@ class DatabricksStreamedResponse(OpenAIStreamedResponse):
     @property
     def provider_details(self) -> dict[str, Any]:
         """Ensure raw usage is included in provider details for streaming."""
-        details = self._internal_provider_details or {}
+        details = dict(self._internal_provider_details or {})
 
         if self._usage:
             details['usage'] = self._usage

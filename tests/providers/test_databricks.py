@@ -203,7 +203,25 @@ def test_databricks_sdk_auth_api_key_only(databricks_sdk_auth: None, env: TestEn
     assert provider.base_url == 'https://mock.databricks.com/serving-endpoints/'
     assert provider.client.api_key == 'user-token'
     # DatabricksAuth should NOT be applied — user provided their own api_key
-    assert not isinstance(provider.client._client._auth, db_mod.DatabricksAuth)  # type: ignore
+    assert not isinstance(provider.client._client._auth, db_mod.DatabricksAuth)
+
+
+def test_databricks_sdk_auth_api_key_only_no_host(env: TestEnv, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SDK host discovery fails when api_key is given but WorkspaceClient can't find a host."""
+    env.remove('DATABRICKS_API_KEY')
+    env.remove('DATABRICKS_BASE_URL')
+    env.remove('DATABRICKS_TOKEN')
+    env.remove('DATABRICKS_HOST')
+
+    class _FailingClient:
+        def __init__(self, **kwargs: object):
+            raise RuntimeError('no host')
+
+    monkeypatch.setattr(db_mod, '_has_databricks_sdk', True)
+    monkeypatch.setattr(db_mod, 'WorkspaceClient', _FailingClient, raising=False)
+
+    with pytest.raises(UserError, match="Couldn't find host url"):
+        DatabricksProvider(api_key='user-token')
 
 
 def test_databricks_sdk_auth_host_with_serving_endpoints(env: TestEnv, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -253,3 +271,16 @@ def test_databricks_sdk_auth_with_custom_http_client(databricks_sdk_auth: None, 
     provider = DatabricksProvider(http_client=http_client)
     assert provider.client._client is http_client
     assert provider.base_url == 'https://mock.databricks.com/serving-endpoints/'
+
+
+def test_databricks_sdk_host_discovery_with_custom_http_client(databricks_sdk_auth: None, env: TestEnv) -> None:
+    """SDK host discovery with user-provided api_key and http_client preserves both."""
+    env.remove('DATABRICKS_API_KEY')
+    env.remove('DATABRICKS_BASE_URL')
+    env.remove('DATABRICKS_TOKEN')
+    env.remove('DATABRICKS_HOST')
+
+    http_client = httpx.AsyncClient()
+    provider = DatabricksProvider(api_key='user-token', http_client=http_client)
+    assert provider.client._client is http_client
+    assert provider.client.api_key == 'user-token'
