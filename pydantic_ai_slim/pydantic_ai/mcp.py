@@ -545,17 +545,10 @@ class MCPServer(AbstractToolset[Any], ABC):
         # Audience filtering must happen before the structured-content path: if every
         # content block is annotated as user-only, the model should not see the
         # JSON-serialised equivalent either.
-        content_for_assistant = [part for part in result.content if _include_content_for_assistant(part)]
-        user_only = [part for part in result.content if not _include_content_for_assistant(part)]
+        content_for_assistant, user_only = _mcp_partition_content(result.content)
 
         if not content_for_assistant and result.content:
-            # All content blocks were filtered out by audience annotations (audience=['user'] only).
-            # Return an informative placeholder so the model knows the tool ran, and expose
-            # the user-only content via ToolReturnPart.metadata so the application can access it.
-            return messages.ToolReturn(
-                return_value='Tool executed successfully. (No model-visible content in result.)',
-                metadata={'mcp_user_content': [p.model_dump() for p in user_only]},
-            )
+            return _mcp_user_only_placeholder(user_only)
 
         # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
@@ -576,12 +569,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         assistant_content: Any = mapped[0] if len(mapped) == 1 else mapped
 
         if user_only:
-            # Some blocks were filtered out — expose them via metadata so the application
-            # can access user-only content while the model only sees assistant-visible content.
-            return messages.ToolReturn(
-                return_value=assistant_content,
-                metadata={'mcp_user_content': [p.model_dump() for p in user_only]},
-            )
+            return _mcp_wrap_with_user_metadata(assistant_content, user_only)
 
         return assistant_content
 
@@ -1346,7 +1334,7 @@ metadata.
 """
 
 
-def _include_content_for_assistant(part: mcp_types.ContentBlock) -> bool:
+def _mcp_audience_include(part: mcp_types.ContentBlock) -> bool:
     """Return True if this content block should be forwarded to the model (assistant).
 
     Per the MCP specification, content blocks may carry ``annotations.audience`` which
@@ -1363,6 +1351,50 @@ def _include_content_for_assistant(part: mcp_types.ContentBlock) -> bool:
     if audience is None:
         return True
     return 'assistant' in audience
+
+
+def _mcp_partition_content(
+    content: list[mcp_types.ContentBlock],
+) -> tuple[list[mcp_types.ContentBlock], list[mcp_types.ContentBlock]]:
+    """Partition MCP content blocks into (assistant-visible, user-only) lists.
+
+    Returns a tuple of ``(filtered, user_only)`` where *filtered* contains all
+    blocks that should be forwarded to the model and *user_only* contains blocks
+    annotated exclusively for the ``user`` audience.
+    """
+    filtered = [p for p in content if _mcp_audience_include(p)]
+    user_only = [p for p in content if not _mcp_audience_include(p)]
+    return filtered, user_only
+
+
+def _mcp_user_only_placeholder(
+    user_only: list[mcp_types.ContentBlock],
+) -> messages.ToolReturn:
+    """Return a placeholder :class:`ToolReturn` for tools whose entire output is user-only.
+
+    The model is told the tool ran successfully; the actual content is preserved in
+    ``ToolReturn.metadata['mcp_user_content']`` for the application.
+    """
+    return messages.ToolReturn(
+        return_value='Tool executed successfully. (No model-visible content in result.)',
+        metadata={'mcp_user_content': [p.model_dump() for p in user_only]},
+    )
+
+
+def _mcp_wrap_with_user_metadata(
+    assistant_content: Any,
+    user_only: list[mcp_types.ContentBlock],
+) -> messages.ToolReturn:
+    """Wrap *assistant_content* in a :class:`ToolReturn` with user-only blocks in metadata.
+
+    Used when a tool result contains a mix of assistant-visible and user-only content.
+    The assistant-visible content is returned as ``return_value``; the user-only content
+    is preserved in ``metadata['mcp_user_content']``.
+    """
+    return messages.ToolReturn(
+        return_value=assistant_content,
+        metadata={'mcp_user_content': [p.model_dump() for p in user_only]},
+    )
 
 
 def _mcp_server_discriminator(value: dict[str, Any]) -> str | None:
