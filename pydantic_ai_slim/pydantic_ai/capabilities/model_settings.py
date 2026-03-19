@@ -18,6 +18,10 @@ class ModelSettings(AbstractCapability[AgentDepsT]):
 
     When `settings` is a callable, it receives the [`RunContext`][pydantic_ai.tools.RunContext]
     and is called before each model request, allowing per-step settings.
+
+    Settings from this capability are merged on top of the agent's top-level `model_settings`
+    (same additive pattern as instructions), so capability settings take precedence over
+    agent-level defaults but can still be overridden by run-level settings.
     """
 
     settings: _ModelSettings | Callable[[RunContext[AgentDepsT]], _ModelSettings]
@@ -46,6 +50,9 @@ class ModelSettings(AbstractCapability[AgentDepsT]):
         model_settings: _ModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ModelMessage], _ModelSettings, ModelRequestParameters]:
-        resolved = self.settings(ctx) if callable(self.settings) else self.settings
-        model_settings = merge_model_settings(model_settings, resolved) or resolved
+        if callable(self.settings):
+            # Dynamic settings need to be resolved and merged per request;
+            # static settings are already handled by get_model_settings.
+            resolved = self.settings(ctx)
+            model_settings = merge_model_settings(model_settings, resolved) or resolved
         return messages, model_settings, model_request_parameters

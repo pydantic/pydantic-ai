@@ -13,6 +13,7 @@ from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapH
 
 from pydantic_ai._agent_graph import EndStrategy
 from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types
+from pydantic_ai._template import TemplateStr
 
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -38,8 +39,10 @@ class AgentSpec(BaseModel):
     json_schema_path: str | None = Field(default=None, alias='$schema')
     model: str
     name: str | None = None
-    description: str | None = None
-    instructions: str | list[str] | None = None
+    description: TemplateStr[Any] | str | None = None
+    instructions: TemplateStr[Any] | str | list[TemplateStr[Any] | str] | None = None
+    deps_schema: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
     model_settings: dict[str, Any] | None = None
     retries: int = 1
     output_retries: int | None = None
@@ -73,7 +76,7 @@ class AgentSpec(BaseModel):
         else:
             try:
                 import yaml
-            except ImportError:
+            except ImportError:  # pragma: no cover — requires PyYAML to not be installed
                 raise ImportError(
                     'PyYAML is required to load YAML agent specs. Install it with: pip install "pydantic-ai-slim[cli]"'
                 ) from None
@@ -116,7 +119,7 @@ class AgentSpec(BaseModel):
         if fmt == 'yaml':
             try:
                 import yaml
-            except ImportError:
+            except ImportError:  # pragma: no cover — requires PyYAML to not be installed
                 raise ImportError(
                     'PyYAML is required to save YAML agent specs. Install it with: pip install "pydantic-ai-slim[cli]"'
                 ) from None
@@ -156,12 +159,24 @@ class AgentSpec(BaseModel):
         capability_schema_types = _build_capability_schema_types(_get_capability_registry(custom_capability_types))
 
         # Build a schema-only model with the resolved capability union
-        class AgentSpec(BaseModel, extra='forbid'):
+        class _AgentSpecSchema(BaseModel, extra='forbid'):
             model: str
+            name: str | None = None
+            description: str | None = None
+            instructions: str | list[str] | None = None
+            deps_schema: dict[str, Any] | None = None
+            output_schema: dict[str, Any] | None = None
+            model_settings: dict[str, Any] | None = None
+            retries: int = 1
+            output_retries: int | None = None
+            end_strategy: EndStrategy = 'early'
+            tool_timeout: float | None = None
+            instrument: bool | None = None
+            metadata: dict[str, Any] | None = None
             if capability_schema_types:  # pragma: no branch
                 capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore  # noqa: UP007
 
-        json_schema = AgentSpec.model_json_schema()
+        json_schema = _AgentSpecSchema.model_json_schema()
         json_schema['properties']['$schema'] = {'type': 'string'}
         return json_schema
 

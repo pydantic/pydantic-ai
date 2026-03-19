@@ -1677,3 +1677,14 @@ async def test_history_processor_replace_resumed_request_falls_through(
     # Falls back to run_id-based detection: the replaced request got run_id from
     # the framework, so new_messages includes both it and the model response
     assert result.new_messages() == result.all_messages()[-2:]
+
+
+def test_takes_ctx_returns_false_for_untyped_processor():
+    """_takes_ctx returns False when the processor's first param has no type annotation."""
+    from pydantic_ai._history_processor import _takes_ctx  # pyright: ignore[reportPrivateUsage]
+
+    def untyped_processor(messages) -> list[ModelMessage]:  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
+        return messages  # pyright: ignore[reportUnknownVariableType]
+
+    # When first param has no type annotation, _takes_ctx returns False
+    assert _takes_ctx(untyped_processor) is False  # pyright: ignore[reportUnknownArgumentType]

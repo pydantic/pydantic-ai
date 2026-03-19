@@ -2,16 +2,17 @@ from typing import Any
 
 from .abstract import AbstractCapability
 from .combined import CombinedCapability
-from .execution_environment import ExecutionEnvironment
 from .history_processor import HistoryProcessorCapability
 from .instructions import Instructions
+
+# Short name is intentional — passing a dict is enough to get type checking,
+# and users rarely need both this and settings.ModelSettings in the same scope.
 from .model_settings import ModelSettings
 from .thinking import Thinking
 from .toolset import Toolset
 from .web_search import WebSearch
 
 DEFAULT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
-    ExecutionEnvironment,
     Instructions,
     ModelSettings,
     Thinking,
@@ -23,7 +24,6 @@ DEFAULT_CAPABILITY_TYPES: tuple[type[AbstractCapability[Any]], ...] = (
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
-        ExecutionEnvironment,
         HistoryProcessorCapability,
         Instructions,
         ModelSettings,
@@ -45,5 +45,4 @@ __all__ = [
     'Toolset',
     'WebSearch',
     'CombinedCapability',
-    'ExecutionEnvironment',
 ]

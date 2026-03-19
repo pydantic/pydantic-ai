@@ -20,13 +20,15 @@ class Thinking(ModelSettings[AgentDepsT]):
         return cls()
 
     def __init__(self):
+        # Cast needed because ModelSettings is a TypedDict and we're constructing
+        # it from a plain dict with provider-specific keys that aren't in the base type.
         super().__init__(
             cast(
                 _ModelSettings,
                 {
                     'openai_reasoning_effort': 'high',
                     'anthropic_thinking': {'type': 'adaptive'},
-                    # etc
+                    # TODO: Use unified thinking settings from #3894 once merged
                 },
             ),
         )

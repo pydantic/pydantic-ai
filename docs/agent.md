@@ -719,7 +719,7 @@ Both agent-level and run-level `model_settings` accept a callable that receives 
 The callable is invoked before each model request, so settings can vary per step.
 The current resolved settings so far are available via `ctx.model_settings` inside the callable.
 
-```py
+```py test="skip"
 from pydantic_ai import Agent, ModelSettings
 
 agent = Agent(

@@ -39,6 +39,7 @@ from .._agent_graph import (
     capture_run_messages,
 )
 from .._output import OutputToolset
+from .._template import TemplateStr
 from .._tool_manager import ParallelExecutionMode, ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..capabilities import AbstractCapability, CombinedCapability, HistoryProcessorCapability
@@ -136,7 +137,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _model: models.Model | models.KnownModelName | str | None
 
     _name: str | None
-    _description: str | None
+    _description: TemplateStr[AgentDepsT] | str | None
     end_strategy: EndStrategy
     """The strategy for handling multiple tool calls when a final result is found.
 
@@ -200,7 +201,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
-        description: str | None = None,
+        description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
@@ -232,7 +233,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
-        description: str | None = None,
+        description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
@@ -262,7 +263,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
-        description: str | None = None,
+        description: TemplateStr[AgentDepsT] | str | None = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
@@ -462,6 +463,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._entered_count = 0
         self._exit_stack = None
 
+    @overload
     @classmethod
     def from_spec(
         cls,
@@ -472,7 +474,73 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         output_type: OutputSpec[Any] = str,
         instructions: _instructions.Instructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
-        deps_type: type[Any] = NoneType,
+        name: str | None = None,
+        description: str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | None = None,
+        validation_context: Any = None,
+        output_retries: int | None = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[Any]] = (),
+        prepare_tools: ToolsPrepareFunc[Any] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
+        toolsets: Sequence[AbstractToolset[Any] | ToolsetFunc[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
+        event_stream_handler: EventStreamHandler[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AbstractCapability[Any]] | None = None,
+    ) -> Agent[None, str]: ...
+
+    @overload
+    @classmethod
+    def from_spec(
+        cls,
+        spec: dict[str, Any] | AgentSpec,
+        *,
+        deps_type: type[T],
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[Any] = str,
+        instructions: _instructions.Instructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        name: str | None = None,
+        description: str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | None = None,
+        validation_context: Any = None,
+        output_retries: int | None = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[Any]] = (),
+        prepare_tools: ToolsPrepareFunc[Any] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
+        toolsets: Sequence[AbstractToolset[Any] | ToolsetFunc[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
+        event_stream_handler: EventStreamHandler[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AbstractCapability[Any]] | None = None,
+    ) -> Agent[T, str]: ...
+
+    @classmethod
+    def from_spec(
+        cls,
+        spec: dict[str, Any] | AgentSpec,
+        *,
+        deps_type: type[Any] = type(None),
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[Any] = str,
+        instructions: _instructions.Instructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
         name: str | None = None,
         description: str | None = None,
         model_settings: ModelSettings | None = None,
@@ -503,13 +571,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Args:
             spec: The agent specification, either a dict or an `AgentSpec` instance.
+            deps_type: The type of the dependencies for the agent. When provided,
+                template strings in capabilities (e.g. ``"Hello {{name}}"``) are
+                compiled and validated against this type.
             custom_capability_types: Additional capability classes to make available
                 beyond the built-in defaults.
             model: Override the model from the spec.
             output_type: The type of the output data, defaults to `str`.
             instructions: Instructions for the agent.
             system_prompt: Static system prompts.
-            deps_type: The type used for dependency injection.
             name: The agent name, overrides spec `name` if provided.
             description: The agent description, overrides spec `description` if provided.
             model_settings: Model request settings.
@@ -535,10 +605,28 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             A new Agent instance.
         """
         from pydantic_ai._spec import build_registry, load_from_registry
+        from pydantic_ai._template import validate_from_spec_args
         from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
         from pydantic_ai.capabilities import DEFAULT_CAPABILITY_TYPES
 
-        validated_spec = _AgentSpecModel.model_validate(spec) if isinstance(spec, dict) else spec
+        template_context: dict[str, Any] = {
+            'deps_type': deps_type if deps_type is not type(None) else None,
+        }
+        if isinstance(spec, dict):
+            validated_spec = _AgentSpecModel.model_validate(spec, context=template_context)
+        else:
+            validated_spec = spec
+        template_context['deps_schema'] = validated_spec.deps_schema
+
+        effective_output_type: OutputSpec[Any]
+        if output_type is not str:
+            effective_output_type = output_type
+        elif validated_spec.output_schema is not None:
+            from pydantic_ai.output import StructuredDict
+
+            effective_output_type = StructuredDict(validated_spec.output_schema)
+        else:
+            effective_output_type = str
 
         registry = build_registry(
             custom_types=custom_capability_types,
@@ -551,6 +639,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         merged_instructions = _instructions.normalize_instructions(validated_spec.instructions)
         merged_instructions.extend(_instructions.normalize_instructions(instructions))
 
+        def _instantiate_cap(
+            cap_cls: type[AbstractCapability[Any]],
+            args: tuple[Any, ...],
+            kwargs: dict[str, Any],
+        ) -> AbstractCapability[Any]:
+            args, kwargs = validate_from_spec_args(cap_cls, args, kwargs, template_context)
+            return cap_cls.from_spec(*args, **kwargs)
+
         all_capabilities: list[AbstractCapability[Any]] = []
         for cap_spec in validated_spec.capabilities:
             capability = load_from_registry(
@@ -558,7 +654,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 cap_spec,
                 label='capability',
                 custom_types_param='custom_capability_types',
-                instantiate=lambda c, args, kwargs: c.from_spec(*args, **kwargs),
+                instantiate=_instantiate_cap,
             )
             all_capabilities.append(capability)
         if capabilities:
@@ -566,14 +662,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         return Agent(
             model=model or validated_spec.model,
-            output_type=output_type,
+            output_type=effective_output_type,
             instructions=merged_instructions or None,
             system_prompt=system_prompt,
             deps_type=deps_type,
             name=name or validated_spec.name,
             description=description or validated_spec.description,
             model_settings=merge_model_settings(
-                cast(ModelSettings, validated_spec.model_settings),
+                cast(ModelSettings, validated_spec.model_settings) if validated_spec.model_settings else None,
                 model_settings,
             ),
             retries=retries if retries is not None else validated_spec.retries,
@@ -629,11 +725,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @property
     def description(self) -> str | None:
-        """A human-readable description of the agent."""
-        return self._description
+        """A human-readable description of the agent.
+
+        If the description is a TemplateStr, returns the raw template source.
+        The rendered description is available at runtime via OTel span attributes.
+        """
+        if self._description is None:
+            return None
+        return str(self._description)
 
     @description.setter
-    def description(self, value: str | None) -> None:
+    def description(self, value: TemplateStr[AgentDepsT] | str | None) -> None:
         """Set the description of the agent."""
         self._description = value
 
@@ -932,7 +1034,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             'logfire.msg': f'{agent_name} run',
         }
         if self._description is not None:
-            span_attributes['gen_ai.agent.description'] = self._description
+            if isinstance(self._description, TemplateStr):  # pragma: no cover — requires pydantic-handlebars
+                span_attributes['gen_ai.agent.description'] = self._description.render(deps)
+            else:
+                span_attributes['gen_ai.agent.description'] = self._description
 
         run_span = tracer.start_span(
             instrumentation_names.get_agent_run_span_name(agent_name),
@@ -1751,6 +1856,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if isinstance(instruction, str):
                 literal_parts.append(instruction)
             else:
+                # TemplateStr instances land here too: they are callable with a
+                # RunContext parameter, so SystemPromptRunner handles them like
+                # any other system prompt function.
                 functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
 
         literal = '\n'.join(literal_parts).strip() or None

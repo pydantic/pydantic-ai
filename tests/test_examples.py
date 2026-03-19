@@ -6,13 +6,11 @@ import re
 import shutil
 import ssl
 import sys
-import tempfile
-import types
 from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field
 from inspect import FrameInfo
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import httpx
 import pytest
@@ -27,7 +25,9 @@ from pydantic_ai import (
     BinaryImage,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    DocumentUrl,
     FilePart,
+    ImageUrl,
     ModelHTTPError,
     ModelMessage,
     ModelResponse,
@@ -42,7 +42,6 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.embeddings import EmbeddingModel, infer_embedding_model
 from pydantic_ai.embeddings.test import TestEmbeddingModel
-from pydantic_ai.environments.local import LocalEnvironment as _LocalEnvironment
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
@@ -61,34 +60,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
 ]
-
-# ---------------------------------------------------------------------------
-# Mock DockerEnvironment backed by LocalEnvironment for testing doc examples
-# without requiring the `docker` package or a running Docker daemon.
-# ---------------------------------------------------------------------------
-
-
-class _MockDockerEnvironment(_LocalEnvironment):
-    """Test stand-in for DockerEnvironment that uses LocalEnvironment under the hood."""
-
-    def __init__(self, **_kwargs: Any) -> None:
-        # Use mkdtemp (no finalizer) instead of TemporaryDirectory to avoid
-        # PytestUnraisableExceptionWarning when constructor-only examples
-        # never enter the async context manager.
-        self._temp_path = Path(tempfile.mkdtemp())
-        super().__init__(root_dir=self._temp_path)
-
-    @classmethod
-    def hardened(cls, **kwargs: Any) -> _MockDockerEnvironment:
-        return cls(**kwargs)
-
-    async def __aexit__(self, *_args: Any) -> None:
-        shutil.rmtree(self._temp_path, ignore_errors=True)
-
-
-_mock_docker_env_module = types.ModuleType('pydantic_ai.environments.docker')
-_mock_docker_env_module.__package__ = 'pydantic_ai.environments'
-_mock_docker_env_module.DockerEnvironment = _MockDockerEnvironment  # type: ignore[attr-defined]
 
 code_examples: dict[str, CodeExample] = {}
 
@@ -201,10 +172,6 @@ def test_docs_examples(
         mocker.patch('sentence_transformers.SentenceTransformer')
     except ModuleNotFoundError:
         pass
-
-    # Replace DockerEnvironment with a LocalEnvironment-backed mock so doc
-    # examples that reference Docker can run without the docker package or daemon.
-    mocker.patch.dict(sys.modules, {'pydantic_ai.environments.docker': _mock_docker_env_module})
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
@@ -387,6 +354,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    'Summarize https://ai.pydantic.dev': 'Pydantic AI is a Python agent framework for building production-grade LLM applications.',
     'Use the web to get the current time.': "In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.",
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
     'How many days between 2000-01-01 and 2025-03-18?': 'There are 9,208 days between January 1, 2000, and March 18, 2025.',
@@ -637,12 +605,20 @@ async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
     m = messages[-1].parts[-1]
-    if isinstance(m, UserPromptPart):
-        if isinstance(m.content, list) and m.content[0] == 'This is file d9a13f:':
-            return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
-        elif isinstance(m.content, list) and m.content[0] == 'This is file c6720d:':
-            return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
-
+    # Handle multimodal tool returns (content directly in ToolReturnPart)
+    if (
+        isinstance(m, ToolReturnPart)
+        and m.tool_name == 'get_company_logo'
+        and any(isinstance(f, ImageUrl) for f in m.files)
+    ):
+        return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
+    elif (
+        isinstance(m, ToolReturnPart)
+        and m.tool_name == 'get_document'
+        and any(isinstance(f, DocumentUrl) for f in m.files)
+    ):
+        return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
+    elif isinstance(m, UserPromptPart):
         assert isinstance(m.content, str)
         if m.content == 'What is the latest news in AI?':
             return ModelResponse(
@@ -841,8 +817,7 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[ToolCallPart(tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
-        m.content = cast(str, m.content)
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name' and isinstance(m.content, str):
         if 'Anne' in m.content:
             return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
         elif 'Yashar' in m.content:
@@ -902,8 +877,8 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[TextPart('The current time is 10:45 PM on April 17, 2025.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
         return ModelResponse(parts=[TextPart("The user's name is John.")])
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast':
-        return ModelResponse(parts=[TextPart(cast(str, m.content))])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast' and isinstance(m.content, str):
+        return ModelResponse(parts=[TextPart(m.content)])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo':
         return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document':
@@ -1003,7 +978,12 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file' and 'README.md.bak' in cast(str, m.content):
+    elif (
+        isinstance(m, ToolReturnPart)
+        and m.tool_name == 'update_file'
+        and isinstance(m.content, str)
+        and 'README.md.bak' in m.content
+    ):
         return ModelResponse(
             parts=[
                 TextPart(

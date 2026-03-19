@@ -1,5 +1,5 @@
-import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -7,29 +7,25 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
-    ExecutionEnvironment,
     Instructions,
     ModelSettings,
     Thinking,
+    Toolset,
     WebSearch,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.environments.memory import MemoryEnvironment
+from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
-    TextPart,
-    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
+from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
-from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
@@ -39,127 +35,11 @@ pytestmark = [
 def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
-            'ExecutionEnvironment': ExecutionEnvironment,
             'Instructions': Instructions,
             'ModelSettings': ModelSettings,
             'Thinking': Thinking,
             'WebSearch': WebSearch,
         }
-    )
-
-
-@pytest.mark.vcr()
-async def test_agent(allow_model_requests: None):
-    pytest.importorskip('anthropic')
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
-    api_key = os.getenv('ANTHROPIC_API_KEY', 'mock-value')
-    agent = Agent(
-        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=api_key)),
-        capabilities=[
-            Instructions("You are 'JAK of all trades', a General Agent for Knowledge built with Pydantic AI."),
-            Thinking(),
-            ExecutionEnvironment(
-                environment=MemoryEnvironment(
-                    files={
-                        'README.md': '# My Project\nThis is a simple project.\n',
-                        'main.py': 'print("hello world")\n',
-                    }
-                ),
-                include=['ls', 'read_file'],
-            ),
-            WebSearch(),
-        ],
-    )
-    result = await agent.run('What files are in the project?')
-
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='What files are in the project?', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                instructions="You are 'JAK of all trades', a General Agent for Knowledge built with Pydantic AI.",
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    ThinkingPart(
-                        content='The user wants to know what files are in the project. Let me list the directory contents.',
-                        signature=IsStr(),
-                        provider_name='anthropic',
-                    ),
-                    TextPart(content='Sure! Let me take a look at the project directory for you!'),
-                    ToolCallPart(tool_name='ls', args={}, tool_call_id=IsStr()),
-                ],
-                usage=RequestUsage(
-                    input_tokens=2483,
-                    output_tokens=83,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 2483,
-                        'output_tokens': 83,
-                    },
-                ),
-                model_name='claude-sonnet-4-6',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'tool_use'},
-                provider_response_id=IsStr(),
-                finish_reason='tool_call',
-                run_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='ls',
-                        content="""\
-README.md (39 bytes)
-main.py (21 bytes)\
-""",
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                instructions="You are 'JAK of all trades', a General Agent for Knowledge built with Pydantic AI.",
-                run_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[
-                    TextPart(
-                        content="""\
-The project currently contains **2 files**:
-
-1. 📄 **`README.md`** *(39 bytes)* - A Markdown file, likely containing documentation or a description of the project.
-2. 🐍 **`main.py`** *(21 bytes)* - A Python source file, likely the main entry point of the application.
-
-Would you like me to read the contents of either file?\
-"""
-                    )
-                ],
-                usage=RequestUsage(
-                    input_tokens=2594,
-                    output_tokens=100,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 2594,
-                        'output_tokens': 100,
-                    },
-                ),
-                model_name='claude-sonnet-4-6',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-                run_id=IsStr(),
-            ),
-        ]
     )
 
 
@@ -173,19 +53,6 @@ def test_agent_from_spec_basic():
                 'Thinking',
                 'WebSearch',
                 {'ModelSettings': {'max_tokens': 4096}},
-            ],
-        }
-    )
-    assert agent.model is not None
-
-
-def test_agent_from_spec_execution_environment():
-    """Test Agent.from_spec with ExecutionEnvironment capability."""
-    agent = Agent.from_spec(
-        {
-            'model': 'test',
-            'capabilities': [
-                {'ExecutionEnvironment': {'environment': 'memory', 'include': ['ls', 'read_file']}},
             ],
         }
     )
@@ -255,6 +122,78 @@ def test_agent_from_spec_with_agent_spec_object():
     )
     agent = Agent.from_spec(spec)
     assert agent.model is not None
+
+
+def test_agent_from_spec_output_type():
+    """Test Agent.from_spec with output_type parameter."""
+    from pydantic import BaseModel
+
+    class MyOutput(BaseModel):
+        name: str
+        value: int
+
+    agent = Agent.from_spec({'model': 'test'}, output_type=MyOutput)
+    assert agent.output_type == MyOutput
+
+
+def test_agent_from_spec_output_schema():
+    """Test Agent.from_spec with output_schema in spec."""
+    schema = {
+        'type': 'object',
+        'properties': {
+            'name': {'type': 'string'},
+            'age': {'type': 'integer'},
+        },
+        'required': ['name', 'age'],
+    }
+    agent = Agent.from_spec({'model': 'test', 'output_schema': schema})
+    # output_type should be a StructuredDict subclass (dict subclass with JSON schema)
+    assert agent.output_type is not str
+    assert isinstance(agent.output_type, type) and issubclass(agent.output_type, dict)
+
+
+def test_agent_from_spec_output_type_takes_precedence():
+    """Test that output_type parameter takes precedence over output_schema in spec."""
+    from pydantic import BaseModel
+
+    class MyOutput(BaseModel):
+        name: str
+
+    schema = {
+        'type': 'object',
+        'properties': {'name': {'type': 'string'}},
+        'required': ['name'],
+    }
+    agent = Agent.from_spec({'model': 'test', 'output_schema': schema}, output_type=MyOutput)
+    assert agent.output_type == MyOutput
+
+
+def test_agent_from_spec_output_schema_invalid():
+    """Test Agent.from_spec with a non-object output_schema raises UserError."""
+    from pydantic_ai.exceptions import UserError
+
+    with pytest.raises(UserError, match='Schema must be an object'):
+        Agent.from_spec({'model': 'test', 'output_schema': {'type': 'string'}})
+
+
+async def test_agent_from_spec_output_schema_integration():
+    """Test Agent.from_spec with output_schema produces dict output."""
+    from pydantic_ai.models.test import TestModel
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'city': {'type': 'string'},
+            'country': {'type': 'string'},
+        },
+        'required': ['city', 'country'],
+    }
+    agent = Agent.from_spec({'model': 'test', 'output_schema': schema})
+    result = await agent.run(
+        'Tell me a city',
+        model=TestModel(custom_output_args={'city': 'Paris', 'country': 'France'}),
+    )
+    assert result.output == {'city': 'Paris', 'country': 'France'}
 
 
 def test_agent_from_spec_name():
@@ -416,14 +355,14 @@ def test_model_json_schema_with_capabilities():
         if 'const' in entry:
             capability_names.add(entry['const'])
         elif '$ref' in entry:
-            # Extract the name from refs like '#/$defs/spec_ExecutionEnvironment'
+            # Extract the name from refs like '#/$defs/spec_Instructions'
             ref = entry['$ref']
             ref_name = ref.rsplit('/', 1)[-1]
             for prefix in ('spec_', 'short_spec_'):
                 if ref_name.startswith(prefix):
                     capability_names.add(ref_name[len(prefix) :])
 
-    assert capability_names == {'ExecutionEnvironment', 'Instructions', 'ModelSettings', 'Thinking', 'WebSearch'}
+    assert capability_names == {'Instructions', 'ModelSettings', 'Thinking', 'WebSearch'}
 
 
 def test_model_json_schema_with_custom_capabilities():
@@ -611,7 +550,7 @@ class ToolsetFuncCapability(AbstractCapability[None]):
         def make_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
             toolset = FunctionToolset[None]()
 
-            @toolset.tool
+            @toolset.tool_plain
             def greet(name: str) -> str:
                 """Greet someone by name."""
                 return f'Hello, {name}!'
@@ -676,3 +615,166 @@ async def test_capability_returning_toolset_func_combined():
     assert len(tool_returns) == 1
     assert isinstance(tool_returns[0].content, str)
     assert tool_returns[0].content.startswith('Hello, ')
+
+
+def test_model_settings_from_spec_positional():
+    """ModelSettings.from_spec with a single positional dict arg."""
+    cap = ModelSettings.from_spec({'max_tokens': 4096, 'temperature': 0.5})
+    assert cap.settings == {'max_tokens': 4096, 'temperature': 0.5}
+
+
+def test_model_settings_from_spec_kwargs():
+    """ModelSettings.from_spec with keyword arguments."""
+    cap = ModelSettings.from_spec(max_tokens=100)
+    assert cap.settings == {'max_tokens': 100}
+
+
+async def test_model_settings_callable_before_model_request():
+    """Callable ModelSettings resolves dynamically in before_model_request."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.result import RunUsage
+
+    def dynamic_settings(ctx: RunContext[None]) -> _ModelSettings:
+        return _ModelSettings(temperature=0.9)
+
+    cap = ModelSettings(settings=dynamic_settings)
+
+    # get_model_settings returns None for callable settings (they're resolved per-request)
+    assert cap.get_model_settings() is None
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
+    _, settings, _ = await cap.before_model_request(
+        ctx,
+        messages=[],
+        model_settings=_ModelSettings(max_tokens=100),
+        model_request_parameters=ModelRequestParameters(),
+    )
+    assert settings.get('temperature') == 0.9
+    assert settings.get('max_tokens') == 100
+
+
+async def test_model_settings_static_before_model_request():
+    """Static ModelSettings passes through before_model_request without modification."""
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.result import RunUsage
+
+    cap = ModelSettings(settings=_ModelSettings(max_tokens=200))
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
+    input_settings = _ModelSettings(temperature=0.5)
+    _, settings, _ = await cap.before_model_request(
+        ctx,
+        messages=[],
+        model_settings=input_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    # Static settings are handled by get_model_settings, not before_model_request
+    assert settings is input_settings
+
+
+def test_abstract_capability_get_model_settings_default():
+    """AbstractCapability.get_model_settings() returns None by default."""
+
+    @dataclass
+    class PlainCap(AbstractCapability[None]):
+        pass
+
+    cap = PlainCap()
+    assert cap.get_model_settings() is None
+
+
+def test_combined_capability_get_model_settings_merge():
+    """CombinedCapability.get_model_settings() merges settings from all sub-capabilities."""
+    caps = CombinedCapability(
+        capabilities=[
+            ModelSettings(settings=_ModelSettings(max_tokens=100)),
+            ModelSettings(settings=_ModelSettings(temperature=0.5)),
+        ]
+    )
+    merged = caps.get_model_settings()
+    assert merged is not None
+    assert merged.get('max_tokens') == 100
+    assert merged.get('temperature') == 0.5
+
+
+def test_combined_capability_get_model_settings_none():
+    """CombinedCapability.get_model_settings() returns None when no capabilities provide settings."""
+    caps = CombinedCapability(capabilities=[Instructions('hello')])
+    assert caps.get_model_settings() is None
+
+
+def test_toolset_capability_get_toolset():
+    """Toolset capability returns its toolset."""
+    ts = FunctionToolset[None]()
+    cap = Toolset(toolset=ts)
+    assert cap.get_toolset() is ts
+
+
+async def test_toolset_capability_in_agent():
+    """A Toolset capability's tools are available to the agent."""
+    from pydantic_ai.models.test import TestModel
+
+    ts = FunctionToolset[None]()
+
+    @ts.tool_plain
+    def greet(name: str) -> str:
+        """Greet someone by name."""
+        return f'Hello, {name}!'
+
+    agent = Agent(TestModel(), capabilities=[Toolset(toolset=ts)])
+    result = await agent.run('Greet Alice')
+
+    tool_returns = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    assert isinstance(tool_returns[0].content, str)
+    assert tool_returns[0].content.startswith('Hello, ')
+
+
+def test_infer_fmt_explicit():
+    """_infer_fmt returns the explicit fmt when provided."""
+    from pydantic_ai.agent.spec import _infer_fmt  # pyright: ignore[reportPrivateUsage]
+
+    assert _infer_fmt(Path('agent.txt'), 'json') == 'json'
+    assert _infer_fmt(Path('agent.txt'), 'yaml') == 'yaml'
+
+
+def test_infer_fmt_unknown_extension():
+    """_infer_fmt raises ValueError for unknown extension without explicit fmt."""
+    from pydantic_ai.agent.spec import _infer_fmt  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(ValueError, match="Could not infer format for filename 'agent.txt'"):
+        _infer_fmt(Path('agent.txt'), None)
+
+
+def test_invalid_custom_capability_type():
+    """Passing a non-AbstractCapability subclass to model_json_schema_with_capabilities raises ValueError."""
+    from pydantic_ai.agent.spec import AgentSpec
+
+    with pytest.raises(ValueError, match='must be subclasses of AbstractCapability'):
+        AgentSpec.model_json_schema_with_capabilities(
+            custom_capability_types=[str],  # type: ignore[list-item]
+        )
+
+
+def test_to_file_with_path_schema_path(tmp_path: str):
+    """to_file works when schema_path is passed as a relative Path (not str), triggering the non-str branch."""
+    from pydantic_ai.agent.spec import AgentSpec
+
+    spec = AgentSpec(model='test', name='path-schema')
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    # Pass a relative Path (not str) to exercise the isinstance(schema_path, str) == False branch
+    schema_path = Path('custom_schema.json')
+    spec.to_file(spec_path, schema_path=schema_path)
+
+    resolved_schema = Path(tmp_path) / 'custom_schema.json'
+    assert resolved_schema.exists()
+    content = spec_path.read_text(encoding='utf-8')
+    assert 'model: test' in content

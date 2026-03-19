@@ -1,0 +1,116 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a document file, then
+      describe what you received."}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name":
+      "get_file", "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice":
+      {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MTdkMjMwNmUtMzhjYi00ZTEwLTk5YTItNWE2ODg4NDM2NTY5
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '368'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '498'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2157
+      output:
+        message:
+          content:
+          - text: I'll retrieve the document file for you.
+          - toolUse:
+              input: {}
+              name: get_file
+              toolUseId: tooluse_aTEQ7nfKkxaO9e3VpHfN2S
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 558
+        outputTokens: 46
+        serverToolUsage: {}
+        totalTokens: 604
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a document file, then
+      describe what you received."}]}, {"role": "assistant", "content": [{"text": "I''ll retrieve the document file for you."},
+      {"toolUse": {"toolUseId": "tooluse_aTEQ7nfKkxaO9e3VpHfN2S", "name": "get_file", "input": {}}}]}, {"role": "user", "content":
+      [{"toolResult": {"toolUseId": "tooluse_aTEQ7nfKkxaO9e3VpHfN2S", "content": [{"document": {"name": "Document 1", "format":
+      "pdf", "source": {"s3Location": {"uri": "s3://pydantic-ai-test-files/test-files/dummy.pdf"}}}}], "status": "success"}}]}],
+      "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file", "inputSchema": {"json":
+      {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MWU5NjJlMDItMGFhOC00MjRiLWI0MjktODhjOTQ2MDZlYmY0
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '825'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1110'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 4221
+      output:
+        message:
+          content:
+          - text: |-
+              The function executed successfully but returned no visible output or content. This could mean:
+
+              1. **Empty document** - The file may be empty or contain no data
+              2. **Binary or non-text format** - The file might be in a format that doesn't display as text (like an image, PDF, or other binary format)
+              3. **Silent return** - The function completed but the system didn't return any readable content
+
+              The tool ran without errors, which indicates it executed properly, but there's no document content for me to describe. If you expected specific content to be returned, you may want to check:
+              - Whether the file exists in the expected location
+              - Whether the file contains actual data
+              - Whether there are additional parameters needed to retrieve the file properly
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 630
+        outputTokens: 163
+        serverToolUsage: {}
+        totalTokens: 793
+    status:
+      code: 200
+      message: OK
+version: 1
