@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
@@ -19,8 +20,6 @@ if TYPE_CHECKING:
 
     from pydantic_ai.models.anthropic import AsyncAnthropicClient
     from pydantic_ai.providers import Provider
-
-GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
 
 
 @overload
@@ -145,7 +144,9 @@ def gateway_provider(
             ' to use the Pydantic AI Gateway provider.'
         )
 
-    base_url = base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', os.getenv('PAIG_BASE_URL', GATEWAY_BASE_URL))
+    base_url = (
+        base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', os.getenv('PAIG_BASE_URL')) or _infer_base_url(api_key)
+    )
     http_client = http_client or cached_async_http_client(provider=f'gateway/{upstream_provider}')
     http_client.event_hooks = {'request': [_request_hook(api_key)]}
 
@@ -235,3 +236,26 @@ def normalize_gateway_provider(provider: str) -> str:
     elif provider in ('bedrock', 'converse'):
         return 'bedrock'
     return provider
+
+
+# TODO(Marcelo): We should deprecate this, and remove it in v2.
+GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
+
+_PYDANTIC_TOKEN_PATTERN = re.compile(r'^pylf_v(?P<version>[0-9]+)_(?P<region>[a-z]+)_[a-zA-Z0-9-_]+$')
+
+
+def _infer_base_url(api_key: str) -> str:
+    """Infer the gateway base URL from the API key.
+
+    The region is extracted to determine the appropriate gateway URL.
+    Defaults to the old gateway base URL if the region is not found.
+    """
+    if match := _PYDANTIC_TOKEN_PATTERN.match(api_key):
+        region = match.group('region')
+        assert isinstance(region, str)
+
+        if region.startswith('staging'):
+            return 'https://gateway.pydantic.info/proxy'
+        return f'https://gateway-{region}.pydantic.dev/proxy'
+
+    return GATEWAY_BASE_URL

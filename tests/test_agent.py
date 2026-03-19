@@ -10,7 +10,6 @@ from typing import Any, Generic, Literal, TypeVar, Union
 
 import pytest
 from dirty_equals import IsJson
-from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter, field_validator
 from pydantic_core import ErrorDetails, to_json
 from typing_extensions import Self
@@ -41,6 +40,7 @@ from pydantic_ai import (
     RunContext,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -73,7 +73,8 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsNow, IsStr, TestEnv
+from ._inline_snapshot import snapshot
+from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -364,6 +365,94 @@ def test_output_validator():
             ),
         ]
     )
+
+
+def test_output_validator_retries():
+    """Test that ctx.retry and ctx.max_retries are correctly tracked in RunContext for output validators."""
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+    target_retries = 3
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        # Always return the same value, let the validator control retries
+        args_json = '{"a": 1, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(return_model), output_type=Foo, output_retries=target_retries)
+
+    @agent.output_validator
+    def validate_output(ctx: RunContext[None], o: Foo) -> Foo:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        # Succeed on the last retry
+        if ctx.retry == target_retries:
+            return o
+        else:
+            raise ModelRetry(f'Retry {ctx.retry}')
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+
+    # Should have been called target_retries + 1 times (0, 1, 2, 3)
+    assert retries_log == [0, 1, 2, 3]
+    assert max_retries_log == [target_retries] * (target_retries + 1)
+
+
+def test_output_function_retries():
+    """Test that ctx.retry and ctx.max_retries are correctly tracked in RunContext for output functions."""
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+    target_retries = 3
+
+    def get_weather(ctx: RunContext[None], text: str) -> str:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        if ctx.retry == target_retries:
+            return f'Weather: {text}'
+        else:
+            raise ModelRetry(f'Retry {ctx.retry}')
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='sunny')])
+
+    agent = Agent(FunctionModel(return_model), output_type=TextOutput(get_weather), output_retries=target_retries)
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Weather: sunny'
+
+    # Should have been called target_retries + 1 times (0, 1, 2, 3)
+    assert retries_log == [0, 1, 2, 3]
+    assert max_retries_log == [target_retries] * (target_retries + 1)
+
+
+def test_tool_output_function_retries():
+    """Test that ctx.retry and ctx.max_retries are correctly tracked in RunContext for tool output functions."""
+    retries_log: list[int] = []
+    max_retries_log: list[int] = []
+    target_retries = 3
+
+    def get_weather(ctx: RunContext[None], city: str) -> str:
+        retries_log.append(ctx.retry)
+        max_retries_log.append(ctx.max_retries)
+        if ctx.retry == target_retries:
+            return f'Weather in {city}'
+        else:
+            raise ModelRetry(f'Retry {ctx.retry}')
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(return_model), output_type=get_weather, output_retries=target_retries)
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Weather in Mexico City'
+
+    # Should have been called target_retries + 1 times (0, 1, 2, 3)
+    assert retries_log == [0, 1, 2, 3]
+    assert max_retries_log == [target_retries] * (target_retries + 1)
 
 
 class TestPartialOutput:
@@ -1910,6 +1999,25 @@ def test_prompted_output_with_template():
     )
 
 
+def test_prompted_output_with_template_false():
+    def return_foo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.model_request_parameters.prompted_output_template is False
+        assert info.model_request_parameters.prompted_output_instructions is None
+        assert info.instructions is None
+        text = Foo(bar='baz').model_dump_json()
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    m = FunctionModel(return_foo)
+
+    class Foo(BaseModel):
+        bar: str
+
+    agent = Agent(m, output_type=PromptedOutput(Foo, template=False))
+
+    result = agent.run_sync('What is the capital of Mexico?')
+    assert result.output == snapshot(Foo(bar='baz'))
+
+
 def test_prompted_output_with_defs():
     class Foo(BaseModel):
         """Foo description"""
@@ -2514,7 +2622,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
         ]
     )
 
-    assert result.new_messages() == result.all_messages()[-1:]
+    assert result.new_messages() == result.all_messages()[-2:]
 
 
 def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_prompt():
@@ -3056,6 +3164,18 @@ def test_unknown_tool_multiple_retries():
     )
 
 
+def test_unknown_tool_per_tool_retries_exceeded():
+    """When output_retries > retries, the per-tool retry limit fires before the agent-level one."""
+
+    def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
+
+    agent = Agent(FunctionModel(empty), retries=1, output_retries=5)
+
+    with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
+        agent.run_sync('Hello')
+
+
 def test_tool_exceeds_token_limit_error():
     def return_incomplete_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[ToolCallPart('dummy_tool', args='{"foo": "bar",')])
@@ -3116,10 +3236,31 @@ def test_empty_response_with_finish_reason_length():
         agent.run_sync('Hello')
 
 
+def test_thinking_only_response_with_finish_reason_length():
+    def return_thinking_only(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        resp = ModelResponse(parts=[ThinkingPart(content='thinking...')])
+        resp.finish_reason = 'length'
+        return resp
+
+    agent = Agent(FunctionModel(return_thinking_only), output_type=str)
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match=r'Model token limit \(10\) exceeded before any response was generated.',
+    ):
+        agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match=r'Model token limit \(provider default\) exceeded before any response was generated.',
+    ):
+        agent.run_sync('Hello')
+
+
 def test_model_requests_blocked(env: TestEnv):
     try:
         env.set('GEMINI_API_KEY', 'foobar')
-        agent = Agent('google-gla:gemini-1.5-flash', output_type=tuple[str, str], defer_model_check=True)
+        agent = Agent('google-gla:gemini-3-flash-preview', output_type=tuple[str, str], defer_model_check=True)
 
         with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
             agent.run_sync('Hello')
@@ -3129,7 +3270,7 @@ def test_model_requests_blocked(env: TestEnv):
 
 def test_override_model(env: TestEnv):
     env.set('GEMINI_API_KEY', 'foobar')
-    agent = Agent('google-gla:gemini-1.5-flash', output_type=tuple[int, str], defer_model_check=True)
+    agent = Agent('google-gla:gemini-3-flash-preview', output_type=tuple[int, str], defer_model_check=True)
 
     with agent.override(model='test'):
         result = agent.run_sync('Hello')
@@ -3218,6 +3359,13 @@ class OutputType(BaseModel):
     """Result type used by multiple tests."""
 
     value: str
+
+
+class OutputTypeWithCount(BaseModel):
+    """Result type with an additional int field, used to test schema validation failures."""
+
+    value: str
+    count: int
 
 
 class TestMultipleToolCalls:
@@ -4182,7 +4330,7 @@ class TestMultipleToolCalls:
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
-                            content='Output tool not used - output failed validation.',
+                            content='Output tool not used - output function execution failed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
@@ -4364,6 +4512,112 @@ class TestMultipleToolCalls:
                 ),
             ]
         )
+
+    def test_exhaustive_strategy_second_output_schema_validation_fails(self):
+        """Test exhaustive strategy when first output succeeds and second fails schema validation."""
+        output_tools_called: list[str] = []
+
+        def process_first(output: OutputType) -> OutputType:
+            output_tools_called.append('first')
+            return output
+
+        def process_second(output: OutputTypeWithCount) -> OutputTypeWithCount:  # pragma: no cover
+            output_tools_called.append('second')
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'valid'}),
+                    ToolCallPart('second_output', {'value': 'invalid', 'count': 'not_an_int'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='exhaustive',
+        )
+
+        result = agent.run_sync('test exhaustive with schema validation failure')
+
+        assert isinstance(result.output, OutputType)
+        assert result.output.value == 'valid'
+        assert output_tools_called == ['first']
+
+    def test_exhaustive_strategy_second_output_max_retries_exceeded(self):
+        """Test exhaustive strategy when first output succeeds and second exceeds max retries."""
+        output_tools_called: list[str] = []
+
+        def process_first(output: OutputType) -> OutputType:
+            output_tools_called.append('first')
+            return output
+
+        def process_second(output: OutputTypeWithCount) -> OutputTypeWithCount:  # pragma: no cover
+            output_tools_called.append('second')
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'valid'}),
+                    ToolCallPart('second_output', {'value': 'invalid', 'count': 'not_an_int'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='exhaustive',
+            output_retries=0,
+        )
+
+        result = agent.run_sync('test exhaustive with max retries exceeded')
+
+        assert isinstance(result.output, OutputType)
+        assert result.output.value == 'valid'
+        assert output_tools_called == ['first']
+
+    def test_early_strategy_second_output_max_retries_exceeded(self):
+        """Test early strategy when first output succeeds and second exceeds max retries."""
+
+        def process_first(output: OutputType) -> OutputType:
+            return output
+
+        def process_second(output: OutputTypeWithCount) -> OutputTypeWithCount:  # pragma: no cover
+            return output
+
+        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('first_output', {'value': 'valid'}),
+                    ToolCallPart('second_output', {'value': 'invalid', 'count': 'not_an_int'}),
+                ],
+            )
+
+        agent = Agent(
+            FunctionModel(return_model),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='early',
+            output_retries=0,
+        )
+
+        result = agent.run_sync('test early with max retries exceeded')
+
+        assert isinstance(result.output, OutputType)
+        assert result.output.value == 'valid'
 
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
@@ -5091,24 +5345,6 @@ def test_image_url_serializable():
     assert messages == result.all_messages()
 
 
-def test_tool_return_part_binary_content_serialization():
-    """Test that ToolReturnPart can properly serialize BinaryContent."""
-    png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
-    binary_content = BinaryContent(png_data, media_type='image/png')
-
-    tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
-
-    assert tool_return.model_response_object() == snapshot(
-        {
-            'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzgAAAAASUVORK5CYII=',
-            'media_type': 'image/png',
-            'vendor_metadata': None,
-            'kind': 'binary',
-            'identifier': '14a01a',
-        }
-    )
-
-
 def test_tool_returning_binary_content_directly():
     """Test that a tool returning BinaryContent directly works correctly."""
 
@@ -5155,21 +5391,10 @@ def test_tool_returning_binary_content_with_identifier():
             parts=[
                 ToolReturnPart(
                     tool_name='get_image',
-                    content='See file image_id_1',
+                    content=IsInstance(BinaryContent),
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                UserPromptPart(
-                    content=[
-                        'This is file image_id_1:',
-                        BinaryContent(
-                            data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
-                            media_type='image/png',
-                            _identifier='image_id_1',
-                        ),
-                    ],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
+                    timestamp=IsDatetime(),
+                )
             ],
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
@@ -5204,25 +5429,15 @@ def test_tool_returning_file_url_with_identifier():
             parts=[
                 ToolReturnPart(
                     tool_name='get_files',
-                    content=['See file img_001', 'See file vid_002', 'See file aud_003', 'See file doc_004'],
-                    tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                UserPromptPart(
                     content=[
-                        'This is file img_001:',
-                        ImageUrl(url='https://example.com/image.jpg', _identifier='img_001', identifier='img_001'),
-                        'This is file vid_002:',
-                        VideoUrl(url='https://example.com/video.mp4', _identifier='vid_002', identifier='vid_002'),
-                        'This is file aud_003:',
-                        AudioUrl(url='https://example.com/audio.mp3', _identifier='aud_003', identifier='aud_003'),
-                        'This is file doc_004:',
-                        DocumentUrl(
-                            url='https://example.com/document.pdf', _identifier='doc_004', identifier='doc_004'
-                        ),
+                        ImageUrl(url='https://example.com/image.jpg', _identifier='img_001'),
+                        VideoUrl(url='https://example.com/video.mp4', _identifier='vid_002'),
+                        AudioUrl(url='https://example.com/audio.mp3', _identifier='aud_003'),
+                        DocumentUrl(url='https://example.com/document.pdf', _identifier='doc_004'),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                )
             ],
             timestamp=IsNow(tz=timezone.utc),
             run_id=IsStr(),
@@ -5828,40 +6043,6 @@ def test_many_multimodal_tool_response():
         agent.run_sync('Please analyze the data')
 
 
-def test_multimodal_tool_response_nested():
-    """Test ToolReturn with custom content and tool return."""
-
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
-        else:
-            return ModelResponse(  # pragma: no cover
-                parts=[
-                    TextPart('Analysis completed'),
-                ]
-            )
-
-    agent = Agent(FunctionModel(llm))
-
-    @agent.tool_plain
-    def analyze_data() -> ToolReturn:
-        return ToolReturn(
-            return_value=ImageUrl('https://example.com/chart.jpg'),
-            content=[
-                'Here are the analysis results:',
-                ImageUrl('https://example.com/chart.jpg'),
-                'The chart shows positive trends.',
-            ],
-            metadata={'foo': 'bar'},
-        )
-
-    with pytest.raises(
-        UserError,
-        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContent` objects. Please use `content` instead.",
-    ):
-        agent.run_sync('Please analyze the data')
-
-
 def test_deprecated_kwargs_validation_agent_init():
     """Test that invalid kwargs raise UserError in Agent constructor."""
     with pytest.raises(UserError, match='Unknown keyword arguments: `usage_limits`'):
@@ -5895,7 +6076,7 @@ def test_deprecated_kwargs_still_work():
 def test_override_toolsets():
     foo_toolset = FunctionToolset()
 
-    @foo_toolset.tool
+    @foo_toolset.tool_plain
     def foo() -> str:
         return 'Hello from foo'
 
@@ -5918,7 +6099,7 @@ def test_override_toolsets():
 
     bar_toolset = FunctionToolset()
 
-    @bar_toolset.tool
+    @bar_toolset.tool_plain
     def bar() -> str:
         return 'Hello from bar'
 
@@ -5976,7 +6157,7 @@ def test_override_tools():
 def test_toolset_factory():
     toolset = FunctionToolset()
 
-    @toolset.tool
+    @toolset.tool_plain
     def foo() -> str:
         return 'Hello from foo'
 
@@ -6031,7 +6212,7 @@ def test_adding_tools_during_run():
     def foo() -> str:
         return 'Hello from foo'
 
-    @toolset.tool
+    @toolset.tool_plain
     def add_foo_tool() -> str:
         toolset.add_function(foo)
         return 'foo tool added'
@@ -6266,6 +6447,58 @@ def test_parallel_mcp_calls():
     assert result.output == snapshot('finished')
 
 
+async def test_parallel_tool_exception_cancels_sibling_tasks():
+    """Non-CancelledError exceptions during parallel tool execution must cancel sibling tasks.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4423.
+    Previously only asyncio.CancelledError triggered cleanup; any other exception
+    left the remaining tasks running as orphaned asyncio tasks.
+    """
+    slow_tool_started = asyncio.Event()
+    slow_tool_cancelled = asyncio.Event()
+
+    async def call_two_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='fast_failing_tool'),
+                ToolCallPart(tool_name='slow_tool'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(call_two_tools))
+
+    @agent.tool_plain
+    async def fast_failing_tool() -> str:
+        # Yield control so slow_tool can start, then raise.
+        await asyncio.sleep(0)
+        raise RuntimeError('boom')
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        slow_tool_started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            slow_tool_cancelled.set()
+            raise
+        return 'done'  # pragma: no cover
+
+    tasks_before = asyncio.all_tasks()
+    with pytest.raises(RuntimeError, match='boom'):
+        await agent.run('call tools')
+
+    # Give the event loop a moment to process cancellations.
+    await asyncio.sleep(0)
+
+    # The slow tool must have started (confirming both tasks ran in parallel).
+    assert slow_tool_started.is_set(), 'slow_tool never started — not running in parallel'
+    # The slow tool must have been cancelled when fast_failing_tool raised.
+    assert slow_tool_cancelled.is_set(), 'slow_tool was not cancelled after RuntimeError'
+    # No new asyncio tasks should be left over from this run.
+    leaked = asyncio.all_tasks() - tasks_before
+    assert not leaked, f'Orphaned tasks remain: {leaked}'
+
+
 @pytest.mark.parametrize('mode', ['argument', 'contextmanager'])
 def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     """Test that tool calls are executed correctly when a `sequential` tool is present in the call."""
@@ -6295,23 +6528,23 @@ def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
 
     integer_holder: int = 1
 
-    @sequential_toolset.tool
+    @sequential_toolset.tool_plain
     def call_first():
         nonlocal integer_holder
         assert integer_holder == 1
 
-    @sequential_toolset.tool(sequential=mode == 'argument')
+    @sequential_toolset.tool_plain(sequential=mode == 'argument')
     def increment_integer_holder():
         nonlocal integer_holder
         integer_holder = 2
 
-    @sequential_toolset.tool
+    @sequential_toolset.tool_plain
     def requires_approval():
         from pydantic_ai.exceptions import ApprovalRequired
 
         raise ApprovalRequired()
 
-    @sequential_toolset.tool
+    @sequential_toolset.tool_plain
     def call_second():
         nonlocal integer_holder
         assert integer_holder == 2
@@ -6371,7 +6604,7 @@ def test_set_mcp_sampling_model():
 def test_toolsets():
     toolset = FunctionToolset()
 
-    @toolset.tool
+    @toolset.tool_plain
     def foo() -> str:
         return 'Hello from foo'  # pragma: no cover
 
@@ -6390,7 +6623,7 @@ async def test_wrapper_agent():
 
     foo_toolset = FunctionToolset()
 
-    @foo_toolset.tool
+    @foo_toolset.tool_plain
     def foo() -> str:
         return 'Hello from foo'  # pragma: no cover
 
@@ -6402,6 +6635,9 @@ async def test_wrapper_agent():
     assert wrapper_agent.name == agent.name
     wrapper_agent.name = 'wrapped'
     assert wrapper_agent.name == 'wrapped'
+    assert wrapper_agent.description == agent.description
+    wrapper_agent.description = 'wrapped description'
+    assert wrapper_agent.description == 'wrapped description'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
     assert wrapper_agent.output_json_schema() == snapshot(
@@ -6416,7 +6652,7 @@ async def test_wrapper_agent():
 
     bar_toolset = FunctionToolset()
 
-    @bar_toolset.tool
+    @bar_toolset.tool_plain
     def bar() -> str:
         return 'Hello from bar'
 
@@ -6434,8 +6670,6 @@ async def test_wrapper_agent():
 
 async def test_thinking_only_response_retry():
     """Test that thinking-only responses trigger a retry mechanism."""
-    from pydantic_ai import ThinkingPart
-    from pydantic_ai.models.function import FunctionModel
 
     call_count = 0
 
@@ -6484,7 +6718,7 @@ async def test_thinking_only_response_retry():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text or call a tool.',
+                        content='Please return text.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -6495,7 +6729,217 @@ async def test_thinking_only_response_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
-                usage=RequestUsage(input_tokens=67, output_tokens=8),
+                usage=RequestUsage(input_tokens=63, output_tokens=8),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_retry_message_no_tools():
+    """Test that thinking-only retry message does not suggest 'call a tool' when no function tools are registered."""
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            return ModelResponse(parts=[ThinkingPart(content='thinking...')])
+        else:
+            return ModelResponse(parts=[TextPart(content='result')])
+
+    agent = Agent(FunctionModel(model_function))
+    result = await agent.run('Hello')
+
+    assert result.output == 'result'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='thinking...')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please return text.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='result')],
+                usage=RequestUsage(input_tokens=63, output_tokens=3),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_thinking_only_response_retry_with_tool_output():
+    """Test that thinking-only responses retry with tool-output guidance when text output is not allowed."""
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        assert info.output_tools is not None
+
+        if call_count == 1:
+            return ModelResponse(parts=[ThinkingPart(content='thinking...')])
+        else:
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"a": 1, "b": "ok"}')])
+
+    result = await Agent(FunctionModel(model_function), output_type=ToolOutput(Foo)).run('Hello')
+
+    assert result.output == Foo(a=1, b='ok')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='thinking...')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please include your response in a tool call.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"a": 1, "b": "ok"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=68, output_tokens=9),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_thinking_only_response_backward_looking_recovery():
+    """Test that thinking-only response after a tool call recovers text from prior model response."""
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # First call: return text alongside a tool call
+            return ModelResponse(
+                parts=[
+                    TextPart(content="Here's my analysis."),
+                    ToolCallPart(tool_name='save_progress', args='{"data": "test"}'),
+                ],
+            )
+        else:
+            # Second call (after tool return): return thinking-only
+            return ModelResponse(
+                parts=[ThinkingPart(content='Nothing more to say.')],
+            )
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def save_progress(data: str) -> str:
+        return 'saved'
+
+    result = await agent.run('Hello')
+
+    assert result.output == "Here's my analysis."
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content="Here's my analysis."),
+                    ToolCallPart(tool_name='save_progress', args='{"data": "test"}', tool_call_id=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=9),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='save_progress',
+                        content='saved',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='Nothing more to say.')],
+                usage=RequestUsage(input_tokens=52, output_tokens=14),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -6655,6 +7099,7 @@ async def test_hitl_tool_approval():
                         content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
+                        outcome='denied',
                     ),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -6686,6 +7131,7 @@ async def test_hitl_tool_approval():
                         content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
+                        outcome='denied',
                     ),
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -7464,6 +7910,16 @@ async def test_message_history():
             pass
         assert run.new_messages() == snapshot(
             [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Hello',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                ),
                 ModelResponse(
                     parts=[TextPart(content='ok here is text')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
@@ -7473,7 +7929,7 @@ async def test_message_history():
                 ),
             ]
         )
-        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"ok here is text",')
+        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
         assert run.all_messages() == snapshot(
             [
                 ModelRequest(

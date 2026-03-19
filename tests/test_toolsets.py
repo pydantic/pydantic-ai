@@ -7,11 +7,11 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock
 
 import pytest
-from inline_snapshot import snapshot
 from typing_extensions import Self
 
 from pydantic_ai import (
     AbstractToolset,
+    Agent,
     CombinedToolset,
     FilteredToolset,
     FunctionToolset,
@@ -28,6 +28,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
+
+from ._inline_snapshot import snapshot
 
 pytestmark = pytest.mark.anyio
 
@@ -58,7 +60,7 @@ async def test_function_toolset():
 
         return replace(tool_def, name=f'{ctx.deps.prefix}_{tool_def.name}')
 
-    @toolset.tool(prepare=prepare_add_prefix)
+    @toolset.tool_plain(prepare=prepare_add_prefix)
     def add(a: int, b: int) -> int:
         """Add two numbers"""
         return a + b
@@ -99,7 +101,7 @@ async def test_function_toolset():
     )
     assert await foo_toolset.handle_call(ToolCallPart(tool_name='foo_add', args={'a': 1, 'b': 2})) == 3
 
-    @toolset.tool
+    @toolset.tool_plain
     def subtract(a: int, b: int) -> int:
         """Subtract two numbers"""
         return a - b  # pragma: lax no cover
@@ -141,7 +143,7 @@ async def test_function_toolset_with_defaults():
         match=re.escape('Missing parameter descriptions for'),
     ):
 
-        @defaults_toolset.tool
+        @defaults_toolset.tool_plain
         def add(a: int, b: int) -> int:
             """Add two numbers"""
             return a + b  # pragma: no cover
@@ -150,7 +152,7 @@ async def test_function_toolset_with_defaults():
 async def test_function_toolset_with_defaults_overridden():
     defaults_toolset = FunctionToolset[None](require_parameter_descriptions=True)
 
-    @defaults_toolset.tool(require_parameter_descriptions=False)
+    @defaults_toolset.tool_plain(require_parameter_descriptions=False)
     def subtract(a: int, b: int) -> int:
         """Subtract two numbers"""
         return a - b  # pragma: no cover
@@ -161,7 +163,7 @@ async def test_prepared_toolset_user_error_add_new_tools():
     context = build_run_context(None)
     base_toolset = FunctionToolset[None]()
 
-    @base_toolset.tool
+    @base_toolset.tool_plain
     def add(a: int, b: int) -> int:
         """Add two numbers"""
         return a + b  # pragma: no cover
@@ -196,12 +198,12 @@ async def test_prepared_toolset_user_error_change_tool_names():
     context = build_run_context(None)
     base_toolset = FunctionToolset[None]()
 
-    @base_toolset.tool
+    @base_toolset.tool_plain
     def add(a: int, b: int) -> int:
         """Add two numbers"""
         return a + b  # pragma: no cover
 
-    @base_toolset.tool
+    @base_toolset.tool_plain
     def subtract(a: int, b: int) -> int:
         """Subtract two numbers"""
         return a - b  # pragma: no cover
@@ -238,17 +240,17 @@ async def test_comprehensive_toolset_composition():
     # Create first FunctionToolset with basic math operations
     math_toolset = FunctionToolset[TestDeps]()
 
-    @math_toolset.tool
+    @math_toolset.tool_plain
     def add(a: int, b: int) -> int:
         """Add two numbers"""
         return a + b
 
-    @math_toolset.tool
+    @math_toolset.tool_plain
     def subtract(a: int, b: int) -> int:
         """Subtract two numbers"""
         return a - b  # pragma: no cover
 
-    @math_toolset.tool
+    @math_toolset.tool_plain
     def multiply(a: int, b: int) -> int:
         """Multiply two numbers"""
         return a * b  # pragma: no cover
@@ -256,17 +258,17 @@ async def test_comprehensive_toolset_composition():
     # Create second FunctionToolset with string operations
     string_toolset = FunctionToolset[TestDeps]()
 
-    @string_toolset.tool
+    @string_toolset.tool_plain
     def concat(s1: str, s2: str) -> str:
         """Concatenate two strings"""
         return s1 + s2
 
-    @string_toolset.tool
+    @string_toolset.tool_plain
     def uppercase(text: str) -> str:
         """Convert text to uppercase"""
         return text.upper()  # pragma: no cover
 
-    @string_toolset.tool
+    @string_toolset.tool_plain
     def reverse(text: str) -> str:
         """Reverse a string"""
         return text[::-1]  # pragma: no cover
@@ -274,7 +276,7 @@ async def test_comprehensive_toolset_composition():
     # Create third FunctionToolset with advanced operations
     advanced_toolset = FunctionToolset[TestDeps]()
 
-    @advanced_toolset.tool
+    @advanced_toolset.tool_plain
     def power(base: int, exponent: int) -> int:
         """Calculate base raised to the power of exponent"""
         return base**exponent  # pragma: no cover
@@ -556,13 +558,13 @@ async def test_tool_manager_retry_logic():
     toolset = FunctionToolset[TestDeps](max_retries=2)
     call_count: defaultdict[str, int] = defaultdict(int)
 
-    @toolset.tool
+    @toolset.tool_plain
     def failing_tool(x: int) -> int:
         """A tool that always fails"""
         call_count['failing_tool'] += 1
         raise ModelRetry('This tool always fails')
 
-    @toolset.tool
+    @toolset.tool_plain
     def other_tool(x: int) -> int:
         """A tool that works"""
         call_count['other_tool'] += 1
@@ -636,17 +638,17 @@ async def test_tool_manager_multiple_failed_tools():
 
     toolset = FunctionToolset[TestDeps]()
 
-    @toolset.tool
+    @toolset.tool_plain
     def tool_a(x: int) -> int:
         """Tool A that fails"""
         raise ModelRetry('Tool A fails')
 
-    @toolset.tool
+    @toolset.tool_plain
     def tool_b(x: int) -> int:
         """Tool B that fails"""
         raise ModelRetry('Tool B fails')
 
-    @toolset.tool
+    @toolset.tool_plain
     def tool_c(x: int) -> int:
         """Tool C that works"""
         return x * 3
@@ -682,10 +684,10 @@ async def test_tool_manager_multiple_failed_tools():
 async def test_tool_manager_sequential_tool_call():
     toolset = FunctionToolset[None]()
 
-    @toolset.tool(sequential=True)
+    @toolset.tool_plain(sequential=True)
     def tool_a(x: int) -> int: ...  # pragma: no cover
 
-    @toolset.tool(sequential=False)
+    @toolset.tool_plain(sequential=False)
     def tool_b(x: int) -> int: ...  # pragma: no cover
 
     tool_manager = ToolManager[None](toolset)
@@ -864,7 +866,6 @@ def test_dynamic_toolset_id():
 
 def test_agent_toolset_decorator_id():
     """Test that @agent.toolset decorator requires explicit id or defaults to None."""
-    from pydantic_ai import Agent
     from pydantic_ai.models.test import TestModel
 
     agent = Agent(TestModel())
@@ -891,3 +892,21 @@ def test_agent_toolset_decorator_id():
     # Third toolset should have explicit id
     assert isinstance(toolsets[2], DynamicToolset)
     assert toolsets[2].id == 'custom_id'
+
+
+def test_tool_without_runctx_raises_warning():
+    toolset = FunctionToolset()
+    with pytest.warns(
+        DeprecationWarning, match='Passing a function without `RunContext` to `FunctionToolset.tool\\(\\)`'
+    ):
+
+        @toolset.tool  # type: ignore[arg-type]  # pragma: no cover
+        def add(x: int):
+            return x + 1
+
+        @toolset.tool(retries=2)  # type: ignore[arg-type]  # pragma: no cover
+        def sub(x: int):
+            return x - 1
+
+    assert 'add' in toolset.tools
+    assert 'sub' in toolset.tools

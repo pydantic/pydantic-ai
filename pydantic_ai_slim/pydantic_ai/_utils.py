@@ -27,6 +27,7 @@ from typing import (
 
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
+from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import (
     ParamSpec,
@@ -160,6 +161,20 @@ def is_set(t_or_unset: T | Unset) -> TypeGuard[T]:
     return t_or_unset is not UNSET
 
 
+async def _cleanup_temporal_group(
+    task: asyncio.Task[Any] | None,
+    aiterator: AsyncIterator[Any],
+) -> None:
+    """Clean up pending task and async iterator after group_by_temporal exits."""
+    if task:
+        task.cancel('Cancelling group_by_temporal pending task')
+        with suppress(asyncio.CancelledError, StopAsyncIteration):
+            await task
+    aclose = getattr(aiterator, 'aclose', None)
+    if aclose is not None:  # pragma: no branch
+        await aclose()
+
+
 @asynccontextmanager
 async def group_by_temporal(
     aiterable: AsyncIterable[T], soft_max_interval: float | None
@@ -188,75 +203,72 @@ async def group_by_temporal(
     Returns:
         A context manager usable as an async iterable of lists of items produced by the input async iterable.
     """
-    if soft_max_interval is None:
-
-        async def async_iter_groups_noop() -> AsyncIterator[list[T]]:
-            async for item in aiterable:
-                yield [item]
-
-        yield async_iter_groups_noop()
-        return
-
     # we might wait for the next item more than once, so we store the task to await next time
     task: asyncio.Task[T] | None = None
+    aiterator = aiter(aiterable)
 
-    async def async_iter_groups() -> AsyncIterator[list[T]]:
-        nonlocal task
+    if soft_max_interval is None:
 
-        assert soft_max_interval is not None and soft_max_interval >= 0, 'soft_max_interval must be a positive number'
-        buffer: list[T] = []
-        group_start_time = time.monotonic()
+        async def async_iter_groups() -> AsyncIterator[list[T]]:
+            async for item in aiterator:
+                yield [item]
 
-        aiterator = aiter(aiterable)
-        while True:
-            if group_start_time is None:
-                # group hasn't started, we just wait for the maximum interval
-                wait_time = soft_max_interval
-            else:
-                # wait for the time remaining in the group
-                wait_time = soft_max_interval - (time.monotonic() - group_start_time)
+    else:
 
-            # if there's no current task, we get the next one
-            if task is None:
-                # anext(aiter) returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
-                # so far, this doesn't seem to be a problem
-                task = asyncio.create_task(anext(aiterator))  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
+        async def async_iter_groups() -> AsyncIterator[list[T]]:
+            nonlocal task
 
-            # we use asyncio.wait to avoid cancelling the coroutine if it's not done
-            done, _ = await asyncio.wait((task,), timeout=wait_time)
+            assert soft_max_interval is not None and soft_max_interval >= 0, (
+                'soft_max_interval must be a positive number'
+            )
+            buffer: list[T] = []
+            group_start_time = time.monotonic()
 
-            if done:
-                # the one task we waited for completed
-                try:
-                    item = done.pop().result()
-                except StopAsyncIteration:
-                    # if the task raised StopAsyncIteration, we're done iterating
-                    if buffer:
-                        yield buffer
-                    task = None
-                    break
+            while True:
+                if group_start_time is None:
+                    # group hasn't started, we just wait for the maximum interval
+                    wait_time = soft_max_interval
                 else:
-                    # we got an item, add it to the buffer and set task to None to get the next item
-                    buffer.append(item)
-                    task = None
-                    # if this is the first item in the group, set the group start time
-                    if group_start_time is None:
-                        group_start_time = time.monotonic()
-            elif buffer:
-                # otherwise if the task timeout expired and we have items in the buffer, yield the buffer
-                yield buffer
-                # clear the buffer and reset the group start time ready for the next group
-                buffer = []
-                group_start_time = None
+                    # wait for the time remaining in the group
+                    wait_time = soft_max_interval - (time.monotonic() - group_start_time)
+
+                # if there's no current task, we get the next one
+                if task is None:
+                    # anext(aiter) returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
+                    # so far, this doesn't seem to be a problem
+                    task = asyncio.create_task(anext(aiterator))  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
+
+                # we use asyncio.wait to avoid cancelling the coroutine if it's not done
+                done, _ = await asyncio.wait((task,), timeout=wait_time)
+
+                if done:
+                    # the one task we waited for completed
+                    try:
+                        item = done.pop().result()
+                    except StopAsyncIteration:
+                        # if the task raised StopAsyncIteration, we're done iterating
+                        if buffer:
+                            yield buffer
+                        task = None
+                        break
+                    else:
+                        # we got an item, add it to the buffer and set task to None to get the next item
+                        buffer.append(item)
+                        task = None
+                        # if this is the first item in the group, set the group start time
+                        if group_start_time is None:
+                            group_start_time = time.monotonic()
+                elif buffer:
+                    # otherwise if the task timeout expired and we have items in the buffer, yield the buffer
+                    yield buffer
+                    # clear the buffer and reset the group start time ready for the next group
+                    buffer = []
+                    group_start_time = None
 
     try:
         yield async_iter_groups()
-    finally:  # pragma: no cover
-        # after iteration if a tasks still exists, cancel it, this will only happen if an error occurred
-        if task:
-            task.cancel('Cancelling due to error in iterator')
-            with suppress(asyncio.CancelledError):
-                await task
+    finally:
+        await _cleanup_temporal_group(task, aiterator)
 
 
 def sync_anext(iterator: Iterator[T]) -> T:
@@ -292,6 +304,15 @@ def guard_tool_call_id(
 ) -> str:
     """Type guard that either returns the tool call id or generates a new one if it's None."""
     return t.tool_call_id or generate_tool_call_id()
+
+
+TOOL_NAME_SANITIZER = re.compile(r'[^a-zA-Z0-9_-]')
+"""Regex matching characters not allowed in tool names by most providers."""
+
+
+def sanitize_tool_name(name: str) -> str:
+    """Replace characters outside `[a-zA-Z0-9_-]` with `_`."""
+    return TOOL_NAME_SANITIZER.sub('_', name)
 
 
 def generate_tool_call_id() -> str:
@@ -414,6 +435,45 @@ def is_async_callable(obj: Any) -> Any:
     return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))
 
 
+def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
+    """Get the type annotation of the first parameter of a callable.
+
+    Handles regular functions, methods, and callable classes with __call__.
+    Uses Pydantic internals to properly resolve type hints including forward references.
+
+    Args:
+        callable_obj: The callable to inspect.
+
+    Returns:
+        The type annotation of the first parameter, or None if it cannot be determined.
+    """
+    try:
+        sig = inspect.signature(callable_obj)
+    except ValueError:
+        return None
+
+    try:
+        first_param_name = next(iter(sig.parameters.keys()))
+    except StopIteration:
+        return None
+
+    # See https://github.com/pydantic/pydantic/pull/11451 for a similar implementation in Pydantic
+    callable_for_hints = callable_obj
+    if not isinstance(callable_obj, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
+        call_func = getattr(type(callable_obj), '__call__', None)
+        if call_func is not None:
+            callable_for_hints = call_func
+        else:
+            return None  # pragma: no cover
+
+    try:
+        type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_for_hints))
+    except (NameError, TypeError, AttributeError):
+        return None
+
+    return type_hints.get(first_param_name)
+
+
 def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
     """Update $refs in a schema to use the new names from name_mapping."""
     if '$ref' in s:
@@ -503,7 +563,7 @@ def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
         raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
 
-_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*\})', flags=re.DOTALL)
+_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*?\})\s*(?:\n?```|\Z)', flags=re.DOTALL)
 
 
 def strip_markdown_fences(text: str) -> str:
@@ -545,3 +605,8 @@ def get_event_loop():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
+    """Check if obj is a dict, narrowing the type to `dict[str, Any]`."""
+    return isinstance(obj, dict)

@@ -24,6 +24,7 @@ __all__ = (
     'AgentRunError',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
+    'ConcurrencyLimitExceeded',
     'ModelAPIError',
     'ModelHTTPError',
     'ContentFilterError',
@@ -84,6 +85,9 @@ class CallDeferred(Exception):
         self.metadata = metadata
         super().__init__()
 
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.metadata,)
+
 
 class ApprovalRequired(Exception):
     """Exception to raise when a tool call requires human-in-the-loop approval.
@@ -98,6 +102,9 @@ class ApprovalRequired(Exception):
     def __init__(self, metadata: dict[str, Any] | None = None):
         self.metadata = metadata
         super().__init__()
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.metadata,)
 
 
 class UserError(RuntimeError):
@@ -129,6 +136,10 @@ class UsageLimitExceeded(AgentRunError):
     """Error raised when a Model's usage exceeds the specified limits."""
 
 
+class ConcurrencyLimitExceeded(AgentRunError):
+    """Error raised when the concurrency queue depth exceeds max_queued."""
+
+
 class UnexpectedModelBehavior(AgentRunError):
     """Error caused by unexpected Model behavior, e.g. an unexpected response code."""
 
@@ -147,6 +158,9 @@ class UnexpectedModelBehavior(AgentRunError):
             except ValueError:
                 self.body = body
         super().__init__(message)
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.message, self.body)
 
     def __str__(self) -> str:
         if self.body:
@@ -169,6 +183,9 @@ class ModelAPIError(AgentRunError):
         self.model_name = model_name
         super().__init__(message)
 
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.message)
+
 
 class ModelHTTPError(ModelAPIError):
     """Raised when an model provider response has a status code of 4xx or 5xx."""
@@ -184,6 +201,9 @@ class ModelHTTPError(ModelAPIError):
         self.body = body
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         super().__init__(model_name=model_name, message=message)
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.status_code, self.model_name, self.body)
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):
@@ -201,6 +221,9 @@ class ToolRetryError(Exception):
             else self._format_error_details(tool_retry.content, tool_retry.tool_name)
         )
         super().__init__(message)
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.tool_retry,)
 
     @staticmethod
     def _format_error_details(errors: list[pydantic_core.ErrorDetails], tool_name: str | None) -> str:

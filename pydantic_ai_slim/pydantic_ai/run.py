@@ -38,7 +38,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ```python
     from pydantic_ai import Agent
 
-    agent = Agent('openai:gpt-4o')
+    agent = Agent('openai:gpt-5.2')
 
     async def main():
         nodes = []
@@ -72,7 +72,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 model_response=ModelResponse(
                     parts=[TextPart(content='The capital of France is Paris.')],
                     usage=RequestUsage(input_tokens=56, output_tokens=7),
-                    model_name='gpt-4o',
+                    model_name='gpt-5.2',
                     timestamp=datetime.datetime(...),
                     run_id='...',
                 )
@@ -216,7 +216,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         from pydantic_ai import Agent
         from pydantic_graph import End
 
-        agent = Agent('openai:gpt-4o')
+        agent = Agent('openai:gpt-5.2')
 
         async def main():
             async with agent.iter('What is the capital of France?') as agent_run:
@@ -252,7 +252,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                         model_response=ModelResponse(
                             parts=[TextPart(content='The capital of France is Paris.')],
                             usage=RequestUsage(input_tokens=56, output_tokens=7),
-                            model_name='gpt-4o',
+                            model_name='gpt-5.2',
                             timestamp=datetime.datetime(...),
                             run_id='...',
                         )

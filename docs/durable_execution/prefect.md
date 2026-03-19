@@ -61,7 +61,7 @@ Any agent can be wrapped in a [`PrefectAgent`][pydantic_ai.durable_exec.prefect.
 * Wraps [tool calls](../tools.md) as Prefect tasks (configurable per-tool).
 * Wraps [MCP communication](../mcp/client.md) as Prefect tasks.
 
-Event stream handlers are **automatically wrapped** by Prefect when running inside a Prefect flow. Each event from the stream is processed in a separate Prefect task for durability. You can customize the task behavior using the `event_stream_handler_task_config` parameter when creating the `PrefectAgent`. Do **not** manually decorate event stream handlers with `@task`. For examples, see the [streaming docs](../agents.md#streaming-all-events)
+Event stream handlers are **automatically wrapped** by Prefect when running inside a Prefect flow. Each event from the stream is processed in a separate Prefect task for durability. You can customize the task behavior using the `event_stream_handler_task_config` parameter when creating the `PrefectAgent`. Do **not** manually decorate event stream handlers with `@task`. For examples, see the [streaming docs](../agent.md#streaming-all-events)
 
 The original agent, model, and MCP server can still be used as normal outside the Prefect flow.
 
@@ -82,7 +82,7 @@ from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent
 
 agent = Agent(
-    'gpt-5',
+    'gpt-5.2',
     instructions="You're an expert in geography.",
     name='geography',  # (1)!
 )
@@ -125,7 +125,7 @@ You can customize tool task behavior using `tool_task_config` (applies to all to
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent, TaskConfig
 
-agent = Agent('gpt-5', name='my_agent')
+agent = Agent('gpt-5.2', name='my_agent')
 
 @agent.tool_plain
 def fetch_data(url: str) -> str:
@@ -154,7 +154,7 @@ For real-time streaming behavior inside Prefect flows, you can set an [`event_st
 - **Outside a flow**: The handler receives events as they stream from the model
 - **Inside a flow**: Each event is wrapped as a Prefect task for durability, which may affect timing but ensures reliability
 
-The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agents.md#streaming-all-events).
+The event stream handler function will receive the agent [run context][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 ## Task Configuration
 
@@ -183,7 +183,7 @@ from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent, TaskConfig
 
 agent = Agent(
-    'gpt-5',
+    'gpt-5.2',
     instructions="You're an expert in geography.",
     name='geography',
 )
@@ -260,7 +260,7 @@ from pydantic_ai.durable_exec.prefect import PrefectAgent
 async def daily_report_flow(user_prompt: str):
     """Generate a daily report using the agent."""
     agent = Agent(  # (1)!
-        'openai:gpt-5',
+        'openai:gpt-5.2',
         name='daily_report_agent',
         instructions='Generate a daily summary report.',
     )

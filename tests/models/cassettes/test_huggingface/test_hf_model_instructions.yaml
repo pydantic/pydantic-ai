@@ -1,120 +1,85 @@
 interactions:
 - request:
-    body: null
     headers:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-    method: GET
-    uri: https://huggingface.co/api/models/Qwen/Qwen2.5-72B-Instruct?expand=inferenceProviderMapping
-  response:
-    headers:
-      access-control-allow-origin:
-      - https://huggingface.co
-      access-control-expose-headers:
-      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '701'
+      - '252'
       content-type:
-      - application/json; charset=utf-8
-      cross-origin-opener-policy:
-      - same-origin
-      etag:
-      - W/"2bd-diYmxjldwbIbFgWNRPBqJ3SEIak"
-      referrer-policy:
-      - strict-origin-when-cross-origin
-      vary:
-      - Origin
-    parsed_body:
-      _id: 66e81cefd1b1391042d0e47e
-      id: Qwen/Qwen2.5-72B-Instruct
-      inferenceProviderMapping:
-        featherless-ai:
-          providerId: Qwen/Qwen2.5-72B-Instruct
-          status: live
-          task: conversational
-        fireworks-ai:
-          providerId: accounts/fireworks/models/qwen2p5-72b-instruct
-          status: live
-          task: conversational
-        hyperbolic:
-          providerId: Qwen/Qwen2.5-72B-Instruct
-          status: live
-          task: conversational
-        nebius:
-          providerId: Qwen/Qwen2.5-72B-Instruct-fast
-          status: live
-          task: conversational
-        novita:
-          providerId: qwen/qwen-2.5-72b-instruct
-          status: live
-          task: conversational
-        together:
-          providerId: Qwen/Qwen2.5-72B-Instruct-Turbo
-          status: live
-          task: conversational
-    status:
-      code: 200
-      message: OK
-- request:
-    body: null
-    headers: {}
+      - application/json
+      host:
+      - router.huggingface.co
     method: POST
-    uri: https://router.huggingface.co/nebius/v1/chat/completions
+    parsed_body:
+      messages:
+      - content: You are a helpful assistant.
+        name: null
+        role: system
+        tool_calls: null
+      - content: What is the capital of France?
+        name: null
+        role: user
+        tool_calls: null
+      model: deepseek-ai/DeepSeek-R1
+      stream: false
+      tools: []
+    uri: https://router.huggingface.co/together/v1/chat/completions
   response:
     headers:
-      access-control-allow-credentials:
-      - 'true'
       access-control-allow-origin:
       - '*'
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
       connection:
       - keep-alive
-      content-length:
-      - '560'
       content-type:
-      - application/json
+      - application/json; charset=utf-8
       cross-origin-opener-policy:
       - same-origin
+      etag:
+      - W/"5db-UY0oV4/lBWbyWNjwPWmfk1IQDeE"
       referrer-policy:
       - strict-origin-when-cross-origin
+      retry-after:
+      - '13'
       strict-transport-security:
-      - max-age=31536000; includeSubDomains
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
       vary:
-      - Origin
+      - Accept-Encoding
     parsed_body:
       choices:
       - finish_reason: stop
         index: 0
         logprobs: null
         message:
-          audio: null
-          content: Paris
-          function_call: null
-          reasoning_content: null
-          refusal: null
+          content: "<think>\nOkay, the user is asking about the capital of France. That's a straightforward geography question.
+            \n\nHmm, I recall that Paris is the capital--it's one of those basic facts everyone learns in school. The user
+            might be a student doing homework, a traveler planning a trip, or just someone confirming a trivia detail. Since
+            the question is simple, they probably want a quick, clear answer without extra fluff. \n\nBut wait--should I add
+            more context? Like how Paris is also France's cultural and economic hub? Nah, the query doesn't hint at needing
+            depth. Over-explaining might annoy them. Keep it concise: \"Paris\" plus a tiny assurance (\"That's correct!\")
+            to sound friendly. \n\n...Though if they follow up, I could mention the Seine River or the Eiffel Tower. For now,
+            brevity wins.\n</think>\nThe capital of France is **Paris**.  \n\nThat's correct! Paris is not only the political
+            center but also the cultural, economic, and historical heart of France. \U0001F1EB\U0001F1F7"
           role: assistant
           tool_calls: []
-        stop_reason: null
-      created: 1751470757
-      id: chatcmpl-b3936940372c481b8d886e596dc75524
-      model: Qwen/Qwen2.5-72B-Instruct-fast
+        seed: 5844196810245229000
+      created: 1769546597
+      id: oV1mrRW-28Eivz-9c4b14db295620a5
+      model: deepseek-ai/DeepSeek-R1
       object: chat.completion
-      prompt_logprobs: null
-      service_tier: null
-      system_fingerprint: null
+      prompt: []
       usage:
-        completion_tokens: 2
-        completion_tokens_details: null
-        prompt_tokens: 26
-        prompt_tokens_details: null
-        total_tokens: 28
+        cached_tokens: 0
+        completion_tokens: 216
+        prompt_tokens: 16
+        total_tokens: 232
     status:
       code: 200
       message: OK

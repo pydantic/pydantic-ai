@@ -1,7 +1,7 @@
 # Graphs
 
 !!! danger "Don't use a nail gun unless you need a nail gun"
-    If Pydantic AI [agents](agents.md) are a hammer, and [multi-agent workflows](multi-agent-applications.md) are a sledgehammer, then graphs are a nail gun:
+    If Pydantic AI [agents](agent.md) are a hammer, and [multi-agent workflows](multi-agent-applications.md) are a sledgehammer, then graphs are a nail gun:
 
     * sure, nail guns look cooler than hammers
     * but nail guns take a lot more setup than hammers
@@ -383,7 +383,7 @@ class State:
 
 
 email_writer_agent = Agent(
-    'google-gla:gemini-2.5-pro',
+    'google-gla:gemini-3-pro-preview',
     output_type=Email,
     instructions='Write a welcome email to our tech blog.',
 )
@@ -423,7 +423,7 @@ class EmailOk(BaseModel):
 
 
 feedback_agent = Agent[None, EmailRequiresWrite | EmailOk](
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=EmailRequiresWrite | EmailOk,  # type: ignore
     instructions=(
         'Review the email and provide feedback, email must reference the users specific interests.'
@@ -663,7 +663,7 @@ from pydantic_graph import (
 from pydantic_ai import Agent, format_as_xml
 from pydantic_ai import ModelMessage
 
-ask_agent = Agent('openai:gpt-5', output_type=str, instrument=True)
+ask_agent = Agent('openai:gpt-5.2', output_type=str, instrument=True)
 
 
 @dataclass
@@ -706,7 +706,7 @@ class EvaluationResult(BaseModel, use_attribute_docstrings=True):
 
 
 evaluate_agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=EvaluationResult,
     instructions='Given a question and answer, evaluate if the answer is correct.',
 )
@@ -906,7 +906,7 @@ from typing import Annotated
 
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext, Edge
 
-ask_agent = Agent('openai:gpt-5', output_type=str, instrument=True)
+ask_agent = Agent('openai:gpt-5.2', output_type=str, instrument=True)
 
 
 @dataclass
@@ -949,7 +949,7 @@ class EvaluationResult(BaseModel, use_attribute_docstrings=True):
 
 
 evaluate_agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     output_type=EvaluationResult,
     instructions='Given a question and answer, evaluate if the answer is correct.',
 )

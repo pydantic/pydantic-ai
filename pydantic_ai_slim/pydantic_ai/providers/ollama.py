@@ -42,7 +42,8 @@ class OllamaProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         prefix_to_profile = {
             'llama': meta_model_profile,
             'gemma': google_model_profile,
@@ -65,7 +66,8 @@ class OllamaProvider(Provider[AsyncOpenAI]):
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_thinking_field='reasoning',
-            openai_chat_send_back_thinking_parts='tags',
+            supports_json_schema_output=True,
+            supports_json_object_output=True,
         ).update(profile)
 
     def __init__(

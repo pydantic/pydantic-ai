@@ -1,0 +1,173 @@
+name: PR Guard
+
+on:
+  pull_request_target:
+    types: [opened, ready_for_review, edited]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: pr-guard-${{ github.event.pull_request.number }}
+
+jobs:
+  guard:
+    name: Guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check linked issues and guard against duplicates
+        run: |
+          set -euo pipefail
+
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          PR_AUTHOR="${{ github.event.pull_request.user.login }}"
+          AUTHOR_ASSOCIATION="${{ github.event.pull_request.author_association }}"
+          PR_BODY=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""')
+
+          echo "PR #${PR_NUMBER} by ${PR_AUTHOR} (${AUTHOR_ASSOCIATION})"
+
+          # Skip draft PRs — authors may create drafts to save progress
+          if [ "${{ github.event.pull_request.draft }}" = "true" ]; then
+            echo "PR is a draft, skipping checks."
+            exit 0
+          fi
+
+          # Maintainer bypass
+          if [[ "$AUTHOR_ASSOCIATION" == "MEMBER" || "$AUTHOR_ASSOCIATION" == "OWNER" || "$AUTHOR_ASSOCIATION" == "COLLABORATOR" ]]; then
+            echo "Author is a maintainer/collaborator, skipping checks."
+            exit 0
+          fi
+
+          # Parse closing keywords from PR body
+          # GitHub recognizes: close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved
+          # Case-insensitive, with optional leading - or *
+          ISSUE_NUMBERS=$(printf '%s\n' "$PR_BODY" | grep -ioE '(^|\s|[-*]\s*)(close[sd]?|fix(es|ed)?|resolve[sd]?)\s+#[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
+
+          if [ -z "$ISSUE_NUMBERS" ]; then
+            echo "No closing keywords found in PR body."
+            exit 0
+          fi
+
+          echo "Found linked issues: $ISSUE_NUMBERS"
+
+          # Helper: attempt to assign a user to an issue.
+          # GitHub silently ignores assignees who lack push access (returns 201 but doesn't add them).
+          # We check assignability first via GET /repos/{owner}/{repo}/assignees/{user} (204 = yes, 404 = no).
+          try_assign() {
+            local issue_num="$1"
+            local user="$2"
+            if gh api "repos/${REPO}/assignees/${user}" > /dev/null 2>&1; then
+              gh api "repos/${REPO}/issues/${issue_num}/assignees" --method POST -f "assignees[]=${user}" > /dev/null
+              echo "Assigned ${user} to issue #${issue_num}."
+              return 0
+            else
+              echo "Cannot assign ${user} to issue #${issue_num} (user is not assignable to this repo)."
+              return 1
+            fi
+          }
+
+          # Fetch all open PRs once upfront (the list endpoint includes body and labels).
+          # Done outside the loop to avoid repeated paginated calls when multiple issues are referenced.
+          ALL_OPEN_PRS=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate) || ALL_OPEN_PRS="[]"
+
+          FOUND_OPEN_ISSUE="false"
+          FOUND_CLOSED_ISSUE="false"
+          for ISSUE_NUM in $ISSUE_NUMBERS; do
+            echo ""
+            echo "--- Checking issue #${ISSUE_NUM} ---"
+
+            # Fetch issue details, skip if not found (gh api exits non-zero on 404)
+            if ! ISSUE_JSON=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" 2>/dev/null); then
+              echo "Issue #${ISSUE_NUM} not found, skipping."
+              continue
+            fi
+
+            # Skip if this is actually a pull request
+            IS_PR=$(echo "$ISSUE_JSON" | jq 'has("pull_request")')
+            if [ "$IS_PR" = "true" ]; then
+              echo "#${ISSUE_NUM} is a pull request, not an issue. Skipping."
+              continue
+            fi
+
+            # Skip closed issues — duplicate check only applies to open issues
+            ISSUE_STATE=$(echo "$ISSUE_JSON" | jq -r '.state')
+            if [ "$ISSUE_STATE" != "open" ]; then
+              echo "Issue #${ISSUE_NUM} is ${ISSUE_STATE}, skipping."
+              FOUND_CLOSED_ISSUE="true"
+              continue
+            fi
+
+            FOUND_OPEN_ISSUE="true"
+
+            # Check for duplicate/blocking PRs first — this must run regardless of assignment outcome.
+            # Look for any other open PR (excluding this one) that references this issue.
+            echo "Checking for existing PRs targeting issue #${ISSUE_NUM}..."
+
+            BLOCKING_PRS=""
+            FOUND_STALE_PR="false"
+            MATCHING_PRS=$(echo "$ALL_OPEN_PRS" | jq -c "[.[] | select(.number != ${PR_NUMBER} and (.body // \"\" | test(\"(?i)\\\\b(close[sd]?|fix(es|ed)?|resolve[sd]?)\\\\s+#${ISSUE_NUM}(\\\\s|$|[^0-9])\")))] | .[]")
+
+            while IFS= read -r PR_JSON; do
+              [ -z "$PR_JSON" ] && continue
+              EXISTING_PR_NUM=$(echo "$PR_JSON" | jq -r '.number')
+              EXISTING_PR_AUTHOR=$(echo "$PR_JSON" | jq -r '.user.login')
+              echo "Found PR #${EXISTING_PR_NUM} by ${EXISTING_PR_AUTHOR} that references issue #${ISSUE_NUM}."
+
+              # Check if the existing PR has the Stale label
+              HAS_STALE=$(echo "$PR_JSON" | jq '[.labels[].name] | any(. == "Stale")')
+              if [ "$HAS_STALE" = "true" ]; then
+                echo "PR #${EXISTING_PR_NUM} is stale. Allowing new PR to supersede."
+                FOUND_STALE_PR="true"
+                continue
+              fi
+
+              # Collect all non-stale blocking PRs
+              if [ -z "$BLOCKING_PRS" ]; then
+                BLOCKING_PRS="#${EXISTING_PR_NUM}"
+              else
+                BLOCKING_PRS="${BLOCKING_PRS}, #${EXISTING_PR_NUM}"
+              fi
+            done <<< "$MATCHING_PRS"
+
+            if [ -n "$BLOCKING_PRS" ]; then
+              echo "Closing PR #${PR_NUMBER} — issue #${ISSUE_NUM} already has active PRs: ${BLOCKING_PRS}"
+
+              COMMENT=$(printf '%s\n\n%s\n\n%s' \
+                "Thanks for your interest in this issue! However, there are already open PRs addressing issue #${ISSUE_NUM}: ${BLOCKING_PRS}." \
+                "To avoid duplicate efforts, this PR has been closed. If you'd like to contribute, you can review the existing PRs or share your thoughts on [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM})." \
+                "If you believe the existing PRs are inactive, please comment on the issue and a maintainer can reassess.")
+              gh pr close "$PR_NUMBER" --repo "$REPO"
+              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT" || true
+              exit 0
+            fi
+
+            if [ "$FOUND_STALE_PR" = "true" ]; then
+              echo "All existing PRs for issue #${ISSUE_NUM} are stale. Allowing new PR."
+            fi
+
+            # Now handle assignment (best-effort, does not gate duplicate check above)
+            ASSIGNEES=$(echo "$ISSUE_JSON" | jq -r '[.assignees[].login] | join(",")')
+            echo "Current assignees: ${ASSIGNEES:-none}"
+
+            if [ -z "$ASSIGNEES" ]; then
+              # No assignee — attempt to assign PR author (may fail if user lacks push access)
+              try_assign "$ISSUE_NUM" "$PR_AUTHOR" || true
+            elif echo ",$ASSIGNEES," | grep -q ",${PR_AUTHOR},"; then
+              echo "Issue #${ISSUE_NUM} is already assigned to ${PR_AUTHOR}."
+            else
+              echo "Issue #${ISSUE_NUM} is assigned to someone else. Leaving assignment as-is for maintainers to review."
+            fi
+          done
+
+          # If we found closed issues but no open ones, close the PR
+          if [ "$FOUND_CLOSED_ISSUE" = "true" ] && [ "$FOUND_OPEN_ISSUE" = "false" ]; then
+            echo "All referenced issues are closed. Closing PR."
+            gh pr close "$PR_NUMBER" --repo "$REPO"
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "All issues referenced by this PR are already closed. If you believe an issue should be reopened, please comment on it first." || true
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}

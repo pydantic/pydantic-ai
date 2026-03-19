@@ -4,15 +4,15 @@ import base64
 import datetime
 import json
 import os
+import random
 import re
 import tempfile
 from collections.abc import AsyncIterator
 from datetime import date, timezone
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from httpx import AsyncClient as HttpxAsyncClient, Timeout
-from inline_snapshot import Is, snapshot
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
@@ -69,25 +69,34 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    UploadedFile,
 )
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
+from .._inline_snapshot import Is, snapshot
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
     from google.genai import errors
     from google.genai.types import (
+        BlockedReason,
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
+        GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
         HarmBlockThreshold,
         HarmCategory,
+        HarmProbability,
+        LogprobsResult,
+        LogprobsResultCandidate,
+        LogprobsResultTopCandidates,
         MediaModality,
         ModalityTokenCount,
+        SafetyRating,
     )
 
     from pydantic_ai.models.google import (
@@ -101,7 +110,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
-if not imports_successful():
+if not imports_successful():  # pragma: lax no cover
     # Define placeholder errors module so parametrize decorators can be parsed
     from types import SimpleNamespace
 
@@ -847,7 +856,9 @@ It looks like someone is either reviewing footage on the monitor, or using it as
 """)
 
 
-async def test_google_model_image_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_image_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -860,7 +871,9 @@ async def test_google_model_image_url_input(allow_model_requests: None, google_p
     assert result.output == snapshot('That is a potato.')
 
 
-async def test_google_model_video_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_video_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -883,6 +896,21 @@ In summary, it looks like the image shows a camera setup, perhaps in the process
 """)
 
 
+async def test_google_model_youtube_video_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, instructions='You are a helpful chatbot.')
+
+    result = await agent.run(
+        [
+            'Explain me this video in a few sentences',
+            VideoUrl(url='https://youtu.be/lCdaVNyHtjU'),
+        ]
+    )
+    assert result.output == snapshot(
+        'This video demonstrates using an AI agent to analyze recent 404 HTTP responses from a service. The user asks the agent, "Logfire," to identify patterns in these errors. The agent then queries a Logfire database, extracts relevant information like URL paths, HTTP methods, and timestamps, and presents a detailed analysis covering common error-prone endpoints, request patterns, timeline-related issues, and potential configuration or authentication problems. Finally, it offers a list of actionable recommendations to address these issues.'
+    )
+
+
 async def test_google_model_youtube_video_url_input_with_vendor_metadata(
     allow_model_requests: None, google_provider: GoogleProvider
 ):
@@ -891,7 +919,7 @@ async def test_google_model_youtube_video_url_input_with_vendor_metadata(
 
     result = await agent.run(
         [
-            'Explain me this video',
+            'Explain me this video in a few sentences',
             VideoUrl(
                 url='https://youtu.be/lCdaVNyHtjU',
                 vendor_metadata={'fps': 0.2},
@@ -899,17 +927,15 @@ async def test_google_model_youtube_video_url_input_with_vendor_metadata(
         ]
     )
     assert result.output == snapshot("""\
-Okay, based on the image, here's what I can infer:
+Sure, here is a summary of the video in a few sentences.
 
-*   **A camera monitor is mounted on top of a camera.**
-*   **The monitor's screen is on, displaying a view of the rocky mountains.**
-*   **This setting suggests a professional video shoot.**
-
-If you'd like a more detailed explanation, please provide additional information about the video.\
+The video is an AI analyzing recent 404 HTTP responses using Logfire. It identifies several patterns such as the most common endpoints with 404 errors, request patterns, timeline-related issues, organization/project access issues, and configuration/authentication issues. Based on the analysis, it provides several recommendations, including verifying the platform-config endpoint is properly configured, checking organization and project permissions, and investigating timeline requests.\
 """)
 
 
-async def test_google_model_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_document_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -919,7 +945,9 @@ async def test_google_model_document_url_input(allow_model_requests: None, googl
     assert result.output == snapshot('The document appears to be a dummy PDF file.\n')
 
 
-async def test_google_model_text_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_text_document_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
+):
     m = GoogleModel('gemini-2.0-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful chatbot.')
 
@@ -2000,6 +2028,34 @@ How can I help you today?\
 """)
 
 
+async def test_google_instructions_only_with_tool_calls(allow_model_requests: None, google_provider: GoogleProvider):
+    """Test that tools work when using instructions-only without a user prompt.
+
+    This tests the fix for https://github.com/pydantic/pydantic-ai/issues/3692 where the second
+    request (after tool results) would fail because contents started with role=model instead of
+    role=user. The fix prepends an empty user turn when the first content is a model response.
+    """
+    m = GoogleModel('gemini-3-flash-preview', provider=google_provider)
+    agent: Agent[None, list[str]] = Agent(m, output_type=list[str])
+
+    @agent.instructions
+    def agent_instructions() -> str:
+        return 'Tell three jokes. Generate topics with the generate_topic tool.'
+
+    @agent.tool_plain
+    def generate_topic() -> str:
+        return random.choice(('cars', 'penguins', 'golf'))
+
+    result = await agent.run()
+    assert result.output == snapshot(
+        [
+            'What kind of car does a sheep drive? A Lamborghini!',
+            "Why don't you see penguins in Great Britain? Because they're afraid of Wales!",
+            'What happened when the wheel was invented? It caused a revolution!',
+        ]
+    )
+
+
 async def test_google_model_empty_assistant_response(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(m)
@@ -2491,7 +2547,7 @@ async def test_google_url_input(
 )
 @pytest.mark.vcr()
 async def test_google_url_input_force_download(
-    allow_model_requests: None, vertex_provider: GoogleProvider
+    allow_model_requests: None, vertex_provider: GoogleProvider, disable_ssrf_protection_for_vcr: None
 ) -> None:  # pragma: lax no cover
     m = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     agent = Agent(m)
@@ -2536,7 +2592,7 @@ async def test_google_gs_url_force_download_raises_user_error(allow_model_reques
     agent = Agent(m)
 
     url = ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png', force_download=True)
-    with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported.'):
+    with pytest.raises(ValueError, match='URL protocol "gs" is not allowed'):
         _ = await agent.run(['What is the main content of this URL?', url])
 
 
@@ -2631,6 +2687,31 @@ async def test_google_timeout(allow_model_requests: None, google_provider: Googl
 
     with pytest.raises(UserError, match='Google does not support setting ModelSettings.timeout to a httpx.Timeout'):
         await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
+
+
+async def test_google_extra_headers(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    agent = Agent(m, model_settings=GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))
+    result = await agent.run('Hello')
+    assert result.output == snapshot('Hello there! How can I help you today?\n')
+
+
+async def test_google_extra_headers_in_config(allow_model_requests: None):
+    m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model_settings = GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'})
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=model_settings,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    # Cast to work around GenerateContentConfigDict having partially unknown types
+    # (same pattern as google.py:308)
+    config_dict = cast(dict[str, Any], config)
+    headers = config_dict['http_options']['headers']
+    assert headers['Extra-Header-Key'] == 'Extra-Header-Value'
+    assert headers['Content-Type'] == 'application/json'
 
 
 async def test_google_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
@@ -3566,7 +3647,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Please return text or call a tool.',
+                        content='Please return text.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -3890,7 +3971,9 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
     }
 
 
-async def test_google_vertexai_image_generation(allow_model_requests: None, vertex_provider: GoogleProvider):
+async def test_google_vertexai_image_generation(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
     model = GoogleModel('gemini-2.5-flash-image', provider=vertex_provider)
 
     agent = Agent(model, output_type=BinaryImage)
@@ -4726,6 +4809,91 @@ async def test_cache_point_filtering():
     assert content[1] == {'text': 'text after'}
 
 
+async def test_uploaded_file_mapping():
+    """Test that UploadedFile is correctly mapped to file_data in Google model."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/abc123'
+    content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(content=['Analyze this file', UploadedFile(file_id=file_uri, provider_name='google-gla')])
+    )
+
+    assert len(content) == 2
+    assert content[0] == {'text': 'Analyze this file'}
+    assert content[1] == {'file_data': {'file_uri': file_uri, 'mime_type': 'application/octet-stream'}}
+
+
+async def test_uploaded_file_mapping_with_media_type():
+    """Test that UploadedFile with media_type is correctly mapped."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/xyz789'
+    content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(
+            content=[UploadedFile(file_id=file_uri, provider_name='google-gla', media_type='application/pdf')]
+        )
+    )
+
+    assert len(content) == 1
+    assert content[0] == {'file_data': {'file_uri': file_uri, 'mime_type': 'application/pdf'}}
+
+
+async def test_uploaded_file_wrong_provider(allow_model_requests: None):
+    """Test that UploadedFile with wrong provider raises an error in GoogleModel."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with GoogleModel"):
+        await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
+
+
+async def test_uploaded_file_invalid_file_id(allow_model_requests: None):
+    """Test that UploadedFile with a non-URI file_id raises an error in GoogleModel."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='must use a file URI from the Google Files API'):
+        await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='google-gla')])
+
+
+async def test_uploaded_file_with_vendor_metadata():
+    """Test that UploadedFile with vendor_metadata includes video_metadata."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/video123'
+    content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(
+            content=[
+                UploadedFile(
+                    file_id=file_uri,
+                    provider_name='google-gla',
+                    media_type='video/mp4',
+                    vendor_metadata={'start_offset': '10s', 'end_offset': '30s'},
+                )
+            ]
+        )
+    )
+
+    assert len(content) == 1
+    assert content[0] == {
+        'file_data': {'file_uri': file_uri, 'mime_type': 'video/mp4'},
+        'video_metadata': {'start_offset': '10s', 'end_offset': '30s'},
+    }
+
+
+async def test_youtube_video_url_without_vendor_metadata():
+    """Test that YouTube VideoUrl without vendor_metadata doesn't include video_metadata."""
+    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    video = VideoUrl(url='https://youtu.be/dQw4w9WgXcQ', media_type='video/mp4')  # No vendor_metadata
+    content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
+
+    assert len(content) == 1
+    # Should NOT have 'video_metadata' key when vendor_metadata is None
+    assert 'video_metadata' not in content[0]
+    assert content[0] == {'file_data': {'file_uri': 'https://youtu.be/dQw4w9WgXcQ', 'mime_type': 'video/mp4'}}
+
+
 # =============================================================================
 # GCS VideoUrl tests for google-vertex
 #
@@ -4763,6 +4931,7 @@ async def test_gcs_video_url_raises_error_on_google_gla():
 
     google-gla cannot access GCS buckets, so attempting to use gs:// URLs
     should fail with a helpful error message rather than a cryptic API error.
+    SSRF protection now catches non-http(s) protocols first.
     """
     model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
     # google-gla is the default for GoogleProvider with api_key, but be explicit
@@ -4770,7 +4939,7 @@ async def test_gcs_video_url_raises_error_on_google_gla():
 
     video = VideoUrl(url='gs://bucket/video.mp4')
 
-    with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported'):
+    with pytest.raises(ValueError, match='URL protocol "gs" is not allowed'):
         await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
 
 
@@ -4822,6 +4991,47 @@ async def test_http_video_url_uses_file_uri_on_google_vertex(mocker: MockerFixtu
         'file_data': {'file_uri': 'https://example.com/video.mp4', 'mime_type': 'video/mp4'},
         'video_metadata': {'start_offset': '10s', 'end_offset': '20s'},
     }
+
+
+# =============================================================================
+# _map_file_to_function_response_part tests for tool returns on Vertex
+#
+# These tests cover the FunctionResponsePartDict mapping for Gemini 3+ native
+# tool returns on google-vertex, which uses file_data for URLs instead of
+# downloading (unlike _map_file_to_part which is for user prompts).
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    'file_url,expected',
+    [
+        pytest.param(
+            VideoUrl(url='https://youtu.be/lCdaVNyHtjU'),
+            {'file_data': {'file_uri': 'https://youtu.be/lCdaVNyHtjU', 'mime_type': 'video/mp4'}},
+            id='youtube',
+        ),
+        pytest.param(
+            VideoUrl(url='gs://bucket/video.mp4'),
+            {'file_data': {'file_uri': 'gs://bucket/video.mp4', 'mime_type': 'video/mp4'}},
+            id='gcs',
+        ),
+        pytest.param(
+            ImageUrl(url='https://example.com/image.png'),
+            {'file_data': {'file_uri': 'https://example.com/image.png', 'mime_type': 'image/png'}},
+            id='http_file_url',
+        ),
+    ],
+)
+async def test_file_url_in_tool_return_on_vertex(
+    mocker: MockerFixture, file_url: VideoUrl | ImageUrl, expected: dict[str, Any]
+):
+    """Test file URLs use file_data (not download) in tool returns on Vertex."""
+    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
+
+    result = await model._map_file_to_function_response_part(file_url)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == expected
 
 
 async def test_thinking_with_tool_calls_from_other_model(
@@ -5017,6 +5227,133 @@ async def test_google_api_non_http_error(
         await agent.run('This prompt will trigger the mocked error.')
 
     assert exc_info.value.model_name == 'gemini-1.5-flash'
+
+
+@pytest.mark.parametrize(
+    'error_class,error_response,expected_status',
+    [
+        (
+            errors.ServerError,
+            {'error': {'code': 503, 'message': 'The service is currently unavailable.', 'status': 'UNAVAILABLE'}},
+            503,
+        ),
+        (
+            errors.ClientError,
+            {'error': {'code': 429, 'message': 'Rate limit exceeded', 'status': 'RESOURCE_EXHAUSTED'}},
+            429,
+        ),
+    ],
+)
+async def test_google_stream_api_errors_are_wrapped(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+    error_class: Any,
+    error_response: dict[str, Any],
+    expected_status: int,
+):
+    """Errors raised during stream iteration should be wrapped as ModelHTTPError, not bubble up raw."""
+    model_name = 'gemini-1.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    first_chunk = mocker.Mock(
+        candidates=[
+            mocker.Mock(
+                content=mocker.Mock(
+                    parts=[
+                        mocker.Mock(
+                            text='partial',
+                            thought=False,
+                            thought_signature=None,
+                            function_call=None,
+                            inline_data=None,
+                            executable_code=None,
+                            code_execution_result=None,
+                            function_response=None,
+                        )
+                    ]
+                ),
+                finish_reason=None,
+                safety_ratings=None,
+                grounding_metadata=None,
+                url_context_metadata=None,
+            )
+        ],
+        model_version=model_name,
+        usage_metadata=None,
+        create_time=datetime.datetime.now(),
+        response_id='resp_1',
+    )
+
+    async def failing_stream():
+        yield first_chunk
+        raise error_class(expected_status, error_response)
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=failing_stream())
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with agent.run_stream('test') as stream:
+            async for _text in stream.stream_text():
+                pass
+
+    assert exc_info.value.status_code == expected_status
+    assert error_response['error']['message'] in str(exc_info.value.body)
+
+
+async def test_google_stream_api_non_http_error_is_wrapped(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+):
+    """Non-HTTP API errors during stream iteration should be wrapped as ModelAPIError."""
+    model_name = 'gemini-1.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    first_chunk = mocker.Mock(
+        candidates=[
+            mocker.Mock(
+                content=mocker.Mock(
+                    parts=[
+                        mocker.Mock(
+                            text='partial',
+                            thought=False,
+                            thought_signature=None,
+                            function_call=None,
+                            inline_data=None,
+                            executable_code=None,
+                            code_execution_result=None,
+                            function_response=None,
+                        )
+                    ]
+                ),
+                finish_reason=None,
+                safety_ratings=None,
+                grounding_metadata=None,
+                url_context_metadata=None,
+            )
+        ],
+        model_version=model_name,
+        usage_metadata=None,
+        create_time=datetime.datetime.now(),
+        response_id='resp_1',
+    )
+
+    async def failing_stream():
+        yield first_chunk
+        raise errors.APIError(302, {'error': {'code': 302, 'message': 'Redirect', 'status': 'REDIRECT'}})
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=failing_stream())
+
+    agent = Agent(model=model)
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with agent.run_stream('test') as stream:
+            async for _text in stream.stream_text():
+                pass
+
+    assert exc_info.value.model_name == model_name
 
 
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
@@ -5343,7 +5680,8 @@ async def test_google_streaming_tool_call_thought_signature(
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
                     provider_details={'thought_signature': IsStr()},
-                )
+                ),
+                args_valid=True,
             ),
             FunctionToolResultEvent(
                 result=ToolReturnPart(
@@ -5479,7 +5817,7 @@ def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str
 async def test_google_splits_tool_return_from_user_prompt(google_provider: GoogleProvider):
     """Test that ToolReturnPart and UserPromptPart are split into separate content objects.
 
-    TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/3763 is resolved
+    TODO: Remove workaround when https://github.com/pydantic/pydantic-ai/issues/4210 is resolved
     """
     m = GoogleModel('gemini-2.5-flash', provider=google_provider)
 
@@ -5596,3 +5934,365 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
             }
         ]
     )
+
+
+async def test_google_prepends_empty_user_turn_when_first_content_is_model(google_provider: GoogleProvider):
+    """Test that an empty user turn is prepended when contents start with a model response.
+
+    This happens when there's a conversation history with a model response (containing tool calls)
+    followed by tool results, but no initial user prompt. The Gemini API requires that function
+    call turns come immediately after a user turn or function response turn.
+
+    See https://github.com/pydantic/pydantic-ai/issues/3692
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='generate_topic', args={}, tool_call_id='test_id'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='generate_topic', content='penguins', tool_call_id='test_id'),
+            ]
+        ),
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {'role': 'user', 'parts': [{'text': ''}]},
+            {
+                'role': 'model',
+                'parts': [
+                    {
+                        'function_call': {'name': 'generate_topic', 'args': {}, 'id': 'test_id'},
+                        'thought_signature': b'skip_thought_signature_validator',
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'function_response': {
+                            'name': 'generate_topic',
+                            'response': {'return_value': 'penguins'},
+                            'id': 'test_id',
+                        }
+                    },
+                ],
+            },
+        ]
+    )
+
+
+async def test_google_vertex_logprobs(allow_model_requests: None, vertex_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_logprobs=True, google_top_logprobs=5)
+    result = await agent.run('What is 2+2?', model_settings=settings)
+
+    messages = result.all_messages()
+    response = cast(ModelResponse, messages[-1])
+
+    assert result.output is not None
+    assert response.provider_details is not None
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'STOP',
+            'timestamp': IsDatetime(),
+            'logprobs': {
+                'chosen_candidates': [
+                    {'log_probability': -0.01972555, 'token': '2', 'token_id': 236778},
+                    {'log_probability': -0.006128676, 'token': ' +', 'token_id': 900},
+                    {'log_probability': -2.3844768e-07, 'token': ' ', 'token_id': 236743},
+                    {'log_probability': -2.3844768e-07, 'token': '2', 'token_id': 236778},
+                    {'log_probability': -0.018705286, 'token': ' =', 'token_id': 578},
+                    {'log_probability': -0.024863577, 'token': ' ', 'token_id': 236743},
+                    {'log_probability': -4.649037e-06, 'token': '4', 'token_id': 236812},
+                ],
+                'top_candidates': [
+                    {
+                        'candidates': [
+                            {'log_probability': -0.01972555, 'token': '2', 'token_id': 236778},
+                            {'log_probability': -4.1320033, 'token': '4', 'token_id': 236812},
+                            {'log_probability': -6.808355, 'token': 'Four', 'token_id': 26391},
+                            {'log_probability': -6.889938, 'token': '$', 'token_id': 236795},
+                            {'log_probability': -7.830156, 'token': '**', 'token_id': 1018},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'log_probability': -0.006128676, 'token': ' +', 'token_id': 900},
+                            {'log_probability': -5.1196923, 'token': '+', 'token_id': 236862},
+                            {'log_probability': -9.429066, 'token': ' plus', 'token_id': 2915},
+                            {'log_probability': -12.47383, 'token': ' increased', 'token_id': 4869},
+                            {'log_probability': -12.602639, 'token': ' add', 'token_id': 1138},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'log_probability': -2.3844768e-07, 'token': ' ', 'token_id': 236743},
+                            {'log_probability': -18.285292, 'token': '2', 'token_id': 236778},
+                            {'log_probability': -18.646221, 'token': ' \u200b\u200b', 'token_id': 21297},
+                            {'log_probability': -18.94063, 'token': ' N', 'token_id': 646},
+                            {'log_probability': -19.028633, 'token': ' an', 'token_id': 614},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'log_probability': -2.3844768e-07, 'token': '2', 'token_id': 236778},
+                            {'log_probability': -16.029083, 'token': '3', 'token_id': 236800},
+                            {'log_probability': -16.497353, 'token': '4', 'token_id': 236812},
+                            {'log_probability': -18.473116, 'token': '1', 'token_id': 236770},
+                            {'log_probability': -18.963243, 'token': '\n', 'token_id': 107},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'log_probability': -0.018705286, 'token': ' =', 'token_id': 578},
+                            {'log_probability': -4.2170067, 'token': ' equals', 'token_id': 14339},
+                            {'log_probability': -5.669649, 'token': ' is', 'token_id': 563},
+                            {'log_probability': -8.487247, 'token': ' equal', 'token_id': 4745},
+                            {'log_probability': -10.404134, 'token': ' равно', 'token_id': 59213},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'log_probability': -0.024863577, 'token': ' ', 'token_id': 236743},
+                            {'log_probability': -3.70766, 'token': ' **', 'token_id': 5213},
+                            {'log_probability': -14.454006, 'token': '**', 'token_id': 1018},
+                            {'log_probability': -14.490942, 'token': ' \u202b', 'token_id': 67184},
+                            {'log_probability': -14.820812, 'token': ' chemical', 'token_id': 7395},
+                        ]
+                    },
+                    {
+                        'candidates': [
+                            {'log_probability': -4.649037e-06, 'token': '4', 'token_id': 236812},
+                            {'log_probability': -13.0294285, 'token': '**', 'token_id': 1018},
+                            {'log_probability': -13.835171, 'token': '\n', 'token_id': 107},
+                            {'log_probability': -17.38563, 'token': 'けます', 'token_id': 141784},
+                            {'log_probability': -17.863365, 'token': ' **', 'token_id': 5213},
+                        ]
+                    },
+                ],
+            },
+            'avg_logprobs': -1.0858495576041085,
+        }
+    )
+
+
+async def test_google_vertex_logprobs_without_top_logprobs(allow_model_requests: None, vertex_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_logprobs=True)
+    result = await agent.run('What is 2+2?', model_settings=settings)
+
+    response = result.response
+
+    assert result.output is not None
+    assert response.provider_details is not None
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'STOP',
+            'timestamp': IsDatetime(),
+            'logprobs': {
+                'chosen_candidates': [
+                    {'log_probability': -0.0066939937, 'token': '2', 'token_id': 236778},
+                    {'log_probability': -0.0026399216, 'token': ' +', 'token_id': 900},
+                    {'log_probability': -3.5760596e-07, 'token': ' ', 'token_id': 236743},
+                    {'log_probability': -1.1922384e-07, 'token': '2', 'token_id': 236778},
+                    {'log_probability': -0.009400622, 'token': ' =', 'token_id': 578},
+                    {'log_probability': -0.03711015, 'token': ' ', 'token_id': 236743},
+                    {'log_probability': -4.529893e-06, 'token': '4', 'token_id': 236812},
+                ],
+                'top_candidates': None,
+            },
+            'avg_logprobs': -0.7161864553179059,
+        }
+    )
+
+
+async def test_google_vertex_logprobs_structure(
+    allow_model_requests: None,
+    vertex_provider: GoogleProvider,
+):
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_logprobs=True, google_top_logprobs=2)
+    result = await agent.run('Answer only with "Hello"', model_settings=settings)
+
+    response = result.response
+
+    assert result.output == snapshot('Hello')
+
+    assert response.provider_details is not None
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'STOP',
+            'timestamp': IsDatetime(),
+            'logprobs': {
+                'chosen_candidates': [{'log_probability': -1.0489701e-05, 'token': 'Hello', 'token_id': 9259}],
+                'top_candidates': [
+                    {
+                        'candidates': [
+                            {'log_probability': -1.0489701e-05, 'token': 'Hello', 'token_id': 9259},
+                            {'log_probability': -11.782881, 'token': '"', 'token_id': 236775},
+                        ]
+                    }
+                ],
+            },
+            'avg_logprobs': -11.512689590454102,
+        }
+    )
+
+
+async def test_google_vertex_logprobs_from_provider_details(
+    allow_model_requests: None,
+    vertex_provider: GoogleProvider,
+):
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model=model)
+
+    settings = GoogleModelSettings(google_logprobs=True, google_top_logprobs=2)
+    result = await agent.run('Answer only with "Hello"', model_settings=settings)
+
+    messages = result.all_messages()
+    response = cast(ModelResponse, messages[-1])
+
+    assert response.provider_details is not None
+    logprobs = LogprobsResult(**response.provider_details['logprobs'])
+    assert logprobs == snapshot(
+        LogprobsResult(
+            chosen_candidates=[LogprobsResultCandidate(log_probability=-6.7947026e-06, token='Hello', token_id=9259)],
+            top_candidates=[
+                LogprobsResultTopCandidates(
+                    candidates=[
+                        LogprobsResultCandidate(log_probability=-6.7947026e-06, token='Hello', token_id=9259),
+                        LogprobsResultCandidate(log_probability=-12.196156, token='"', token_id=236775),
+                    ]
+                )
+            ],
+        )
+    )
+
+
+def _make_prompt_feedback(*, with_details: bool) -> GenerateContentResponsePromptFeedback:
+    """Create a prompt_feedback with block_reason, optionally with message and safety_ratings."""
+    if with_details:
+        return GenerateContentResponsePromptFeedback(
+            block_reason=BlockedReason.PROHIBITED_CONTENT,
+            block_reason_message='The prompt was blocked.',
+            safety_ratings=[
+                SafetyRating(
+                    category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    probability=HarmProbability.HIGH,
+                    blocked=True,
+                )
+            ],
+        )
+    return GenerateContentResponsePromptFeedback(
+        block_reason=BlockedReason.PROHIBITED_CONTENT,
+    )
+
+
+@pytest.mark.parametrize('with_details', [True, False])
+async def test_google_prompt_feedback_non_streaming(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture, with_details: bool
+):
+    """Test that prompt_feedback with block_reason raises ContentFilterError when candidates are empty."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    response = GenerateContentResponse(
+        candidates=[],
+        prompt_feedback=_make_prompt_feedback(with_details=with_details),
+        response_id='resp_123',
+        model_version=model_name,
+        create_time=datetime.datetime.now(),
+    )
+
+    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        ContentFilterError, match="Content filter triggered. Block reason: 'PROHIBITED_CONTENT'"
+    ) as exc_info:
+        await agent.run('prohibited content')
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['block_reason'] == 'PROHIBITED_CONTENT'
+    if with_details:
+        assert response_msg['provider_details']['block_reason_message'] == 'The prompt was blocked.'
+        assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
+        assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
+        assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True
+
+
+@pytest.mark.parametrize('with_details', [True, False])
+async def test_google_prompt_feedback_streaming(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture, with_details: bool
+):
+    """Test that prompt_feedback with block_reason raises ContentFilterError in streaming mode."""
+    model_name = 'gemini-2.5-flash'
+    model = GoogleModel(model_name, provider=google_provider)
+
+    chunks: list[GenerateContentResponse] = []
+
+    if not with_details:
+        # Include a chunk with no candidates and no block_reason to cover that branch
+        chunks.append(
+            GenerateContentResponse(
+                candidates=[],
+                model_version=model_name,
+                response_id='resp_123',
+                prompt_feedback=GenerateContentResponsePromptFeedback(),
+            )
+        )
+
+    chunks.append(
+        GenerateContentResponse(
+            candidates=[],
+            model_version=model_name,
+            response_id='resp_123',
+            prompt_feedback=_make_prompt_feedback(with_details=with_details),
+        )
+    )
+
+    async def stream_iterator():
+        for c in chunks:
+            yield c
+
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
+
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        ContentFilterError, match="Content filter triggered. Block reason: 'PROHIBITED_CONTENT'"
+    ) as exc_info:
+        async with agent.run_stream('prohibited content'):
+            pass
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['block_reason'] == 'PROHIBITED_CONTENT'
+    if with_details:
+        assert response_msg['provider_details']['block_reason_message'] == 'The prompt was blocked.'
+        assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_DANGEROUS_CONTENT'
+        assert response_msg['provider_details']['safety_ratings'][0]['probability'] == 'HIGH'
+        assert response_msg['provider_details']['safety_ratings'][0]['blocked'] is True

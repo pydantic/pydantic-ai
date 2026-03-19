@@ -8,15 +8,16 @@ Pydantic Evals is built around these core concepts:
 
 - **[`Dataset`][pydantic_evals.dataset.Dataset]** - A static definition containing test cases and evaluators
 - **[`Case`][pydantic_evals.dataset.Case]** - A single test scenario with inputs and optional expected outputs
-- **[`Evaluator`][pydantic_evals.evaluators.Evaluator]** - Logic for scoring or validating outputs
+- **[`Evaluator`][pydantic_evals.evaluators.Evaluator]** - Logic for scoring or validating individual outputs
+- **[`ReportEvaluator`][pydantic_evals.evaluators.ReportEvaluator]** - Logic for analyzing full experiment results (e.g., confusion matrices, accuracy)
 - **Experiment** - The act of running a task function against all cases in a dataset. (This corresponds to a call to `Dataset.evaluate`.)
 - **[`EvaluationReport`][pydantic_evals.reporting.EvaluationReport]** - The results from running an experiment
 
 The key distinction is between:
 
-- **Definition** (`Dataset` with `Case`s and `Evaluator`s) - what you want to test
+- **Definition** (`Dataset` with `Case`s, `Evaluator`s, and `ReportEvaluator`s) - what you want to test
 - **Execution** (Experiment) - running your task against those tests
-- **Results** (`EvaluationReport`) - what happened during the experiment
+- **Results** (`EvaluationReport` with case results and experiment-wide analyses) - what happened during the experiment
 
 ## Unit Testing Analogy
 
@@ -124,16 +125,17 @@ report = dataset.evaluate_sync(uppercase_task)
 
 When you run an experiment:
 
-1. **Setup**: The dataset loads all cases and evaluators
+1. **Setup**: The dataset loads all cases, evaluators, and report evaluators
 2. **Execution**: For each case:
     1. The task function is called with `case.inputs`
     2. Execution time is measured and OpenTelemetry spans are captured (if `logfire` is configured)
     3. The outputs of the task function for each case are recorded
-3. **Evaluation**: For each case output:
+3. **Case Evaluation**: For each case output:
     1. All dataset-level evaluators are run
     2. Case-specific evaluators are run (if any)
     3. Results are collected (scores, assertions, labels)
-4. **Reporting**: All results are aggregated into an [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport]
+4. **Report Evaluation**: If report evaluators are configured, they run over the full set of results to produce experiment-wide analyses (confusion matrices, precision-recall curves, scalar metrics, tables, etc.)
+5. **Reporting**: All results are aggregated into an [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport], including both per-case results and experiment-wide analyses
 
 ### Multiple Experiments from One Dataset
 
@@ -412,6 +414,7 @@ The [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] contains:
 - `name`: Experiment name
 - `cases`: List of successful case evaluations
 - `failures`: List of failed executions
+- `analyses`: List of experiment-wide analyses from [report evaluators](evaluators/report-evaluators.md) (confusion matrices, PR curves, scalars, tables)
 - `trace_id`: OpenTelemetry trace ID (optional)
 - `span_id`: OpenTelemetry span ID (optional)
 
@@ -460,7 +463,8 @@ Here's how the core concepts relate to each other:
 
 - A **Dataset** contains:
   - Many **Cases** (test scenarios with inputs and expected outputs)
-  - Many **Evaluators** (logic for scoring outputs)
+  - Many **Evaluators** (logic for scoring individual outputs)
+  - Many **Report Evaluators** (logic for analyzing full experiment results)
 
 ### Execution (Experiment)
 
@@ -474,6 +478,7 @@ When you call `dataset.evaluate(task)`, an **Experiment** runs:
 
 - An **EvaluationReport** contains:
   - Results for each **Case** (inputs, outputs, scores, assertions, labels)
+  - Experiment-wide **Analyses** from report evaluators (confusion matrices, PR curves, scalars, tables)
   - Summary statistics (averages, pass rates)
   - Performance data (durations)
   - Tracing information (OpenTelemetry spans)
@@ -490,4 +495,5 @@ When you call `dataset.evaluate(task)`, an **Experiment** runs:
 - **[Evaluators Overview](evaluators/overview.md)** - When to use different evaluator types
 - **[Built-in Evaluators](evaluators/built-in.md)** - Complete reference of provided evaluators
 - **[Custom Evaluators](evaluators/custom.md)** - Write your own evaluation logic
+- **[Report Evaluators](evaluators/report-evaluators.md)** - Experiment-wide analyses (confusion matrices, PR curves, etc.)
 - **[Dataset Management](how-to/dataset-management.md)** - Save, load, and generate datasets
