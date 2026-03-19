@@ -2624,3 +2624,32 @@ async def test_tool_return_with_files():
             },
         ]
     )
+
+
+
+async def test_stray_delta_after_tool_call_end_is_dropped():
+    """Stray TOOL_CALL_ARGS deltas after TOOL_CALL_END should be silently dropped.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4733
+    """
+    from pydantic_ai._parts_manager import ToolCallPartDelta
+    from pydantic_ai.messages import ToolCallPart
+
+    run_input = create_input(UserMessage(id='msg_1', content='test'))
+    event_stream = AGUIEventStream(run_input=run_input)
+
+    part = ToolCallPart(tool_name='my_tool', args='{"action":"run"}', tool_call_id='call_1')
+
+    # Start the tool call
+    events_start = [e async for e in event_stream._handle_tool_call_start(part)]
+    assert len(events_start) >= 1  # TOOL_CALL_START + optional TOOL_CALL_ARGS
+
+    # End the tool call
+    events_end = [e async for e in event_stream.handle_tool_call_end(part)]
+    assert len(events_end) == 1  # TOOL_CALL_END
+
+    # Stray delta after end — should produce NO events
+    stray_events = [e async for e in event_stream.handle_tool_call_delta(
+        ToolCallPartDelta(tool_call_id='call_1', args_delta='}')
+    )]
+    assert stray_events == [], f'Stray delta after TOOL_CALL_END should be dropped, got {stray_events}'

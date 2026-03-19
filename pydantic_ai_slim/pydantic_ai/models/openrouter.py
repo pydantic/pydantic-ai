@@ -197,7 +197,7 @@ class OpenRouterReasoning(TypedDict, total=False):
     token limits, but not both simultaneously.
     """
 
-    effort: Literal['xhigh', 'high', 'medium', 'low', 'minimal', 'none']
+    effort: Literal['high', 'medium', 'low']
     """OpenAI-style reasoning effort level. Cannot be used with max_tokens."""
 
     max_tokens: int
