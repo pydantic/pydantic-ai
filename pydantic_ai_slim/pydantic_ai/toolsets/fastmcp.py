@@ -36,7 +36,6 @@ try:
 
     from pydantic_ai.mcp import (
         TOOL_SCHEMA_VALIDATOR,
-        _mcp_audience_include,
         _mcp_partition_content,
         _mcp_user_only_placeholder,
         _mcp_wrap_with_user_metadata,
