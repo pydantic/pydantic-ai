@@ -250,7 +250,7 @@ async def test_server_instructions_enabled(run_context: RunContext[int]):
 async def test_server_instructions_included_in_agent_request() -> None:
     """Test that MCP server instructions are injected into agent model requests."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
-    agent = Agent(TestModel(), toolsets=[server])
+    agent = Agent(TestModel(call_tools=[]), toolsets=[server])
 
     async with agent:
         result = await agent.run('Hello')
