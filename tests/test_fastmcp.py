@@ -724,3 +724,44 @@ class TestAudienceFiltering:
         assert result.return_value == 'for model'
         assert result.metadata is not None
         assert result.metadata['mcp_user_content'][0]['text'] == 'for user'
+
+    async def test_call_tool_structured_content_with_user_only_falls_through(
+        self, run_context: RunContext[None]
+    ) -> None:
+        """structured_content is NOT returned when user-only content blocks are present.
+
+        FastMCP serialises the raw return value into structured_content, which would
+        expose user-only content to the model. When user_only is non-empty the
+        structured_content path must be skipped and the text/image mapping used instead.
+        """
+        from unittest.mock import AsyncMock, patch
+
+        from mcp.types import CallToolResult
+
+        fastmcp_server = FastMCP('test_server')
+
+        @fastmcp_server.tool()
+        def noop() -> str:
+            return 'ignored'
+
+        toolset = FastMCPToolset(fastmcp_server)
+        fake_result = CallToolResult(
+            content=[
+                TextContent(type='text', text='model sees this', annotations=Annotations(audience=['assistant'])),
+                TextContent(type='text', text='user only secret', annotations=Annotations(audience=['user'])),
+            ],
+            structured_content={'raw': 'user only secret'},
+            isError=False,
+        )
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            with patch.object(toolset.client, 'call_tool', new=AsyncMock(return_value=fake_result)):
+                result = await toolset.call_tool(name='noop', tool_args={}, ctx=run_context, tool=tools['noop'])
+
+        from pydantic_ai.messages import ToolReturn
+
+        assert isinstance(result, ToolReturn)
+        # structured_content was skipped; model only sees the assistant-visible text
+        assert result.return_value == 'model sees this'
+        assert result.metadata is not None
+        assert result.metadata['mcp_user_content'][0]['text'] == 'user only secret'

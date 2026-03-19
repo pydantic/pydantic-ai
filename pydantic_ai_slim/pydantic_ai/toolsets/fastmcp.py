@@ -180,7 +180,10 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         # Prefer structured content when available — covers both the case where the tool
         # returned data directly (empty content + structured_content) and the normal case
         # where FastMCP serialises the return value alongside text content.
-        if call_tool_result.structured_content:
+        # Guard: structured_content holds the raw unfiltered return value; if any content
+        # blocks are user-only, we must NOT return it directly (it would expose user-only
+        # content to the model). Fall through to the text/image mapping path instead.
+        if not user_only and call_tool_result.structured_content:
             return call_tool_result.structured_content
 
         # No structured content: map the filtered text/image parts, or return [] for tools
