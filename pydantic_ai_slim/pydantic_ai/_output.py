@@ -864,8 +864,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     processors: dict[str, ObjectOutputProcessor[Any]]
     """The processors for the output tools in this toolset."""
     max_retries: int
-    max_retries_set_by_output: bool
-    """Whether `max_retries` was explicitly set via a `ToolOutput` instance."""
     output_validators: list[OutputValidator[AgentDepsT, Any]]
 
     @classmethod
@@ -886,8 +884,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         default_description = description
         default_strict = strict
 
-        max_retries: int | None = None
-
         multiple = len(outputs) > 1
         for output in outputs:
             name = None
@@ -898,8 +894,6 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 name = output.name
                 description = output.description
                 strict = output.strict
-                if output.max_retries is not None:
-                    max_retries = output.max_retries
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -940,24 +934,18 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             processors[name] = processor
             tool_defs.append(tool_def)
 
-        kwargs: dict[str, Any] = dict(processors=processors, tool_defs=tool_defs)
-        if max_retries is not None:
-            kwargs['max_retries'] = max_retries
-            kwargs['max_retries_set_by_output'] = True
-        return cls(**kwargs)
+        return cls(processors=processors, tool_defs=tool_defs)
 
     def __init__(
         self,
         tool_defs: list[ToolDefinition],
         processors: dict[str, ObjectOutputProcessor[Any]],
         max_retries: int = 1,
-        max_retries_set_by_output: bool = False,
         output_validators: list[OutputValidator[AgentDepsT, Any]] | None = None,
     ):
         self.processors = processors
         self._tool_defs = tool_defs
         self.max_retries = max_retries
-        self.max_retries_set_by_output = max_retries_set_by_output
         self.output_validators = output_validators or []
 
     @property
