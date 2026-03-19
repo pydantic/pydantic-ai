@@ -342,6 +342,14 @@ agent = Agent('openai:gpt-5.2', toolsets=[weather_server, calculator_server])
 
 MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools. These are accessible via the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] property after the connection is established, and can be automatically injected into the agent's instructions by setting `include_instructions=True` when creating the server.
 
+```python {title="mcp_server_include_instructions.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStreamableHTTP
+
+server = MCPServerStreamableHTTP('http://localhost:8000/mcp', include_instructions=True)
+agent = Agent('openai:gpt-5.2', toolsets=[server])
+```
+
 ## Tool metadata
 
 MCP tools can include metadata that provides additional information about the tool's characteristics, which can be useful when [filtering tools][pydantic_ai.toolsets.FilteredToolset]. The `meta`, `annotations`, and `output_schema` fields can be found on the `metadata` dict on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] object that's passed to filter functions.
