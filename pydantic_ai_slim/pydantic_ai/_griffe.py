@@ -70,7 +70,7 @@ def doc_descriptions(
     if examples := next((p for p in sections if p.kind == DocstringSectionKind.examples), None):
         examples_content: list[str] = []
         for source, output in examples.value:
-            if isinstance(source, DocstringSectionKind):
+            if isinstance(source, DocstringSectionKind):  # pragma: no branch
                 if output is not None:  # pragma: no branch
                     examples_content.append(str(output))
 
