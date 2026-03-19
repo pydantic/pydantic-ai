@@ -153,14 +153,15 @@ class ModelResponsePartsManager:
                     raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
 
         if thinking_tags and not start_tag and end_tag:
-            yield from self._handle_empty_start_tag(
-                vendor_part_id=vendor_part_id,
-                content=content,
-                end_tag=end_tag,
-                provider_name=provider_name,
-                provider_details=provider_details,
-            )
-            return
+            if vendor_part_id is None or not self._parts or vendor_part_id in self._vendor_id_to_part_index:
+                yield from self._handle_empty_start_tag(
+                    vendor_part_id=vendor_part_id,
+                    content=content,
+                    end_tag=end_tag,
+                    provider_name=provider_name,
+                    provider_details=provider_details,
+                )
+                return
 
         if thinking_tags and start_tag and content == start_tag:
             # When we see a thinking start tag (which is a single token), we'll build a new thinking part instead

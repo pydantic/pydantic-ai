@@ -162,6 +162,35 @@ def test_handle_text_deltas_with_think_tags():
     )
 
 
+def test_handle_text_deltas_with_empty_start_think_tag():
+    manager = ModelResponsePartsManager()
+    thinking_tags = ('', '</think>')
+
+    events = list(manager.handle_text_delta(vendor_part_id='content', content='thinking', thinking_tags=thinking_tags))
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start'),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='thinking', part_delta_kind='thinking'),
+                event_kind='part_delta',
+            ),
+        ]
+    )
+    assert manager.get_parts() == snapshot([ThinkingPart(content='thinking', part_kind='thinking')])
+
+    events = list(manager.handle_text_delta(vendor_part_id='content', content='</think>', thinking_tags=thinking_tags))
+    assert events == []
+
+    event = next(manager.handle_text_delta(vendor_part_id='content', content='after', thinking_tags=thinking_tags))
+    assert event == snapshot(
+        PartStartEvent(index=1, part=TextPart(content='after', part_kind='text'), event_kind='part_start')
+    )
+    assert manager.get_parts() == snapshot(
+        [ThinkingPart(content='thinking', part_kind='thinking'), TextPart(content='after', part_kind='text')]
+    )
+
+
 def test_handle_tool_call_deltas():
     manager = ModelResponsePartsManager()
 
