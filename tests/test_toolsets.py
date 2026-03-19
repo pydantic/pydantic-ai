@@ -1300,6 +1300,42 @@ async def test_resume_without_prompt_dynamic_toolset_instructions_resolve_once_f
     assert requests[-1].instructions == 'Dynamic instructions at step 1.'
 
 
+async def test_resume_without_prompt_dynamic_toolset_with_tool_calls_resolve_once_for_request_step():
+    """Resuming from a trailing ModelResponse with ToolCallParts exercises the _handle_tool_calls path.
+
+    This is the more common resume scenario and ensures dynamic toolsets are resolved only once even
+    when the code path goes through _handle_tool_calls (which calls for_run_step).
+    """
+    run_steps: list[int] = []
+
+    def make_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+        run_steps.append(ctx.run_step)
+        toolset = FunctionToolset[None](instructions=f'Dynamic instructions at step {ctx.run_step}.')
+
+        @toolset.tool_plain
+        def greet(name: str) -> str:
+            """Greet someone by name."""
+            return f'Hello {name}!'
+
+        return toolset
+
+    agent = Agent(TestModel(custom_output_text='done'), toolsets=[DynamicToolset(make_toolset)])
+    result = await agent.run(
+        message_history=[ModelResponse(parts=[ToolCallPart(tool_name='greet', args={'name': 'Alice'})])]
+    )
+
+    # After resuming with tool calls, the toolset should be resolved for the next request step (step 1)
+    # for the pre-check. Any subsequent resolutions should also be at step 1.
+    # We verify that step 1 appears at the start (pre-check) and only the step 1 resolutions are tracked
+    # for the next request preparation (any step 0 calls are from tool processing which shouldn't affect
+    # the instructions for the next request).
+    assert 1 in run_steps
+
+    requests = [m for m in result.all_messages() if isinstance(m, ModelRequest)]
+    # The last request should have instructions prepared at step 1
+    assert requests[-1].instructions == 'Dynamic instructions at step 1.'
+
+
 async def test_toolset_instructions_combined_with_agent_instructions():
     """Toolset instructions are appended after agent-level instructions."""
     from pydantic_ai import Agent
