@@ -6,11 +6,10 @@ from urllib.parse import urlparse
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
-from inline_snapshot.extra import raises
 
 from pydantic_ai import Agent, UserError
 
+from .._inline_snapshot import raises, snapshot
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:

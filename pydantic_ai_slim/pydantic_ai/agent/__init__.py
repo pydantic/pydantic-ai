@@ -46,6 +46,7 @@ from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
     AgentDepsT,
+    ArgsValidatorFunc,
     BuiltinToolFunc,
     DeferredToolResults,
     DocstringFormat,
@@ -125,6 +126,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _model: models.Model | models.KnownModelName | str | None
 
     _name: str | None
+    _description: str | None
     end_strategy: EndStrategy
     """The strategy for handling multiple tool calls when a final result is found.
 
@@ -184,6 +186,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
+        description: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
@@ -214,6 +217,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
+        description: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
@@ -242,6 +246,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         system_prompt: str | Sequence[str] = (),
         deps_type: type[AgentDepsT] = NoneType,
         name: str | None = None,
+        description: str | None = None,
         model_settings: ModelSettings | None = None,
         retries: int = 1,
         validation_context: Any | Callable[[RunContext[AgentDepsT]], Any] = None,
@@ -278,6 +283,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 or add a type hint `: Agent[None, <return type>]`.
             name: The name of the agent, used for logging. If `None`, we try to infer the agent name from the call frame
                 when the agent is first run.
+            description: A human-readable description of the agent, attached to the agent run span as
+                `gen_ai.agent.description` when instrumentation is enabled.
             model_settings: Optional model request settings to use for this agent's runs, by default.
             retries: The default number of retries to allow for tool calls and output validation, before raising an error.
                 For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
@@ -338,6 +345,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._model = models.infer_model(model)
 
         self._name = name
+        self._description = description
         self.end_strategy = end_strategy
         self.model_settings = model_settings
 
@@ -448,6 +456,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def name(self, value: str | None) -> None:
         """Set the name of the agent, used for logging."""
         self._name = value
+
+    @property
+    def description(self) -> str | None:
+        """A human-readable description of the agent."""
+        return self._description
+
+    @description.setter
+    def description(self, value: str | None) -> None:
+        """Set the description of the agent."""
+        self._description = value
 
     @property
     def deps_type(self) -> type:
@@ -674,6 +692,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             user_deps=deps,
             prompt=user_prompt,
             new_message_index=len(message_history) if message_history else 0,
+            resumed_request=None,
             model=model_used,
             model_settings=model_settings,
             usage_limits=usage_limits,
@@ -705,14 +724,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings.version if instrumentation_settings else DEFAULT_INSTRUMENTATION_VERSION
         )
 
+        span_attributes: dict[str, str] = {
+            'model_name': model_used.model_name if model_used else 'no-model',
+            'agent_name': agent_name,
+            'gen_ai.agent.name': agent_name,
+            'logfire.msg': f'{agent_name} run',
+        }
+        if self._description is not None:
+            span_attributes['gen_ai.agent.description'] = self._description
+
         run_span = tracer.start_span(
             instrumentation_names.get_agent_run_span_name(agent_name),
-            attributes={
-                'model_name': model_used.model_name if model_used else 'no-model',
-                'agent_name': agent_name,
-                'gen_ai.agent.name': agent_name,
-                'logfire.msg': f'{agent_name} run',
-            },
+            attributes=span_attributes,
         )
 
         run_metadata: dict[str, Any] | None = None
@@ -1167,6 +1190,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -1186,6 +1210,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -1233,6 +1258,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
+            args_validator: custom method to validate tool arguments after schema validation has passed,
+                before execution. The validator receives the already-validated and type-converted parameters,
+                with `RunContext` as the first argument.
+                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
+                return `None` on success.
+                See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
@@ -1258,6 +1289,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 description=description,
                 retries=retries,
                 prepare=prepare,
+                args_validator=args_validator,
                 docstring_format=docstring_format,
                 require_parameter_descriptions=require_parameter_descriptions,
                 schema_generator=schema_generator,
@@ -1283,6 +1315,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -1302,6 +1335,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -1349,6 +1383,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
+            args_validator: custom method to validate tool arguments after schema validation has passed,
+                before execution. The validator receives the already-validated and type-converted parameters,
+                with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument — even though the
+                tool function itself does not take `RunContext` when using `tool_plain`.
+                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
+                return `None` on success.
+                See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
@@ -1372,6 +1413,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 description=description,
                 retries=retries,
                 prepare=prepare,
+                args_validator=args_validator,
                 docstring_format=docstring_format,
                 require_parameter_descriptions=require_parameter_descriptions,
                 schema_generator=schema_generator,
@@ -1661,9 +1703,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Args:
             models: Additional models to make available in the UI. Can be:
-                - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-5']`)
+                - A sequence of model names/instances (e.g., `['openai:gpt-5', 'anthropic:claude-sonnet-4-6']`)
                 - A dict mapping display labels to model names/instances
-                  (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-5'}`)
+                  (e.g., `{'GPT 5': 'openai:gpt-5', 'Claude': 'anthropic:claude-sonnet-4-6'}`)
                 The agent's model is always included. Builtin tool support is automatically
                 determined from each model's profile.
             builtin_tools: Additional builtin tools to make available in the UI.
@@ -1692,7 +1734,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             app = agent.to_web()
 
             # Or provide additional models for UI selection
-            app = agent.to_web(models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'])
+            app = agent.to_web(models=['openai:gpt-5', 'anthropic:claude-sonnet-4-6'])
 
             # Then run with: uvicorn app:app --reload
             ```

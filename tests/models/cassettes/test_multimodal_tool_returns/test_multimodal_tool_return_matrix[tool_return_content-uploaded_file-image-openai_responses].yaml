@@ -1,0 +1,212 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '409'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2866'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '2221'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1772656542
+      created_at: 1772656540
+      error: null
+      frequency_penalty: 0.0
+      id: resp_086090ee9d1835df0069a8979c55d0819c8b250faf0d7c366a
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpqJeeIxy4BRZlK4-GIdryPb5Gh8eJiOswTSg53itfFtZGhslJ-wlqsrooBeoxORLm2K3nT2yYwITyO70oSzYZC66t6D9xxAvKg9SFWgb3J4HnpdiTjeWJ6GvhXTz6dOfHaL8YrXnGPRhqki0FQQb4WhDY1odXU2ODlkXqTMLrAxrL7CMFjR-8ES6jwMU526XiZ7UJXZrSciKfxuk_0Ykjvfd9SRglHjigxnAufPQdTs8jZFNfDX10yBTOX6KxKa9wWSoyDwgkNVNEE8vRo4u6p5bufIki4eXT8eWkukoZBCyd-lzuvOiO0WSt2wvxDw3MDDz_gTyRoReC_LQGudlWowTRjOXb9bEcfF8zRbjFqUl5ZYX8vHm6YvOmI8XhbEN9EU9cNfYAe85e5GWIwbG-C88WLsuellXDUTMlB_ovBvAuVMRfL3GGrEb6sEqyyTrxi5r88W3NS4uKFY7eehlXy-GV-cVwnaUrP8Oh1TiEYBk2HFEjwuFwQpA6rvrxYcLcZ9_Z6jzM8S7nC_k5bIbIgk5pNtns8V18-vNGm8wX9yUhlATrzs1atvzM2DQxdT5rwwers713XFM887ScIAXqF2QjGQRkaf86HQpNVsmaW9iLzdhcY7KnomwSDOTHMNJ-jrloGHGHj3KkzJLMRFIu4x4RuT9sCi6auhXf1aOi6GBKzc1-C1rcgvtb9y-_D5Uq0dK4398mWF3oT1oBXKKSKkFo_gv65w53oL78_xq3iOumiJ8_5tPGpSSA6eUUWBTJqytC17i9yVOpOoodMXWHpEAC0PLMAKlcKx4nII2XXXffZOGV4gCkSwpv0FRlZkImkCSbIfklyhmc5rr3PTETqBLXi05QowovTOz7KQZjtPEJX-CpGVYzGYZ57ROynXmnXwFoQQIMN4yyYWckNGb_ZOReMFbQ_FCQPoeNtBRsYM0x7TssIbzJXoEJcbcXLoAL9wSf1ycaFDDD-qMahHPGOSrfzhqfuwDIflny4TZ9_Z-kKNqbWfxvPN9IViwtzaaCkqe7VXLyluSGS-0zgVp08ED0vyz3XSUVZ7AL96aENPXeT19H2Drx2B_2vLF5ToT98knEq3EvCj9-IHhaE8s9FpDkSMx2OsB-IBa-ArBBoAUWn2YYA1oU8fa9ZzTQB_G482oN8efWKih36TuOqOHi96QV-UPpHQmKuo8IAFtYoZSMAsSn7T8B11jxfcLhkN-xmhQ0PXqYwtvtrvHRXHHwWs2aSRq1AEIrCD_IxxGEvVjaqMg2LL0x-CvIUH7k3ZF0S4K7zsUUIPFJxo8kXGay1wYxkIOm9hE-He7Fv3l5nO7dStI=
+        id: rs_086090ee9d1835df0069a8979c8e5c819cb76bc2694aa36c11
+        summary: []
+        type: reasoning
+      - arguments: '{}'
+        call_id: call_N2quw33vc8m9ZIwGWU5I6tNU
+        id: fc_086090ee9d1835df0069a8979e3590819c937c785a006ae305
+        name: get_file
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 47
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 89
+        output_tokens_details:
+          reasoning_tokens: 64
+        total_tokens: 136
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2246'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=CJGkmZuosBIARi31RbzwOnwwiEYh3IlnyeTkiybqYRM-1772656540.2748787-1.0.1.1-FxI4Y3xFPb81tt8BXDaIuR8cd7U4e6MM57h46jRdTSskHJmH8wTS9vn5.cjourDV7k7j4rglEK5oHYSCFs9gllzvGdHJCuen3I6QYYjPuLlo7ZpYmATFlubAcqBxyySv
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use the get_file tool now to retrieve a image file, then describe what you received.
+        role: user
+      - encrypted_content: gAAAAABpqJeeIxy4BRZlK4-GIdryPb5Gh8eJiOswTSg53itfFtZGhslJ-wlqsrooBeoxORLm2K3nT2yYwITyO70oSzYZC66t6D9xxAvKg9SFWgb3J4HnpdiTjeWJ6GvhXTz6dOfHaL8YrXnGPRhqki0FQQb4WhDY1odXU2ODlkXqTMLrAxrL7CMFjR-8ES6jwMU526XiZ7UJXZrSciKfxuk_0Ykjvfd9SRglHjigxnAufPQdTs8jZFNfDX10yBTOX6KxKa9wWSoyDwgkNVNEE8vRo4u6p5bufIki4eXT8eWkukoZBCyd-lzuvOiO0WSt2wvxDw3MDDz_gTyRoReC_LQGudlWowTRjOXb9bEcfF8zRbjFqUl5ZYX8vHm6YvOmI8XhbEN9EU9cNfYAe85e5GWIwbG-C88WLsuellXDUTMlB_ovBvAuVMRfL3GGrEb6sEqyyTrxi5r88W3NS4uKFY7eehlXy-GV-cVwnaUrP8Oh1TiEYBk2HFEjwuFwQpA6rvrxYcLcZ9_Z6jzM8S7nC_k5bIbIgk5pNtns8V18-vNGm8wX9yUhlATrzs1atvzM2DQxdT5rwwers713XFM887ScIAXqF2QjGQRkaf86HQpNVsmaW9iLzdhcY7KnomwSDOTHMNJ-jrloGHGHj3KkzJLMRFIu4x4RuT9sCi6auhXf1aOi6GBKzc1-C1rcgvtb9y-_D5Uq0dK4398mWF3oT1oBXKKSKkFo_gv65w53oL78_xq3iOumiJ8_5tPGpSSA6eUUWBTJqytC17i9yVOpOoodMXWHpEAC0PLMAKlcKx4nII2XXXffZOGV4gCkSwpv0FRlZkImkCSbIfklyhmc5rr3PTETqBLXi05QowovTOz7KQZjtPEJX-CpGVYzGYZ57ROynXmnXwFoQQIMN4yyYWckNGb_ZOReMFbQ_FCQPoeNtBRsYM0x7TssIbzJXoEJcbcXLoAL9wSf1ycaFDDD-qMahHPGOSrfzhqfuwDIflny4TZ9_Z-kKNqbWfxvPN9IViwtzaaCkqe7VXLyluSGS-0zgVp08ED0vyz3XSUVZ7AL96aENPXeT19H2Drx2B_2vLF5ToT98knEq3EvCj9-IHhaE8s9FpDkSMx2OsB-IBa-ArBBoAUWn2YYA1oU8fa9ZzTQB_G482oN8efWKih36TuOqOHi96QV-UPpHQmKuo8IAFtYoZSMAsSn7T8B11jxfcLhkN-xmhQ0PXqYwtvtrvHRXHHwWs2aSRq1AEIrCD_IxxGEvVjaqMg2LL0x-CvIUH7k3ZF0S4K7zsUUIPFJxo8kXGay1wYxkIOm9hE-He7Fv3l5nO7dStI=
+        id: rs_086090ee9d1835df0069a8979c8e5c819cb76bc2694aa36c11
+        summary: []
+        type: reasoning
+      - arguments: '{}'
+        call_id: call_N2quw33vc8m9ZIwGWU5I6tNU
+        id: fc_086090ee9d1835df0069a8979e3590819c937c785a006ae305
+        name: get_file
+        type: function_call
+      - call_id: call_N2quw33vc8m9ZIwGWU5I6tNU
+        output: File attached
+        type: function_call_output
+      - content:
+        - file_id: file-BVTjj4CLd1Z7cgppk5sL45
+          type: input_file
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '637'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '314'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      error:
+        code: null
+        message: 'Invalid input: Expected context stuffing file type to be a supported format: .art, .bat, .brf, .c, .cls,
+          .css, .csv, .diff, .doc, .docx, .dot, .eml, .es, .h, .hs, .htm, .html, .hwp, .hwpx, .ics, .ifb, .java, .js, .json,
+          .keynote, .ksh, .ltx, .mail, .markdown, .md, .mht, .mhtml, .mjs, .nws, .odt, .pages, .patch, .pdf, .pl, .pm, .pot,
+          .ppa, .pps, .ppt, .pptx, .pwz, .py, .rst, .rtf, .scala, .sh, .shtml, .srt, .sty, .svg, .svgz, .tex, .text, .txt,
+          .vcf, .vtt, .wiz, .xla, .xlb, .xlc, .xlm, .xls, .xlsx, .xlt, .xlw, .xml, .yaml, .yml but got .jpg.'
+        param: input
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+version: 1

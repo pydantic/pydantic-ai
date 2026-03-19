@@ -9,10 +9,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
+from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_origin
 
 from pydantic import ConfigDict
-from pydantic._internal import _decorators, _generate_schema, _typing_extra
+from pydantic._internal import _decorators, _generate_schema
 from pydantic._internal._config import ConfigWrapper
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
@@ -22,7 +22,7 @@ from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
-from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
+from ._utils import check_object_json_schema, get_first_param_type, is_async_callable, is_model_like, run_in_executor
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat, ObjectJsonSchema
@@ -184,10 +184,8 @@ def function_schema(  # noqa: C901
         raise UserError(f'Error generating schema for {function.__qualname__}:\n  {error_details}')
 
     core_config = config_wrapper.core_config(None)
-    # noinspection PyTypedDict
-    core_config['extra_fields_behavior'] = 'allow' if var_kwargs_schema else 'forbid'
 
-    schema, single_arg_name = _build_schema(fields, var_kwargs_schema, gen_schema, core_config)
+    schema, single_arg_name = _build_schema(fields, var_kwargs_schema, core_config)
     schema = gen_schema.clean_schema(schema)
     # noinspection PyUnresolvedReferences
     schema_validator = create_schema_validator(
@@ -242,34 +240,15 @@ def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:  # 
     Returns:
         `True` if the callable takes a `RunContext` as first argument, `False` otherwise.
     """
-    try:
-        sig = signature(callable_obj)
-    except ValueError:
+    first_param_type = get_first_param_type(callable_obj)
+    if first_param_type is None:
         return False
-    try:
-        first_param_name = next(iter(sig.parameters.keys()))
-    except StopIteration:
-        return False
-    else:
-        # See https://github.com/pydantic/pydantic/pull/11451 for a similar implementation in Pydantic
-        if not isinstance(callable_obj, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
-            call_func = getattr(type(callable_obj), '__call__', None)
-            if call_func is not None:
-                callable_obj = call_func
-            else:
-                return False  # pragma: no cover
-
-        type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_obj))
-        annotation = type_hints.get(first_param_name)
-        if annotation is None:
-            return False
-        return True is not sig.empty and _is_call_ctx(annotation)
+    return _is_call_ctx(first_param_type)
 
 
 def _build_schema(
     fields: dict[str, core_schema.TypedDictField],
     var_kwargs_schema: core_schema.CoreSchema | None,
-    gen_schema: _generate_schema.GenerateSchema,
     core_config: core_schema.CoreConfig,
 ) -> tuple[core_schema.CoreSchema, str | None]:
     """Generate a typed dict schema for function parameters.
@@ -277,7 +256,6 @@ def _build_schema(
     Args:
         fields: The fields to generate a typed dict schema for.
         var_kwargs_schema: The variable keyword arguments schema.
-        gen_schema: The `GenerateSchema` instance.
         core_config: The core configuration.
 
     Returns:
@@ -289,10 +267,12 @@ def _build_schema(
         if td_field['metadata']['is_model_like']:  # type: ignore
             return td_field['schema'], name
 
+    extra_behavior: Literal['allow', 'forbid'] = 'allow' if var_kwargs_schema else 'forbid'
     td_schema = core_schema.typed_dict_schema(
         fields,
         config=core_config,
-        extras_schema=gen_schema.generate_schema(var_kwargs_schema) if var_kwargs_schema else None,
+        extra_behavior=extra_behavior,
+        extras_schema=var_kwargs_schema,
     )
     return td_schema, None
 
