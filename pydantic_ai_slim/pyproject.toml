@@ -7,7 +7,7 @@ source = "uv-dynamic-versioning"
 
 [tool.uv-dynamic-versioning]
 vcs = "git"
-style = "pep440
+style = "pep440"
 bump = true
 
 [project]
