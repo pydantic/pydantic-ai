@@ -247,6 +247,17 @@ async def test_server_instructions_enabled(run_context: RunContext[int]):
         assert instructions == 'Be a helpful assistant.'
 
 
+async def test_server_instructions_included_in_agent_request() -> None:
+    """Test that MCP server instructions are injected into agent model requests."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
+    agent = Agent(TestModel(), toolsets=[server])
+
+    async with agent:
+        result = await agent.run('Hello')
+
+    assert result.all_messages()[0].instructions == 'Be a helpful assistant.'
+
+
 async def test_server_instructions_not_initialized():
     """Test that AttributeError is raised when include_instructions=True but server not initialized."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)

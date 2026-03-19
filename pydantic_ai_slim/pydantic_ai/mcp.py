@@ -490,15 +490,15 @@ class MCPServer(AbstractToolset[Any], ABC):
     async def get_instructions(self, ctx: RunContext[Any]) -> str | list[str] | None:
         """Return the MCP server's instructions for how to use its tools.
 
-        If [`include_instructions`][pydantic_ai.mcp.MCPServer.include_instructions] is ``True``, returns
+        If [`include_instructions`][pydantic_ai.mcp.MCPServer.include_instructions] is `True`, returns
         the [`instructions`][pydantic_ai.mcp.MCPServer.instructions] sent by the MCP server during
-        initialization. Otherwise, returns ``None``.
+        initialization. Otherwise, returns `None`.
 
         Args:
             ctx: The run context for this agent run.
 
         Returns:
-            The server's instructions if ``include_instructions`` is enabled, otherwise ``None``.
+            The server's instructions if `include_instructions` is enabled, otherwise `None`.
         """
         if self.include_instructions:
             return self.instructions
@@ -936,7 +936,7 @@ class MCPServerStdio(MCPServer):
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
                 See [`MCPServer.cache_resources`][pydantic_ai.mcp.MCPServer.cache_resources].
-            include_instructions: Whether to include the server's instructions in the agent's instructions
+            include_instructions: Whether to include the server's instructions in the agent's instructions.
                 See [`MCPServer.include_instructions`][pydantic_ai.mcp.MCPServer.include_instructions].
             id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
             client_info: Information describing the MCP client implementation.

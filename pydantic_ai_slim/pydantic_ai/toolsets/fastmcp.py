@@ -154,15 +154,15 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
         """Return the FastMCP server's instructions for how to use its tools.
 
-        If [`include_instructions`][pydantic_ai.toolsets.fastmcp.FastMCPToolset.include_instructions] is ``True``, returns
+        If [`include_instructions`][pydantic_ai.toolsets.fastmcp.FastMCPToolset.include_instructions] is `True`, returns
         the [`instructions`][pydantic_ai.toolsets.fastmcp.FastMCPToolset.instructions] sent by the FastMCP server during
-        initialization. Otherwise, returns ``None``.
+        initialization. Otherwise, returns `None`.
 
         Args:
             ctx: The run context for this agent run.
 
         Returns:
-            The server's instructions if ``include_instructions`` is enabled, otherwise ``None``.
+            The server's instructions if `include_instructions` is enabled, otherwise `None`.
         """
         if self.include_instructions:
             return self.instructions
