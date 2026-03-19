@@ -242,7 +242,7 @@ class DatabricksStreamedResponse(OpenAIStreamedResponse):
                                 vendor_part_id='reasoning',
                                 content=val,
                             )
-                    elif isinstance(block, DatabricksTextContent):
+                    else:
                         yield from self._parts_manager.handle_text_delta(
                             vendor_part_id='content',
                             content=block.text,

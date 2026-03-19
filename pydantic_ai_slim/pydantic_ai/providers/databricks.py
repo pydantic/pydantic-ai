@@ -135,11 +135,7 @@ class DatabricksProvider(Provider['AsyncOpenAI']):
             # if successfully authed without api key, set a dummy key for openai client.
             api_key = 'nop'
 
-        if (not ws) and base_url and api_key:
-            ws = WorkspaceClient(host=base_url, token=api_key)
-
-        if not ws:
-            raise UserError('Failed to initialize Databricks SDK.')
+        assert ws is not None, 'Failed to initialize Databricks SDK.'
 
         host = ws.config.host
         if not host:

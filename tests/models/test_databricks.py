@@ -539,12 +539,6 @@ class TestDatabricksProcessProviderDetails:
 class TestDatabricksStreamedResponseUnit:
     """Tests for DatabricksStreamedResponse edge cases (no HTTP)."""
 
-    def _make_stream_response(self) -> DatabricksStreamedResponse:
-        sr = object.__new__(DatabricksStreamedResponse)
-        sr._internal_provider_details = None
-        sr._usage = RequestUsage()
-        return sr
-
     def test_usage_when_none(self):
         """Streaming usage returns empty RequestUsage when _usage is default."""
         sr = object.__new__(DatabricksStreamedResponse)
@@ -615,6 +609,14 @@ class TestDatabricksStreamedResponseUnit:
         assert result.input_tokens == 10
         assert result.output_tokens == 20
         assert result.details.get('reasoning_tokens') == 7
+
+    def test_provider_details_no_usage(self):
+        """provider_details returns empty dict when _usage is falsy."""
+        sr = object.__new__(DatabricksStreamedResponse)
+        sr._internal_provider_details = None
+        sr._usage = None  # type: ignore
+        details = sr.provider_details
+        assert details == {}
 
 
 class TestDatabricksProcessProviderDetailsSafety:
@@ -697,3 +699,14 @@ class TestDatabricksStreamedResponseMapPartDelta:
         ]
         events = list(sr._map_part_delta(choice))
         assert len(events) >= 2  # At least one for reasoning and one for text
+
+    def test_map_part_delta_with_empty_reasoning_block(self):
+        """Reasoning block with empty get_value() produces no events."""
+        from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
+
+        sr = self._make_stream_response()
+        delta = ChoiceDelta(role='assistant', content=None)
+        choice = ChunkChoice(index=0, delta=delta, finish_reason=None)
+        choice.delta.content = [{'type': 'reasoning'}]  # type: ignore
+        events = list(sr._map_part_delta(choice))
+        assert len(events) == 0
