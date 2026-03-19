@@ -742,7 +742,7 @@ class TestAudienceFiltering:
 
         @fastmcp_server.tool()
         def noop() -> str:
-            return 'ignored'
+            return 'ignored'  # pragma: no cover
 
         toolset = FastMCPToolset(fastmcp_server)
         fake_result = FMCPCallToolResult(
