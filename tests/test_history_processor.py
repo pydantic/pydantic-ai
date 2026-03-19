@@ -1288,8 +1288,8 @@ async def test_history_processor_resuming_without_prompt(
 ):
     """
     When running without a user prompt (resuming from history), new_messages()
-    should include the resumed request when that request has the current
-    run_id.
+    should not include the resumed request — it came from message_history, not
+    from the current run.
     """
 
     def prepend_summary(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1351,14 +1351,14 @@ async def test_history_processor_resuming_without_prompt(
             ),
         ]
     )
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
-async def test_resuming_without_prompt_with_tool_calls_includes_resumed_request_with_current_run_id():
+async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request():
     """
     When resuming without a user prompt and the model enters a tool-call loop,
-    new_messages() should include the resumed history request when it has
-    the current run_id.
+    new_messages() should not include the resumed history request — only the
+    messages generated during the current run.
     """
 
     call_count = 0
@@ -1418,7 +1418,7 @@ async def test_resuming_without_prompt_with_tool_calls_includes_resumed_request_
         ]
     )
 
-    assert result.new_messages() == result.all_messages()
+    assert result.new_messages() == result.all_messages()[1:]
 
 
 async def test_resuming_without_prompt_excludes_request_with_different_run_id(
@@ -1487,8 +1487,8 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
 ):
     """
     When a history processor deep-copies messages (breaking object identity),
-    new_messages() should still include the resumed request when it has the
-    current run_id.
+    new_messages() should still exclude the resumed request — it came from
+    message_history, not from the current run.
     """
 
     def deepcopy_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1526,7 +1526,7 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
         ]
     )
 
-    assert result.new_messages() == result.all_messages()
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 async def test_history_processor_rebuild_resuming_without_prompt(
@@ -1534,8 +1534,8 @@ async def test_history_processor_rebuild_resuming_without_prompt(
 ):
     """
     When a history processor rebuilds `ModelRequest` instances with equivalent
-    values, new_messages() should include the resumed request when it has the
-    current run_id.
+    values, new_messages() should still exclude the resumed request — it came
+    from message_history, not from the current run.
     """
 
     def rebuild_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1601,7 +1601,7 @@ async def test_history_processor_rebuild_resuming_without_prompt(
         ]
     )
 
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 async def test_history_processor_replace_resumed_request_falls_through(
@@ -1609,8 +1609,9 @@ async def test_history_processor_replace_resumed_request_falls_through(
 ):
     """
     When a history processor replaces the resumed request with completely
-    different content, new_messages() falls back to run_id-based detection
-    to determine which messages belong to the current run.
+    different content (breaking both identity and value matching), new_messages()
+    falls back to run_id-based detection. The replaced request gets the current
+    run_id assigned and is included in new_messages().
     """
 
     def replace_all_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1674,6 +1675,7 @@ async def test_history_processor_replace_resumed_request_falls_through(
         ]
     )
 
-    # Falls back to run_id-based detection: the replaced request got run_id from
-    # the framework, so new_messages includes both it and the model response
+    # Falls back to run_id-based detection: identity and value matching both fail
+    # because the processor replaced the content. The replaced request got run_id
+    # assigned by the framework, so new_messages includes both it and the response.
     assert result.new_messages() == result.all_messages()[-2:]

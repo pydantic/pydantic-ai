@@ -2622,7 +2622,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
         ]
     )
 
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_prompt():
@@ -2883,6 +2883,24 @@ def test_agent_message_history_includes_run_id() -> None:
     run_ids = [message.run_id for message in history]
     assert run_ids == snapshot([IsStr(), IsStr()])
     assert len({*run_ids}) == snapshot(1)
+
+
+def test_new_messages_excludes_history_request_without_user_prompt() -> None:
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/4669.
+
+    When agent.run() is called with message_history containing a trailing ModelRequest
+    (and no user_prompt), that request should not appear in new_messages().
+    """
+    agent = Agent(TestModel())
+
+    result = agent.run_sync(
+        message_history=[ModelRequest(parts=[UserPromptPart(content='hi')])]
+    )
+
+    new = result.new_messages()
+    # Only the model response should be new — not the request from message_history.
+    assert len(new) == 1
+    assert isinstance(new[0], ModelResponse)
 
 
 async def test_agent_run_result_metadata_available() -> None:
@@ -7910,16 +7928,6 @@ async def test_message_history():
             pass
         assert run.new_messages() == snapshot(
             [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='Hello',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                ),
                 ModelResponse(
                     parts=[TextPart(content='ok here is text')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
@@ -7929,7 +7937,7 @@ async def test_message_history():
                 ),
             ]
         )
-        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"Hello",')
+        assert run.new_messages_json().startswith(b'[{"parts":[{"content":"ok here is text",')
         assert run.all_messages() == snapshot(
             [
                 ModelRequest(

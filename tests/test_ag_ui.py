@@ -1590,7 +1590,8 @@ async def test_adapter_sets_current_run_id_on_trailing_mapped_request() -> None:
     assert messages[1].run_id is None
     assert messages[2].run_id == run_result.run_id
     assert messages[3].run_id == run_result.run_id
-    assert run_result.new_messages() == messages[-2:]
+    # The mapped request is not "new" — it came from message_history, not from the run itself.
+    assert run_result.new_messages() == messages[-1:]
 
 
 async def test_callback_async() -> None:
