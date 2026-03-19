@@ -2,20 +2,15 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, cast, overload
+from typing import Annotated, Any, Literal, cast
 
-from openai import NOT_GIVEN, APIConnectionError, APIStatusError, AsyncStream, Omit
 from openai.types import chat
-
-# Import this specific type to fix the assignment error in create()
-from openai.types.chat import ChatCompletionStreamOptionsParam
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from typing_extensions import override
 
-from pydantic_ai import ModelAPIError, ModelHTTPError, ModelMessage, ModelResponse, ModelResponseStreamEvent
+from pydantic_ai import ModelResponseStreamEvent
 from pydantic_ai.profiles import ModelProfileSpec
 from pydantic_ai.profiles.databricks import DatabricksModelProfile
-from pydantic_ai.profiles.openai import OpenAIModelProfile
 
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -23,11 +18,9 @@ from ..usage import RequestUsage
 from . import OpenAIChatCompatibleProvider
 from .openai import (
     OMIT,
-    ModelRequestParameters,
     OpenAIChatModel,
     OpenAIChatModelSettings,
     OpenAIStreamedResponse,
-    get_user_agent,
 )
 
 try:
@@ -113,106 +106,12 @@ class DatabricksModel(OpenAIChatModel):
             settings=settings,
         )
 
-    @overload
-    async def _completions_create(
-        self,
-        messages: list[ModelMessage],
-        stream: Literal[True],
-        model_settings: OpenAIChatModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[chat.ChatCompletionChunk]: ...
-
-    @overload
-    async def _completions_create(
-        self,
-        messages: list[ModelMessage],
-        stream: Literal[False],
-        model_settings: OpenAIChatModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> chat.ChatCompletion | ModelResponse: ...
-
-    async def _completions_create(
-        self,
-        messages: list[ModelMessage],
-        stream: bool,
-        model_settings: OpenAIChatModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk] | ModelResponse:
-        tools = self._get_tools(model_request_parameters)
-        web_search_options = self._get_web_search_options(model_request_parameters)
-
-        self.profile = cast(DatabricksModelProfile, self.profile)
-
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output and self.profile.databricks_supports_tool_call_required:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
-
-        openai_messages = await self._map_messages(messages, model_request_parameters)
-
-        response_format: chat.completion_create_params.ResponseFormat | None = None
-        if model_request_parameters.output_mode == 'native':
-            output_object = model_request_parameters.output_object
-            assert output_object is not None
-            response_format = self._map_json_schema(output_object)
-        elif (
-            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
-        ):  # pragma: no branch
-            response_format = {'type': 'json_object'}
-
-        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
-
-        for setting in unsupported_model_settings:
-            model_settings.pop(setting, None)
-
-        stream_options: ChatCompletionStreamOptionsParam | Omit
-        if stream and self.profile.databricks_stream_options:
-            stream_options = {'include_usage': True}
-        else:
-            stream_options = OMIT
-
-        try:
-            extra_headers = model_settings.get('extra_headers', {})
-            extra_headers.setdefault('User-Agent', get_user_agent())
-
-            return await self.client.chat.completions.create(
-                model=self.model_name,
-                messages=openai_messages,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
-                tools=tools or OMIT,
-                tool_choice=tool_choice or OMIT,
-                stream=stream,
-                stream_options=stream_options,
-                stop=model_settings.get('stop_sequences', OMIT),
-                max_completion_tokens=model_settings.get('max_tokens', OMIT),
-                timeout=model_settings.get('timeout', NOT_GIVEN),
-                response_format=response_format or OMIT,
-                seed=model_settings.get('seed', OMIT),
-                reasoning_effort=model_settings.get('openai_reasoning_effort', OMIT),
-                user=model_settings.get('openai_user', OMIT),
-                web_search_options=web_search_options or OMIT,
-                service_tier=model_settings.get('openai_service_tier', OMIT),
-                prediction=model_settings.get('openai_prediction', OMIT),
-                temperature=model_settings.get('temperature', OMIT),
-                top_p=model_settings.get('top_p', OMIT),
-                presence_penalty=model_settings.get('presence_penalty', OMIT),
-                frequency_penalty=model_settings.get('frequency_penalty', OMIT),
-                logit_bias=model_settings.get('logit_bias', OMIT),
-                logprobs=model_settings.get('openai_logprobs', OMIT),
-                top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-                prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
-                prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
-                extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
-            )
-        except APIStatusError as e:
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
-        except APIConnectionError as e:
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+    @override
+    def _get_stream_options(self, model_settings: OpenAIChatModelSettings) -> chat.ChatCompletionStreamOptionsParam:
+        profile = cast(DatabricksModelProfile, self.profile)
+        if not profile.databricks_stream_options:
+            return cast(chat.ChatCompletionStreamOptionsParam, OMIT)
+        return super()._get_stream_options(model_settings)
 
     @property
     def _streamed_response_cls(self) -> type[OpenAIStreamedResponse]:

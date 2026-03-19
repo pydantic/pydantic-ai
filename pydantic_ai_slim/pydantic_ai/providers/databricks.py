@@ -29,12 +29,13 @@ except ImportError as _import_error:
         'Please install the `openai` package to use the Databricks provider: `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
+_has_databricks_sdk = False
 try:
     from databricks.sdk import WorkspaceClient
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install the `databricks-sdk` package to use this provider: `pip install "pydantic-ai[databricks]"`'
-    ) from _import_error
+
+    _has_databricks_sdk = True
+except ImportError:
+    pass
 
 
 class DatabricksAuth(httpx.Auth):
@@ -95,9 +96,26 @@ class DatabricksProvider(Provider['AsyncOpenAI']):
         api_key = api_key or os.getenv('DATABRICKS_API_KEY') or os.getenv('DATABRICKS_TOKEN')
         base_url = base_url or os.getenv('DATABRICKS_BASE_URL') or os.getenv('DATABRICKS_HOST')
 
-        ws = None
+        if api_key and base_url:
+            host = base_url
+            if not host.rstrip('/').endswith('serving-endpoints'):
+                host = f'{host.rstrip("/")}/serving-endpoints'
 
-        # If we're trying to use from a databricks notebook, it should be able auth without any params
+            self._client = AsyncOpenAI(
+                base_url=host,
+                api_key=api_key,
+                http_client=http_client or httpx.AsyncClient(),
+            )
+            return
+
+        if not _has_databricks_sdk:
+            raise ImportError(
+                'Please install the `databricks-sdk` package to use this provider without explicit credentials: '
+                '`pip install "pydantic-ai[databricks]"`'
+            )
+
+        ws: WorkspaceClient | None = None
+
         if not base_url:
             try:
                 ws = WorkspaceClient()
@@ -116,14 +134,11 @@ class DatabricksProvider(Provider['AsyncOpenAI']):
             # if successfully authed without api key, set a dummy key for openai client.
             api_key = 'nop'
 
-        # explicit auth
         if (not ws) and base_url and api_key:
             ws = WorkspaceClient(host=base_url, token=api_key)
 
         if not ws:
             raise UserError('Failed to initialize Databricks SDK.')
-
-        self.ws = ws
 
         host = ws.config.host
         if not host:

@@ -1,3 +1,4 @@
+# pyright: reportPrivateUsage=false
 import base64
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
@@ -24,7 +25,16 @@ from pydantic_ai.usage import RequestUsage
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.databricks import DatabricksModel, DatabricksModelSettings
+    from openai.types.chat import ChatCompletion, ChatCompletionMessage
+    from openai.types.chat.chat_completion import Choice
+
+    from pydantic_ai.models.databricks import (
+        DatabricksModel,
+        DatabricksModelSettings,
+        DatabricksReasoningContent,
+        DatabricksStreamedResponse,
+        DatabricksSummaryText,
+    )
     from pydantic_ai.providers.databricks import DatabricksProvider
 
 pytestmark = [
@@ -277,3 +287,413 @@ class TestDatabricks:
             await model_request(model, [ModelRequest.user_text_prompt('Hello')])
 
         assert exc_info.value.status_code in (400, 401, 403)
+
+
+class TestDatabricksReasoningContent:
+    """Tests for DatabricksReasoningContent.get_value() variants."""
+
+    def test_get_value_text(self):
+        block = DatabricksReasoningContent(type='reasoning', text='hello')
+        assert block.get_value() == 'hello'
+
+    def test_get_value_content(self):
+        block = DatabricksReasoningContent(type='reasoning', content='from content field')
+        assert block.get_value() == 'from content field'
+
+    def test_get_value_text_preferred_over_content(self):
+        block = DatabricksReasoningContent(type='reasoning', text='from text', content='from content')
+        assert block.get_value() == 'from text'
+
+    def test_get_value_summary(self):
+        block = DatabricksReasoningContent(
+            type='reasoning',
+            summary=[
+                DatabricksSummaryText(type='summary_text', text='a'),
+                DatabricksSummaryText(type='summary_text', text='b'),
+            ],
+        )
+        assert block.get_value() == 'ab'
+
+    def test_get_value_empty(self):
+        block = DatabricksReasoningContent(type='reasoning')
+        assert block.get_value() == ''
+
+
+class TestValidateCompletion:
+    """Tests for DatabricksModel._validate_completion edge cases."""
+
+    def _make_model(self) -> DatabricksModel:
+        provider = DatabricksProvider(api_key='test', base_url='https://test.com')
+        return DatabricksModel('test-model', provider=provider)
+
+    def test_empty_choices(self):
+        """Response with no choices delegates to parent."""
+        model = self._make_model()
+        response = ChatCompletion(id='test', choices=[], created=0, model='test', object='chat.completion')
+        result = model._validate_completion(response)
+        assert result.id == 'test'
+
+    def test_missing_id_gets_placeholder(self):
+        """Response with null id gets a placeholder."""
+        model = self._make_model()
+        response = ChatCompletion(
+            id='test-id',
+            choices=[
+                Choice(
+                    index=0,
+                    finish_reason='stop',
+                    message=ChatCompletionMessage(role='assistant', content='hello'),
+                )
+            ],
+            created=0,
+            model='test',
+            object='chat.completion',
+        )
+        data = response.model_dump(mode='json', warnings=False)
+        data['id'] = None
+        patched = ChatCompletion.model_construct(**data)
+        result = model._validate_completion(patched)
+        assert result.id == 'databricks-placeholder-id'
+
+    def test_list_content_with_text_and_reasoning(self):
+        """List content is parsed into text + reasoning_content."""
+        model = self._make_model()
+        response = ChatCompletion(
+            id='test',
+            choices=[
+                Choice(
+                    index=0,
+                    finish_reason='stop',
+                    message=ChatCompletionMessage(role='assistant', content='placeholder'),
+                )
+            ],
+            created=0,
+            model='test',
+            object='chat.completion',
+        )
+        data = response.model_dump(mode='json', warnings=False)
+        data['choices'][0]['message']['content'] = [
+            {'type': 'text', 'text': 'The answer is 4.'},
+            {'type': 'reasoning', 'text': 'I calculated 2+2.'},
+        ]
+        patched = ChatCompletion.model_construct(**data)
+        result = model._validate_completion(patched)
+        assert result.choices[0].message.content == 'The answer is 4.'
+        assert getattr(result.choices[0].message, 'reasoning_content', None) == 'I calculated 2+2.'
+
+    def test_list_content_invalid_blocks_raises(self):
+        """Invalid list content: TypeAdapter ValidationError is caught but model_validate fails."""
+        from pydantic import ValidationError as PydanticValidationError
+
+        model = self._make_model()
+        response = ChatCompletion(
+            id='test',
+            choices=[
+                Choice(
+                    index=0,
+                    finish_reason='stop',
+                    message=ChatCompletionMessage(role='assistant', content='placeholder'),
+                )
+            ],
+            created=0,
+            model='test',
+            object='chat.completion',
+        )
+        data = response.model_dump(mode='json', warnings=False)
+        data['choices'][0]['message']['content'] = [{'type': 'unknown_type', 'bad': True}]
+        patched = ChatCompletion.model_construct(**data)
+        with pytest.raises(PydanticValidationError):
+            model._validate_completion(patched)
+
+    def test_string_content_passes_through(self):
+        """Normal string content is not modified."""
+        model = self._make_model()
+        response = ChatCompletion(
+            id='test',
+            choices=[
+                Choice(
+                    index=0,
+                    finish_reason='stop',
+                    message=ChatCompletionMessage(role='assistant', content='hello world'),
+                )
+            ],
+            created=0,
+            model='test',
+            object='chat.completion',
+        )
+        result = model._validate_completion(response)
+        assert result.choices[0].message.content == 'hello world'
+
+    def test_list_content_text_only_no_reasoning(self):
+        """List content with only text blocks — no reasoning_content set."""
+        model = self._make_model()
+        response = ChatCompletion(
+            id='test',
+            choices=[
+                Choice(
+                    index=0,
+                    finish_reason='stop',
+                    message=ChatCompletionMessage(role='assistant', content='placeholder'),
+                )
+            ],
+            created=0,
+            model='test',
+            object='chat.completion',
+        )
+        data = response.model_dump(mode='json', warnings=False)
+        data['choices'][0]['message']['content'] = [
+            {'type': 'text', 'text': 'Just text.'},
+        ]
+        patched = ChatCompletion.model_construct(**data)
+        result = model._validate_completion(patched)
+        assert result.choices[0].message.content == 'Just text.'
+        # No reasoning_content should be set
+        assert not getattr(result.choices[0].message, 'reasoning_content', None)
+
+
+class TestDatabricksMapUsage:
+    """Tests for DatabricksModel._map_usage edge cases."""
+
+    def _make_model(self) -> DatabricksModel:
+        provider = DatabricksProvider(api_key='test', base_url='https://test.com')
+        return DatabricksModel('test-model', provider=provider)
+
+    def test_no_usage_returns_empty(self):
+        model = self._make_model()
+        response = ChatCompletion(id='test', choices=[], created=0, model='test', object='chat.completion')
+        # response.usage is None by default
+        result = model._map_usage(response)
+        assert result == RequestUsage()
+
+    def test_usage_with_reasoning_tokens_in_model_extra(self):
+        """Reasoning tokens found in model_extra when not a direct attribute."""
+        model = self._make_model()
+        response = ChatCompletion(
+            id='test',
+            choices=[
+                Choice(
+                    index=0,
+                    finish_reason='stop',
+                    message=ChatCompletionMessage(role='assistant', content='hi'),
+                )
+            ],
+            created=0,
+            model='test',
+            object='chat.completion',
+            usage={'prompt_tokens': 10, 'completion_tokens': 20, 'total_tokens': 30, 'reasoning_tokens': 5},  # type: ignore
+        )
+        result = model._map_usage(response)
+        assert result.input_tokens == 10
+        assert result.output_tokens == 20
+        assert result.details.get('reasoning_tokens') == 5
+
+
+class TestDatabricksProcessProviderDetails:
+    """Tests for DatabricksModel._process_provider_details."""
+
+    def _make_model(self) -> DatabricksModel:
+        provider = DatabricksProvider(api_key='test', base_url='https://test.com')
+        return DatabricksModel('test-model', provider=provider)
+
+    def test_provider_details_includes_usage(self):
+        model = self._make_model()
+        response = ChatCompletion(
+            id='test',
+            choices=[
+                Choice(
+                    index=0,
+                    finish_reason='stop',
+                    message=ChatCompletionMessage(role='assistant', content='hi'),
+                )
+            ],
+            created=0,
+            model='test',
+            object='chat.completion',
+            usage={'prompt_tokens': 5, 'completion_tokens': 10, 'total_tokens': 15},  # type: ignore
+        )
+        details = model._process_provider_details(response)
+        assert details is not None
+        assert 'usage' in details
+
+    def test_provider_details_no_usage(self):
+        model = self._make_model()
+        response = ChatCompletion(
+            id='test',
+            choices=[
+                Choice(
+                    index=0,
+                    finish_reason='stop',
+                    message=ChatCompletionMessage(role='assistant', content='hi'),
+                )
+            ],
+            created=0,
+            model='test',
+            object='chat.completion',
+        )
+        details = model._process_provider_details(response)
+        # Without usage, parent returns details from the choice but no 'usage' key
+        assert details is not None
+        assert 'usage' not in details
+
+
+class TestDatabricksStreamedResponseUnit:
+    """Tests for DatabricksStreamedResponse edge cases (no HTTP)."""
+
+    def _make_stream_response(self) -> DatabricksStreamedResponse:
+        sr = object.__new__(DatabricksStreamedResponse)
+        sr._internal_provider_details = None
+        sr._usage = RequestUsage()
+        return sr
+
+    def test_usage_when_none(self):
+        """Streaming usage returns empty RequestUsage when _usage is default."""
+        sr = object.__new__(DatabricksStreamedResponse)
+        sr._usage = None  # type: ignore
+        result = sr.usage()
+        assert result == RequestUsage()
+
+    def test_provider_details_no_internal_with_default_usage(self):
+        """provider_details includes usage even with default RequestUsage (it's truthy)."""
+        sr = object.__new__(DatabricksStreamedResponse)
+        sr._internal_provider_details = None
+        sr._usage = RequestUsage()
+        details = sr.provider_details
+        assert details == {'usage': RequestUsage()}
+
+    def test_provider_details_with_internal_details(self):
+        """provider_details merges internal details with usage."""
+        sr = object.__new__(DatabricksStreamedResponse)
+        sr._internal_provider_details = {'timestamp': '2024-01-01'}
+        sr._usage = RequestUsage()
+        details = sr.provider_details
+        assert details['timestamp'] == '2024-01-01'
+        assert 'usage' in details
+
+    def test_provider_details_setter(self):
+        """Setting provider_details stores in _internal_provider_details."""
+        sr = object.__new__(DatabricksStreamedResponse)
+        sr._internal_provider_details = None
+        sr._usage = RequestUsage()
+        sr.provider_details = {'key': 'value'}
+        assert sr._internal_provider_details == {'key': 'value'}
+
+    def test_usage_with_databricks_usage_object(self):
+        """Test usage() with a DatabricksUsage-like object that has prompt_tokens/completion_tokens."""
+        from pydantic_ai.models.databricks import DatabricksUsage
+
+        sr = object.__new__(DatabricksStreamedResponse)
+        # Create a DatabricksUsage object to simulate what would come from the API
+        usage_obj = DatabricksUsage(prompt_tokens=10, completion_tokens=20, total_tokens=30, reasoning_tokens=5)
+        sr._usage = usage_obj  # type: ignore
+        result = sr.usage()
+        assert result.input_tokens == 10
+        assert result.output_tokens == 20
+        assert result.details['reasoning_tokens'] == 5
+
+    def test_usage_with_databricks_usage_no_reasoning(self):
+        """Test usage() with DatabricksUsage that has no reasoning_tokens."""
+        from pydantic_ai.models.databricks import DatabricksUsage
+
+        sr = object.__new__(DatabricksStreamedResponse)
+        usage_obj = DatabricksUsage(prompt_tokens=10, completion_tokens=20, total_tokens=30)
+        sr._usage = usage_obj  # type: ignore
+        result = sr.usage()
+        assert result.input_tokens == 10
+        assert result.output_tokens == 20
+        assert 'reasoning_tokens' not in result.details
+
+    def test_usage_with_reasoning_tokens_in_model_extra(self):
+        """Test usage() with reasoning_tokens in model_extra (fallback path)."""
+        from pydantic_ai.models.databricks import DatabricksUsage
+
+        sr = object.__new__(DatabricksStreamedResponse)
+        # Simulate a usage object where reasoning_tokens is in model_extra
+        usage_data = {'prompt_tokens': 10, 'completion_tokens': 20, 'total_tokens': 30, 'reasoning_tokens': 7}
+        usage_obj = DatabricksUsage.model_validate(usage_data)
+        sr._usage = usage_obj  # type: ignore
+        result = sr.usage()
+        assert result.input_tokens == 10
+        assert result.output_tokens == 20
+        assert result.details.get('reasoning_tokens') == 7
+
+
+class TestDatabricksProcessProviderDetailsSafety:
+    """Test safety_identifier handling in provider details."""
+
+    def _make_model(self) -> DatabricksModel:
+        provider = DatabricksProvider(api_key='test', base_url='https://test.com')
+        return DatabricksModel('test-model', provider=provider)
+
+    def test_safety_identifier_captured(self):
+        """safety_identifier is captured when present on the response."""
+        model = self._make_model()
+        response = ChatCompletion(
+            id='test',
+            choices=[
+                Choice(
+                    index=0,
+                    finish_reason='stop',
+                    message=ChatCompletionMessage(role='assistant', content='hi'),
+                )
+            ],
+            created=0,
+            model='test',
+            object='chat.completion',
+            usage={'prompt_tokens': 5, 'completion_tokens': 10, 'total_tokens': 15},  # type: ignore
+        )
+        # Monkey-patch safety_identifier onto the response
+        response.safety_identifier = 'safety-123'  # type: ignore
+        details = model._process_provider_details(response)
+        assert details is not None
+        assert details['safety_identifier'] == 'safety-123'
+
+
+class TestDatabricksStreamedResponseMapPartDelta:
+    """Test _map_part_delta with structured content."""
+
+    def _make_stream_response(self) -> DatabricksStreamedResponse:
+        from pydantic_ai.models import ModelResponsePartsManager
+
+        sr = object.__new__(DatabricksStreamedResponse)
+        sr._internal_provider_details = None
+        sr._usage = RequestUsage()
+        sr._parts_manager = ModelResponsePartsManager()
+        return sr
+
+    def test_map_part_delta_with_text_block(self):
+        """Test _map_part_delta with list content containing a text block."""
+        from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
+
+        sr = self._make_stream_response()
+        # Create a choice with list content
+        delta = ChoiceDelta(role='assistant', content=None)
+        choice = ChunkChoice(index=0, delta=delta, finish_reason=None)
+        # Monkey-patch content to be a list
+        choice.delta.content = [{'type': 'text', 'text': 'hello'}]  # type: ignore
+        events = list(sr._map_part_delta(choice))
+        assert len(events) > 0
+
+    def test_map_part_delta_with_reasoning_block(self):
+        """Test _map_part_delta with list content containing a reasoning block."""
+        from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
+
+        sr = self._make_stream_response()
+        delta = ChoiceDelta(role='assistant', content=None)
+        choice = ChunkChoice(index=0, delta=delta, finish_reason=None)
+        choice.delta.content = [{'type': 'reasoning', 'text': 'thinking...'}]  # type: ignore
+        events = list(sr._map_part_delta(choice))
+        assert len(events) > 0
+
+    def test_map_part_delta_with_mixed_blocks(self):
+        """Test _map_part_delta with list content containing both text and reasoning."""
+        from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
+
+        sr = self._make_stream_response()
+        delta = ChoiceDelta(role='assistant', content=None)
+        choice = ChunkChoice(index=0, delta=delta, finish_reason=None)
+        choice.delta.content = [  # type: ignore
+            {'type': 'reasoning', 'text': 'thinking...'},
+            {'type': 'text', 'text': 'The answer is 4.'},
+        ]
+        events = list(sr._map_part_delta(choice))
+        assert len(events) >= 2  # At least one for reasoning and one for text

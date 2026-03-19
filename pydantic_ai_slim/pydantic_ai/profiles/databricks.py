@@ -24,7 +24,6 @@ class DatabricksModelProfile(OpenAIModelProfile):
     Inherits all configuration from OpenAIModelProfile.
     """
 
-    databricks_supports_tool_call_required: bool = True
     databricks_stream_options: bool = True
 
 
@@ -38,5 +37,6 @@ def databricks_model_profile(model_name: str) -> ModelProfile:
         tool_call_required = False
 
     return DatabricksModelProfile(
-        databricks_stream_options=stream_options, databricks_supports_tool_call_required=tool_call_required
+        databricks_stream_options=stream_options,
+        openai_supports_tool_choice_required=tool_call_required,
     )
