@@ -73,10 +73,6 @@ def doc_descriptions(
             if isinstance(source, DocstringSectionKind):
                 if output is not None:  # pragma: no branch
                     examples_content.append(str(output))
-            elif output:
-                examples_content.append(f'{source}\n{output}')
-            else:
-                examples_content.append(str(source))
 
         if examples_content:  # pragma: no branch
             formatted_examples = '\n\n'.join(examples_content)
