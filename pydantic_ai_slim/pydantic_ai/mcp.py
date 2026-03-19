@@ -545,10 +545,10 @@ class MCPServer(AbstractToolset[Any], ABC):
         # Audience filtering must happen before the structured-content path: if every
         # content block is annotated as user-only, the model should not see the
         # JSON-serialised equivalent either.
-        content_for_assistant, user_only = _mcp_partition_content(result.content)
+        content_for_assistant, user_only = mcp_partition_content(result.content)
 
         if not content_for_assistant and result.content:
-            return _mcp_user_only_placeholder(user_only)
+            return mcp_user_only_placeholder(user_only)
 
         # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
         # See https://github.com/modelcontextprotocol/python-sdk#structured-output
@@ -569,7 +569,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         assistant_content: Any = mapped[0] if len(mapped) == 1 else mapped
 
         if user_only:
-            return _mcp_wrap_with_user_metadata(assistant_content, user_only)
+            return mcp_wrap_with_user_metadata(assistant_content, user_only)
 
         return assistant_content
 
@@ -1334,7 +1334,7 @@ metadata.
 """
 
 
-def _mcp_audience_include(part: mcp_types.ContentBlock) -> bool:
+def mcp_audience_include(part: mcp_types.ContentBlock) -> bool:
     """Return True if this content block should be forwarded to the model (assistant).
 
     Per the MCP specification, content blocks may carry ``annotations.audience`` which
@@ -1353,7 +1353,7 @@ def _mcp_audience_include(part: mcp_types.ContentBlock) -> bool:
     return 'assistant' in audience
 
 
-def _mcp_partition_content(
+def mcp_partition_content(
     content: list[mcp_types.ContentBlock],
 ) -> tuple[list[mcp_types.ContentBlock], list[mcp_types.ContentBlock]]:
     """Partition MCP content blocks into (assistant-visible, user-only) lists.
@@ -1362,12 +1362,12 @@ def _mcp_partition_content(
     blocks that should be forwarded to the model and *user_only* contains blocks
     annotated exclusively for the ``user`` audience.
     """
-    filtered = [p for p in content if _mcp_audience_include(p)]
-    user_only = [p for p in content if not _mcp_audience_include(p)]
+    filtered = [p for p in content if mcp_audience_include(p)]
+    user_only = [p for p in content if not mcp_audience_include(p)]
     return filtered, user_only
 
 
-def _mcp_user_only_placeholder(
+def mcp_user_only_placeholder(
     user_only: list[mcp_types.ContentBlock],
 ) -> messages.ToolReturn:
     """Return a placeholder :class:`ToolReturn` for tools whose entire output is user-only.
@@ -1381,7 +1381,7 @@ def _mcp_user_only_placeholder(
     )
 
 
-def _mcp_wrap_with_user_metadata(
+def mcp_wrap_with_user_metadata(
     assistant_content: Any,
     user_only: list[mcp_types.ContentBlock],
 ) -> messages.ToolReturn:
