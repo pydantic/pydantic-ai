@@ -193,7 +193,7 @@ def test_databricks_sdk_auth_base_url_only(databricks_sdk_auth: None, env: TestE
 
 
 def test_databricks_sdk_auth_api_key_only(databricks_sdk_auth: None, env: TestEnv) -> None:
-    """SDK auth with api_key but no base_url discovers host from SDK."""
+    """SDK auth with api_key but no base_url discovers host from SDK without overriding credentials."""
     env.remove('DATABRICKS_API_KEY')
     env.remove('DATABRICKS_BASE_URL')
     env.remove('DATABRICKS_TOKEN')
@@ -202,6 +202,8 @@ def test_databricks_sdk_auth_api_key_only(databricks_sdk_auth: None, env: TestEn
     provider = DatabricksProvider(api_key='user-token')
     assert provider.base_url == 'https://mock.databricks.com/serving-endpoints/'
     assert provider.client.api_key == 'user-token'
+    # DatabricksAuth should NOT be applied — user provided their own api_key
+    assert not isinstance(provider.client._client._auth, db_mod.DatabricksAuth)  # type: ignore
 
 
 def test_databricks_sdk_auth_host_with_serving_endpoints(env: TestEnv, monkeypatch: pytest.MonkeyPatch) -> None:

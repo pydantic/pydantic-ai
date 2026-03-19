@@ -128,8 +128,9 @@ class DatabricksModel(OpenAIChatModel):
             data['id'] = 'databricks-placeholder-id'
 
         choices = data.get('choices', [])
+
         if not choices:
-            return super()._validate_completion(response)
+            return chat.ChatCompletion.model_validate(data)
 
         message_payload = choices[0].get('message', {})
         raw_content = message_payload.get('content')

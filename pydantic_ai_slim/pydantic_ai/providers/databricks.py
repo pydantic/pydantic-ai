@@ -115,6 +115,7 @@ class DatabricksProvider(Provider['AsyncOpenAI']):
                 '`pip install "pydantic-ai[databricks]"`'
             )
 
+        use_sdk_auth = not api_key
         ws: WorkspaceClient | None = None
 
         if not base_url:
@@ -147,7 +148,8 @@ class DatabricksProvider(Provider['AsyncOpenAI']):
         if http_client is None:
             http_client = httpx.AsyncClient()
 
-        http_client.auth = DatabricksAuth(ws)
+        if use_sdk_auth:
+            http_client.auth = DatabricksAuth(ws)
 
         self._client = AsyncOpenAI(
             base_url=host,
