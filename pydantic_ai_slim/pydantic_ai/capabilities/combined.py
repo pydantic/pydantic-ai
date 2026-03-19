@@ -3,14 +3,13 @@ from dataclasses import dataclass
 
 from pydantic_ai import _instructions, _system_prompt
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.messages import ModelMessage, ModelResponse
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.messages import ModelResponse
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, RunContext
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetFunc
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from .abstract import AbstractCapability
+from .abstract import AbstractCapability, BeforeModelRequestContext
 
 
 @dataclass
@@ -54,16 +53,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
-        *,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> tuple[list[ModelMessage], ModelSettings, ModelRequestParameters]:
+        request_context: BeforeModelRequestContext,
+    ) -> BeforeModelRequestContext:
         for capability in self.capabilities:
-            messages, model_settings, model_request_parameters = await capability.before_model_request(
-                ctx, messages=messages, model_settings=model_settings, model_request_parameters=model_request_parameters
-            )
-        return messages, model_settings, model_request_parameters
+            request_context = await capability.before_model_request(ctx, request_context)
+        return request_context
 
     async def after_model_request(
         self,

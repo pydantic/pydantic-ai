@@ -22,13 +22,15 @@ class Thinking(ModelSettings[AgentDepsT]):
     def __init__(self):
         # Cast needed because ModelSettings is a TypedDict and we're constructing
         # it from a plain dict with provider-specific keys that aren't in the base type.
+        # Providers covered: OpenAI, Anthropic, Google (google.genai SDK), Gemini (direct API)
         super().__init__(
             cast(
                 _ModelSettings,
                 {
                     'openai_reasoning_effort': 'high',
                     'anthropic_thinking': {'type': 'adaptive'},
-                    # TODO: Use unified thinking settings from #3894 once merged
+                    'google_thinking_config': {'include_thoughts': True},
+                    'gemini_thinking_config': {'include_thoughts': True},
                 },
             ),
         )

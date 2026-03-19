@@ -1,6 +1,6 @@
 from typing import Any
 
-from .abstract import AbstractCapability
+from .abstract import AbstractCapability, BeforeModelRequestContext
 from .combined import CombinedCapability
 from .history_processor import HistoryProcessorCapability
 from .instructions import Instructions
@@ -36,6 +36,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 
 __all__ = [
     'AbstractCapability',
+    'BeforeModelRequestContext',
     'CAPABILITY_TYPES',
     'DEFAULT_CAPABILITY_TYPES',
     'Instructions',

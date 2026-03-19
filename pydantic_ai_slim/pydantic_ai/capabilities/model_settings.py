@@ -4,12 +4,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
-from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings as _ModelSettings, merge_model_settings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from .abstract import AbstractCapability
+from .abstract import AbstractCapability, BeforeModelRequestContext
 
 
 @dataclass
@@ -45,14 +43,11 @@ class ModelSettings(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
-        *,
-        messages: list[ModelMessage],
-        model_settings: _ModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> tuple[list[ModelMessage], _ModelSettings, ModelRequestParameters]:
+        request_context: BeforeModelRequestContext,
+    ) -> BeforeModelRequestContext:
         if callable(self.settings):
             # Dynamic settings need to be resolved and merged per request;
             # static settings are already handled by get_model_settings.
             resolved = self.settings(ctx)
-            model_settings = merge_model_settings(model_settings, resolved) or resolved
-        return messages, model_settings, model_request_parameters
+            request_context.model_settings = merge_model_settings(request_context.model_settings, resolved) or resolved
+        return request_context

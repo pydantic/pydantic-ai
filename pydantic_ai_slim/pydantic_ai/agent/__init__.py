@@ -374,7 +374,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for history_processor in history_processors or []:
             capabilities.append(HistoryProcessorCapability(history_processor))
 
-        self.root_capability = CombinedCapability(capabilities)
+        self._root_capability = CombinedCapability(capabilities)
 
         self.model_settings = model_settings
 
@@ -395,7 +395,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_validators = []
 
         self._instructions = _instructions.normalize_instructions(instructions)
-        self._instructions.extend(_instructions.normalize_instructions(self.root_capability.get_instructions()))
+        self._instructions.extend(_instructions.normalize_instructions(self._root_capability.get_instructions()))
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -408,7 +408,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._validation_context = validation_context
 
         self._builtin_tools = list(builtin_tools)
-        self._builtin_tools.extend(self.root_capability.get_builtin_tools())
+        self._builtin_tools.extend(self._root_capability.get_builtin_tools())
 
         self._prepare_tools = prepare_tools
         self._prepare_output_tools = prepare_output_tools
@@ -425,7 +425,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         toolsets = list(toolsets or [])
-        toolset = self.root_capability.get_toolset()
+        toolset = self._root_capability.get_toolset()
         if toolset is not None:
             toolsets.append(toolset)
 
@@ -992,7 +992,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_schema=output_schema,
             output_validators=output_validators,
             validation_context=self._validation_context,
-            root_capability=self.root_capability,
+            root_capability=self._root_capability,
             builtin_tools=[*self._builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,

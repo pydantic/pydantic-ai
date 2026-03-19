@@ -15,6 +15,19 @@ from pydantic_ai.toolsets import AbstractToolset, ToolsetFunc
 
 
 @dataclass
+class BeforeModelRequestContext:
+    """Context passed to and returned from [`AbstractCapability.before_model_request`][pydantic_ai.capabilities.abstract.AbstractCapability.before_model_request].
+
+    Wrapping these parameters in a dataclass instead of a tuple makes the signature
+    future-proof: new fields can be added without breaking existing implementations.
+    """
+
+    messages: list[ModelMessage]
+    model_settings: ModelSettings
+    model_request_parameters: ModelRequestParameters
+
+
+@dataclass
 class AbstractCapability(ABC, Generic[AgentDepsT]):
     """Abstract base class for agent capabilities."""
 
@@ -53,13 +66,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
-        *,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> tuple[list[ModelMessage], ModelSettings, ModelRequestParameters]:
+        request_context: BeforeModelRequestContext,
+    ) -> BeforeModelRequestContext:
         """Called before each model request. Can modify messages, settings, and parameters."""
-        return messages, model_settings, model_request_parameters
+        return request_context
 
     async def after_model_request(
         self,

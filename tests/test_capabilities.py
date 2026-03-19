@@ -329,7 +329,7 @@ def test_agent_from_spec_capabilities_merged():
         capabilities=[ExtraCap()],
     )
     # Should have both the Instructions capability from spec and ExtraCap from arg
-    children = agent.root_capability.capabilities
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
     assert any(isinstance(c, Instructions) for c in children)
     assert any(isinstance(c, ExtraCap) for c in children)
 
@@ -631,6 +631,7 @@ def test_model_settings_from_spec_kwargs():
 
 async def test_model_settings_callable_before_model_request():
     """Callable ModelSettings resolves dynamically in before_model_request."""
+    from pydantic_ai.capabilities.abstract import BeforeModelRequestContext
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.test import TestModel
     from pydantic_ai.result import RunUsage
@@ -644,18 +645,21 @@ async def test_model_settings_callable_before_model_request():
     assert cap.get_model_settings() is None
 
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
-    _, settings, _ = await cap.before_model_request(
+    result = await cap.before_model_request(
         ctx,
-        messages=[],
-        model_settings=_ModelSettings(max_tokens=100),
-        model_request_parameters=ModelRequestParameters(),
+        BeforeModelRequestContext(
+            messages=[],
+            model_settings=_ModelSettings(max_tokens=100),
+            model_request_parameters=ModelRequestParameters(),
+        ),
     )
-    assert settings.get('temperature') == 0.9
-    assert settings.get('max_tokens') == 100
+    assert result.model_settings.get('temperature') == 0.9
+    assert result.model_settings.get('max_tokens') == 100
 
 
 async def test_model_settings_static_before_model_request():
     """Static ModelSettings passes through before_model_request without modification."""
+    from pydantic_ai.capabilities.abstract import BeforeModelRequestContext
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.test import TestModel
     from pydantic_ai.result import RunUsage
@@ -664,14 +668,16 @@ async def test_model_settings_static_before_model_request():
 
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
     input_settings = _ModelSettings(temperature=0.5)
-    _, settings, _ = await cap.before_model_request(
+    result = await cap.before_model_request(
         ctx,
-        messages=[],
-        model_settings=input_settings,
-        model_request_parameters=ModelRequestParameters(),
+        BeforeModelRequestContext(
+            messages=[],
+            model_settings=input_settings,
+            model_request_parameters=ModelRequestParameters(),
+        ),
     )
     # Static settings are handled by get_model_settings, not before_model_request
-    assert settings is input_settings
+    assert result.model_settings is input_settings
 
 
 def test_abstract_capability_get_model_settings_default():

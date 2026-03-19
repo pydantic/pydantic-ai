@@ -21,7 +21,7 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager, ValidatedToolCall
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, now_utc
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, BeforeModelRequestContext
 from pydantic_graph import BaseNode, GraphRunContext
 from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
@@ -521,12 +521,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters = await _prepare_request_parameters(ctx)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
 
-        messages, model_settings, model_request_parameters = await ctx.deps.root_capability.before_model_request(
+        request_context = await ctx.deps.root_capability.before_model_request(
             run_context,
-            messages=ctx.state.message_history[:],
-            model_settings=model_settings,
-            model_request_parameters=model_request_parameters,
+            BeforeModelRequestContext(
+                messages=ctx.state.message_history[:],
+                model_settings=model_settings,
+                model_request_parameters=model_request_parameters,
+            ),
         )
+        messages = request_context.messages
+        model_settings = request_context.model_settings
+        model_request_parameters = request_context.model_request_parameters
 
         if len(messages) == 0:
             raise exceptions.UserError('Processed history cannot be empty.')
