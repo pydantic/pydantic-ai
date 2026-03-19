@@ -255,7 +255,9 @@ async def test_server_instructions_included_in_agent_request() -> None:
     async with agent:
         result = await agent.run('Hello')
 
-    assert result.all_messages()[0].instructions == 'Be a helpful assistant.'
+    first_message = result.all_messages()[0]
+    assert isinstance(first_message, ModelRequest)
+    assert first_message.instructions == 'Be a helpful assistant.'
 
 
 async def test_server_instructions_not_initialized():
