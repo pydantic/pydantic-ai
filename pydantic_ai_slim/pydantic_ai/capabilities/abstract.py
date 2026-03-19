@@ -29,7 +29,20 @@ class BeforeModelRequestContext:
 
 @dataclass
 class AbstractCapability(ABC, Generic[AgentDepsT]):
-    """Abstract base class for agent capabilities."""
+    """Abstract base class for agent capabilities.
+
+    A capability is a reusable, composable unit of agent behavior that can provide
+    instructions, model settings, tools, and request/response hooks.
+
+    Lifecycle: capabilities are passed to an `Agent` at construction time, where their
+    `get_*` methods are called to collect static configuration (instructions, model
+    settings, toolsets, builtin tools). Then, on each model request during a run, the
+    `before_model_request` and `after_model_request` hooks are called to allow
+    dynamic adjustments.
+
+    See `capabilities.thinking.Thinking` and `capabilities.model_settings.ModelSettings`
+    for built-in examples.
+    """
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

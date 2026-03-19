@@ -9,7 +9,12 @@ from .model_settings import ModelSettings
 
 
 class Thinking(ModelSettings[AgentDepsT]):
-    """Capability that enables model thinking/reasoning."""
+    """Capability that enables model thinking/reasoning.
+
+    This is a placeholder that hardcodes provider-specific thinking settings.
+    It will be replaced by unified thinking settings from #3894, which will
+    also allow configurable parameters (e.g. reasoning_effort, budget_tokens).
+    """
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
