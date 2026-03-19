@@ -227,6 +227,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         is_resuming_without_prompt = False
 
         run_context: RunContext[DepsT] | None = None
+        instructions: str | None = None
 
         if messages and (last_message := messages[-1]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
@@ -256,12 +257,16 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 if self.user_prompt is None:
                     # Align with the upcoming request step so we don't resolve dynamic toolsets twice.
                     run_context = replace(build_run_context(ctx), run_step=ctx.state.run_step + 1)
-                    # Resolve dynamic toolsets before skipping to CallToolsNode, so the tool manager is
-                    # ready for the next step (instructions will be fetched by ModelRequestNode later).
                     ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
-                    # If there's no new prompt, skip ModelRequestNode and go directly to CallToolsNode.
-                    # Instructions are applied to the next ModelRequest by ModelRequestNode.run().
-                    return CallToolsNode[DepsT, NodeRunEndT](last_message)
+                    if last_message.tool_calls:
+                        # Pending tool calls must be processed before any new ModelRequest, regardless
+                        # of instructions.  Instructions will be applied by ModelRequestNode.run() on
+                        # the subsequent request after tool results are collected.
+                        return CallToolsNode[DepsT, NodeRunEndT](last_message)
+                    instructions = await ctx.deps.get_instructions(run_context)
+                    if not instructions:
+                        # No pending tool calls and no instructions — nothing new to send to the model.
+                        return CallToolsNode[DepsT, NodeRunEndT](last_message)
                 elif last_message.tool_calls:
                     raise exceptions.UserError(
                         'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
@@ -284,6 +289,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 parts.append(_messages.UserPromptPart(self.user_prompt))
 
             next_message = _messages.ModelRequest(parts=parts)
+
+        next_message.instructions = instructions
 
         return ModelRequestNode[DepsT, NodeRunEndT](
             request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
