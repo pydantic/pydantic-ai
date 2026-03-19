@@ -22,6 +22,10 @@
 
 **Documentation**: [ai.pydantic.dev](https://ai.pydantic.dev/)
 
+<p align="center">
+  <a href="README.zh.md">简体中文</a> | <strong>English</strong>
+</p>
+
 ---
 
 ### <em>Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.</em>
