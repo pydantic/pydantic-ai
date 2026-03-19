@@ -255,7 +255,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         ctx.deps.prompt = combined_content
             elif isinstance(last_message, _messages.ModelResponse):
                 if self.user_prompt is None:
-                    run_context = build_run_context(ctx)
+                    # Align with the upcoming request step so we don't resolve dynamic toolsets twice.
+                    run_context = replace(build_run_context(ctx), run_step=ctx.state.run_step + 1)
                     # Resolve dynamic toolsets before fetching instructions, so DynamicToolset.get_instructions()
                     # can delegate to the resolved inner toolset instead of returning None
                     ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)

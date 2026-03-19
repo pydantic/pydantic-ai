@@ -24,6 +24,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -1279,6 +1280,24 @@ async def test_dynamic_toolset_instructions_on_first_request():
     result = await agent.run('Hello')
     first_message = result.all_messages()[0]
     assert first_message.instructions == 'Dynamic tool instructions.'  # type: ignore[union-attr]
+
+
+async def test_resume_without_prompt_dynamic_toolset_instructions_resolve_once_for_request_step():
+    """Resuming from a trailing ModelResponse should resolve dynamic toolsets only once for the next request step."""
+    run_steps: list[int] = []
+
+    def make_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+        run_steps.append(ctx.run_step)
+        return FunctionToolset[None](instructions=f'Dynamic instructions at step {ctx.run_step}.')
+
+    agent = Agent(TestModel(custom_output_text='done'), toolsets=[DynamicToolset(make_toolset)])
+    result = await agent.run(message_history=[ModelResponse(parts=[TextPart(content='previous')])])
+
+    # The resume pre-check and request preparation should use the same run_step.
+    assert run_steps == [1]
+
+    requests = [m for m in result.all_messages() if isinstance(m, ModelRequest)]
+    assert requests[-1].instructions == 'Dynamic instructions at step 1.'
 
 
 async def test_toolset_instructions_combined_with_agent_instructions():
