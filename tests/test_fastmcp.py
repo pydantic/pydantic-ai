@@ -736,7 +736,7 @@ class TestAudienceFiltering:
         """
         from unittest.mock import AsyncMock, patch
 
-        from mcp.types import CallToolResult
+        from fastmcp.client.client import CallToolResult as FMCPCallToolResult
 
         fastmcp_server = FastMCP('test_server')
 
@@ -745,13 +745,13 @@ class TestAudienceFiltering:
             return 'ignored'
 
         toolset = FastMCPToolset(fastmcp_server)
-        fake_result = CallToolResult(
+        fake_result = FMCPCallToolResult(
             content=[
                 TextContent(type='text', text='model sees this', annotations=Annotations(audience=['assistant'])),
                 TextContent(type='text', text='user only secret', annotations=Annotations(audience=['user'])),
             ],
             structured_content={'raw': 'user only secret'},
-            isError=False,
+            meta=None,
         )
         async with toolset:
             tools = await toolset.get_tools(run_context)

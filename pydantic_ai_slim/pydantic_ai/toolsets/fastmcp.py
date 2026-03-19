@@ -169,7 +169,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
         # If audience filtering removed all non-empty content, return a placeholder and
         # expose the user-only content via ToolReturnPart.metadata for the application.
-        # (This check must come before the structured_content check so that a tool
+        # (This check must come before the structuredContent check so that a tool
         # whose entire output is user-only doesn't expose its JSON-serialised equivalent.)
         if not filtered and call_tool_result.content:
             return messages.ToolReturn(
@@ -178,9 +178,9 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
             )
 
         # Prefer structured content when available — covers both the case where the tool
-        # returned data directly (empty content + structured_content) and the normal case
+        # returned data directly (empty content + structuredContent) and the normal case
         # where FastMCP serialises the return value alongside text content.
-        # Guard: structured_content holds the raw unfiltered return value; if any content
+        # Guard: structuredContent holds the raw unfiltered return value; if any content
         # blocks are user-only, we must NOT return it directly (it would expose user-only
         # content to the model). Fall through to the text/image mapping path instead.
         if not user_only and call_tool_result.structured_content:
