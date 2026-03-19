@@ -1535,6 +1535,24 @@ async def test_custom_model_settings(allow_model_requests: None, dbos: DBOS):
     assert result.output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")
 
 
+def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(agent_info.instructions or '')])
+
+
+mcp_instructions_agent = Agent(
+    FunctionModel(return_mcp_instructions),
+    name='mcp_instructions_agent',
+    toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],
+)
+mcp_instructions_dbos_agent = DBOSAgent(mcp_instructions_agent)
+
+
+async def test_dbos_mcp_toolset_instructions_propagate(dbos: DBOS):
+    """MCP instructions should propagate through DBOS wrapper toolsets."""
+    result = await mcp_instructions_dbos_agent.run('Use MCP instructions')
+    assert result.output == snapshot('Be a helpful assistant.')
+
+
 fastmcp_agent = Agent(
     model,
     name='fastmcp_agent',

@@ -1355,6 +1355,7 @@ async def test_temporal_agent():
             'agent__complex_agent__model_request_stream',
             'agent__complex_agent__toolset__<agent>__call_tool',
             'agent__complex_agent__toolset__country__call_tool',
+            'agent__complex_agent__mcp_server__mcp__get_instructions',
             'agent__complex_agent__mcp_server__mcp__get_tools',
             'agent__complex_agent__mcp_server__mcp__call_tool',
         ]
@@ -2419,6 +2420,44 @@ async def test_custom_model_settings(allow_model_requests: None, client: Client)
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")
+
+
+def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(agent_info.instructions or '')])
+
+
+mcp_instructions_agent = Agent(
+    FunctionModel(return_mcp_instructions),
+    name='mcp_instructions_agent',
+    toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],
+)
+
+mcp_instructions_temporal_agent = TemporalAgent(mcp_instructions_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class MCPInstructionsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await mcp_instructions_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_temporal_mcp_toolset_instructions_propagate(client: Client):
+    """MCP instructions should propagate through Temporal wrapper toolsets."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPInstructionsWorkflow],
+        plugins=[AgentPlugin(mcp_instructions_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MCPInstructionsWorkflow.run,
+            args=['Use MCP instructions'],
+            id=MCPInstructionsWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('Be a helpful assistant.')
 
 
 image_agent = Agent(model, name='image_agent', output_type=BinaryImage)

@@ -48,6 +48,19 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
 
         self._dbos_wrapped_get_tools_step = wrapped_get_tools_step
 
+        # Wrap get_instructions in a DBOS step.
+        @DBOS.step(
+            name=f'{self._name}.get_instructions',
+            **self._step_config,
+        )
+        async def wrapped_get_instructions_step(
+            ctx: RunContext[AgentDepsT],
+        ) -> str | list[str] | None:
+            async with self.wrapped:
+                return await super(DBOSMCPToolset, self).get_instructions(ctx)
+
+        self._dbos_wrapped_get_instructions_step = wrapped_get_instructions_step
+
         # Wrap call_tool in a DBOS step.
         @DBOS.step(
             name=f'{self._name}.call_tool',
@@ -88,6 +101,14 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tool_defs = await self._dbos_wrapped_get_tools_step(ctx)
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
+
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | list[str] | None:
+        # When instructions are disabled, base delegation returns `None` directly.
+        # If enabled but not yet initialized in this process, fetch inside a DBOS step.
+        try:
+            return await super().get_instructions(ctx)
+        except AttributeError:
+            return await self._dbos_wrapped_get_instructions_step(ctx)
 
     async def call_tool(
         self,
