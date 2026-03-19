@@ -16,6 +16,7 @@ from httpx import AsyncClient
 from pydantic import BaseModel
 
 from pydantic_ai import (
+    AbstractToolset,
     Agent,
     AgentStreamEvent,
     ModelMessage,
@@ -24,7 +25,9 @@ from pydantic_ai import (
     ModelSettings,
     RetryPromptPart,
     RunContext,
+    RunUsage,
     TextPart,
+    ToolsetTool,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -43,6 +46,7 @@ try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
     from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSMCPServer, DBOSModel
+    from pydantic_ai.durable_exec.dbos._mcp import DBOSMCPToolset
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
@@ -1551,6 +1555,64 @@ async def test_dbos_mcp_toolset_instructions_propagate(dbos: DBOS):
     """MCP instructions should propagate through DBOS wrapper toolsets."""
     result = await mcp_instructions_dbos_agent.run('Use MCP instructions')
     assert result.output == snapshot('Be a helpful assistant.')
+
+
+class _UninitializedInstructionsToolset(AbstractToolset[None]):
+    """A toolset whose instructions raise AttributeError until it's entered (like an uninitialized MCP server)."""
+
+    _entered = False
+
+    @property
+    def id(self) -> str:
+        return 'test-mcp-uninit'
+
+    async def __aenter__(self) -> _UninitializedInstructionsToolset:
+        self._entered = True
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        self._entered = False
+
+    async def get_instructions(self, ctx: RunContext[None]) -> str | list[str] | None:
+        if not self._entered:
+            raise AttributeError('instructions are only available after initialization')
+        return 'step-resolved instructions'
+
+    async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+        return {}
+
+    async def call_tool(
+        self,
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[None],
+        tool: ToolsetTool[None],
+    ) -> Any:
+        raise AssertionError('call_tool should not be invoked in this test')  # pragma: no cover
+
+
+class _TestDBOSMCPToolset(DBOSMCPToolset[None]):
+    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[None]:
+        raise AssertionError('tool_for_tool_def should not be invoked in this test')  # pragma: no cover
+
+
+_uninit_instructions_toolset = _TestDBOSMCPToolset(
+    _UninitializedInstructionsToolset(),
+    step_name_prefix='coverage_test',
+    step_config={},
+)
+
+
+async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
+    """When wrapped instructions are uninitialized, DBOS wrapper should fetch them in a step."""
+    run_context = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+    )
+
+    instructions = await _uninit_instructions_toolset.get_instructions(run_context)
+    assert instructions == 'step-resolved instructions'
 
 
 fastmcp_agent = Agent(
