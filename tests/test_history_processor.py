@@ -1288,8 +1288,8 @@ async def test_history_processor_resuming_without_prompt(
 ):
     """
     When running without a user prompt (resuming from history), new_messages()
-    should include the resumed request when that request has the current
-    run_id.
+    should exclude the request supplied via message_history even when that
+    request gets the current run_id.
     """
 
     def prepend_summary(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1351,14 +1351,14 @@ async def test_history_processor_resuming_without_prompt(
             ),
         ]
     )
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
-async def test_resuming_without_prompt_with_tool_calls_includes_resumed_request_with_current_run_id():
+async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request():
     """
     When resuming without a user prompt and the model enters a tool-call loop,
-    new_messages() should include the resumed history request when it has
-    the current run_id.
+    new_messages() should exclude the resumed history request even though it
+    gets the current run_id.
     """
 
     call_count = 0
@@ -1418,7 +1418,7 @@ async def test_resuming_without_prompt_with_tool_calls_includes_resumed_request_
         ]
     )
 
-    assert result.new_messages() == result.all_messages()
+    assert result.new_messages() == result.all_messages()[1:]
 
 
 async def test_resuming_without_prompt_excludes_request_with_different_run_id(
@@ -1487,8 +1487,8 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
 ):
     """
     When a history processor deep-copies messages (breaking object identity),
-    new_messages() should still include the resumed request when it has the
-    current run_id.
+    new_messages() should still exclude the resumed request supplied via
+    message_history.
     """
 
     def deepcopy_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1526,7 +1526,7 @@ async def test_history_processor_deepcopy_resuming_without_prompt(
         ]
     )
 
-    assert result.new_messages() == result.all_messages()
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 async def test_history_processor_rebuild_resuming_without_prompt(
@@ -1534,8 +1534,8 @@ async def test_history_processor_rebuild_resuming_without_prompt(
 ):
     """
     When a history processor rebuilds `ModelRequest` instances with equivalent
-    values, new_messages() should include the resumed request when it has the
-    current run_id.
+    values, new_messages() should still exclude the resumed request supplied
+    via message_history.
     """
 
     def rebuild_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1601,7 +1601,7 @@ async def test_history_processor_rebuild_resuming_without_prompt(
         ]
     )
 
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 async def test_history_processor_replace_resumed_request_falls_through(
