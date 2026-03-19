@@ -120,6 +120,13 @@ class ModelResponsePartsManager:
             UnexpectedModelBehavior: If attempting to apply text content to a part that is not a TextPart.
         """
         existing_text_part_and_index: tuple[TextPart, int] | None = None
+        start_tag: str | None = None
+        end_tag: str | None = None
+
+        if thinking_tags:
+            start_tag, end_tag = thinking_tags
+            if not start_tag and not end_tag:
+                thinking_tags = None
 
         if vendor_part_id is None:
             # If the vendor_part_id is None, check if the latest part is a TextPart to update
@@ -132,7 +139,7 @@ class ModelResponsePartsManager:
 
                 if thinking_tags and isinstance(existing_part, ThinkingPart):
                     # We may be building a thinking part instead of a text part if we had previously seen a thinking tag
-                    if content == thinking_tags[1]:
+                    if end_tag and content == end_tag:
                         # When we see the thinking end tag, we're done with the thinking part and the next text delta will need a new part
                         self._handle_embedded_thinking_end(vendor_part_id)
                         return
@@ -145,7 +152,17 @@ class ModelResponsePartsManager:
                 else:
                     raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
 
-        if thinking_tags and content == thinking_tags[0]:
+        if thinking_tags and not start_tag and end_tag:
+            yield from self._handle_empty_start_tag(
+                vendor_part_id=vendor_part_id,
+                content=content,
+                end_tag=end_tag,
+                provider_name=provider_name,
+                provider_details=provider_details,
+            )
+            return
+
+        if thinking_tags and start_tag and content == start_tag:
             # When we see a thinking start tag (which is a single token), we'll build a new thinking part instead
             yield from self._handle_embedded_thinking_start(vendor_part_id, provider_name, provider_details)
             return
@@ -482,6 +499,39 @@ class ModelResponsePartsManager:
     def _handle_embedded_thinking_end(self, vendor_part_id: VendorId) -> None:
         """Handle </think> tag - stop tracking so next delta creates new part."""
         self._stop_tracking_vendor_id(vendor_part_id)
+
+    def _handle_empty_start_tag(
+        self,
+        *,
+        vendor_part_id: VendorId | None,
+        content: str,
+        end_tag: str,
+        provider_name: str | None,
+        provider_details: dict[str, Any] | None,
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Handle thinking when the start tag is empty and end tag is present."""
+        if vendor_part_id is None:
+            existing_thinking_part_and_index = self._latest_part_if_of_type(ThinkingPart)
+            if existing_thinking_part_and_index is not None:
+                existing_thinking_part, part_index = existing_thinking_part_and_index
+                if content == end_tag:
+                    self._handle_embedded_thinking_end(vendor_part_id)
+                    return
+                yield from self._handle_embedded_thinking_content(
+                    existing_thinking_part, part_index, content, provider_name, provider_details
+                )
+                return
+        if content == end_tag:
+            yield from self._handle_embedded_thinking_start(vendor_part_id, provider_name, provider_details)
+            self._handle_embedded_thinking_end(vendor_part_id)
+            return
+        yield from self._handle_embedded_thinking_start(vendor_part_id, provider_name, provider_details)
+        latest_thinking_part_and_index = self._latest_part_if_of_type(ThinkingPart)
+        if latest_thinking_part_and_index is not None:
+            existing_thinking_part, part_index = latest_thinking_part_and_index
+            yield from self._handle_embedded_thinking_content(
+                existing_thinking_part, part_index, content, provider_name, provider_details
+            )
 
     def _resolve_provider_name(
         self, existing_part: ModelResponsePart | ToolCallPartDelta, provider_name: str | None
