@@ -1168,3 +1168,12 @@ def test_openrouter_validate_completion_nested_response() -> None:
     model_response = model._process_response(nested_completion)  # type: ignore[reportPrivateUsage]
 
     assert any(isinstance(part, TextPart) and part.content == 'Hello from nested!' for part in model_response.parts)
+
+
+def test_openrouter_settings_to_openai_settings_without_model_request_parameters() -> None:
+    """Test _openrouter_settings_to_openai_settings when model_request_parameters is None (no plugins injected)."""
+    settings = OpenRouterModelSettings()
+    result = _openrouter_settings_to_openai_settings(settings, None)
+    extra_body = cast(dict[str, Any], result.get('extra_body', {}))
+    assert 'plugins' not in extra_body
+    assert 'web_search_options' not in extra_body
