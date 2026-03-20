@@ -1,3 +1,4 @@
+import importlib.util
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -786,6 +787,7 @@ def test_to_file_with_path_schema_path(tmp_path: str):
     assert 'model: test' in content
 
 
+@pytest.mark.skipif(not importlib.util.find_spec('rich'), reason='CLI deps not installed')
 def test_load_agent_yaml(tmp_path: str):
     """load_agent loads an agent from a YAML spec file."""
     from pydantic_ai._cli import load_agent
@@ -797,6 +799,7 @@ def test_load_agent_yaml(tmp_path: str):
     assert agent.name == 'yaml-agent'
 
 
+@pytest.mark.skipif(not importlib.util.find_spec('rich'), reason='CLI deps not installed')
 def test_load_agent_json(tmp_path: str):
     """load_agent loads an agent from a JSON spec file."""
     from pydantic_ai._cli import load_agent
@@ -808,6 +811,7 @@ def test_load_agent_json(tmp_path: str):
     assert agent.name == 'json-agent'
 
 
+@pytest.mark.skipif(not importlib.util.find_spec('rich'), reason='CLI deps not installed')
 def test_load_agent_missing_file(tmp_path: str):
     """load_agent returns None for a non-existent spec file."""
     from pydantic_ai._cli import load_agent
