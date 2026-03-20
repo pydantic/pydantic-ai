@@ -4350,6 +4350,30 @@ def test_transformer_adds_properties_to_object_schemas():
     assert result['properties'] == {}
 
 
+def test_transformer_bare_list_not_strict_compatible():
+    """Array schema with empty `items: {}` (from bare `list`) is not strict-compatible."""
+    schema = {'type': 'array', 'items': {}}
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is False
+
+
+def test_transformer_array_missing_items_not_strict_compatible():
+    """Array schema with no `items` key at all is not strict-compatible."""
+    schema = {'type': 'array'}
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is False
+
+
+def test_transformer_typed_list_stays_strict_compatible():
+    """Array schema with a proper `items` type remains strict-compatible."""
+    schema = {'type': 'array', 'items': {'type': 'string'}}
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is True
+
+
 def chunk_with_usage(
     delta: list[ChoiceDelta],
     finish_reason: FinishReason | None = None,
