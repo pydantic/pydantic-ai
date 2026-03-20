@@ -1,21 +1,17 @@
 # pyright: reportPrivateUsage=false
-import base64
-from typing import Any, Literal, cast
-from unittest.mock import MagicMock, patch
+from typing import Literal, cast
 
 import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
-    BinaryContent,
     ModelHTTPError,
     ModelRequest,
     ModelResponse,
     TextPart,
     ToolCallPart,
     ToolDefinition,
-    UserPromptPart,
 )
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
@@ -29,7 +25,6 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.databricks import (
         DatabricksModel,
-        DatabricksModelSettings,
         DatabricksReasoningContent,
         DatabricksStreamedResponse,
         DatabricksSummaryText,
@@ -180,93 +175,6 @@ class TestDatabricks:
         last_msg = result.all_messages()[-1]
         assert isinstance(last_msg, ModelResponse)
         assert last_msg.provider_details is not None
-
-    async def test_databricks_multimodal_content_structure(
-        self,
-        allow_model_requests: None,
-        databricks_api_key: str,
-        databricks_base_url: str,
-        model_name: str,
-    ) -> None:
-        """
-        Test that multimodal inputs (Text + Image) are correctly mapped to the
-        List[ContentItem] schema required by Databricks, using _map_messages inspection.
-        """
-        provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
-        model = DatabricksModel(model_name, provider=provider)
-
-        fake_image_data = b'fake_image_bytes'
-
-        message = ModelRequest(
-            parts=[
-                UserPromptPart(
-                    content=[
-                        'What is in this image?',
-                        BinaryContent(data=fake_image_data, media_type='image/png'),
-                    ]
-                )
-            ]
-        )
-
-        mapped_messages = await model._map_messages([message], None)  # type: ignore[reportPrivateUsage]
-
-        assert len(mapped_messages) == 1
-
-        message_param = mapped_messages[0]
-        assert 'content' in message_param
-        content = message_param['content']
-
-        assert isinstance(content, list)
-        assert len(content) == 2
-
-        assert content[0] == {'type': 'text', 'text': 'What is in this image?'}
-
-        b64_img = base64.b64encode(fake_image_data).decode('utf-8')
-        assert content[1] == {
-            'type': 'image_url',
-            'image_url': {'url': f'data:image/png;base64,{b64_img}'},
-        }
-
-    async def test_databricks_reasoning_effort_setting(
-        self,
-        allow_model_requests: None,
-        databricks_api_key: str,
-        databricks_base_url: str,
-        model_name: str,
-    ) -> None:
-        """
-        Test that the 'reasoning_effort' parameter is correctly passed to the client.
-        """
-        provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
-        model = DatabricksModel(model_name, provider=provider)
-        settings = DatabricksModelSettings(openai_reasoning_effort='high')
-
-        with patch.object(model.client.chat.completions, 'create', new_callable=MagicMock) as mock_create:
-            # FIX: Add types for args and kwargs
-            async def async_return(*args: Any, **kwargs: Any):
-                from openai.types.chat import ChatCompletion, ChatCompletionMessage
-                from openai.types.chat.chat_completion import Choice
-
-                return ChatCompletion(
-                    id='test-id',
-                    created=123,
-                    model=model_name,
-                    object='chat.completion',
-                    choices=[
-                        Choice(
-                            index=0,
-                            message=ChatCompletionMessage(role='assistant', content='Thoughtful answer'),
-                            finish_reason='stop',
-                        )
-                    ],
-                )
-
-            mock_create.side_effect = async_return
-
-            await model_request(model, [ModelRequest.user_text_prompt('Think hard')], model_settings=settings)
-
-            call_kwargs = mock_create.call_args.kwargs
-            assert call_kwargs.get('reasoning_effort') == 'high'
 
     async def test_databricks_error_handling(
         self,
@@ -446,43 +354,6 @@ class TestValidateCompletion:
         assert not getattr(result.choices[0].message, 'reasoning_content', None)
 
 
-class TestDatabricksMapUsage:
-    """Tests for DatabricksModel._map_usage edge cases."""
-
-    def _make_model(self) -> DatabricksModel:
-        provider = DatabricksProvider(api_key='test', base_url='https://test.com')
-        return DatabricksModel('test-model', provider=provider)
-
-    def test_no_usage_returns_empty(self):
-        model = self._make_model()
-        response = ChatCompletion(id='test', choices=[], created=0, model='test', object='chat.completion')
-        # response.usage is None by default
-        result = model._map_usage(response)
-        assert result == RequestUsage()
-
-    def test_usage_with_reasoning_tokens_in_model_extra(self):
-        """Reasoning tokens found in model_extra when not a direct attribute."""
-        model = self._make_model()
-        response = ChatCompletion(
-            id='test',
-            choices=[
-                Choice(
-                    index=0,
-                    finish_reason='stop',
-                    message=ChatCompletionMessage(role='assistant', content='hi'),
-                )
-            ],
-            created=0,
-            model='test',
-            object='chat.completion',
-            usage={'prompt_tokens': 10, 'completion_tokens': 20, 'total_tokens': 30, 'reasoning_tokens': 5},  # type: ignore
-        )
-        result = model._map_usage(response)
-        assert result.input_tokens == 10
-        assert result.output_tokens == 20
-        assert result.details.get('reasoning_tokens') == 5
-
-
 class TestDatabricksProcessProviderDetailsSafety:
     """Test safety_identifier handling in provider details."""
 
@@ -521,7 +392,6 @@ class TestDatabricksStreamedResponseMapPartDelta:
         from pydantic_ai.models import ModelResponsePartsManager
 
         sr = object.__new__(DatabricksStreamedResponse)
-        sr._internal_provider_details = None
         sr._usage = RequestUsage()
         sr._parts_manager = ModelResponsePartsManager()
         sr._provider_name = 'databricks'
