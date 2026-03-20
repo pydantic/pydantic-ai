@@ -34,14 +34,20 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     A capability is a reusable, composable unit of agent behavior that can provide
     instructions, model settings, tools, and request/response hooks.
 
-    Lifecycle: capabilities are passed to an `Agent` at construction time, where their
+    Lifecycle: capabilities are passed to an [`Agent`][pydantic_ai.Agent] at construction time, where their
     `get_*` methods are called to collect static configuration (instructions, model
     settings, toolsets, builtin tools). Then, on each model request during a run, the
-    `before_model_request` and `after_model_request` hooks are called to allow
-    dynamic adjustments.
+    [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] and
+    [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] hooks
+    are called to allow dynamic adjustments.
 
-    See `capabilities.thinking.Thinking` and `capabilities.model_settings.ModelSettings`
-    for built-in examples.
+    See [`Thinking`][pydantic_ai.capabilities.Thinking] and
+    [`ModelSettings`][pydantic_ai.capabilities.ModelSettings] for built-in examples.
+
+    Custom capabilities that should work with YAML/JSON specs (via
+    [`Agent.from_spec`][pydantic_ai.Agent.from_spec]) can override
+    [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name]
+    and [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec].
     """
 
     @classmethod

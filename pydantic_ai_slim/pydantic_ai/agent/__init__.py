@@ -360,6 +360,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
                 to `run()` or `iter()` will wait until a slot becomes available.
             capabilities: Optional list of capabilities to configure the agent with.
+                Built-in capabilities include [`Instructions`][pydantic_ai.capabilities.Instructions],
+                [`Thinking`][pydantic_ai.capabilities.Thinking],
+                [`ModelSettings`][pydantic_ai.capabilities.ModelSettings], and
+                [`WebSearch`][pydantic_ai.capabilities.WebSearch].
+                Custom capabilities can be created by subclassing
+                [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
         """
         if model is None or defer_model_check:
             self._model = model
@@ -755,11 +761,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return self._event_stream_handler
 
     @property
-    def history_processors(self) -> list[HistoryProcessor[AgentDepsT]]:
+    def history_processors(self) -> tuple[HistoryProcessor[AgentDepsT], ...]:
         """History processors extracted from the agent's capabilities."""
-        return [
+        return tuple(
             cap.processor for cap in self._root_capability.capabilities if isinstance(cap, HistoryProcessorCapability)
-        ]
+        )
 
     def __repr__(self) -> str:
         return f'{type(self).__name__}(model={self.model!r}, name={self.name!r}, end_strategy={self.end_strategy!r}, model_settings={self.model_settings!r}, output_type={self.output_type!r}, instrument={self.instrument!r})'
