@@ -260,16 +260,18 @@ def test_databricks_provider_sdk_host_not_configured(env: TestEnv, monkeypatch: 
         DatabricksProvider()
 
 
-def test_databricks_sdk_auth_with_custom_http_client(databricks_sdk_auth: None, env: TestEnv) -> None:
-    """SDK auth path uses provided http_client and adds DatabricksAuth to it."""
+def test_databricks_sdk_auth_creates_own_http_client(databricks_sdk_auth: None, env: TestEnv) -> None:
+    """SDK auth path creates its own http_client with DatabricksAuth (does not mutate user-supplied client)."""
     env.remove('DATABRICKS_API_KEY')
     env.remove('DATABRICKS_BASE_URL')
     env.remove('DATABRICKS_TOKEN')
     env.remove('DATABRICKS_HOST')
 
-    http_client = httpx.AsyncClient()
-    provider = DatabricksProvider(http_client=http_client)
-    assert provider.client._client is http_client
+    user_client = httpx.AsyncClient()
+    provider = DatabricksProvider(http_client=user_client)
+    # SDK auth path creates a new client rather than mutating the user-supplied one
+    assert provider.client._client is not user_client
+    assert isinstance(provider.client._client._auth, db_mod.DatabricksAuth)  # type: ignore
     assert provider.base_url == 'https://mock.databricks.com/serving-endpoints/'
 
 

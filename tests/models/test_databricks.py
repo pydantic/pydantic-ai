@@ -2,6 +2,7 @@
 from typing import Literal, cast
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -10,13 +11,15 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolDefinition,
 )
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.usage import RequestUsage
 
-from ..conftest import try_import
+from ..conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.databricks import (
@@ -236,6 +239,25 @@ async def test_databricks_list_content_with_reasoning(
     text_part = cast(TextPart, response.parts[1])
     assert 'The answer is 4.' in text_part.content
 
+    assert response == snapshot(
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='I need to add 2 and 2 together.', id='reasoning_content', provider_name='databricks'
+                ),
+                TextPart(content='The answer is 4.'),
+            ],
+            usage=RequestUsage(input_tokens=12, output_tokens=15),
+            model_name='databricks-gpt-5-2',
+            timestamp=IsDatetime(),
+            provider_name='databricks',
+            provider_url='https://mock.databricks.com/serving-endpoints/',
+            provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+            provider_response_id='chatcmpl-list-content-test',
+            finish_reason='stop',
+        )
+    )
+
 
 async def test_databricks_missing_id_placeholder(
     allow_model_requests: None,
@@ -255,6 +277,20 @@ async def test_databricks_missing_id_placeholder(
     text_part = cast(TextPart, response.parts[0])
     assert 'hello' in text_part.content
 
+    assert response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='hello')],
+            usage=RequestUsage(input_tokens=5, output_tokens=1),
+            model_name='databricks-gpt-5-2',
+            timestamp=IsDatetime(),
+            provider_name='databricks',
+            provider_url='https://mock.databricks.com/serving-endpoints/',
+            provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+            provider_response_id='databricks-placeholder-id',
+            finish_reason='stop',
+        )
+    )
+
 
 async def test_databricks_safety_identifier(
     allow_model_requests: None,
@@ -272,6 +308,24 @@ async def test_databricks_safety_identifier(
 
     assert response.provider_details is not None
     assert response.provider_details.get('safety_identifier') == 'safety-abc-123'
+
+    assert response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='Hi there!')],
+            usage=RequestUsage(input_tokens=5, output_tokens=3),
+            model_name='databricks-gpt-5-2',
+            timestamp=IsDatetime(),
+            provider_name='databricks',
+            provider_url='https://mock.databricks.com/serving-endpoints/',
+            provider_details={
+                'finish_reason': 'stop',
+                'safety_identifier': 'safety-abc-123',
+                'timestamp': IsDatetime(),
+            },
+            provider_response_id='chatcmpl-safety-test',
+            finish_reason='stop',
+        )
+    )
 
 
 async def test_databricks_stream_structured_content(
@@ -311,6 +365,20 @@ async def test_databricks_list_content_text_only(
     assert len(response.parts) == 1
     text_part = cast(TextPart, response.parts[0])
     assert 'Hello' in text_part.content
+
+    assert response == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='Hello there!')],
+            usage=RequestUsage(input_tokens=5, output_tokens=3),
+            model_name='databricks-gpt-5-2',
+            timestamp=IsDatetime(),
+            provider_name='databricks',
+            provider_url='https://mock.databricks.com/serving-endpoints/',
+            provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+            provider_response_id='chatcmpl-text-only-list',
+            finish_reason='stop',
+        )
+    )
 
 
 async def test_databricks_stream_empty_reasoning(

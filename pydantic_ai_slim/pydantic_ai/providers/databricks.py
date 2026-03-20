@@ -8,7 +8,7 @@ import anyio.to_thread
 import httpx
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, cached_async_http_client
+from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, cached_async_http_client, get_user_agent
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.databricks import databricks_model_profile
 from pydantic_ai.providers import Provider
@@ -153,9 +153,11 @@ class DatabricksProvider(Provider['AsyncOpenAI']):
             host = f'{host.rstrip("/")}/serving-endpoints'
 
         if use_sdk_auth:
-            if http_client is None:
-                http_client = httpx.AsyncClient(timeout=httpx.Timeout(timeout=DEFAULT_HTTP_TIMEOUT, connect=5))
-            http_client.auth = DatabricksAuth(ws)
+            http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout=DEFAULT_HTTP_TIMEOUT, connect=5),
+                headers={'User-Agent': get_user_agent()},
+                auth=DatabricksAuth(ws),
+            )
         elif http_client is None:
             http_client = cached_async_http_client(provider='databricks')
 
