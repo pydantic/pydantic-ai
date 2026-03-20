@@ -74,3 +74,25 @@ model = DatabricksModel(
 agent = Agent(model)
 ...
 ```
+
+## `workspace_client` argument
+
+For advanced authentication scenarios (service principals, Azure AD, managed identity),
+you can pass a pre-configured Databricks `WorkspaceClient` directly:
+
+```python {test="skip"}
+from databricks.sdk import WorkspaceClient
+
+from pydantic_ai import Agent
+from pydantic_ai.models.databricks import DatabricksModel
+from pydantic_ai.providers.databricks import DatabricksProvider
+
+ws = WorkspaceClient(host='https://your-workspace.databricks.com')
+provider = DatabricksProvider(workspace_client=ws)
+model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+agent = Agent(model)
+...
+```
+
+The `WorkspaceClient` handles host discovery and token refresh automatically,
+supporting all [Databricks authentication methods](https://docs.databricks.com/en/dev-tools/auth/index.html).

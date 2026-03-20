@@ -261,15 +261,15 @@ def test_databricks_provider_sdk_host_not_configured(env: TestEnv, monkeypatch: 
 
 
 def test_databricks_sdk_auth_creates_own_http_client(databricks_sdk_auth: None, env: TestEnv) -> None:
-    """SDK auth path creates its own http_client with DatabricksAuth (does not mutate user-supplied client)."""
+    """SDK auth path warns and creates its own http_client when user supplies one."""
     env.remove('DATABRICKS_API_KEY')
     env.remove('DATABRICKS_BASE_URL')
     env.remove('DATABRICKS_TOKEN')
     env.remove('DATABRICKS_HOST')
 
     user_client = httpx.AsyncClient()
-    provider = DatabricksProvider(http_client=user_client)
-    # SDK auth path creates a new client rather than mutating the user-supplied one
+    with pytest.warns(UserWarning, match='http_client is ignored'):
+        provider = DatabricksProvider(http_client=user_client)
     assert provider.client._client is not user_client
     assert isinstance(provider.client._client._auth, db_mod.DatabricksAuth)
     assert provider.base_url == 'https://mock.databricks.com/serving-endpoints/'
@@ -286,3 +286,33 @@ def test_databricks_sdk_host_discovery_with_custom_http_client(databricks_sdk_au
     provider = DatabricksProvider(api_key='user-token', http_client=http_client)
     assert provider.client._client is http_client
     assert provider.client.api_key == 'user-token'
+
+
+def test_databricks_provider_workspace_client() -> None:
+    """Passing a WorkspaceClient directly configures SDK auth and host from the client."""
+    ws = _SdkWorkspaceClient()
+    provider = DatabricksProvider(workspace_client=ws)  # type: ignore
+    assert provider.base_url == 'https://mock.databricks.com/serving-endpoints/'
+    assert provider.client.api_key == 'nop'
+    assert isinstance(provider.client._client._auth, db_mod.DatabricksAuth)
+
+
+def test_databricks_provider_workspace_client_no_host() -> None:
+    """WorkspaceClient with empty host raises UserError."""
+    ws = _SdkWorkspaceClient(host='')
+    with pytest.raises(UserError, match='Databricks host not configured on the provided workspace_client'):
+        DatabricksProvider(workspace_client=ws)  # type: ignore
+
+
+def test_databricks_provider_workspace_client_appends_serving_endpoints() -> None:
+    """WorkspaceClient host without /serving-endpoints gets it appended."""
+    ws = _SdkWorkspaceClient(host='https://custom.databricks.com')
+    provider = DatabricksProvider(workspace_client=ws)  # type: ignore
+    assert provider.base_url == 'https://custom.databricks.com/serving-endpoints/'
+
+
+def test_databricks_provider_workspace_client_preserves_serving_endpoints() -> None:
+    """WorkspaceClient host already ending with /serving-endpoints is not double-appended."""
+    ws = _SdkWorkspaceClient(host='https://custom.databricks.com/serving-endpoints')
+    provider = DatabricksProvider(workspace_client=ws)  # type: ignore
+    assert 'serving-endpoints/serving-endpoints' not in str(provider.base_url)

@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import warnings
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Literal, overload
 
@@ -40,6 +41,22 @@ try:
     _has_databricks_sdk = True
 except ImportError:
     pass
+
+
+def _ensure_serving_endpoints(host: str) -> str:
+    """Ensure the host URL ends with /serving-endpoints."""
+    if not host.rstrip('/').endswith('serving-endpoints'):
+        return f'{host.rstrip("/")}/serving-endpoints'
+    return host
+
+
+def _sdk_auth_client(ws: WorkspaceClient) -> httpx.AsyncClient:
+    """Create an httpx.AsyncClient wired with DatabricksAuth for SDK-based authentication."""
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(timeout=DEFAULT_HTTP_TIMEOUT, connect=5),
+        headers={'User-Agent': get_user_agent()},
+        auth=DatabricksAuth(ws),
+    )
 
 
 class DatabricksAuth(httpx.Auth):
@@ -84,6 +101,9 @@ class DatabricksProvider(Provider['AsyncOpenAI']):
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
 
     @overload
+    def __init__(self, *, workspace_client: WorkspaceClient) -> None: ...
+
+    @overload
     def __init__(
         self,
         *,
@@ -98,22 +118,30 @@ class DatabricksProvider(Provider['AsyncOpenAI']):
         base_url: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
+        workspace_client: WorkspaceClient | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         if openai_client is not None:
             self._client = openai_client
             return
 
+        if workspace_client is not None:
+            host = workspace_client.config.host
+            if not host:
+                raise UserError('Databricks host not configured on the provided workspace_client.')
+            self._client = AsyncOpenAI(
+                base_url=_ensure_serving_endpoints(host),
+                api_key='nop',
+                http_client=_sdk_auth_client(workspace_client),
+            )
+            return
+
         api_key = api_key or os.getenv('DATABRICKS_API_KEY') or os.getenv('DATABRICKS_TOKEN')
         base_url = base_url or os.getenv('DATABRICKS_BASE_URL') or os.getenv('DATABRICKS_HOST')
 
         if api_key and base_url:
-            host = base_url
-            if not host.rstrip('/').endswith('serving-endpoints'):
-                host = f'{host.rstrip("/")}/serving-endpoints'
-
             self._client = AsyncOpenAI(
-                base_url=host,
+                base_url=_ensure_serving_endpoints(base_url),
                 api_key=api_key,
                 http_client=http_client or cached_async_http_client(provider='databricks'),
             )
@@ -149,20 +177,20 @@ class DatabricksProvider(Provider['AsyncOpenAI']):
         if not host:
             raise UserError('Databricks host not configured.')
 
-        if not host.rstrip('/').endswith('serving-endpoints'):
-            host = f'{host.rstrip("/")}/serving-endpoints'
-
         if use_sdk_auth:
-            http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(timeout=DEFAULT_HTTP_TIMEOUT, connect=5),
-                headers={'User-Agent': get_user_agent()},
-                auth=DatabricksAuth(ws),
-            )
+            if http_client is not None:
+                warnings.warn(
+                    'http_client is ignored when using Databricks SDK authentication; '
+                    'a new client with DatabricksAuth will be created instead',
+                    UserWarning,
+                    stacklevel=2,
+                )
+            http_client = _sdk_auth_client(ws)
         elif http_client is None:
             http_client = cached_async_http_client(provider='databricks')
 
         self._client = AsyncOpenAI(
-            base_url=host,
+            base_url=_ensure_serving_endpoints(host),
             api_key=api_key,
             http_client=http_client,
         )
