@@ -170,7 +170,7 @@ def gateway_provider(
         from .anthropic import AnthropicProvider
 
         return AnthropicProvider(
-            anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
+            anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client, timeout=60.0)
         )
     elif upstream_provider in ('bedrock', 'converse'):
         from .bedrock import BedrockProvider
