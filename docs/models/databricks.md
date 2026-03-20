@@ -52,7 +52,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.databricks import DatabricksModel
 from pydantic_ai.providers.databricks import DatabricksProvider
 
-model = DatabricksModel('databricks-gpt-5-2', provider=DatabricksProvider(api_key='your-api-key'))
+model = DatabricksModel('databricks-gpt-5-2', provider=DatabricksProvider(api_key='your-databricks-token', base_url='your-databricks-host'))
 agent = Agent(model)
 ...
 ```

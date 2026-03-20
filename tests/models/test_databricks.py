@@ -539,10 +539,19 @@ class TestDatabricksProcessProviderDetails:
 class TestDatabricksStreamedResponseUnit:
     """Tests for DatabricksStreamedResponse edge cases (no HTTP)."""
 
-    def test_usage_when_none(self):
-        """Streaming usage returns empty RequestUsage when _usage is default."""
+    def test_usage_returns_accumulated_request_usage(self):
+        """Streaming usage returns the already-accumulated RequestUsage from the base class."""
         sr = object.__new__(DatabricksStreamedResponse)
-        sr._usage = None  # type: ignore
+        sr._usage = RequestUsage(input_tokens=10, output_tokens=20, details={'reasoning_tokens': 5})
+        result = sr.usage()
+        assert result.input_tokens == 10
+        assert result.output_tokens == 20
+        assert result.details['reasoning_tokens'] == 5
+
+    def test_usage_default_empty(self):
+        """Streaming usage returns empty RequestUsage when no usage accumulated."""
+        sr = object.__new__(DatabricksStreamedResponse)
+        sr._usage = RequestUsage()
         result = sr.usage()
         assert result == RequestUsage()
 
@@ -570,45 +579,6 @@ class TestDatabricksStreamedResponseUnit:
         sr._usage = RequestUsage()
         sr.provider_details = {'key': 'value'}
         assert sr._internal_provider_details == {'key': 'value'}
-
-    def test_usage_with_databricks_usage_object(self):
-        """Test usage() with a DatabricksUsage-like object that has prompt_tokens/completion_tokens."""
-        from pydantic_ai.models.databricks import DatabricksUsage
-
-        sr = object.__new__(DatabricksStreamedResponse)
-        # Create a DatabricksUsage object to simulate what would come from the API
-        usage_obj = DatabricksUsage(prompt_tokens=10, completion_tokens=20, total_tokens=30, reasoning_tokens=5)
-        sr._usage = usage_obj  # type: ignore
-        result = sr.usage()
-        assert result.input_tokens == 10
-        assert result.output_tokens == 20
-        assert result.details['reasoning_tokens'] == 5
-
-    def test_usage_with_databricks_usage_no_reasoning(self):
-        """Test usage() with DatabricksUsage that has no reasoning_tokens."""
-        from pydantic_ai.models.databricks import DatabricksUsage
-
-        sr = object.__new__(DatabricksStreamedResponse)
-        usage_obj = DatabricksUsage(prompt_tokens=10, completion_tokens=20, total_tokens=30)
-        sr._usage = usage_obj  # type: ignore
-        result = sr.usage()
-        assert result.input_tokens == 10
-        assert result.output_tokens == 20
-        assert 'reasoning_tokens' not in result.details
-
-    def test_usage_with_reasoning_tokens_in_model_extra(self):
-        """Test usage() with reasoning_tokens in model_extra (fallback path)."""
-        from pydantic_ai.models.databricks import DatabricksUsage
-
-        sr = object.__new__(DatabricksStreamedResponse)
-        # Simulate a usage object where reasoning_tokens is in model_extra
-        usage_data = {'prompt_tokens': 10, 'completion_tokens': 20, 'total_tokens': 30, 'reasoning_tokens': 7}
-        usage_obj = DatabricksUsage.model_validate(usage_data)
-        sr._usage = usage_obj  # type: ignore
-        result = sr.usage()
-        assert result.input_tokens == 10
-        assert result.output_tokens == 20
-        assert result.details.get('reasoning_tokens') == 7
 
     def test_provider_details_no_usage(self):
         """provider_details returns empty dict when _usage is falsy."""

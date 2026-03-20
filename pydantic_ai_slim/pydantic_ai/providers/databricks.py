@@ -145,7 +145,7 @@ class DatabricksProvider(Provider['AsyncOpenAI']):
 
         if use_sdk_auth:
             if http_client is None:
-                http_client = cached_async_http_client(provider='databricks') or httpx.AsyncClient()
+                http_client = httpx.AsyncClient()
             http_client.auth = DatabricksAuth(ws)
         elif http_client is None:
             http_client = cached_async_http_client(provider='databricks')

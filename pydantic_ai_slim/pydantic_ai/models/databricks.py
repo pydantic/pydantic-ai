@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Literal, cast
 
 from openai.types import chat
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, TypeAdapter
 from typing_extensions import override
 
 from pydantic_ai import ModelResponseStreamEvent
@@ -14,7 +14,6 @@ from pydantic_ai.profiles.databricks import DatabricksModelProfile
 
 from ..providers import Provider
 from ..settings import ModelSettings
-from ..usage import RequestUsage
 from . import OpenAIChatCompatibleProvider
 from .openai import (
     OMIT,
@@ -67,15 +66,6 @@ class DatabricksReasoningContent(BaseModel):
 
 
 DatabricksContentBlock = Annotated[DatabricksTextContent | DatabricksReasoningContent, Field(discriminator='type')]
-
-
-class DatabricksUsage(BaseModel):
-    """Explicit definition of Databricks usage to satisfy type checkers."""
-
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    reasoning_tokens: int | None = None
 
 
 class DatabricksModelSettings(OpenAIChatModelSettings, total=False):
@@ -136,55 +126,21 @@ class DatabricksModel(OpenAIChatModel):
         raw_content = message_payload.get('content')
 
         if isinstance(raw_content, list):
-            try:
-                adapter = TypeAdapter(list[DatabricksContentBlock])
-                parsed_blocks = adapter.validate_python(raw_content)
+            adapter = TypeAdapter(list[DatabricksContentBlock])
+            parsed_blocks = adapter.validate_python(raw_content)
 
-                text_parts = [b.text for b in parsed_blocks if isinstance(b, DatabricksTextContent)]
-                full_text = ''.join(text_parts)
+            text_parts = [b.text for b in parsed_blocks if isinstance(b, DatabricksTextContent)]
+            full_text = ''.join(text_parts)
 
-                reasoning_parts = [b.get_value() for b in parsed_blocks if isinstance(b, DatabricksReasoningContent)]
-                full_reasoning = ''.join(reasoning_parts)
+            reasoning_parts = [b.get_value() for b in parsed_blocks if isinstance(b, DatabricksReasoningContent)]
+            full_reasoning = ''.join(reasoning_parts)
 
-                message_payload['content'] = full_text
+            message_payload['content'] = full_text
 
-                if full_reasoning:
-                    message_payload['reasoning_content'] = full_reasoning
-
-            except ValidationError:
-                pass
+            if full_reasoning:
+                message_payload['reasoning_content'] = full_reasoning
 
         return chat.ChatCompletion.model_validate(data)
-
-    @override
-    def _map_usage(self, response: chat.ChatCompletion) -> RequestUsage:
-        """Override usage mapping to handle Databricks' flat structure.
-
-        Databricks returns `reasoning_tokens` at the top level of the usage object,
-        whereas OpenAI places them inside `completion_tokens_details`.
-        """
-        if not response.usage:
-            return RequestUsage()
-
-        usage_obj = cast(DatabricksUsage, response.usage)
-
-        request_usage = RequestUsage(
-            input_tokens=usage_obj.prompt_tokens,
-            output_tokens=usage_obj.completion_tokens,
-            details={},
-        )
-
-        reasoning_tokens = getattr(usage_obj, 'reasoning_tokens', None)
-
-        if reasoning_tokens is None and hasattr(usage_obj, 'model_extra'):
-            model_extra = getattr(usage_obj, 'model_extra', {})
-            if model_extra:
-                reasoning_tokens = cast(int | None, model_extra.get('reasoning_tokens'))
-
-        if reasoning_tokens is not None:
-            request_usage.details['reasoning_tokens'] = reasoning_tokens
-
-        return request_usage
 
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
         """Capture Databricks-specific details."""
@@ -203,24 +159,6 @@ class DatabricksStreamedResponse(OpenAIStreamedResponse):
     """Custom streaming response to handle Databricks specific usage fields."""
 
     _internal_provider_details: dict[str, Any] | None = None
-
-    def usage(self) -> RequestUsage:
-        """Override usage mapping to handle Databricks' flat structure in streams."""
-        if not self._usage:
-            return RequestUsage()
-        usage_obj = cast(DatabricksUsage, self._usage)
-        usage = RequestUsage(
-            input_tokens=usage_obj.prompt_tokens,
-            output_tokens=usage_obj.completion_tokens,
-            details={},
-        )
-        reasoning_tokens = getattr(usage_obj, 'reasoning_tokens', None)
-        if reasoning_tokens is None:
-            model_extra = getattr(usage_obj, 'model_extra', {}) or {}
-            reasoning_tokens = model_extra.get('reasoning_tokens')
-        if reasoning_tokens is not None:
-            usage.details['reasoning_tokens'] = reasoning_tokens
-        return usage
 
     @override
     def _map_part_delta(self, choice: chat.chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
