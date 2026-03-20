@@ -69,16 +69,18 @@ jobs:
           # 0 merged -> 1, 1 merged -> 2, 2 merged -> 3, 3+ merged -> unlimited
           if [ "$MERGED_COUNT" -lt 3 ]; then
             MAX_OPEN=$((MERGED_COUNT + 1))
-            OPEN_COUNT=$(gh api -X GET "search/issues" \
-              -f q="repo:${REPO} type:pr author:${PR_AUTHOR} is:open -${PR_NUMBER}" \
+            # Count all open PRs by this author, then subtract 1 for the current PR.
+            ALL_OPEN=$(gh api -X GET "search/issues" \
+              -f q="repo:${REPO} type:pr author:${PR_AUTHOR} is:open" \
               --jq '.total_count')
-            echo "Open PRs: ${OPEN_COUNT} (limit: ${MAX_OPEN})."
+            OPEN_COUNT=$((ALL_OPEN > 0 ? ALL_OPEN - 1 : 0))
+            echo "Open PRs (excluding this one): ${OPEN_COUNT} (limit: ${MAX_OPEN})."
 
             if [ "$OPEN_COUNT" -ge "$MAX_OPEN" ]; then
               echo "PR limit exceeded. Closing."
               gh pr close "$PR_NUMBER" --repo "$REPO"
               gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$(printf '%s\n\n%s' \
-                "You currently have **${OPEN_COUNT}** open PR(s), and your limit is **${MAX_OPEN}** (based on **${MERGED_COUNT}** merged PR(s))." \
+                "You currently have **${OPEN_COUNT}** other open PR(s), and your limit is **${MAX_OPEN}** (based on **${MERGED_COUNT}** merged PR(s))." \
                 "Please wait for existing PRs to be reviewed and merged before opening new ones. See our [contribution guidelines](https://github.com/${REPO}/blob/main/docs/contributing.md) for details.")" || true
               exit 0
             fi
