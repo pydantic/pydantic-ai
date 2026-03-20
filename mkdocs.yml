@@ -33,6 +33,7 @@ nav:
           - models/bedrock.md
           - models/cerebras.md
           - models/cohere.md
+          - models/databricks.md
           - models/groq.md
           - models/huggingface.md
           - models/mistral.md
@@ -310,7 +311,7 @@ markdown_extensions:
   - material.extensions.preview:
       targets:
         include:
-          - '*'
+          - "*"
   - pydantic_docs.mdext
 
 watch:

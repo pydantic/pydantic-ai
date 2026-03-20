@@ -4,7 +4,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, cast
 
-from openai.types import chat
 from pydantic import BaseModel, Field, TypeAdapter
 from typing_extensions import override
 
@@ -15,15 +14,17 @@ from pydantic_ai.profiles.databricks import DatabricksModelProfile
 from ..providers import Provider
 from ..settings import ModelSettings
 from . import OpenAIChatCompatibleProvider
-from .openai import (
-    OMIT,
-    OpenAIChatModel,
-    OpenAIChatModelSettings,
-    OpenAIStreamedResponse,
-)
 
 try:
     from openai import AsyncOpenAI
+    from openai.types import chat
+
+    from .openai import (
+        OMIT,
+        OpenAIChatModel,
+        OpenAIChatModelSettings,
+        OpenAIStreamedResponse,
+    )
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the Databricks model, '
@@ -66,6 +67,8 @@ class DatabricksReasoningContent(BaseModel):
 
 
 DatabricksContentBlock = Annotated[DatabricksTextContent | DatabricksReasoningContent, Field(discriminator='type')]
+
+_CONTENT_BLOCK_ADAPTER = TypeAdapter(list[DatabricksContentBlock])
 
 
 class DatabricksModelSettings(OpenAIChatModelSettings, total=False):
@@ -126,8 +129,7 @@ class DatabricksModel(OpenAIChatModel):
         raw_content = message_payload.get('content')
 
         if isinstance(raw_content, list):
-            adapter = TypeAdapter(list[DatabricksContentBlock])
-            parsed_blocks = adapter.validate_python(raw_content)
+            parsed_blocks = _CONTENT_BLOCK_ADAPTER.validate_python(raw_content)
 
             text_parts = [b.text for b in parsed_blocks if isinstance(b, DatabricksTextContent)]
             full_text = ''.join(text_parts)
@@ -167,14 +169,16 @@ class DatabricksStreamedResponse(OpenAIStreamedResponse):
         content = choice.delta.content
 
         if isinstance(content, list):
-            blocks = TypeAdapter(list[DatabricksContentBlock]).validate_python(content)
+            blocks = _CONTENT_BLOCK_ADAPTER.validate_python(content)
 
             for block in blocks:
                 if isinstance(block, DatabricksReasoningContent):
                     if val := block.get_value():
                         yield from self._parts_manager.handle_thinking_delta(
                             vendor_part_id='reasoning',
+                            id='reasoning',
                             content=val,
+                            provider_name=self.provider_name,
                         )
                 else:
                     yield from self._parts_manager.handle_text_delta(
@@ -193,7 +197,11 @@ class DatabricksStreamedResponse(OpenAIStreamedResponse):
         details = dict(self._internal_provider_details or {})
 
         if self._usage:
-            details['usage'] = self._usage
+            details['usage'] = {
+                'input_tokens': self._usage.input_tokens,
+                'output_tokens': self._usage.output_tokens,
+                'details': self._usage.details,
+            }
 
         return details
 

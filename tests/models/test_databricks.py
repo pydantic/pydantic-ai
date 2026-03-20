@@ -630,6 +630,7 @@ class TestDatabricksStreamedResponseMapPartDelta:
         sr._internal_provider_details = None
         sr._usage = RequestUsage()
         sr._parts_manager = ModelResponsePartsManager()
+        sr._provider_name = 'databricks'
         return sr
 
     def test_map_part_delta_with_text_block(self):
