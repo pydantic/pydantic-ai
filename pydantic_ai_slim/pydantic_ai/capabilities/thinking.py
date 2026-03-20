@@ -21,7 +21,9 @@ class Thinking(ModelSettings[AgentDepsT]):
         return 'Thinking'
 
     @classmethod
-    def from_spec(cls, *args: Any, **kwargs: Any) -> ModelSettings[Any]:
+    def from_spec(cls, *args: Any, **kwargs: Any) -> Thinking[Any]:
+        if args or kwargs:
+            raise TypeError('Thinking() does not accept arguments')
         return cls()
 
     def __init__(self):

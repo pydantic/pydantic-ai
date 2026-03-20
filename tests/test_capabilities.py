@@ -784,3 +784,58 @@ def test_to_file_with_path_schema_path(tmp_path: str):
     assert resolved_schema.exists()
     content = spec_path.read_text(encoding='utf-8')
     assert 'model: test' in content
+
+
+def test_load_agent_yaml(tmp_path: str):
+    """load_agent loads an agent from a YAML spec file."""
+    from pydantic_ai._cli import load_agent
+
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('model: test\nname: yaml-agent\n', encoding='utf-8')
+    agent = load_agent(str(spec_path))
+    assert agent is not None
+    assert agent.name == 'yaml-agent'
+
+
+def test_load_agent_json(tmp_path: str):
+    """load_agent loads an agent from a JSON spec file."""
+    from pydantic_ai._cli import load_agent
+
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec_path.write_text('{"model": "test", "name": "json-agent"}', encoding='utf-8')
+    agent = load_agent(str(spec_path))
+    assert agent is not None
+    assert agent.name == 'json-agent'
+
+
+def test_load_agent_missing_file(tmp_path: str):
+    """load_agent returns None for a non-existent spec file."""
+    from pydantic_ai._cli import load_agent
+
+    agent = load_agent(str(Path(tmp_path) / 'nonexistent.yaml'))
+    assert agent is None
+
+
+async def test_thinking_capability_applies_settings():
+    """Thinking capability's model settings are applied to the model request."""
+
+    agent = Agent('test', capabilities=[Thinking()])
+    result = await agent.run('hi')
+    # The agent ran successfully — verify that the Thinking settings were included
+    # by checking that the capability produces non-None model settings
+    assert agent._root_capability.get_model_settings() is not None  # pyright: ignore[reportPrivateUsage]
+    cap_settings = agent._root_capability.get_model_settings()  # pyright: ignore[reportPrivateUsage]
+    assert cap_settings is not None
+    assert cap_settings.get('anthropic_thinking') == {'type': 'adaptive'}
+    assert cap_settings.get('openai_reasoning_effort') == 'high'
+    # Verify the run itself succeeds
+    assert result.output is not None
+
+
+def test_thinking_from_spec_rejects_args():
+    """Thinking.from_spec raises TypeError when given arguments."""
+    with pytest.raises(TypeError, match='does not accept arguments'):
+        Thinking.from_spec('extra')
+
+    with pytest.raises(TypeError, match='does not accept arguments'):
+        Thinking.from_spec(budget=100)

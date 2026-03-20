@@ -76,7 +76,8 @@ class GraphAgentState:
     run_step: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid.uuid4()))
     metadata: dict[str, Any] | None = None
-    model_settings: Any = None
+    # Cached from last _prepare_request, used only in error paths
+    last_model_settings: Any = None
     """Last-resolved model settings for the current step, used for error messages.
 
     Typed as `Any` because `ModelSettings` contains types like `httpx.Timeout` that
@@ -539,6 +540,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not isinstance(messages[-1], _messages.ModelRequest):
             raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
 
+        # Ensure the last request has a timestamp (history processors may create new ModelRequest objects without one)
+        if messages[-1].timestamp is None:
+            messages[-1].timestamp = now_utc()
+
         if messages and messages[-1].run_id is None:
             messages[-1].run_id = ctx.state.run_id
 
@@ -556,7 +561,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
         messages = _clean_message_history(messages)
 
-        ctx.state.model_settings = model_settings
+        ctx.state.last_model_settings = model_settings
         usage = ctx.state.usage
         if ctx.deps.usage_limits.count_tokens_before_request:
             # Copy to avoid modifying the original usage object with the counted usage
@@ -655,7 +660,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                     # Don't retry if the token limit was exceeded, possibly during thinking.
                     if self.model_response.finish_reason == 'length':
-                        model_settings = ctx.state.model_settings
+                        model_settings = ctx.state.last_model_settings
                         max_tokens = model_settings.get('max_tokens') if model_settings else None
                         raise exceptions.UnexpectedModelBehavior(
                             f'Model token limit ({max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
@@ -697,7 +702,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         # as the empty response and request will not create any items in the API payload,
                         # in the hope the model will return a non-empty response this time.
                         ctx.state.increment_retries(
-                            ctx.deps.max_result_retries, model_settings=ctx.state.model_settings
+                            ctx.deps.max_result_retries, model_settings=ctx.state.last_model_settings
                         )
                         run_context = build_run_context(ctx)
                         instructions = await ctx.deps.get_instructions(run_context)
@@ -771,7 +776,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     raise ToolRetryError(m)
                 except ToolRetryError as e:
                     ctx.state.increment_retries(
-                        ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.state.last_model_settings
                     )
                     run_context = build_run_context(ctx)
                     instructions = await ctx.deps.get_instructions(run_context)
@@ -1015,7 +1020,7 @@ async def process_tool_calls(  # noqa: C901
                         yield event
                     continue
                 ctx.state.increment_retries(
-                    ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
+                    ctx.deps.max_result_retries, error=e, model_settings=ctx.state.last_model_settings
                 )
                 raise  # pragma: lax no cover
 
@@ -1031,7 +1036,7 @@ async def process_tool_calls(  # noqa: C901
                 ctx.state.increment_retries(
                     ctx.deps.max_result_retries,
                     error=validated.validation_error,
-                    model_settings=ctx.state.model_settings,
+                    model_settings=ctx.state.last_model_settings,
                 )
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 output_parts.append(validated.validation_error.tool_retry)
@@ -1049,7 +1054,7 @@ async def process_tool_calls(  # noqa: C901
                         yield event
                     continue
                 ctx.state.increment_retries(
-                    ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
+                    ctx.deps.max_result_retries, error=e, model_settings=ctx.state.last_model_settings
                 )
                 raise  # pragma: lax no cover
             except ToolRetryError as e:
@@ -1057,7 +1062,7 @@ async def process_tool_calls(  # noqa: C901
                 # This allows the run to succeed if at least one output tool returned a valid result
                 if not final_result:
                     ctx.state.increment_retries(
-                        ctx.deps.max_result_retries, error=e, model_settings=ctx.state.model_settings
+                        ctx.deps.max_result_retries, error=e, model_settings=ctx.state.last_model_settings
                     )
                 yield _messages.FunctionToolCallEvent(call, args_valid=True)
                 output_parts.append(e.tool_retry)
@@ -1091,7 +1096,7 @@ async def process_tool_calls(  # noqa: C901
 
     # Then, we handle unknown tool calls
     if tool_calls_by_kind['unknown']:
-        ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.state.model_settings)
+        ctx.state.increment_retries(ctx.deps.max_result_retries, model_settings=ctx.state.last_model_settings)
         calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     calls_to_run_results: dict[str, DeferredToolResult] = {}

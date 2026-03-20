@@ -39,6 +39,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if toolset is None:
                 pass
             elif isinstance(toolset, AbstractToolset):
+                # Pyright can't narrow Callable type aliases out of unions after isinstance check
                 toolsets.append(toolset)  # pyright: ignore[reportUnknownArgumentType]
             else:
                 toolsets.append(DynamicToolset[AgentDepsT](toolset_func=toolset))

@@ -754,6 +754,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Optional handler for events from the model's streaming response and the agent's execution of tools."""
         return self._event_stream_handler
 
+    @property
+    def history_processors(self) -> list[HistoryProcessor[AgentDepsT]]:
+        """History processors extracted from the agent's capabilities."""
+        return [
+            cap.processor for cap in self._root_capability.capabilities if isinstance(cap, HistoryProcessorCapability)
+        ]
+
     def __repr__(self) -> str:
         return f'{type(self).__name__}(model={self.model!r}, name={self.name!r}, end_strategy={self.end_strategy!r}, model_settings={self.model_settings!r}, output_type={self.output_type!r}, instrument={self.instrument!r})'
 
@@ -951,6 +958,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 agent_model_settings(run_context) if callable(agent_model_settings) else agent_model_settings
             )
             merged = merge_model_settings(base, resolved_agent)
+            run_context.model_settings = merged
+            # Capability settings (e.g. from Thinking, ModelSettings capabilities)
+            cap_settings = self._root_capability.get_model_settings()
+            merged = merge_model_settings(merged, cap_settings)
             run_context.model_settings = merged
             resolved_run = run_model_settings(run_context) if callable(run_model_settings) else run_model_settings
             final = merge_model_settings(merged, resolved_run)
