@@ -95,7 +95,7 @@ jobs:
           if [[ "$PR_BRANCH" == ai/* ]]; then
             echo "Branch has ai/ prefix. Closing AI-submitted PR."
             gh pr close "$PR_NUMBER" --repo "$REPO"
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "This PR was submitted from an \`ai/\` branch and has been automatically closed. If you believe this was a mistake, please re-submit from a branch without the \`ai/\` prefix." || true
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "This PR was submitted from an \`ai/\` branch and has been automatically closed because it appears to have been raised by an AI agent. If this is your work, please raise the PR yourself using the GitHub UI." || true
             exit 0
           fi
 
