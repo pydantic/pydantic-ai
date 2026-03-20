@@ -271,7 +271,7 @@ def test_databricks_sdk_auth_creates_own_http_client(databricks_sdk_auth: None, 
     provider = DatabricksProvider(http_client=user_client)
     # SDK auth path creates a new client rather than mutating the user-supplied one
     assert provider.client._client is not user_client
-    assert isinstance(provider.client._client._auth, db_mod.DatabricksAuth)  # type: ignore
+    assert isinstance(provider.client._client._auth, db_mod.DatabricksAuth)
     assert provider.base_url == 'https://mock.databricks.com/serving-endpoints/'
 
 
