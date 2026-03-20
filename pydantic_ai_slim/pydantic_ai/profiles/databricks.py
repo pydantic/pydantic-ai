@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.profiles.openai import OpenAIModelProfile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
 _NO_STREAM_OPTIONS_MODELS = {
     'databricks-gpt-oss-120b',
@@ -37,6 +37,7 @@ def databricks_model_profile(model_name: str) -> ModelProfile:
         tool_call_required = False
 
     return DatabricksModelProfile(
+        json_schema_transformer=OpenAIJsonSchemaTransformer,
         databricks_stream_options=stream_options,
         openai_supports_tool_choice_required=tool_call_required,
     )
