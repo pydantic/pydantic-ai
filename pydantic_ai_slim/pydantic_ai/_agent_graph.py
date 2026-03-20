@@ -511,8 +511,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             assert self._result is not None
             return
 
-        effective_ms = model_settings or ModelSettings()
-
         # Task-based wrap_model_request for streaming
         stream_ready = asyncio.Event()
         stream_done = asyncio.Event()
@@ -544,7 +542,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         wrap_request_context = BeforeModelRequestContext(
             messages=message_history,
-            model_settings=effective_ms,
+            model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
         wrap_task = asyncio.create_task(
@@ -617,8 +615,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.usage.requests += 1
             return await self._finish_handling(ctx, e.response)
 
-        effective_model_settings = model_settings or ModelSettings()
-
         async def model_handler(req_ctx: BeforeModelRequestContext) -> _messages.ModelResponse:
             with set_current_run_context(run_context):
                 return await ctx.deps.model.request(
@@ -629,7 +625,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             run_context,
             request_context=BeforeModelRequestContext(
                 messages=message_history,
-                model_settings=effective_model_settings,
+                model_settings=model_settings,
                 model_request_parameters=model_request_parameters,
             ),
             handler=model_handler,

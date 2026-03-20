@@ -26,7 +26,7 @@ class BeforeModelRequestContext:
     """
 
     messages: list[ModelMessage]
-    model_settings: ModelSettings
+    model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
 
 
