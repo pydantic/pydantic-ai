@@ -11,11 +11,17 @@ import os
 
 import openai
 import pytest
+from openai.types.responses import FunctionToolParam, NamespaceToolParam, ToolSearchToolParam
 
 from .conftest import try_import
 
 with try_import() as anthropic_available:
     import anthropic
+    from anthropic.types.beta import (
+        BetaToolParam,
+        BetaToolSearchToolBm25_20251119Param,
+        BetaToolUnionParam,
+    )
 
 pytestmark = [
     pytest.mark.anyio,
@@ -27,21 +33,24 @@ MOCK_API_KEYS: dict[str, str] = {
     'ANTHROPIC_API_KEY': 'mock-api-key',
 }
 
-_TOOLS = [
-    {
-        'name': 'get_weather',
-        'description': 'Get the current weather for a city.',
-        'parameters': {
+_TOOLS: list[FunctionToolParam] = [
+    FunctionToolParam(
+        type='function',
+        name='get_weather',
+        description='Get the current weather for a city.',
+        parameters={
             'type': 'object',
             'properties': {'city': {'type': 'string'}},
             'required': ['city'],
             'additionalProperties': False,
         },
-    },
-    {
-        'name': 'get_exchange_rate',
-        'description': 'Look up the current exchange rate between two currencies.',
-        'parameters': {
+        strict=None,
+    ),
+    FunctionToolParam(
+        type='function',
+        name='get_exchange_rate',
+        description='Look up the current exchange rate between two currencies.',
+        parameters={
             'type': 'object',
             'properties': {
                 'from_currency': {'type': 'string'},
@@ -50,21 +59,25 @@ _TOOLS = [
             'required': ['from_currency', 'to_currency'],
             'additionalProperties': False,
         },
-    },
-    {
-        'name': 'stock_lookup',
-        'description': 'Look up stock price by ticker symbol.',
-        'parameters': {
+        strict=None,
+    ),
+    FunctionToolParam(
+        type='function',
+        name='stock_lookup',
+        description='Look up stock price by ticker symbol.',
+        parameters={
             'type': 'object',
             'properties': {'symbol': {'type': 'string'}},
             'required': ['symbol'],
             'additionalProperties': False,
         },
-    },
-    {
-        'name': 'mortgage_calculator',
-        'description': 'Calculate monthly mortgage payment for a home loan.',
-        'parameters': {
+        strict=None,
+    ),
+    FunctionToolParam(
+        type='function',
+        name='mortgage_calculator',
+        description='Calculate monthly mortgage payment for a home loan.',
+        parameters={
             'type': 'object',
             'properties': {
                 'principal': {'type': 'number'},
@@ -74,7 +87,8 @@ _TOOLS = [
             'required': ['principal', 'rate', 'years'],
             'additionalProperties': False,
         },
-    },
+        strict=None,
+    ),
 ]
 
 
@@ -94,36 +108,26 @@ async def test_openai_native_tool_search(allow_model_requests: None) -> None:
     """
     client = openai.AsyncOpenAI()
 
-    namespace_tools: list[dict[str, object]] = [
-        {
-            'type': 'function',
-            'name': _TOOLS[0]['name'],
-            'description': _TOOLS[0]['description'],
-            'parameters': _TOOLS[0]['parameters'],
-        },
+    # ToolFunction (namespace inner type) doesn't have defer_loading in its TypedDict,
+    # but the API accepts it. We build from FunctionToolParam and pass as namespace tools.
+    # TODO investigate whether this is due to a newer SDK version
+    namespace_tools = [
+        {'type': 'function', 'name': t['name'], 'description': t.get('description'), 'parameters': t['parameters']}
+        | ({'defer_loading': True} if i > 0 else {})
+        for i, t in enumerate(_TOOLS)
     ]
-    for tool_def in _TOOLS[1:]:
-        namespace_tools.append(
-            {
-                'type': 'function',
-                'name': tool_def['name'],
-                'description': tool_def['description'],
-                'parameters': tool_def['parameters'],
-                'defer_loading': True,
-            }
-        )
 
     response = await client.responses.create(
         model='gpt-5.4',
         input='What is the current exchange rate from USD to EUR?',
         tools=[
-            {
-                'type': 'namespace',
-                'name': 'tools',
-                'description': 'Available tools for weather, finance, and calculations.',
-                'tools': namespace_tools,
-            },
-            {'type': 'tool_search'},
+            NamespaceToolParam(
+                type='namespace',
+                name='tools',
+                description='Available tools for weather, finance, and calculations.',
+                tools=namespace_tools,  # pyright: ignore[reportArgumentType]
+            ),
+            ToolSearchToolParam(type='tool_search'),
         ],
         parallel_tool_calls=False,
     )
@@ -142,30 +146,29 @@ async def test_anthropic_native_tool_search(allow_model_requests: None) -> None:
     """
     client = anthropic.AsyncAnthropic()
 
-    tools: list[dict[str, object]] = [
-        {
-            'type': 'custom',
-            'name': _TOOLS[0]['name'],
-            'description': _TOOLS[0]['description'],
-            'input_schema': _TOOLS[0]['parameters'],
-        },
+    custom_tools: list[BetaToolParam] = [
+        BetaToolParam(
+            name=str(_TOOLS[0]['name']),
+            description=str(_TOOLS[0].get('description', '')),
+            input_schema=_TOOLS[0]['parameters'],  # pyright: ignore[reportArgumentType]
+        ),
+        *(
+            BetaToolParam(
+                name=str(tool_def['name']),
+                description=str(tool_def.get('description', '')),
+                input_schema=tool_def['parameters'],  # pyright: ignore[reportArgumentType]
+                defer_loading=True,
+            )
+            for tool_def in _TOOLS[1:]
+        ),
     ]
-    for tool_def in _TOOLS[1:]:
-        tools.append(
-            {
-                'type': 'custom',
-                'name': tool_def['name'],
-                'description': tool_def['description'],
-                'input_schema': tool_def['parameters'],
-                'defer_loading': True,
-            }
-        )
-    tools.append(
-        {
-            'type': 'tool_search_tool_bm25_20251119',
-            'name': 'tool_search_tool_bm25',
-        }
-    )
+    tools: list[BetaToolUnionParam] = [
+        *custom_tools,
+        BetaToolSearchToolBm25_20251119Param(
+            type='tool_search_tool_bm25_20251119',
+            name='tool_search_tool_bm25',
+        ),
+    ]
 
     response = await client.beta.messages.create(
         model='claude-sonnet-4-5',

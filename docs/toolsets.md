@@ -396,13 +396,13 @@ from pydantic_ai import Agent, FunctionToolset
 toolset: FunctionToolset[None] = FunctionToolset()
 
 
-@toolset.tool
+@toolset.tool_plain
 def get_weather(city: str) -> str:
     """Get current weather for a city."""
     return f'Sunny in {city}'
 
 
-@toolset.tool
+@toolset.tool_plain
 def stock_price(ticker: str) -> str:
     """Get current stock price for a ticker symbol."""
     return f'{ticker}: $150.00'

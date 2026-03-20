@@ -12,7 +12,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import BaseModel
+from typing_extensions import TypedDict
 
 from pydantic_ai import Agent
 from pydantic_ai._utils import is_str_dict
@@ -226,29 +228,101 @@ def _build_dataset() -> Dataset[str, EvalOutput, EvalMetadata]:
     )
 
 
-_MODELS = [
-    pytest.param('openai:gpt-5-mini', id='openai'),
-    pytest.param(
-        'anthropic:claude-sonnet-4-5',
-        id='anthropic',
-        marks=pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed'),
+def _summarize_report(report: Any) -> dict[str, ScenarioSummary]:
+    """Extract a compact summary from eval report for snapshotting."""
+    summary: dict[str, ScenarioSummary] = {}
+    for case in report.cases:
+        output: EvalOutput = case.output
+        keywords: str | None = None
+        if output.search_interactions:
+            args = output.search_interactions[0][0]
+            if isinstance(args, str):
+                args = json.loads(args)
+            if is_str_dict(args):
+                keywords = args.get('keywords')
+        summary[case.name] = ScenarioSummary(keywords=keywords, tool_calls=output.tool_calls)
+    return summary
+
+
+class ScenarioSummary(TypedDict):
+    """The search keywords the model chose and the tools it discovered and called."""
+
+    keywords: str | None
+    tool_calls: list[str]
+
+
+@dataclass
+class ModelCase:
+    model_name: str
+    marks: list[pytest.MarkDecorator] = field(default_factory=list[pytest.MarkDecorator])
+    scenario_summary: dict[str, ScenarioSummary] = field(default_factory=dict[str, ScenarioSummary])
+
+
+_CASES = [
+    ModelCase(
+        model_name='openai:gpt-5-mini',
+        scenario_summary=snapshot(
+            {
+                'exchange_rate': {
+                    'keywords': 'exchange rate currency USD EUR forex rate',
+                    'tool_calls': ['search_tools', 'get_exchange_rate'],
+                },
+                'stock_price': {
+                    'keywords': 'stock AAPL price finance market quote',
+                    'tool_calls': ['search_tools', 'stock_lookup'],
+                },
+                'translation': {'keywords': None, 'tool_calls': []},
+                'no_matching_tool': {'keywords': None, 'tool_calls': []},
+            }
+        ),
     ),
-    pytest.param(
-        'google-gla:gemini-3-flash-preview',
-        id='google',
-        marks=pytest.mark.skipif(not google_available(), reason='google-genai not installed'),
+    ModelCase(
+        model_name='anthropic:claude-sonnet-4-5',
+        marks=[pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')],
+        scenario_summary=snapshot(
+            {
+                'exchange_rate': {
+                    'keywords': 'exchange rate currency conversion USD EUR',
+                    'tool_calls': ['search_tools', 'get_exchange_rate'],
+                },
+                'stock_price': {'keywords': 'stock price quote ticker', 'tool_calls': ['search_tools', 'stock_lookup']},
+                'translation': {'keywords': 'translate translation language French', 'tool_calls': ['search_tools']},
+                'no_matching_tool': {'keywords': 'flight booking travel reservation', 'tool_calls': ['search_tools']},
+            }
+        ),
+    ),
+    ModelCase(
+        model_name='google-gla:gemini-3-flash-preview',
+        marks=[pytest.mark.skipif(not google_available(), reason='google-genai not installed')],
+        scenario_summary=snapshot(
+            {
+                'exchange_rate': {
+                    'keywords': 'exchange rate USD to EUR',
+                    'tool_calls': ['search_tools', 'get_exchange_rate'],
+                },
+                'stock_price': {
+                    'keywords': 'stock price financial data AAPL',
+                    'tool_calls': ['search_tools', 'stock_lookup'],
+                },
+                'translation': {'keywords': None, 'tool_calls': []},
+                'no_matching_tool': {'keywords': 'flight booking travel', 'tool_calls': ['search_tools']},
+            }
+        ),
     ),
 ]
 
 
-@pytest.mark.parametrize('model_name', _MODELS)
-async def test_tool_search_eval(allow_model_requests: None, model_name: str) -> None:
+@pytest.mark.parametrize(
+    'case',
+    [pytest.param(c, id=c.model_name.split(':')[0], marks=c.marks) for c in _CASES],
+)
+async def test_tool_search_eval(allow_model_requests: None, case: ModelCase) -> None:
     """Evaluate tool search behavior across scenarios using pydantic-evals.
 
     Runs 4 scenarios per model: exchange_rate, stock_price, translation, no_matching_tool.
     Evaluators check: used_search_tools, found_expected_tools, reasonable_usage, keyword_count.
     """
-    agent = _build_agent(model_name)
+    agent = _build_agent(case.model_name)
 
     async def task(prompt: str) -> EvalOutput:
         try:
@@ -264,6 +338,8 @@ async def test_tool_search_eval(allow_model_requests: None, model_name: str) -> 
     report = await dataset.evaluate(task, name='tool_search', progress=False, max_concurrency=1)
 
     assert not report.failures
-    for case in report.cases:
-        for name, result in case.assertions.items():
-            assert result.value, f'{case.name}/{name} failed'
+    for eval_case in report.cases:
+        for name, result in eval_case.assertions.items():
+            assert result.value, f'{eval_case.name}/{name} failed'
+
+    assert _summarize_report(report) == case.scenario_summary
