@@ -955,31 +955,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         run_model_settings = model_settings if model_settings_override is None else None
 
-        def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
-            # Resolve settings in layers, each merged on top of the previous.
-            # Before calling each callable, set run_context.model_settings so it
-            # can see the merged result of all previous layers.
-            merged = model_used.settings
-
-            run_context.model_settings = merged
-            resolved_agent = (
-                agent_model_settings(run_context) if callable(agent_model_settings) else agent_model_settings
-            )
-            merged = merge_model_settings(merged, resolved_agent)
-
-            # Capability settings (e.g. from Thinking, ModelSettings capabilities)
-            run_context.model_settings = merged
-            cap_settings = self._root_capability.get_model_settings()
-            resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings
-            merged = merge_model_settings(merged, resolved_cap)
-
-            run_context.model_settings = merged
-            resolved_run = run_model_settings(run_context) if callable(run_model_settings) else run_model_settings
-            merged = merge_model_settings(merged, resolved_run)
-
-            run_context.model_settings = merged
-            return merged
-
         usage_limits = usage_limits or _usage.UsageLimits()
 
         if isinstance(model_used, InstrumentedModel):
@@ -1012,6 +987,32 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_instructions = None  # use init-time defaults
             cap_builtin_tools = self._cap_builtin_tools
             cap_toolsets = None
+
+        # Build model settings resolver using per-run capability
+        def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
+            # Resolve settings in layers, each merged on top of the previous.
+            # Before calling each callable, set run_context.model_settings so it
+            # can see the merged result of all previous layers.
+            merged = model_used.settings
+
+            run_context.model_settings = merged
+            resolved_agent = (
+                agent_model_settings(run_context) if callable(agent_model_settings) else agent_model_settings
+            )
+            merged = merge_model_settings(merged, resolved_agent)
+
+            # Capability settings (e.g. from Thinking, ModelSettings capabilities)
+            run_context.model_settings = merged
+            cap_settings = run_capability.get_model_settings()
+            resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings
+            merged = merge_model_settings(merged, resolved_cap)
+
+            run_context.model_settings = merged
+            resolved_run = run_model_settings(run_context) if callable(run_model_settings) else run_model_settings
+            merged = merge_model_settings(merged, resolved_run)
+
+            run_context.model_settings = merged
+            return merged
 
         # Build toolset with per-run capability contributions
         toolset = self._get_toolset(
@@ -1927,35 +1928,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             additional_toolsets: Additional toolsets to add, unless toolsets have been overridden.
             cap_toolsets: Per-run capability toolsets to use instead of the init-time capability toolsets.
         """
-        toolsets: Sequence[AbstractToolset[AgentDepsT]]
-        if cap_toolsets is not None:
-            # Build toolset list with per-run capability toolsets instead of init-time ones
-            base: list[AbstractToolset[AgentDepsT]] = []
-
-            if some_tools := self._override_tools.get():
-                function_toolset = _AgentFunctionToolset(
-                    some_tools.value,
-                    max_retries=self._max_tool_retries,
-                    timeout=self._tool_timeout,
-                    output_schema=self._output_schema,
-                )
-            else:
-                function_toolset = self._function_toolset
-            base.append(function_toolset)
-
-            if some_user_toolsets := self._override_toolsets.get():
-                base.extend(some_user_toolsets.value)
-            else:
-                base.extend(self._user_toolsets)
-                base.extend(self._dynamic_toolsets)
-                for cap_ts in cap_toolsets:
-                    if isinstance(cap_ts, AbstractToolset):
-                        base.append(cap_ts)  # pyright: ignore[reportUnknownArgumentType]
-                    else:
-                        base.append(DynamicToolset(cap_ts))
-            toolsets = base
-        else:
-            toolsets = list(self.toolsets)
+        toolsets = list(self._build_toolset_list(cap_toolsets=cap_toolsets))
         # Don't add additional toolsets if the toolsets have been overridden
         if additional_toolsets and self._override_toolsets.get() is None:
             toolsets = [*toolsets, *additional_toolsets]
@@ -1979,6 +1952,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Output tools are not included.
         """
+        return self._build_toolset_list()
+
+    def _build_toolset_list(
+        self,
+        cap_toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
+    ) -> list[AbstractToolset[AgentDepsT]]:
+        """Build the list of toolsets, optionally with per-run capability toolsets."""
         toolsets: list[AbstractToolset[AgentDepsT]] = []
 
         if some_tools := self._override_tools.get():
@@ -1997,7 +1977,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             toolsets.extend(self._user_toolsets)
             toolsets.extend(self._dynamic_toolsets)
-            for cap_ts in self._cap_toolsets:
+            for cap_ts in cap_toolsets if cap_toolsets is not None else self._cap_toolsets:
                 if isinstance(cap_ts, AbstractToolset):
                     toolsets.append(cap_ts)  # pyright: ignore[reportUnknownArgumentType]
                 else:

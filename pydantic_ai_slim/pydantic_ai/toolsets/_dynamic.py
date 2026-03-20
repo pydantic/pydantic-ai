@@ -98,11 +98,13 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        result = None
-        if self._toolset is not None:
-            result = await self._toolset.__aexit__(*args)
+        try:
+            result = None
+            if self._toolset is not None:
+                result = await self._toolset.__aexit__(*args)
+            return result
+        finally:
             self._toolset = None
-        return result
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         if self._toolset is None:

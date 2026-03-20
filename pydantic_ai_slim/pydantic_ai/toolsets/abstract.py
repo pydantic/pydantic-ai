@@ -112,10 +112,11 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         return self
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        """Return the toolset to use for this run step.
+        """Called at the start of each run step.
 
-        Called at the start of each step. If a different toolset is returned,
-        the framework manages the `__aexit__`/`__aenter__` transition. Default: return `self`.
+        Implementations should manage any internal transitions (e.g. exiting old
+        inner toolsets and entering new ones) in-place, and return ``self``.
+        Default: return ``self`` (no per-step changes).
         """
         return self
 

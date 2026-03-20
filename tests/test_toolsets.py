@@ -920,7 +920,7 @@ class StatefulToolset(AbstractToolset[None]):
     """A custom stateful toolset for testing for_run/for_run_step."""
 
     def __init__(self, *, call_count: int = 0, id: str | None = 'stateful'):
-        self._call_count = call_count
+        self.call_count = call_count
         self._id = id
 
     @property
@@ -936,8 +936,8 @@ class StatefulToolset(AbstractToolset[None]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
     ) -> Any:
-        self._call_count += 1
-        return self._call_count
+        self.call_count += 1
+        return self.call_count
 
 
 async def test_for_run_returns_fresh_instance():
@@ -948,8 +948,8 @@ async def test_for_run_returns_fresh_instance():
     run_toolset = await original.for_run(ctx)
     assert run_toolset is not original
     assert isinstance(run_toolset, StatefulToolset)
-    assert run_toolset._call_count == 0
-    assert original._call_count == 5  # original unchanged
+    assert run_toolset.call_count == 0
+    assert original.call_count == 5  # original unchanged
 
 
 async def test_for_run_step_default_returns_self():
@@ -972,7 +972,7 @@ async def test_wrapper_propagates_for_run():
     assert isinstance(run_wrapper, WrapperToolset)
     inner_after = run_wrapper.wrapped
     assert isinstance(inner_after, StatefulToolset)
-    assert inner_after._call_count == 0  # fresh
+    assert inner_after.call_count == 0  # fresh
 
 
 async def test_wrapper_propagates_for_run_no_change():
@@ -996,7 +996,7 @@ async def test_combined_propagates_for_run():
     assert run_combined is not combined
     assert isinstance(run_combined, CombinedToolset)
     assert isinstance(run_combined.toolsets[0], StatefulToolset)
-    assert run_combined.toolsets[0]._call_count == 0  # type: ignore[union-attr]
+    assert run_combined.toolsets[0].call_count == 0  # type: ignore[union-attr]
     assert run_combined.toolsets[1] is static  # unchanged
 
 
