@@ -41,8 +41,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] hooks
     are called to allow dynamic adjustments.
 
-    See [`Thinking`][pydantic_ai.capabilities.Thinking] and
-    [`ModelSettings`][pydantic_ai.capabilities.ModelSettings] for built-in examples.
+    Built-in capabilities:
+
+    - [`Instructions`][pydantic_ai.capabilities.Instructions] — static or template-based system prompt instructions
+    - [`Thinking`][pydantic_ai.capabilities.Thinking] — enables model thinking/reasoning mode
+    - [`ModelSettings`][pydantic_ai.capabilities.ModelSettings] — provides extra model settings
+    - [`WebSearch`][pydantic_ai.capabilities.WebSearch] — registers the web search builtin tool
+    - [`HistoryProcessorCapability`][pydantic_ai.capabilities.HistoryProcessorCapability] — wraps a history processor as a capability
+    - [`Toolset`][pydantic_ai.capabilities.Toolset] — registers a toolset with the agent
 
     Custom capabilities that should work with YAML/JSON specs (via
     [`Agent.from_spec`][pydantic_ai.Agent.from_spec]) can override
@@ -82,8 +88,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
         """Return model settings to merge into the agent's defaults, or None.
 
-        Can return a static `ModelSettings` dict or a callable that receives
-        `RunContext` and is resolved before each model request.
+        Return a static `ModelSettings` dict when the settings are known at agent
+        construction time and don't change between requests. Return a callable
+        that receives [`RunContext`][pydantic_ai.tools.RunContext] when settings
+        need to vary per step (e.g. based on `ctx.run_step` or `ctx.deps`).
+
+        When the callable is invoked, `ctx.model_settings` contains the merged
+        result of all layers resolved before this capability (model defaults and
+        agent-level settings). The returned dict is merged on top of that.
         """
         return None
 

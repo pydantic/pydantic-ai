@@ -23,7 +23,10 @@ class Thinking(ModelSettings[AgentDepsT]):
     @classmethod
     def from_spec(cls, *args: Any, **kwargs: Any) -> Thinking[Any]:
         if args or kwargs:
-            raise TypeError('Thinking() does not accept arguments')
+            raise TypeError(
+                'Thinking() does not accept arguments yet — configurable parameters will be available once'
+                ' #3894 lands. Use ModelSettings capability for custom thinking settings.'
+            )
         return cls()
 
     def __init__(self):
