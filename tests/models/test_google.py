@@ -367,13 +367,14 @@ async def test_google_model_builtin_code_execution_stream(
     \
 """,
                             'language': 'PYTHON',
+                            'id': None,
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -387,13 +388,14 @@ result = 65465 - 6544 * 65464 - 6 + 1.02255
 print(result)\
 """,
                             'language': 'PYTHON',
+                            'id': None,
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                        content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='google-gla',
@@ -434,6 +436,7 @@ print(result)\
     \
 """,
                         'language': 'PYTHON',
+                        'id': None,
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -450,6 +453,7 @@ print(result)\
     \
 """,
                         'language': 'PYTHON',
+                        'id': None,
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -460,7 +464,7 @@ print(result)\
                 index=1,
                 part=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -478,6 +482,7 @@ result = 65465 - 6544 * 65464 - 6 + 1.02255
 print(result)\
 """,
                         'language': 'PYTHON',
+                        'id': None,
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -495,6 +500,7 @@ result = 65465 - 6544 * 65464 - 6 + 1.02255
 print(result)\
 """,
                         'language': 'PYTHON',
+                        'id': None,
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -505,7 +511,7 @@ print(result)\
                 index=3,
                 part=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -527,6 +533,7 @@ print(result)\
     \
 """,
                         'language': 'PYTHON',
+                        'id': None,
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -535,7 +542,7 @@ print(result)\
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -551,6 +558,7 @@ result = 65465 - 6544 * 65464 - 6 + 1.02255
 print(result)\
 """,
                         'language': 'PYTHON',
+                        'id': None,
                     },
                     tool_call_id=IsStr(),
                     provider_name='google-gla',
@@ -559,7 +567,7 @@ print(result)\
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
+                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': None},
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
@@ -1800,6 +1808,7 @@ formatted_date = utrecht_now.strftime("%A, %B %d, %Y")
 print(f"Today in Utrecht is {formatted_date}.")
 """,
                             'language': 'PYTHON',
+                            'id': None,
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
@@ -1809,6 +1818,7 @@ print(f"Today in Utrecht is {formatted_date}.")
                         content={
                             'outcome': 'OUTCOME_OK',
                             'output': 'Today in Utrecht is Tuesday, September 16, 2025.\n',
+                            'id': None,
                         },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
@@ -1859,6 +1869,7 @@ tomorrow = date.today() + timedelta(days=1)
 print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
 """,
                             'language': 'PYTHON',
+                            'id': None,
                         },
                         tool_call_id=IsStr(),
                         provider_name='google-gla',
@@ -1868,6 +1879,7 @@ print(f"Tomorrow is {tomorrow.strftime('%A, %B %d, %Y')}.")
                         content={
                             'outcome': 'OUTCOME_OK',
                             'output': 'Tomorrow is Wednesday, September 17, 2025.\n',
+                            'id': None,
                         },
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
