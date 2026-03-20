@@ -120,12 +120,8 @@ class DatabricksModel(OpenAIChatModel):
         if data.get('id') is None:
             data['id'] = 'databricks-placeholder-id'
 
-        choices = data.get('choices', [])
-
-        if not choices:
-            return chat.ChatCompletion.model_validate(data)
-
-        message_payload = choices[0].get('message', {})
+        choices: list[dict[str, Any]] = data.get('choices', [])
+        message_payload: dict[str, Any] = choices[0].get('message', {}) if choices else {}
         raw_content = message_payload.get('content')
 
         if isinstance(raw_content, list):

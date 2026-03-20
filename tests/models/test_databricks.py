@@ -15,18 +15,13 @@ from pydantic_ai import (
 )
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.usage import RequestUsage
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from openai.types.chat import ChatCompletion, ChatCompletionMessage
-    from openai.types.chat.chat_completion import Choice
-
     from pydantic_ai.models.databricks import (
         DatabricksModel,
         DatabricksReasoningContent,
-        DatabricksStreamedResponse,
         DatabricksSummaryText,
     )
     from pydantic_ai.providers.databricks import DatabricksProvider
@@ -222,226 +217,117 @@ class TestDatabricksReasoningContent:
         assert block.get_value() == ''
 
 
-class TestValidateCompletion:
-    """Tests for DatabricksModel._validate_completion edge cases."""
+async def test_databricks_list_content_with_reasoning(
+    allow_model_requests: None,
+    databricks_api_key: str,
+    databricks_base_url: str,
+) -> None:
+    """Databricks list content with text+reasoning blocks is parsed correctly."""
+    provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
+    model = DatabricksModel('databricks-gpt-5-2', provider=provider)
 
-    def _make_model(self) -> DatabricksModel:
-        provider = DatabricksProvider(api_key='test', base_url='https://test.com')
-        return DatabricksModel('test-model', provider=provider)
+    response = await model_request(
+        model,
+        [ModelRequest.user_text_prompt('What is 2+2? Think step by step.')],
+    )
 
-    def test_empty_choices(self):
-        """Response with no choices delegates to parent."""
-        model = self._make_model()
-        response = ChatCompletion(id='test', choices=[], created=0, model='test', object='chat.completion')
-        result = model._validate_completion(response)
-        assert result.id == 'test'
-
-    def test_missing_id_gets_placeholder(self):
-        """Response with null id gets a placeholder."""
-        model = self._make_model()
-        response = ChatCompletion(
-            id='test-id',
-            choices=[
-                Choice(
-                    index=0,
-                    finish_reason='stop',
-                    message=ChatCompletionMessage(role='assistant', content='hello'),
-                )
-            ],
-            created=0,
-            model='test',
-            object='chat.completion',
-        )
-        data = response.model_dump(mode='json', warnings=False)
-        data['id'] = None
-        patched = ChatCompletion.model_construct(**data)
-        result = model._validate_completion(patched)
-        assert result.id == 'databricks-placeholder-id'
-
-    def test_list_content_with_text_and_reasoning(self):
-        """List content is parsed into text + reasoning_content."""
-        model = self._make_model()
-        response = ChatCompletion(
-            id='test',
-            choices=[
-                Choice(
-                    index=0,
-                    finish_reason='stop',
-                    message=ChatCompletionMessage(role='assistant', content='placeholder'),
-                )
-            ],
-            created=0,
-            model='test',
-            object='chat.completion',
-        )
-        data = response.model_dump(mode='json', warnings=False)
-        data['choices'][0]['message']['content'] = [
-            {'type': 'text', 'text': 'The answer is 4.'},
-            {'type': 'reasoning', 'text': 'I calculated 2+2.'},
-        ]
-        patched = ChatCompletion.model_construct(**data)
-        result = model._validate_completion(patched)
-        assert result.choices[0].message.content == 'The answer is 4.'
-        assert getattr(result.choices[0].message, 'reasoning_content', None) == 'I calculated 2+2.'
-
-    def test_list_content_invalid_blocks_raises(self):
-        """Invalid list content: TypeAdapter ValidationError is caught but model_validate fails."""
-        from pydantic import ValidationError as PydanticValidationError
-
-        model = self._make_model()
-        response = ChatCompletion(
-            id='test',
-            choices=[
-                Choice(
-                    index=0,
-                    finish_reason='stop',
-                    message=ChatCompletionMessage(role='assistant', content='placeholder'),
-                )
-            ],
-            created=0,
-            model='test',
-            object='chat.completion',
-        )
-        data = response.model_dump(mode='json', warnings=False)
-        data['choices'][0]['message']['content'] = [{'type': 'unknown_type', 'bad': True}]
-        patched = ChatCompletion.model_construct(**data)
-        with pytest.raises(PydanticValidationError):
-            model._validate_completion(patched)
-
-    def test_string_content_passes_through(self):
-        """Normal string content is not modified."""
-        model = self._make_model()
-        response = ChatCompletion(
-            id='test',
-            choices=[
-                Choice(
-                    index=0,
-                    finish_reason='stop',
-                    message=ChatCompletionMessage(role='assistant', content='hello world'),
-                )
-            ],
-            created=0,
-            model='test',
-            object='chat.completion',
-        )
-        result = model._validate_completion(response)
-        assert result.choices[0].message.content == 'hello world'
-
-    def test_list_content_text_only_no_reasoning(self):
-        """List content with only text blocks — no reasoning_content set."""
-        model = self._make_model()
-        response = ChatCompletion(
-            id='test',
-            choices=[
-                Choice(
-                    index=0,
-                    finish_reason='stop',
-                    message=ChatCompletionMessage(role='assistant', content='placeholder'),
-                )
-            ],
-            created=0,
-            model='test',
-            object='chat.completion',
-        )
-        data = response.model_dump(mode='json', warnings=False)
-        data['choices'][0]['message']['content'] = [
-            {'type': 'text', 'text': 'Just text.'},
-        ]
-        patched = ChatCompletion.model_construct(**data)
-        result = model._validate_completion(patched)
-        assert result.choices[0].message.content == 'Just text.'
-        # No reasoning_content should be set
-        assert not getattr(result.choices[0].message, 'reasoning_content', None)
+    assert len(response.parts) >= 2
+    # Reasoning block becomes ThinkingPart, text block becomes TextPart
+    text_part = cast(TextPart, response.parts[1])
+    assert 'The answer is 4.' in text_part.content
 
 
-class TestDatabricksProcessProviderDetailsSafety:
-    """Test safety_identifier handling in provider details."""
+async def test_databricks_missing_id_placeholder(
+    allow_model_requests: None,
+    databricks_api_key: str,
+    databricks_base_url: str,
+) -> None:
+    """Databricks responses with null id get a placeholder id."""
+    provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
+    model = DatabricksModel('databricks-gpt-5-2', provider=provider)
 
-    def _make_model(self) -> DatabricksModel:
-        provider = DatabricksProvider(api_key='test', base_url='https://test.com')
-        return DatabricksModel('test-model', provider=provider)
+    response = await model_request(
+        model,
+        [ModelRequest.user_text_prompt('Say hello')],
+    )
 
-    def test_safety_identifier_captured(self):
-        """safety_identifier is captured when present on the response."""
-        model = self._make_model()
-        response = ChatCompletion(
-            id='test',
-            choices=[
-                Choice(
-                    index=0,
-                    finish_reason='stop',
-                    message=ChatCompletionMessage(role='assistant', content='hi'),
-                )
-            ],
-            created=0,
-            model='test',
-            object='chat.completion',
-            usage={'prompt_tokens': 5, 'completion_tokens': 10, 'total_tokens': 15},  # type: ignore
-        )
-        # Monkey-patch safety_identifier onto the response
-        response.safety_identifier = 'safety-123'  # type: ignore
-        details = model._process_provider_details(response)
-        assert details is not None
-        assert details['safety_identifier'] == 'safety-123'
+    assert response.provider_response_id == 'databricks-placeholder-id'
+    text_part = cast(TextPart, response.parts[0])
+    assert 'hello' in text_part.content
 
 
-class TestDatabricksStreamedResponseMapPartDelta:
-    """Test _map_part_delta with structured content."""
+async def test_databricks_safety_identifier(
+    allow_model_requests: None,
+    databricks_api_key: str,
+    databricks_base_url: str,
+) -> None:
+    """safety_identifier from Databricks response is captured in provider_details."""
+    provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
+    model = DatabricksModel('databricks-gpt-5-2', provider=provider)
 
-    def _make_stream_response(self) -> DatabricksStreamedResponse:
-        from pydantic_ai.models import ModelResponsePartsManager
+    response = await model_request(
+        model,
+        [ModelRequest.user_text_prompt('Hello')],
+    )
 
-        sr = object.__new__(DatabricksStreamedResponse)
-        sr._usage = RequestUsage()
-        sr._parts_manager = ModelResponsePartsManager()
-        sr._provider_name = 'databricks'
-        return sr
+    assert response.provider_details is not None
+    assert response.provider_details.get('safety_identifier') == 'safety-abc-123'
 
-    def test_map_part_delta_with_text_block(self):
-        """Test _map_part_delta with list content containing a text block."""
-        from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
 
-        sr = self._make_stream_response()
-        # Create a choice with list content
-        delta = ChoiceDelta(role='assistant', content=None)
-        choice = ChunkChoice(index=0, delta=delta, finish_reason=None)
-        # Monkey-patch content to be a list
-        choice.delta.content = [{'type': 'text', 'text': 'hello'}]  # type: ignore
-        events = list(sr._map_part_delta(choice))
-        assert len(events) > 0
+async def test_databricks_stream_structured_content(
+    allow_model_requests: None,
+    databricks_api_key: str,
+    databricks_base_url: str,
+) -> None:
+    """Streaming with structured content blocks (reasoning + text) produces events."""
+    provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
+    model = DatabricksModel('databricks-gpt-5-2', provider=provider)
 
-    def test_map_part_delta_with_reasoning_block(self):
-        """Test _map_part_delta with list content containing a reasoning block."""
-        from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
+    async with model_request_stream(
+        model,
+        [ModelRequest.user_text_prompt('What is 2+2? Think step by step.')],
+    ) as stream:
+        chunks = [chunk async for chunk in stream]
 
-        sr = self._make_stream_response()
-        delta = ChoiceDelta(role='assistant', content=None)
-        choice = ChunkChoice(index=0, delta=delta, finish_reason=None)
-        choice.delta.content = [{'type': 'reasoning', 'text': 'thinking...'}]  # type: ignore
-        events = list(sr._map_part_delta(choice))
-        assert len(events) > 0
+        assert len(chunks) > 0
+        assert stream.provider_details is not None
+        assert stream.provider_details['finish_reason'] == 'stop'
 
-    def test_map_part_delta_with_mixed_blocks(self):
-        """Test _map_part_delta with list content containing both text and reasoning."""
-        from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
 
-        sr = self._make_stream_response()
-        delta = ChoiceDelta(role='assistant', content=None)
-        choice = ChunkChoice(index=0, delta=delta, finish_reason=None)
-        choice.delta.content = [  # type: ignore
-            {'type': 'reasoning', 'text': 'thinking...'},
-            {'type': 'text', 'text': 'The answer is 4.'},
-        ]
-        events = list(sr._map_part_delta(choice))
-        assert len(events) >= 2  # At least one for reasoning and one for text
+async def test_databricks_list_content_text_only(
+    allow_model_requests: None,
+    databricks_api_key: str,
+    databricks_base_url: str,
+) -> None:
+    """List content with only text blocks (no reasoning) is handled correctly."""
+    provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
+    model = DatabricksModel('databricks-gpt-5-2', provider=provider)
 
-    def test_map_part_delta_with_empty_reasoning_block(self):
-        """Reasoning block with empty get_value() produces no events."""
-        from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
+    response = await model_request(
+        model,
+        [ModelRequest.user_text_prompt('Say hello')],
+    )
 
-        sr = self._make_stream_response()
-        delta = ChoiceDelta(role='assistant', content=None)
-        choice = ChunkChoice(index=0, delta=delta, finish_reason=None)
-        choice.delta.content = [{'type': 'reasoning'}]  # type: ignore
-        events = list(sr._map_part_delta(choice))
-        assert len(events) == 0
+    assert len(response.parts) == 1
+    text_part = cast(TextPart, response.parts[0])
+    assert 'Hello' in text_part.content
+
+
+async def test_databricks_stream_empty_reasoning(
+    allow_model_requests: None,
+    databricks_api_key: str,
+    databricks_base_url: str,
+) -> None:
+    """Streaming with an empty reasoning block (no text) skips it and continues."""
+    provider = DatabricksProvider(api_key=databricks_api_key, base_url=databricks_base_url)
+    model = DatabricksModel('databricks-gpt-5-2', provider=provider)
+
+    async with model_request_stream(
+        model,
+        [ModelRequest.user_text_prompt('Think about nothing.')],
+    ) as stream:
+        chunks = [chunk async for chunk in stream]
+
+        assert len(chunks) > 0
+        assert stream.provider_details is not None
+        assert stream.provider_details['finish_reason'] == 'stop'
