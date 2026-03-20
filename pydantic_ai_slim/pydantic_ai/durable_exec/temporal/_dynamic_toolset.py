@@ -7,7 +7,7 @@ from typing import Any, Literal
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai import AbstractToolset, ToolsetTool
+from pydantic_ai import ToolsetTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -52,11 +52,20 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
-        async def _prepare_toolset(ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            """Evaluate the dynamic toolset factory for use in an activity."""
-            toolset = await self.wrapped.for_run(ctx)
-            toolset = await toolset.for_run_step(ctx)
-            return toolset
+        async def _prepare_toolset(ctx: RunContext[AgentDepsT]) -> DynamicToolset[AgentDepsT]:
+            """Evaluate the dynamic toolset factory for use in an activity.
+
+            Each activity is a fresh execution, so we create a per-run copy
+            and evaluate the factory. We don't call for_run_step here because
+            the activity's `async with` will handle __aenter__/__aexit__.
+            """
+            new = DynamicToolset(
+                self.wrapped.toolset_func,
+                per_run_step=self.wrapped.per_run_step,
+                id=self.wrapped._id,
+            )
+            new._toolset = await new._evaluate_factory(ctx)
+            return new
 
         async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> dict[str, _ToolInfo]:
             """Activity that calls the dynamic function and returns tool definitions."""

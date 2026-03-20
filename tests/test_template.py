@@ -207,9 +207,9 @@ class TestAgentFromSpecDeps:
             {'model': 'test', 'capabilities': [{'Instructions': 'Hello {{name}}'}]},
             deps_type=MyDeps,
         )
-        # The agent normalizes instructions into _instructions list
-        assert len(agent._instructions) == 1  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(agent._instructions[0], TemplateStr)  # pyright: ignore[reportPrivateUsage]
+        # Capability instructions are stored separately in _cap_instructions
+        assert len(agent._cap_instructions) == 1  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(agent._cap_instructions[0], TemplateStr)  # pyright: ignore[reportPrivateUsage]
 
     def test_from_spec_without_deps_type_returns_agent_none(self) -> None:
         """Without deps_type, from_spec returns Agent[None, str]."""
