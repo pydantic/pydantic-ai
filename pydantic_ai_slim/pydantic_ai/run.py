@@ -91,6 +91,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     _graph_run: GraphRun[
         _agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[OutputDataT]
     ]
+    _result_override: AgentRunResult[OutputDataT] | None = dataclasses.field(default=None, repr=False, init=False)
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...
@@ -127,6 +128,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Once the run returns an [`End`][pydantic_graph.nodes.End] node, `result` is populated
         with an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult].
         """
+        if self._result_override is not None:
+            return self._result_override
         graph_run_output = self._graph_run.output
         if graph_run_output is None:
             return None
@@ -178,6 +181,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         """Advance to the next node automatically based on the last returned node."""
+        if self._result_override is not None:
+            raise StopAsyncIteration
         task = await anext(self._graph_run)
         return self._task_to_node(task)
 

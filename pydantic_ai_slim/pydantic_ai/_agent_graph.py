@@ -44,6 +44,8 @@ from .tools import (
 )
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from .models.instrumented import InstrumentationSettings
 
 __all__ = (
@@ -433,6 +435,36 @@ async def _prepare_request_parameters(
 
 
 @dataclasses.dataclass
+class _SkipStreamedResponse(models.StreamedResponse):
+    """Minimal StreamedResponse for SkipModelRequest — yields no events."""
+
+    _response: _messages.ModelResponse = field(repr=False)
+
+    @property
+    def model_name(self) -> str:
+        return self._response.model_name or ''
+
+    @property
+    def provider_name(self) -> str | None:
+        return None
+
+    @property
+    def provider_url(self) -> str | None:
+        return None
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._response.timestamp
+
+    async def _get_event_iterator(self) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
+        return
+        yield  # pragma: no cover
+
+    def get(self) -> _messages.ModelResponse:
+        return self._response
+
+
+@dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
 
@@ -462,33 +494,119 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> AsyncIterator[result.AgentStream[DepsT, T]]:
         assert not self._did_stream, 'stream() should only be called once per node'
 
-        model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
-        with set_current_run_context(run_context):
-            async with ctx.deps.model.request_stream(
-                message_history, model_settings, model_request_parameters, run_context
-            ) as streamed_response:
-                self._did_stream = True
-                ctx.state.usage.requests += 1
-                agent_stream = result.AgentStream[DepsT, T](
-                    _raw_stream_response=streamed_response,
-                    _output_schema=ctx.deps.output_schema,
-                    _model_request_parameters=model_request_parameters,
-                    _output_validators=ctx.deps.output_validators,
-                    _run_ctx=build_run_context(ctx),
-                    _usage_limits=ctx.deps.usage_limits,
-                    _tool_manager=ctx.deps.tool_manager,
-                    _metadata_getter=lambda: ctx.state.metadata,
-                )
-                yield agent_stream
-                # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
-                # otherwise usage won't be properly counted:
-                async for _ in agent_stream:
+        try:
+            model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
+        except exceptions.SkipModelRequest as e:
+            # SkipModelRequest in stream path: yield an empty stream and finish handling
+            self._did_stream = True
+            ctx.state.usage.requests += 1
+            skip_mrp = await _prepare_request_parameters(ctx)
+            skip_sr = _SkipStreamedResponse(model_request_parameters=skip_mrp, _response=e.response)
+            agent_stream = result.AgentStream[DepsT, T](
+                _raw_stream_response=skip_sr,
+                _output_schema=ctx.deps.output_schema,
+                _model_request_parameters=skip_mrp,
+                _output_validators=ctx.deps.output_validators,
+                _run_ctx=build_run_context(ctx),
+                _usage_limits=ctx.deps.usage_limits,
+                _tool_manager=ctx.deps.tool_manager,
+                _metadata_getter=lambda: ctx.state.metadata,
+            )
+            yield agent_stream
+            await self._finish_handling(ctx, e.response)
+            assert self._result is not None
+            return
+
+        effective_ms = model_settings or ModelSettings()
+
+        # Task-based wrap_model_request for streaming
+        stream_ready = asyncio.Event()
+        stream_done = asyncio.Event()
+        agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
+
+        async def _streaming_handler(
+            msgs: list[_messages.ModelMessage],
+            ms: ModelSettings,
+            mrp: models.ModelRequestParameters,
+        ) -> _messages.ModelResponse:
+            with set_current_run_context(run_context):
+                async with ctx.deps.model.request_stream(msgs, ms, mrp, run_context) as sr:
+                    self._did_stream = True
+                    ctx.state.usage.requests += 1
+                    agent_stream = result.AgentStream[DepsT, T](
+                        _raw_stream_response=sr,
+                        _output_schema=ctx.deps.output_schema,
+                        _model_request_parameters=mrp,
+                        _output_validators=ctx.deps.output_validators,
+                        _run_ctx=build_run_context(ctx),
+                        _usage_limits=ctx.deps.usage_limits,
+                        _tool_manager=ctx.deps.tool_manager,
+                        _metadata_getter=lambda: ctx.state.metadata,
+                    )
+                    agent_stream_holder.append(agent_stream)
+                    stream_ready.set()
+                    await stream_done.wait()
+            return sr.get()
+
+        wrap_task = asyncio.create_task(
+            ctx.deps.root_capability.wrap_model_request(
+                run_context,
+                messages=message_history,
+                model_settings=effective_ms,
+                model_request_parameters=model_request_parameters,
+                handler=_streaming_handler,
+            )
+        )
+
+        # Wait for handler to start or wrap to complete (short-circuit)
+        ready_waiter = asyncio.create_task(stream_ready.wait())
+        await asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+        ready_waiter.cancel()
+
+        if wrap_task.done() and not stream_ready.is_set():
+            # wrap_model_request short-circuited (didn't call handler)
+            model_response = wrap_task.result()
+            self._did_stream = True
+            ctx.state.usage.requests += 1
+            skip_sr = _SkipStreamedResponse(model_request_parameters=model_request_parameters, _response=model_response)
+            agent_stream = result.AgentStream[DepsT, T](
+                _raw_stream_response=skip_sr,
+                _output_schema=ctx.deps.output_schema,
+                _model_request_parameters=model_request_parameters,
+                _output_validators=ctx.deps.output_validators,
+                _run_ctx=build_run_context(ctx),
+                _usage_limits=ctx.deps.usage_limits,
+                _tool_manager=ctx.deps.tool_manager,
+                _metadata_getter=lambda: ctx.state.metadata,
+            )
+            yield agent_stream
+            await self._finish_handling(ctx, model_response)
+            assert self._result is not None
+            return
+
+        # Normal path: handler was called, stream is ready
+        stream_error: BaseException | None = None
+        try:
+            yield agent_stream_holder[0]
+            # Ensure stream is fully consumed for proper usage counting
+            async for _ in agent_stream_holder[0]:
+                pass
+        except BaseException as exc:
+            stream_error = exc
+            raise
+        finally:
+            stream_done.set()
+
+            if stream_error is not None:
+                wrap_task.cancel()
+                try:
+                    await wrap_task
+                except (asyncio.CancelledError, BaseException):
                     pass
-
-        model_response = streamed_response.get()
-
-        await self._finish_handling(ctx, model_response)
-        assert self._result is not None  # this should be set by the previous line
+            else:
+                model_response = await wrap_task
+                await self._finish_handling(ctx, model_response)
+                assert self._result is not None
 
     async def _make_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -496,9 +614,29 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._result is not None:
             return self._result  # pragma: no cover
 
-        model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
-        with set_current_run_context(run_context):
-            model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
+        try:
+            model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
+        except exceptions.SkipModelRequest as e:
+            ctx.state.usage.requests += 1
+            return await self._finish_handling(ctx, e.response)
+
+        effective_model_settings = model_settings or ModelSettings()
+
+        async def model_handler(
+            messages: list[_messages.ModelMessage],
+            ms: ModelSettings,
+            mrp: models.ModelRequestParameters,
+        ) -> _messages.ModelResponse:
+            with set_current_run_context(run_context):
+                return await ctx.deps.model.request(messages, ms or model_settings, mrp)
+
+        model_response = await ctx.deps.root_capability.wrap_model_request(
+            run_context,
+            messages=message_history,
+            model_settings=effective_model_settings,
+            model_request_parameters=model_request_parameters,
+            handler=model_handler,
+        )
         ctx.state.usage.requests += 1
 
         return await self._finish_handling(ctx, model_response)
@@ -1152,6 +1290,7 @@ async def process_tool_calls(  # noqa: C901
             tool_calls=calls_to_run,
             tool_call_results=calls_to_run_results,
             validated_calls=validated_calls,
+            tracer=ctx.deps.tracer,
             output_parts=output_parts,
             output_deferred_calls=deferred_calls,
             output_deferred_metadata=deferred_metadata,
@@ -1219,6 +1358,7 @@ async def _call_tools(  # noqa: C901
     tool_calls: list[_messages.ToolCallPart],
     tool_call_results: dict[str, DeferredToolResult],
     validated_calls: dict[str, ValidatedToolCall[DepsT]],
+    tracer: Tracer,
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
     output_deferred_metadata: dict[str, dict[str, Any]],
@@ -1228,89 +1368,101 @@ async def _call_tools(  # noqa: C901
     deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
     deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
-    async def handle_call_or_result(
-        coro_or_task: Awaitable[
-            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]
-        ]
-        | Task[
-            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]
-        ],
-        index: int,
-    ) -> _messages.HandleResponseEvent | None:
-        try:
-            tool_part, tool_user_content = (
-                (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
-            )
-        except exceptions.CallDeferred as e:
-            deferred_calls_by_index[index] = 'external'
-            deferred_metadata_by_index[index] = e.metadata
-        except exceptions.ApprovalRequired as e:
-            deferred_calls_by_index[index] = 'unapproved'
-            deferred_metadata_by_index[index] = e.metadata
-        else:
-            tool_parts_by_index[index] = tool_part
-            if tool_user_content:
-                user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
+    with tracer.start_as_current_span(
+        'running tools',
+        attributes={
+            'tools': [call.tool_name for call in tool_calls],
+            'logfire.msg': f'running {len(tool_calls)} tool{"" if len(tool_calls) == 1 else "s"}',
+        },
+    ):
 
-            return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
-
-    parallel_execution_mode = tool_manager.get_parallel_execution_mode(tool_calls)
-    if parallel_execution_mode == 'sequential':
-        for index, call in enumerate(tool_calls):
-            if event := await handle_call_or_result(
-                _call_tool(
-                    tool_manager,
-                    validated_calls.get(call.tool_call_id, call),
-                    tool_call_results.get(call.tool_call_id),
-                ),
-                index,
-            ):
-                yield event
-
-    else:
-        tasks = [
-            asyncio.create_task(
-                _call_tool(
-                    tool_manager,
-                    validated_calls.get(call.tool_call_id, call),
-                    tool_call_results.get(call.tool_call_id),
-                ),
-                name=call.tool_name,
-            )
-            for call in tool_calls
-        ]
-        try:
-            if parallel_execution_mode == 'parallel_ordered_events':
-                # Wait for all tasks to complete before yielding any events
-                await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
-                for index, task in enumerate(tasks):
-                    if event := await handle_call_or_result(coro_or_task=task, index=index):
-                        yield event
+        async def handle_call_or_result(
+            coro_or_task: Awaitable[
+                tuple[
+                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
+                ]
+            ]
+            | Task[
+                tuple[
+                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
+                ]
+            ],
+            index: int,
+        ) -> _messages.HandleResponseEvent | None:
+            try:
+                tool_part, tool_user_content = (
+                    (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
+                )
+            except exceptions.CallDeferred as e:
+                deferred_calls_by_index[index] = 'external'
+                deferred_metadata_by_index[index] = e.metadata
+            except exceptions.ApprovalRequired as e:
+                deferred_calls_by_index[index] = 'unapproved'
+                deferred_metadata_by_index[index] = e.metadata
             else:
-                pending: set[
-                    asyncio.Task[
-                        tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
-                    ]
-                ] = set(tasks)  # pyright: ignore[reportAssignmentType]
-                while pending:
-                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                    for task in done:
-                        index = tasks.index(task)  # pyright: ignore[reportArgumentType]
-                        if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
-                            yield event
+                tool_parts_by_index[index] = tool_part
+                if tool_user_content:
+                    user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
 
-        except asyncio.CancelledError as e:
-            for task in tasks:
-                task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
-            raise
-        except BaseException:
-            # Cancel any still-running sibling tasks so they don't become
-            # orphaned asyncio tasks when a non-CancelledError exception
-            # (e.g. RuntimeError, ConnectionError) propagates out of
-            # handle_call_or_result().
-            for task in tasks:
-                task.cancel()
-            raise
+                return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
+
+        parallel_execution_mode = tool_manager.get_parallel_execution_mode(tool_calls)
+        if parallel_execution_mode == 'sequential':
+            for index, call in enumerate(tool_calls):
+                if event := await handle_call_or_result(
+                    _call_tool(
+                        tool_manager,
+                        validated_calls.get(call.tool_call_id, call),
+                        tool_call_results.get(call.tool_call_id),
+                    ),
+                    index,
+                ):
+                    yield event
+
+        else:
+            tasks = [
+                asyncio.create_task(
+                    _call_tool(
+                        tool_manager,
+                        validated_calls.get(call.tool_call_id, call),
+                        tool_call_results.get(call.tool_call_id),
+                    ),
+                    name=call.tool_name,
+                )
+                for call in tool_calls
+            ]
+            try:
+                if parallel_execution_mode == 'parallel_ordered_events':
+                    # Wait for all tasks to complete before yielding any events
+                    await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
+                    for index, task in enumerate(tasks):
+                        if event := await handle_call_or_result(coro_or_task=task, index=index):
+                            yield event
+                else:
+                    pending: set[
+                        asyncio.Task[
+                            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
+                        ]
+                    ] = set(tasks)  # pyright: ignore[reportAssignmentType]
+                    while pending:
+                        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                        for task in done:
+                            index = tasks.index(task)  # pyright: ignore[reportArgumentType]
+                            if event := await handle_call_or_result(coro_or_task=task, index=index):  # pyright: ignore[reportArgumentType]
+                                yield event
+
+            except asyncio.CancelledError as e:
+                for task in tasks:
+                    task.cancel(msg=e.args[0] if len(e.args) != 0 else None)
+                raise
+            except BaseException:
+                # Cancel any still-running sibling tasks so they don't become
+                # orphaned asyncio tasks when a non-CancelledError exception
+                # (e.g. RuntimeError, ConnectionError) propagates out of
+                # handle_call_or_result().
+                for task in tasks:
+                    task.cancel()
+                raise
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
     # This is mostly just to simplify testing

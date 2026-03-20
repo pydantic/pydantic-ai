@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import dataclasses
 import inspect
 import json
@@ -90,6 +91,8 @@ if TYPE_CHECKING:
     from ..ui._web import ModelsParam
     from .spec import AgentSpec
 
+Instructions = _instructions.Instructions
+
 __all__ = (
     'Agent',
     'AgentRun',
@@ -104,6 +107,7 @@ __all__ = (
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
+    'Instructions',
     'AgentModelSettings',
 )
 
@@ -374,7 +378,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for history_processor in history_processors or []:
             capabilities.append(HistoryProcessorCapability(history_processor))
 
-        self._root_capability = CombinedCapability(capabilities)
+        self.root_capability = CombinedCapability(capabilities)
 
         self.model_settings = model_settings
 
@@ -395,7 +399,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_validators = []
 
         self._instructions = _instructions.normalize_instructions(instructions)
-        self._instructions.extend(_instructions.normalize_instructions(self._root_capability.get_instructions()))
+        self._instructions.extend(_instructions.normalize_instructions(self.root_capability.get_instructions()))
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -408,7 +412,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._validation_context = validation_context
 
         self._builtin_tools = list(builtin_tools)
-        self._builtin_tools.extend(self._root_capability.get_builtin_tools())
+        self._builtin_tools.extend(self.root_capability.get_builtin_tools())
 
         self._prepare_tools = prepare_tools
         self._prepare_output_tools = prepare_output_tools
@@ -425,7 +429,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         toolsets = list(toolsets or [])
-        toolset = self._root_capability.get_toolset()
+        toolset = self.root_capability.get_toolset()
         if toolset is not None:
             toolsets.append(toolset)
 
@@ -798,7 +802,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def iter(
+    async def iter(  # noqa: C901
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -923,7 +927,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
-        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
+        tool_manager = ToolManager[AgentDepsT](
+            toolset, root_capability=self.root_capability, default_max_retries=self._max_tool_retries
+        )
 
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
@@ -992,7 +998,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_schema=output_schema,
             output_validators=output_validators,
             validation_context=self._validation_context,
-            root_capability=self._root_capability,
+            root_capability=self.root_capability,
             builtin_tools=[*self._builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,
@@ -1022,7 +1028,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             'logfire.msg': f'{agent_name} run',
         }
         if self._description is not None:
-            if isinstance(self._description, TemplateStr):  # pragma: no cover — requires pydantic-handlebars
+            if isinstance(self._description, TemplateStr):
                 span_attributes['gen_ai.agent.description'] = self._description.render(deps)
             else:
                 span_attributes['gen_ai.agent.description'] = self._description
@@ -1048,13 +1054,61 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     agent_run = AgentRun(graph_run)
                     run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
 
+                    # Build RunContext for run lifecycle hooks
+                    run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+
+                    # Task-based wrap_run: handler calls before_run, signals readiness,
+                    # then waits for caller to finish
+                    _run_ready = asyncio.Event()
+                    _run_done = asyncio.Event()
+                    _run_error: BaseException | None = None
+
+                    async def _do_run() -> AgentRunResult[Any]:
+                        await self.root_capability.before_run(run_ctx)
+                        _run_ready.set()
+                        await _run_done.wait()
+                        if _run_error is not None:
+                            raise _run_error
+                        r = agent_run.result
+                        assert r is not None
+                        return r
+
+                    _wrap_task = asyncio.create_task(self.root_capability.wrap_run(run_ctx, handler=_do_run))
+
+                    # Wait for handler to start or wrap_run to complete (short-circuit)
+                    _ready_waiter = asyncio.create_task(_run_ready.wait())
+                    await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+                    _ready_waiter.cancel()
+
+                    _short_circuited = _wrap_task.done() and not _run_ready.is_set()
+                    if _short_circuited:
+                        _result = _wrap_task.result()
+                        _result = await self.root_capability.after_run(run_ctx, result=_result)
+                        agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
+
                     try:
                         yield agent_run
+                    except BaseException as _exc:
+                        _run_error = _exc
+                        raise
                     finally:
                         if agent_run.result is not None:
                             run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
                         else:
                             run_metadata = graph_run.state.metadata
+
+                        if not _short_circuited:
+                            _run_done.set()
+                            if _run_error is None and agent_run.result is not None:
+                                _result = await _wrap_task
+                                _result = await self.root_capability.after_run(run_ctx, result=_result)
+                                agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
+                            elif not _wrap_task.done():
+                                _wrap_task.cancel()
+                                try:
+                                    await _wrap_task
+                                except (asyncio.CancelledError, BaseException):
+                                    pass
 
                     final_result = agent_run.result
                     if (

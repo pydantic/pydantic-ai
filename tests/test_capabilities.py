@@ -329,7 +329,7 @@ def test_agent_from_spec_capabilities_merged():
         capabilities=[ExtraCap()],
     )
     # Should have both the Instructions capability from spec and ExtraCap from arg
-    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    children = agent.root_capability.capabilities
     assert any(isinstance(c, Instructions) for c in children)
     assert any(isinstance(c, ExtraCap) for c in children)
 
