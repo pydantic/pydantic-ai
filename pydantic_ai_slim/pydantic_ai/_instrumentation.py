@@ -26,6 +26,9 @@ class InstrumentationNames:
     # Output Tool execution span configuration
     output_tool_span_name: str
 
+    # Output validator execution span configuration
+    output_validator_span_name: str
+
     @classmethod
     def for_version(cls, version: int) -> Self:
         """Create instrumentation configuration for a specific version.
@@ -44,6 +47,7 @@ class InstrumentationNames:
                 tool_arguments_attr='tool_arguments',
                 tool_result_attr='tool_response',
                 output_tool_span_name='running output function',
+                output_validator_span_name='running output validator',
             )
         else:
             return cls(
@@ -53,6 +57,7 @@ class InstrumentationNames:
                 tool_arguments_attr='gen_ai.tool.call.arguments',
                 tool_result_attr='gen_ai.tool.call.result',
                 output_tool_span_name='execute_tool',
+                output_validator_span_name='validate_output',
             )
 
     def get_agent_run_span_name(self, agent_name: str) -> str:
@@ -93,3 +98,16 @@ class InstrumentationNames:
         if self.output_tool_span_name == 'execute_tool':
             return f'execute_tool {tool_name}'
         return self.output_tool_span_name
+
+    def get_output_validator_span_name(self, validator_name: str) -> str:
+        """Get the formatted output validator span name.
+
+        Args:
+            validator_name: Name of the output validator function
+
+        Returns:
+            Formatted span name
+        """
+        if self.output_validator_span_name == 'validate_output':
+            return f'validate_output {validator_name}'
+        return self.output_validator_span_name

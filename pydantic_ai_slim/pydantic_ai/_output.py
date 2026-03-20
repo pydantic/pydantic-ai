@@ -172,7 +172,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
         run_context: RunContext[AgentDepsT],
         wrap_validation_errors: bool = True,
     ) -> T:
-        """Validate a result but calling the function.
+        """Validate a result by calling the function within a traced span.
 
         Args:
             result: The result data after Pydantic validation the message content.
@@ -182,30 +182,62 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
         Returns:
             Result of either the validated result data (ok) or a retry message (Err).
         """
-        if self._takes_ctx:
-            args = run_context, result
-        else:
-            args = (result,)
+        instrumentation_names = InstrumentationNames.for_version(run_context.instrumentation_version)
+        validator_name = getattr(self.function, '__name__', 'output_validator')
+        attributes = {
+            'logfire.msg': f'running output validator: {validator_name}',
+        }
+        attributes['logfire.json_schema'] = json.dumps(
+            {
+                'type': 'object',
+                'properties': {
+                    **(
+                        {instrumentation_names.tool_result_attr: {'type': 'object'}}
+                        if run_context.trace_include_content
+                        else {}
+                    ),
+                },
+            }
+        )
 
-        try:
-            if self._is_async:
-                function = cast(Callable[[Any], Awaitable[T]], self.function)
-                result_data = await function(*args)
+        with run_context.tracer.start_as_current_span(
+            instrumentation_names.get_output_validator_span_name(validator_name),
+            attributes=attributes,
+        ) as span:
+            if self._takes_ctx:
+                args = run_context, result
             else:
-                function = cast(Callable[[Any], T], self.function)
-                result_data = await _utils.run_in_executor(function, *args)
-        except ModelRetry as r:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    content=r.message,
-                    tool_name=run_context.tool_name,
+                args = (result,)
+
+            try:
+                if self._is_async:
+                    function = cast(Callable[[Any], Awaitable[T]], self.function)
+                    result_data = await function(*args)
+                else:
+                    function = cast(Callable[[Any], T], self.function)
+                    result_data = await _utils.run_in_executor(function, *args)
+            except ModelRetry as r:
+                if wrap_validation_errors:
+                    m = _messages.RetryPromptPart(
+                        content=r.message,
+                        tool_name=run_context.tool_name,
+                    )
+                    if run_context.tool_call_id:  # pragma: no cover
+                        m.tool_call_id = run_context.tool_call_id
+                    raise ToolRetryError(m) from r
+                else:
+                    raise r
+
+            if run_context.trace_include_content and span.is_recording():
+                from .models.instrumented import InstrumentedModel
+
+                span.set_attribute(
+                    instrumentation_names.tool_result_attr,
+                    result_data
+                    if isinstance(result_data, str)
+                    else json.dumps(InstrumentedModel.serialize_any(result_data)),
                 )
-                if run_context.tool_call_id:  # pragma: no cover
-                    m.tool_call_id = run_context.tool_call_id
-                raise ToolRetryError(m) from r
-            else:
-                raise r
-        else:
+
             return result_data
 
 

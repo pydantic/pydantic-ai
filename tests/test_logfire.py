@@ -3225,3 +3225,108 @@ async def test_agent_description_absent_when_none(capfire: CaptureLogfire) -> No
     spans = capfire.exporter.exported_spans_as_dict()
     agent_run_span = next(s for s in spans if s['name'] == 'agent run')
     assert 'gen_ai.agent.description' not in agent_run_span['attributes']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_logfire_output_validator_span(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"temperature": 28.7, "description": "sunny"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    agent = Agent(FunctionModel(return_model), output_type=WeatherInfo, instrument=instrumentation_settings)
+
+    @agent.output_validator
+    def validate_output(o: WeatherInfo) -> WeatherInfo:
+        return o
+
+    result = agent.run_sync('Hello')
+    assert result.output == WeatherInfo(temperature=28.7, description='sunny')
+
+    summary = get_logfire_summary()
+
+    # Find the output validator span
+    validator_spans = [
+        attributes
+        for attributes in summary.attributes.values()
+        if 'running output validator' in attributes.get('logfire.msg', '')
+    ]
+    assert len(validator_spans) == 1
+    [validator_attributes] = validator_spans
+
+    if include_content:
+        assert validator_attributes == snapshot(
+            {
+                'logfire.msg': 'running output validator: validate_output',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_response': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'tool_response': IsStr(),
+            }
+        )
+    else:
+        assert validator_attributes == snapshot(
+            {
+                'logfire.msg': 'running output validator: validate_output',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {},
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+            }
+        )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_logfire_output_validator_span_with_retry(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            args_json = '{"temperature": 0.0, "description": "cold"}'
+        else:
+            args_json = '{"temperature": 28.7, "description": "sunny"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(return_model), output_type=WeatherInfo, instrument=True)
+
+    @agent.output_validator
+    def validate_output(o: WeatherInfo) -> WeatherInfo:
+        if o.temperature > 0:
+            return o
+        raise ModelRetry('temperature should be positive')
+
+    result = agent.run_sync('Hello')
+    assert result.output == WeatherInfo(temperature=28.7, description='sunny')
+
+    summary = get_logfire_summary()
+
+    # Should have two validator spans: one that retried, one that succeeded
+    validator_spans = [
+        attributes
+        for attributes in summary.attributes.values()
+        if 'running output validator' in attributes.get('logfire.msg', '')
+    ]
+    assert len(validator_spans) == 2
+    # First span should have error level (retry)
+    assert validator_spans[0].get('logfire.level_num') == snapshot(17)
+    # Second span should succeed (no error level)
+    assert 'logfire.level_num' not in validator_spans[1]
