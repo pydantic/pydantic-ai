@@ -131,10 +131,10 @@ def validate_from_spec_args(
     to automatically compile template strings (containing ``{{``) into TemplateStr
     instances using the deps_type/deps_schema from the validation context.
     """
-    from pydantic._internal import _typing_extra
+    from pydantic_ai._utils import get_function_type_hints
 
     try:
-        hints = _typing_extra.get_function_type_hints(cls.from_spec)
+        hints = get_function_type_hints(cls.from_spec)
     except Exception:  # pragma: no cover — defensive; depends on Pydantic internals
         return args, kwargs
 
