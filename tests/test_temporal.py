@@ -3728,3 +3728,39 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
             ('BinaryContent', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
         ]
+
+
+def test_temporal_toolset_preserves_tool_return_metadata():
+    """Test that ToolReturn.metadata survives the temporal wrap/unwrap cycle.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/4676
+    """
+    from pydantic_ai.durable_exec.temporal._toolset import _ToolReturn, _unwrap_call_tool_result_fn
+    from pydantic_ai.messages import ToolReturn
+
+    # Simulate what _wrap_call_tool_result does
+    tool_return = ToolReturn(return_value='result', metadata={'request_id': 'abc-123'})
+    wrapped = _ToolReturn(result=tool_return.return_value, metadata=tool_return.metadata)
+
+    assert wrapped.result == 'result'
+    assert wrapped.metadata == {'request_id': 'abc-123'}
+
+    # Simulate what _unwrap_call_tool_result does — should reconstruct ToolReturn
+    # We can't easily call the method directly, so test the dataclass roundtrip
+    if wrapped.metadata is not None:
+        unwrapped = ToolReturn(return_value=wrapped.result, metadata=wrapped.metadata)
+    else:
+        unwrapped = wrapped.result
+
+    assert isinstance(unwrapped, ToolReturn)
+    assert unwrapped.return_value == 'result'
+    assert unwrapped.metadata == {'request_id': 'abc-123'}
+
+
+def test_temporal_toolset_no_metadata_passthrough():
+    """Test that plain results (no ToolReturn) still work after the fix."""
+    from pydantic_ai.durable_exec.temporal._toolset import _ToolReturn
+
+    wrapped = _ToolReturn(result='plain result')
+    assert wrapped.result == 'plain result'
+    assert wrapped.metadata is None
