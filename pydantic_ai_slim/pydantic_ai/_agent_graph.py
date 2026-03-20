@@ -659,6 +659,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_request_parameters = await _prepare_request_parameters(ctx)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
+        run_context.model_settings = model_settings
 
         request_context = await ctx.deps.root_capability.before_model_request(
             run_context,

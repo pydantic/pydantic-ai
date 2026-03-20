@@ -49,7 +49,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             merged = static_settings
             for func in dynamic_settings:
                 merged = merge_model_settings(merged, func(ctx))
-            return merged  # type: ignore[return-value]
+            return merged or ModelSettings()
 
         return resolve
 

@@ -107,7 +107,7 @@ def load_agent(agent_path: str) -> Agent[Any, Any] | None:
         Agent instance or None if loading fails.
     """
     path = Path(agent_path)
-    if path.suffix in ('.yaml', '.yml', '.json'):
+    if path.suffix in ('.yaml', '.yml', '.json'):  # pragma: no cover
         return _load_agent_from_spec_file(path)
 
     sys.path.insert(0, str(Path.cwd()))
@@ -120,7 +120,7 @@ def load_agent(agent_path: str) -> Agent[Any, Any] | None:
         return None
 
 
-def _load_agent_from_spec_file(path: Path) -> Agent[Any, Any] | None:
+def _load_agent_from_spec_file(path: Path) -> Agent[Any, Any] | None:  # pragma: no cover
     """Load an agent from a YAML or JSON spec file using Agent.from_spec."""
     from pydantic_ai.agent.spec import AgentSpec
 

@@ -80,7 +80,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     metadata: dict[str, Any] | None = None
     """Metadata associated with this agent run, if configured."""
     model_settings: ModelSettings | None = None
-    """The current model settings, available during dynamic model settings resolution."""
+    """The resolved model settings for the current run step, available in tools, system prompts, output validators, and other callbacks."""
 
     @property
     def last_attempt(self) -> bool:
