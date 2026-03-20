@@ -17,10 +17,8 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
 # --- Helpers ---
@@ -116,13 +114,11 @@ class LoggingCapability(AbstractCapability[Any]):
         self,
         ctx: RunContext[Any],
         *,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings,
-        model_request_parameters: ModelRequestParameters,
+        request_context: Any,
         handler: Any,
     ) -> ModelResponse:
         self.log.append('wrap_model_request:before')
-        response = await handler(messages, model_settings, model_request_parameters)
+        response = await handler(request_context)
         self.log.append('wrap_model_request:after')
         return response
 
@@ -269,15 +265,9 @@ class TestModelRequestHooks:
         @dataclass
         class WrapModifyCap(AbstractCapability[Any]):
             async def wrap_model_request(
-                self,
-                ctx: RunContext[Any],
-                *,
-                messages: list[ModelMessage],
-                model_settings: ModelSettings,
-                model_request_parameters: ModelRequestParameters,
-                handler: Any,
+                self, ctx: RunContext[Any], *, request_context: Any, handler: Any
             ) -> ModelResponse:
-                response = await handler(messages, model_settings, model_request_parameters)
+                response = await handler(request_context)
                 return ModelResponse(parts=[TextPart(content='wrapped: ' + response.parts[0].content)])
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapModifyCap()])
@@ -486,16 +476,10 @@ class TestCompositionOrder:
                 return response
 
             async def wrap_model_request(
-                self,
-                ctx: RunContext[Any],
-                *,
-                messages: list[ModelMessage],
-                model_settings: ModelSettings,
-                model_request_parameters: ModelRequestParameters,
-                handler: Any,
+                self, ctx: RunContext[Any], *, request_context: Any, handler: Any
             ) -> ModelResponse:
                 log.append('cap1:wrap:before')
-                response = await handler(messages, model_settings, model_request_parameters)
+                response = await handler(request_context)
                 log.append('cap1:wrap:after')
                 return response
 
@@ -509,26 +493,15 @@ class TestCompositionOrder:
                 log.append('cap2:before')
                 return request_context
 
-            async def after_model_request(
-                self,
-                ctx: RunContext[Any],
-                *,
-                response: ModelResponse,
-            ) -> ModelResponse:
+            async def after_model_request(self, ctx: RunContext[Any], *, response: ModelResponse) -> ModelResponse:
                 log.append('cap2:after')
                 return response
 
             async def wrap_model_request(
-                self,
-                ctx: RunContext[Any],
-                *,
-                messages: list[ModelMessage],
-                model_settings: ModelSettings,
-                model_request_parameters: ModelRequestParameters,
-                handler: Any,
+                self, ctx: RunContext[Any], *, request_context: Any, handler: Any
             ) -> ModelResponse:
                 log.append('cap2:wrap:before')
-                response = await handler(messages, model_settings, model_request_parameters)
+                response = await handler(request_context)
                 log.append('cap2:wrap:after')
                 return response
 
@@ -719,15 +692,9 @@ class TestStreamingHooks:
         @dataclass
         class WrapModifyCap(AbstractCapability[Any]):
             async def wrap_model_request(
-                self,
-                ctx: RunContext[Any],
-                *,
-                messages: list[ModelMessage],
-                model_settings: ModelSettings,
-                model_request_parameters: ModelRequestParameters,
-                handler: Any,
+                self, ctx: RunContext[Any], *, request_context: Any, handler: Any
             ) -> ModelResponse:
-                response = await handler(messages, model_settings, model_request_parameters)
+                response = await handler(request_context)
                 return ModelResponse(parts=[TextPart(content='wrapped: ' + response.parts[0].content)])
 
         agent = Agent(
@@ -1006,13 +973,7 @@ class TestSkipModelRequestInteraction:
         @dataclass
         class ShortCircuitModelCap(AbstractCapability[Any]):
             async def wrap_model_request(
-                self,
-                ctx: RunContext[Any],
-                *,
-                messages: list[ModelMessage],
-                model_settings: ModelSettings,
-                model_request_parameters: ModelRequestParameters,
-                handler: Any,
+                self, ctx: RunContext[Any], *, request_context: Any, handler: Any
             ) -> ModelResponse:
                 # Don't call handler — return a response directly
                 return ModelResponse(parts=[TextPart(content='model short-circuited')])

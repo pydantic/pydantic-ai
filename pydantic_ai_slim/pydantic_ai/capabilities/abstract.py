@@ -161,16 +161,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings,
-        model_request_parameters: ModelRequestParameters,
-        handler: Callable[
-            [list[ModelMessage], ModelSettings, ModelRequestParameters],
-            Awaitable[ModelResponse],
-        ],
+        request_context: BeforeModelRequestContext,
+        handler: Callable[[BeforeModelRequestContext], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         """Wraps the model request. handler() calls the model."""
-        return await handler(messages, model_settings, model_request_parameters)
+        return await handler(request_context)
 
     # --- Tool validate lifecycle hooks ---
 

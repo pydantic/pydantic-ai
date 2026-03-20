@@ -6,8 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import _instructions, _system_prompt
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, ToolCallPart
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, RunContext
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetFunc
@@ -139,18 +138,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings,
-        model_request_parameters: ModelRequestParameters,
-        handler: Callable[
-            [list[ModelMessage], ModelSettings, ModelRequestParameters],
-            Awaitable[ModelResponse],
-        ],
+        request_context: BeforeModelRequestContext,
+        handler: Callable[[BeforeModelRequestContext], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         chain = handler
         for cap in reversed(self.capabilities):
             chain = _make_model_request_wrap(cap, ctx, chain)
-        return await chain(messages, model_settings, model_request_parameters)
+        return await chain(request_context)
 
     # --- Tool validate lifecycle hooks ---
 
@@ -247,24 +241,12 @@ def _make_run_wrap(
 def _make_model_request_wrap(
     cap: AbstractCapability[AgentDepsT],
     ctx: RunContext[AgentDepsT],
-    inner: Callable[
-        [list[ModelMessage], ModelSettings, ModelRequestParameters],
-        Awaitable[ModelResponse],
-    ],
-) -> Callable[
-    [list[ModelMessage], ModelSettings, ModelRequestParameters],
-    Awaitable[ModelResponse],
-]:
-    async def wrapped(
-        messages: list[ModelMessage],
-        model_settings: ModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
+    inner: Callable[[BeforeModelRequestContext], Awaitable[ModelResponse]],
+) -> Callable[[BeforeModelRequestContext], Awaitable[ModelResponse]]:
+    async def wrapped(request_context: BeforeModelRequestContext) -> ModelResponse:
         return await cap.wrap_model_request(
             ctx,
-            messages=messages,
-            model_settings=model_settings,
-            model_request_parameters=model_request_parameters,
+            request_context=request_context,
             handler=inner,
         )
 

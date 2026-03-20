@@ -519,18 +519,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
         async def _streaming_handler(
-            msgs: list[_messages.ModelMessage],
-            ms: ModelSettings,
-            mrp: models.ModelRequestParameters,
+            req_ctx: BeforeModelRequestContext,
         ) -> _messages.ModelResponse:
             with set_current_run_context(run_context):
-                async with ctx.deps.model.request_stream(msgs, ms, mrp, run_context) as sr:
+                async with ctx.deps.model.request_stream(
+                    req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters, run_context
+                ) as sr:
                     self._did_stream = True
                     ctx.state.usage.requests += 1
                     agent_stream = result.AgentStream[DepsT, T](
                         _raw_stream_response=sr,
                         _output_schema=ctx.deps.output_schema,
-                        _model_request_parameters=mrp,
+                        _model_request_parameters=req_ctx.model_request_parameters,
                         _output_validators=ctx.deps.output_validators,
                         _run_ctx=build_run_context(ctx),
                         _usage_limits=ctx.deps.usage_limits,
@@ -542,12 +542,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     await stream_done.wait()
             return sr.get()
 
+        wrap_request_context = BeforeModelRequestContext(
+            messages=message_history,
+            model_settings=effective_ms,
+            model_request_parameters=model_request_parameters,
+        )
         wrap_task = asyncio.create_task(
             ctx.deps.root_capability.wrap_model_request(
                 run_context,
-                messages=message_history,
-                model_settings=effective_ms,
-                model_request_parameters=model_request_parameters,
+                request_context=wrap_request_context,
                 handler=_streaming_handler,
             )
         )
@@ -616,19 +619,19 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         effective_model_settings = model_settings or ModelSettings()
 
-        async def model_handler(
-            messages: list[_messages.ModelMessage],
-            ms: ModelSettings,
-            mrp: models.ModelRequestParameters,
-        ) -> _messages.ModelResponse:
+        async def model_handler(req_ctx: BeforeModelRequestContext) -> _messages.ModelResponse:
             with set_current_run_context(run_context):
-                return await ctx.deps.model.request(messages, ms or model_settings, mrp)
+                return await ctx.deps.model.request(
+                    req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters
+                )
 
         model_response = await ctx.deps.root_capability.wrap_model_request(
             run_context,
-            messages=message_history,
-            model_settings=effective_model_settings,
-            model_request_parameters=model_request_parameters,
+            request_context=BeforeModelRequestContext(
+                messages=message_history,
+                model_settings=effective_model_settings,
+                model_request_parameters=model_request_parameters,
+            ),
             handler=model_handler,
         )
         ctx.state.usage.requests += 1
