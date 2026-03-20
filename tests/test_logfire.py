@@ -3318,7 +3318,7 @@ def test_deferral_approval_required_v2(capfire: CaptureLogfire) -> None:
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_deferral_call_deferred_v5(capfire: CaptureLogfire) -> None:
-    """Test that CallDeferred on v5 marks span as ERROR with deferral attributes."""
+    """Test that CallDeferred on v5 leaves span as UNSET with deferral attributes."""
     agent = Agent(
         TestModel(),
         output_type=[str, DeferredToolRequests],
@@ -3337,7 +3337,7 @@ def test_deferral_call_deferred_v5(capfire: CaptureLogfire) -> None:
             'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
             'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
             'start_time': 4000000000,
-            'end_time': 6000000000,
+            'end_time': 5000000000,
             'attributes': {
                 'gen_ai.tool.name': 'my_tool',
                 'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
@@ -3355,27 +3355,14 @@ def test_deferral_call_deferred_v5(capfire: CaptureLogfire) -> None:
                 'logfire.span_type': 'span',
                 'pydantic_ai.tool.deferral.name': 'CallDeferred',
                 'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
-                'logfire.level_num': 17,
             },
-            'events': [
-                {
-                    'name': 'exception',
-                    'timestamp': 5000000000,
-                    'attributes': {
-                        'exception.type': 'pydantic_ai.exceptions.CallDeferred',
-                        'exception.message': '',
-                        'exception.stacktrace': 'pydantic_ai.exceptions.CallDeferred',
-                        'exception.escaped': 'True',
-                    },
-                }
-            ],
         }
     )
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_deferral_approval_required_v5(capfire: CaptureLogfire) -> None:
-    """Test that ApprovalRequired on v5 marks span as ERROR with deferral attributes."""
+    """Test that ApprovalRequired on v5 leaves span as UNSET with deferral attributes."""
     agent = Agent(
         TestModel(),
         output_type=[str, DeferredToolRequests],
@@ -3394,7 +3381,7 @@ def test_deferral_approval_required_v5(capfire: CaptureLogfire) -> None:
             'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
             'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
             'start_time': 4000000000,
-            'end_time': 6000000000,
+            'end_time': 5000000000,
             'attributes': {
                 'gen_ai.tool.name': 'my_tool',
                 'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
@@ -3412,20 +3399,7 @@ def test_deferral_approval_required_v5(capfire: CaptureLogfire) -> None:
                 'logfire.span_type': 'span',
                 'pydantic_ai.tool.deferral.name': 'ApprovalRequired',
                 'pydantic_ai.tool.deferral.metadata': {'task_id': 'task-123'},
-                'logfire.level_num': 17,
             },
-            'events': [
-                {
-                    'name': 'exception',
-                    'timestamp': 5000000000,
-                    'attributes': {
-                        'exception.type': 'pydantic_ai.exceptions.ApprovalRequired',
-                        'exception.message': '',
-                        'exception.stacktrace': 'pydantic_ai.exceptions.ApprovalRequired',
-                        'exception.escaped': 'True',
-                    },
-                }
-            ],
         }
     )
 
@@ -3453,7 +3427,7 @@ def test_deferral_no_metadata(capfire: CaptureLogfire) -> None:
             'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
             'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
             'start_time': 4000000000,
-            'end_time': 6000000000,
+            'end_time': 5000000000,
             'attributes': {
                 'gen_ai.tool.name': 'my_tool',
                 'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
@@ -3470,20 +3444,7 @@ def test_deferral_no_metadata(capfire: CaptureLogfire) -> None:
                 },
                 'logfire.span_type': 'span',
                 'pydantic_ai.tool.deferral.name': 'CallDeferred',
-                'logfire.level_num': 17,
             },
-            'events': [
-                {
-                    'name': 'exception',
-                    'timestamp': 5000000000,
-                    'attributes': {
-                        'exception.type': 'pydantic_ai.exceptions.CallDeferred',
-                        'exception.message': '',
-                        'exception.stacktrace': 'pydantic_ai.exceptions.CallDeferred',
-                        'exception.escaped': 'True',
-                    },
-                }
-            ],
         }
     )
 
@@ -3516,7 +3477,7 @@ def test_deferral_non_serializable_metadata(capfire: CaptureLogfire) -> None:
             'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
             'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
             'start_time': 4000000000,
-            'end_time': 6000000000,
+            'end_time': 5000000000,
             'attributes': {
                 'gen_ai.tool.name': 'my_tool',
                 'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__my_tool',
@@ -3534,20 +3495,7 @@ def test_deferral_non_serializable_metadata(capfire: CaptureLogfire) -> None:
                 'logfire.span_type': 'span',
                 'pydantic_ai.tool.deferral.name': 'CallDeferred',
                 'pydantic_ai.tool.deferral.metadata': "{'obj': <CustomObj>}",
-                'logfire.level_num': 17,
             },
-            'events': [
-                {
-                    'name': 'exception',
-                    'timestamp': 5000000000,
-                    'attributes': {
-                        'exception.type': 'pydantic_ai.exceptions.CallDeferred',
-                        'exception.message': '',
-                        'exception.stacktrace': 'pydantic_ai.exceptions.CallDeferred',
-                        'exception.escaped': 'True',
-                    },
-                }
-            ],
         }
     )
 

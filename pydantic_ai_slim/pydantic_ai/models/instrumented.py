@@ -132,10 +132,11 @@ class InstrumentationSettings:
                     URL-based media uses type='uri' with uri and mime_type fields (and modality for image/audio/video).
                     Inline binary content uses type='blob' with mime_type and content fields (and modality for image/audio/video).
                     https://opentelemetry.io/docs/specs/semconv/gen-ai/non-normative/examples-llm-calls/#multimodal-inputs-example
-                Version 5 is the same as version 4, with deferral metadata
+                Version 5 is the same as version 4, but CallDeferred and ApprovalRequired exceptions
+                    no longer record an exception event or set the span status to ERROR — the span is left
+                    as UNSET, since deferrals are control flow, not errors. Deferral metadata
                     (`pydantic_ai.tool.deferral.name` and `pydantic_ai.tool.deferral.metadata`)
-                    recorded as span attributes when CallDeferred or ApprovalRequired exceptions are raised.
-                    Note: deferral attributes are recorded regardless of version.
+                    is recorded as span attributes. Note: deferral attributes are recorded regardless of version.
             event_mode: The mode for emitting events in version 1.
                 If `'attributes'`, events are attached to the span as attributes.
                 If `'logs'`, events are emitted as OpenTelemetry log-based events.
