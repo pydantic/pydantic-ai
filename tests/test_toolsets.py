@@ -25,7 +25,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
 
@@ -663,7 +663,6 @@ async def test_toolset_explicit_max_retries_overrides_agent():
 
 async def test_tool_explicit_retries_overrides_toolset_and_agent():
     """Tool(retries=X) should take precedence over both toolset and agent defaults."""
-    from pydantic_ai.tools import Tool
 
     def always_fails(x: int) -> int:
         """A tool that always fails."""
