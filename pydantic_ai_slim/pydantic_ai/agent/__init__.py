@@ -1002,17 +1002,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await self._root_capability.for_run(initial_ctx)
+        cap_toolsets: list[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None
         if run_capability is not self._root_capability:
             cap_instructions = _instructions.normalize_instructions(run_capability.get_instructions())
             cap_builtin_tools = list(run_capability.get_builtin_tools())
             cap_ts = run_capability.get_toolset()
-            cap_toolsets: list[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] = (
-                [cap_ts] if cap_ts is not None else []
-            )
+            cap_toolsets = [cap_ts] if cap_ts is not None else []
         else:
             cap_instructions = None  # use init-time defaults
             cap_builtin_tools = self._cap_builtin_tools
-            cap_toolsets = None  # use init-time defaults
+            cap_toolsets = None
 
         # Build toolset with per-run capability contributions
         toolset = self._get_toolset(
@@ -1951,12 +1950,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 base.extend(self._dynamic_toolsets)
                 for cap_ts in cap_toolsets:
                     if isinstance(cap_ts, AbstractToolset):
-                        base.append(cap_ts)
+                        base.append(cap_ts)  # pyright: ignore[reportUnknownArgumentType]
                     else:
                         base.append(DynamicToolset(cap_ts))
             toolsets = base
         else:
-            toolsets = self.toolsets
+            toolsets = list(self.toolsets)
         # Don't add additional toolsets if the toolsets have been overridden
         if additional_toolsets and self._override_toolsets.get() is None:
             toolsets = [*toolsets, *additional_toolsets]
@@ -1994,15 +1993,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets.append(function_toolset)
 
         if some_user_toolsets := self._override_toolsets.get():
-            user_toolsets = some_user_toolsets.value
+            toolsets.extend(some_user_toolsets.value)
         else:
-            user_toolsets: list[AbstractToolset[AgentDepsT]] = [*self._user_toolsets, *self._dynamic_toolsets]
+            toolsets.extend(self._user_toolsets)
+            toolsets.extend(self._dynamic_toolsets)
             for cap_ts in self._cap_toolsets:
                 if isinstance(cap_ts, AbstractToolset):
-                    user_toolsets.append(cap_ts)
+                    toolsets.append(cap_ts)  # pyright: ignore[reportUnknownArgumentType]
                 else:
-                    user_toolsets.append(DynamicToolset(cap_ts))
-        toolsets.extend(user_toolsets)
+                    toolsets.append(DynamicToolset(cap_ts))
 
         return toolsets
 
