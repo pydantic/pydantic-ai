@@ -41,50 +41,45 @@ jobs:
             exit 0
           fi
 
-          # --- Repeat offender detection + merged PR count ---
-          # Fetch closed PRs by this author once and derive both counts.
+          # --- Contributor history (used for repeat offender detection + PR limits) ---
+          # Use GitHub search API to get counts server-side instead of fetching all PRs.
           THIRTY_DAYS_AGO=$(date -u -d '30 days ago' '+%Y-%m-%dT%H:%M:%SZ')
-          AUTHOR_CLOSED_PRS=$(gh api "repos/${REPO}/pulls?state=closed&per_page=100" --paginate \
-            --jq "[.[] | select(.user.login == \"${PR_AUTHOR}\")]")
-          REJECTED_COUNT=$(echo "$AUTHOR_CLOSED_PRS" | jq "[.[] | select(.merged_at == null and .closed_at > \"${THIRTY_DAYS_AGO}\")] | length")
-          MERGED_COUNT=$(echo "$AUTHOR_CLOSED_PRS" | jq "[.[] | select(.merged_at != null)] | length")
-          echo "Author has ${REJECTED_COUNT} closed-without-merge PRs in the last 30 days, ${MERGED_COUNT} merged PRs total."
+          REJECTED_COUNT=$(gh api -X GET "search/issues" \
+            -f q="repo:${REPO} type:pr author:${PR_AUTHOR} is:closed is:unmerged closed:>${THIRTY_DAYS_AGO}" \
+            --jq '.total_count')
+          MERGED_COUNT=$(gh api -X GET "search/issues" \
+            -f q="repo:${REPO} type:pr author:${PR_AUTHOR} is:merged" \
+            --jq '.total_count')
+          echo "Author: ${REJECTED_COUNT} rejected PRs (last 30d), ${MERGED_COUNT} merged PRs total."
 
+          # Repeat offender: 5+ rejected PRs in 30 days = close, 3+ = warn
           if [ "$REJECTED_COUNT" -ge 5 ]; then
-            echo "Repeat offender detected (${REJECTED_COUNT} rejected PRs). Closing and warning."
-            COMMENT=$(printf '%s\n\n%s\n\n%s' \
-              "⚠️ You have had **${REJECTED_COUNT} PRs closed without merging** in this repository in the last 30 days." \
-              "This pattern suggests your contributions are not following our [contribution guidelines](https://github.com/${REPO}/blob/main/docs/contributing.md). Please read them carefully before submitting further PRs. Continued spamming may result in being blocked from this repository." \
-              "If you believe this is a mistake, please reach out on our [Slack community](https://logfire.pydantic.dev/docs/join-slack/) or comment on a relevant issue to discuss with maintainers.")
+            echo "Repeat offender (${REJECTED_COUNT} rejected). Closing."
             gh pr close "$PR_NUMBER" --repo "$REPO"
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT" || true
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$(printf '%s\n\n%s\n\n%s' \
+              "⚠️ You have had **${REJECTED_COUNT} PRs closed without merging** in the last 30 days." \
+              "Please read our [contribution guidelines](https://github.com/${REPO}/blob/main/docs/contributing.md) before submitting further PRs. Continued spamming may result in being blocked from this repository." \
+              "If you believe this is a mistake, please reach out on [Slack](https://logfire.pydantic.dev/docs/join-slack/) or comment on a relevant issue to discuss with maintainers.")" || true
             exit 0
           elif [ "$REJECTED_COUNT" -ge 3 ]; then
-            echo "Warning: author has ${REJECTED_COUNT} rejected PRs recently."
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "⚠️ You have had **${REJECTED_COUNT} PRs closed without merging** recently. Please make sure you have read our [contribution guidelines](https://github.com/${REPO}/blob/main/docs/contributing.md) before submitting PRs. If you need help, reach out on [Slack](https://logfire.pydantic.dev/docs/join-slack/)." || true
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "⚠️ You have had **${REJECTED_COUNT} PRs closed without merging** recently. Please read our [contribution guidelines](https://github.com/${REPO}/blob/main/docs/contributing.md). If you need help, reach out on [Slack](https://logfire.pydantic.dev/docs/join-slack/)." || true
           fi
 
-          # --- PR limits for new contributors ---
-          # 0 merged PRs -> max 1 open PR
-          # 1 merged PR  -> max 2 open PRs
-          # 2 merged PRs -> max 3 open PRs
-          # 3+ merged    -> unlimited
-          echo "Author has ${MERGED_COUNT} merged PRs."
-
+          # PR limits: new contributors can only have a limited number of open PRs
+          # 0 merged -> 1, 1 merged -> 2, 2 merged -> 3, 3+ merged -> unlimited
           if [ "$MERGED_COUNT" -lt 3 ]; then
             MAX_OPEN=$((MERGED_COUNT + 1))
-            # Count open PRs by this author, excluding the current one
-            OPEN_COUNT=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate --jq "[.[] | select(.user.login == \"${PR_AUTHOR}\" and .number != ${PR_NUMBER})] | length")
-            echo "Author has ${OPEN_COUNT} other open PRs (limit: ${MAX_OPEN})."
+            OPEN_COUNT=$(gh api -X GET "search/issues" \
+              -f q="repo:${REPO} type:pr author:${PR_AUTHOR} is:open -${PR_NUMBER}" \
+              --jq '.total_count')
+            echo "Open PRs: ${OPEN_COUNT} (limit: ${MAX_OPEN})."
 
             if [ "$OPEN_COUNT" -ge "$MAX_OPEN" ]; then
               echo "PR limit exceeded. Closing."
-              COMMENT=$(printf '%s\n\n%s\n\n%s' \
-                "Thanks for your interest in contributing! To help us maintain quality reviews, we limit the number of simultaneous open PRs for newer contributors." \
-                "You currently have **${OPEN_COUNT}** other open PR(s), and your limit is **${MAX_OPEN}** (based on **${MERGED_COUNT}** previously merged PR(s)). Please wait for your existing PR(s) to be reviewed and merged before opening new ones." \
-                "See [contribution guidelines](https://github.com/${REPO}/blob/main/docs/contributing.md) for details.")
               gh pr close "$PR_NUMBER" --repo "$REPO"
-              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT" || true
+              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$(printf '%s\n\n%s' \
+                "You currently have **${OPEN_COUNT}** open PR(s), and your limit is **${MAX_OPEN}** (based on **${MERGED_COUNT}** merged PR(s))." \
+                "Please wait for existing PRs to be reviewed and merged before opening new ones. See our [contribution guidelines](https://github.com/${REPO}/blob/main/docs/contributing.md) for details.")" || true
               exit 0
             fi
           fi
@@ -97,9 +92,8 @@ jobs:
           # --- Check 0: ai/ branch prefix = auto-close ---
           # AGENTS.md instructs AI agents to use the ai/ branch prefix.
           # If we see it, close the PR immediately.
-          PR_BRANCH="${{ github.event.pull_request.head.ref }}"
           if [[ "$PR_BRANCH" == ai/* ]]; then
-            echo "Branch '${PR_BRANCH}' has ai/ prefix. Closing AI-submitted PR."
+            echo "Branch has ai/ prefix. Closing AI-submitted PR."
             gh pr close "$PR_NUMBER" --repo "$REPO"
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body "This PR was submitted from an \`ai/\` branch and has been automatically closed. If you believe this was a mistake, please re-submit from a branch without the \`ai/\` prefix." || true
             exit 0
@@ -119,15 +113,8 @@ jobs:
             exit 0
           fi
 
-          # --- Check 2: PR must reference at least one issue ---
           if [ -z "$ISSUE_NUMBERS" ]; then
-            echo "No closing keywords found in PR body. Closing."
-            COMMENT=$(printf '%s\n\n%s\n\n%s' \
-              "This PR does not reference any GitHub issue. All PRs must be linked to an existing, maintainer-approved issue using a closing keyword (e.g., \`Closes #123\`)." \
-              "Please [open an issue](https://github.com/${REPO}/issues/new/choose) first, wait for maintainer feedback, then submit a new PR referencing it." \
-              "See [contribution guidelines](https://github.com/${REPO}/blob/main/docs/contributing.md) for the full contribution process.")
-            gh pr close "$PR_NUMBER" --repo "$REPO"
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT" || true
+            echo "No closing keywords found in PR body."
             exit 0
           fi
 
@@ -251,3 +238,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
