@@ -420,6 +420,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._builtin_tools = list(builtin_tools)
         self._cap_builtin_tools = list(self._root_capability.get_builtin_tools())
 
+        self._cap_model_settings = self._root_capability.get_model_settings()
+
         self._prepare_tools = prepare_tools
         self._prepare_output_tools = prepare_output_tools
 
@@ -981,11 +983,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if run_capability is not self._root_capability:
             cap_instructions = _instructions.normalize_instructions(run_capability.get_instructions())
             cap_builtin_tools = list(run_capability.get_builtin_tools())
+            cap_model_settings = run_capability.get_model_settings()
             cap_ts = run_capability.get_toolset()
             cap_toolsets = [cap_ts] if cap_ts is not None else []
         else:
             cap_instructions = None  # use init-time defaults
             cap_builtin_tools = self._cap_builtin_tools
+            cap_model_settings = self._cap_model_settings
             cap_toolsets = None
 
         # Build model settings resolver using per-run capability
@@ -1001,9 +1005,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
             merged = merge_model_settings(merged, resolved_agent)
 
-            # Capability settings (e.g. from Thinking, ModelSettings capabilities)
+            # Capability settings (e.g. from Thinking, ModelSettings capabilities), cached at init
             run_context.model_settings = merged
-            cap_settings = run_capability.get_model_settings()
+            cap_settings = cap_model_settings
             resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings
             merged = merge_model_settings(merged, resolved_cap)
 
