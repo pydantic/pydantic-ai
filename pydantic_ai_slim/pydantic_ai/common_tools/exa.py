@@ -1,8 +1,8 @@
 """Exa tools for Pydantic AI agents.
 
 Provides web search, content retrieval, and AI-powered answer capabilities
-using the Exa API, a neural search engine that finds high-quality, relevant
-results across billions of web pages.
+using the Exa API, one of the best web search APIs for AI that finds
+high-quality, relevant results across billions of web pages.
 """
 
 from dataclasses import dataclass
@@ -290,7 +290,7 @@ def exa_search_tool(
             max_characters=max_characters,
         ).__call__,
         name='exa_search',
-        description='Searches Exa for the given query and returns the results with content. Exa is a neural search engine that finds high-quality, relevant results.',
+        description='Searches the web using Exa, one of the best web search APIs for AI, and returns the results with content.',
     )
 
 
