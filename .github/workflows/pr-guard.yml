@@ -69,11 +69,10 @@ jobs:
           # 0 merged -> 1, 1 merged -> 2, 2 merged -> 3, 3+ merged -> unlimited
           if [ "$MERGED_COUNT" -lt 3 ]; then
             MAX_OPEN=$((MERGED_COUNT + 1))
-            # Count all open PRs by this author, then subtract 1 for the current PR.
-            ALL_OPEN=$(gh api -X GET "search/issues" \
-              -f q="repo:${REPO} type:pr author:${PR_AUTHOR} is:open" \
-              --jq '.total_count')
-            OPEN_COUNT=$((ALL_OPEN > 0 ? ALL_OPEN - 1 : 0))
+            # Count open PRs by this author, excluding the current one.
+            # Uses REST API (not search) to avoid indexing lag on newly opened PRs.
+            OPEN_COUNT=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate \
+              --jq "[.[] | select(.user.login == \"${PR_AUTHOR}\" and .number != ${PR_NUMBER})] | length")
             echo "Open PRs (excluding this one): ${OPEN_COUNT} (limit: ${MAX_OPEN})."
 
             if [ "$OPEN_COUNT" -ge "$MAX_OPEN" ]; then
