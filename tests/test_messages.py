@@ -31,7 +31,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
+from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
@@ -1339,3 +1339,51 @@ def test_tool_return_part_model_response_str_and_user_content():
     text, user_content = p_file_only.model_response_str_and_user_content()
     assert text == snapshot('See file d5a901.')
     assert user_content == snapshot(['This is file d5a901:', ImageUrl(url='https://example.com/img.png')])
+
+
+def test_args_as_dict_valid_json():
+    """args_as_dict should return parsed dict for valid JSON args."""
+    part = ToolCallPart(tool_name='test_tool', args='{"key": "value"}')
+    assert part.args_as_dict() == {'key': 'value'}
+
+
+def test_args_as_dict_dict_args():
+    """args_as_dict should return the dict directly when args is already a dict."""
+    part = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
+    assert part.args_as_dict() == {'key': 'value'}
+
+
+def test_args_as_dict_malformed_json_returns_invalid_json_wrapper():
+    """args_as_dict should return INVALID_JSON wrapper for malformed JSON by default."""
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    result = part.args_as_dict()
+    assert result == {INVALID_JSON_KEY: malformed}
+
+
+def test_args_as_dict_non_dict_json_returns_invalid_json_wrapper():
+    """args_as_dict should return INVALID_JSON wrapper for valid JSON that's not a dict."""
+    json_list = '[1, 2, 3]'
+    part = ToolCallPart(tool_name='test_tool', args=json_list)
+    assert part.args_as_dict() == {INVALID_JSON_KEY: json_list}
+
+
+def test_args_as_dict_empty_args():
+    """args_as_dict should return {} when args is None/empty."""
+    part = ToolCallPart(tool_name='test_tool', args=None)
+    assert part.args_as_dict() == {}
+
+
+def test_args_as_dict_raise_if_invalid_malformed_json():
+    """args_as_dict(raise_if_invalid=True) should raise ValueError on malformed JSON."""
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    with pytest.raises(ValueError):
+        part.args_as_dict(raise_if_invalid=True)
+
+
+def test_args_as_dict_raise_if_invalid_non_dict_json():
+    """args_as_dict(raise_if_invalid=True) should raise AssertionError on non-dict JSON."""
+    part = ToolCallPart(tool_name='test_tool', args='[1, 2, 3]')
+    with pytest.raises(AssertionError):
+        part.args_as_dict(raise_if_invalid=True)

@@ -333,6 +333,15 @@ class BedrockModelSettings(ModelSettings, total=False):
     See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html>.
     """
 
+    bedrock_inference_profile: str
+    """An [inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) ARN to use as the `modelId` in API requests.
+
+    When set, this value is used as the `modelId` in `converse` and `converse_stream` API calls instead of the
+    base `model_name`. This allows you to pass the base model name (e.g. `'anthropic.claude-sonnet-4-5-20250929-v1:0'`)
+    as `model_name` for detecting model capabilities and token counting, while routing requests through an inference profile
+    for cost tracking or cross-region inference.
+    """
+
 
 @dataclass(init=False)
 class BedrockConverseModel(Model):
@@ -586,7 +595,7 @@ class BedrockConverseModel(Model):
         inference_config = self._map_inference_config(settings)
 
         params: ConverseRequestTypeDef = {
-            'modelId': self.model_name,
+            'modelId': settings.get('bedrock_inference_profile') or self.model_name,
             'messages': bedrock_messages,
             'system': system_prompt,
             'inferenceConfig': inference_config,
@@ -1016,7 +1025,11 @@ class BedrockConverseModel(Model):
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
         return {
-            'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
+            'toolUse': {
+                'toolUseId': _utils.guard_tool_call_id(t=t),
+                'name': _utils.sanitize_tool_name(t.tool_name),
+                'input': t.args_as_dict(),
+            }
         }
 
     @staticmethod
