@@ -278,7 +278,7 @@ result = agent.run_sync('What tools are available?')
 print(test_model.last_model_request_parameters.function_tools)
 """
 [
-    ToolDefinition(
+    FunctionToolDefinition(
         name='temperature_celsius',
         parameters_json_schema={
             'additionalProperties': False,
@@ -288,7 +288,7 @@ print(test_model.last_model_request_parameters.function_tools)
         },
         description='Get the temperature in degrees Celsius',
     ),
-    ToolDefinition(
+    FunctionToolDefinition(
         name='temperature_fahrenheit',
         parameters_json_schema={
             'additionalProperties': False,
@@ -298,7 +298,7 @@ print(test_model.last_model_request_parameters.function_tools)
         },
         description='Get the temperature in degrees Fahrenheit',
     ),
-    ToolDefinition(
+    FunctionToolDefinition(
         name='weather_conditions',
         parameters_json_schema={
             'additionalProperties': False,
@@ -308,7 +308,7 @@ print(test_model.last_model_request_parameters.function_tools)
         },
         description='Get the current weather conditions',
     ),
-    ToolDefinition(
+    FunctionToolDefinition(
         name='current_time',
         parameters_json_schema={
             'additionalProperties': False,
