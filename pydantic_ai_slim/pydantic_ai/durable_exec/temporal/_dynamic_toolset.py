@@ -55,16 +55,18 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         async def _prepare_toolset(ctx: RunContext[AgentDepsT]) -> DynamicToolset[AgentDepsT]:
             """Evaluate the dynamic toolset factory for use in an activity.
 
-            Each activity is a fresh execution, so we create a per-run copy
-            and evaluate the factory. We don't call for_run_step here because
-            the activity's `async with` will handle __aenter__/__aexit__.
+            Each activity is a fresh execution. We create a per-run copy and
+            eagerly evaluate the factory so the inner toolset is ready.
+            The activity's `async with` handles __aenter__/__aexit__.
             """
-            new = DynamicToolset(
-                self.wrapped.toolset_func,
-                per_run_step=self.wrapped.per_run_step,
-                id=self.wrapped._id,
+            assert isinstance(self.wrapped, DynamicToolset)
+            wrapped: DynamicToolset[AgentDepsT] = self.wrapped
+            new: DynamicToolset[AgentDepsT] = DynamicToolset(
+                wrapped.toolset_func,
+                per_run_step=wrapped.per_run_step,
+                id=wrapped.id,
             )
-            new._toolset = await new._evaluate_factory(ctx)
+            new._toolset = await new._evaluate_factory(ctx)  # pyright: ignore[reportPrivateUsage]
             return new
 
         async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> dict[str, _ToolInfo]:
@@ -99,7 +101,9 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
                         'The dynamic toolset function may have returned a different toolset than expected.'
                     )
 
-                return await self._call_tool_in_activity(params.name, params.tool_args, ctx, tool)
+                # Re-validate args and call on the per-activity run_toolset (not self.wrapped)
+                args_dict = tool.args_validator.validate_python(params.tool_args)
+                return await self._wrap_call_tool_result(run_toolset.call_tool(params.name, args_dict, ctx, tool))
 
         call_tool_activity.__annotations__['deps'] = deps_type
 
