@@ -208,23 +208,18 @@ class DatabricksStreamedResponse(OpenAIStreamedResponse):
         """Override usage mapping to handle Databricks' flat structure in streams."""
         if not self._usage:
             return RequestUsage()
-
         usage_obj = cast(DatabricksUsage, self._usage)
-
         usage = RequestUsage(
             input_tokens=usage_obj.prompt_tokens,
             output_tokens=usage_obj.completion_tokens,
             details={},
         )
-
         reasoning_tokens = getattr(usage_obj, 'reasoning_tokens', None)
         if reasoning_tokens is None:
             model_extra = getattr(usage_obj, 'model_extra', {}) or {}
             reasoning_tokens = model_extra.get('reasoning_tokens')
-
         if reasoning_tokens is not None:
             usage.details['reasoning_tokens'] = reasoning_tokens
-
         return usage
 
     @override
@@ -233,24 +228,20 @@ class DatabricksStreamedResponse(OpenAIStreamedResponse):
         content = choice.delta.content
 
         if isinstance(content, list):
-            try:
-                blocks = TypeAdapter(list[DatabricksContentBlock]).validate_python(content)
+            blocks = TypeAdapter(list[DatabricksContentBlock]).validate_python(content)
 
-                for block in blocks:
-                    if isinstance(block, DatabricksReasoningContent):
-                        if val := block.get_value():
-                            yield from self._parts_manager.handle_thinking_delta(
-                                vendor_part_id='reasoning',
-                                content=val,
-                            )
-                    else:
-                        yield from self._parts_manager.handle_text_delta(
-                            vendor_part_id='content',
-                            content=block.text,
+            for block in blocks:
+                if isinstance(block, DatabricksReasoningContent):
+                    if val := block.get_value():
+                        yield from self._parts_manager.handle_thinking_delta(
+                            vendor_part_id='reasoning',
+                            content=val,
                         )
-
-            except ValidationError:
-                pass
+                else:
+                    yield from self._parts_manager.handle_text_delta(
+                        vendor_part_id='content',
+                        content=block.text,
+                    )
 
             yield from self._map_tool_call_delta(choice)
 

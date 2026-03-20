@@ -376,7 +376,7 @@ def vcr_config():
         'filter_headers': ['authorization', 'x-api-key'],
         'decode_compressed_response': True,
         'filter_sensitive_data': [
-            (os.environ.get('DATABRICKS_BASE_URL'), 'https://mock.databricks.com'),
+            (os.environ.get('DATABRICKS_BASE_URL', ''), 'https://mock.databricks.com'),
         ],
     }
 
