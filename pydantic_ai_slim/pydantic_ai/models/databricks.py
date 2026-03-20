@@ -28,7 +28,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the Databricks model, '
-        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+        'you can use the `databricks` optional group — `pip install "pydantic-ai-slim[databricks]"`'
     ) from _import_error
 
 
