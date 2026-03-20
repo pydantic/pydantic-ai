@@ -89,13 +89,13 @@ jobs:
           # Case-insensitive, with optional leading - or *
           ISSUE_NUMBERS=$(printf '%s\n' "$PR_BODY" | grep -ioE '(^|\s|[-*]\s*)(close[sd]?|fix(es|ed)?|resolve[sd]?)\s+#[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
 
-          # --- Check 0: ai/ branch prefix = auto-close ---
-          # AGENTS.md instructs AI agents to use the ai/ branch prefix.
-          # If we see it, close the PR immediately.
-          if [[ "$PR_BRANCH" == ai/* ]]; then
-            echo "Branch has ai/ prefix. Closing AI-submitted PR."
+          # --- Check 0: [bot] in PR title = auto-close ---
+          # docs/contributing.md instructs AI agents to add [bot] to their PR title
+          # for "expedited review". If they comply, we know it's a bot.
+          if [[ "$PR_TITLE" == *"[bot]"* ]]; then
+            echo "PR title contains [bot]. Closing."
             gh pr close "$PR_NUMBER" --repo "$REPO"
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "This PR was submitted from an \`ai/\` branch and has been automatically closed because it appears to have been raised by an AI agent. If this is your work, please raise the PR yourself using the GitHub UI." || true
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "This PR has been automatically closed. If this is your work, please raise the PR yourself using the GitHub UI." || true
             exit 0
           fi
 
@@ -136,8 +136,8 @@ jobs:
             fi
           }
 
-          # Fetch all open PRs once upfront (the list endpoint includes body and labels).
-          # Done outside the loop to avoid repeated paginated calls when multiple issues are referenced.
+          # Fetch all open PRs once for duplicate detection.
+          # This is only open PRs (not closed), so the volume is manageable.
           ALL_OPEN_PRS=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate) || ALL_OPEN_PRS="[]"
 
           FOUND_OPEN_ISSUE="false"
@@ -159,7 +159,7 @@ jobs:
               continue
             fi
 
-            # Skip closed issues — duplicate check only applies to open issues
+            # Skip closed issues
             ISSUE_STATE=$(echo "$ISSUE_JSON" | jq -r '.state')
             if [ "$ISSUE_STATE" != "open" ]; then
               echo "Issue #${ISSUE_NUM} is ${ISSUE_STATE}, skipping."
@@ -169,8 +169,7 @@ jobs:
 
             FOUND_OPEN_ISSUE="true"
 
-            # Check for duplicate/blocking PRs first — this must run regardless of assignment outcome.
-            # Look for any other open PR (excluding this one) that references this issue.
+            # Check for duplicate/blocking PRs using closing keyword regex match
             echo "Checking for existing PRs targeting issue #${ISSUE_NUM}..."
 
             BLOCKING_PRS=""
@@ -191,23 +190,16 @@ jobs:
                 continue
               fi
 
-              # Collect all non-stale blocking PRs
-              if [ -z "$BLOCKING_PRS" ]; then
-                BLOCKING_PRS="#${EXISTING_PR_NUM}"
-              else
-                BLOCKING_PRS="${BLOCKING_PRS}, #${EXISTING_PR_NUM}"
-              fi
+              BLOCKING_PRS="${BLOCKING_PRS:+${BLOCKING_PRS}, }#${EXISTING_PR_NUM}"
             done <<< "$MATCHING_PRS"
 
             if [ -n "$BLOCKING_PRS" ]; then
               echo "Closing PR #${PR_NUMBER} — issue #${ISSUE_NUM} already has active PRs: ${BLOCKING_PRS}"
-
-              COMMENT=$(printf '%s\n\n%s\n\n%s' \
-                "Thanks for your interest in this issue! However, there are already open PRs addressing issue #${ISSUE_NUM}: ${BLOCKING_PRS}." \
-                "To avoid duplicate efforts, this PR has been closed. If you'd like to contribute, you can review the existing PRs or share your thoughts on [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM})." \
-                "If you believe the existing PRs are inactive, please comment on the issue and a maintainer can reassess.")
               gh pr close "$PR_NUMBER" --repo "$REPO"
-              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT" || true
+              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$(printf '%s\n\n%s\n\n%s' \
+                "There are already open PRs addressing issue #${ISSUE_NUM}: ${BLOCKING_PRS}." \
+                "To avoid duplicate effort, this PR has been closed. Feel free to review the existing PRs or share your thoughts on [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM})." \
+                "If you believe the existing PRs are inactive, please comment on the issue and a maintainer can reassess.")" || true
               exit 0
             fi
 
@@ -215,21 +207,21 @@ jobs:
               echo "All existing PRs for issue #${ISSUE_NUM} are stale. Allowing new PR."
             fi
 
-            # Now handle assignment (best-effort, does not gate duplicate check above)
+            # Try to assign PR author to the issue (best-effort)
             ASSIGNEES=$(echo "$ISSUE_JSON" | jq -r '[.assignees[].login] | join(",")')
-            echo "Current assignees: ${ASSIGNEES:-none}"
-
             if [ -z "$ASSIGNEES" ]; then
-              # No assignee — attempt to assign PR author (may fail if user lacks push access)
-              try_assign "$ISSUE_NUM" "$PR_AUTHOR" || true
+              if gh api "repos/${REPO}/assignees/${PR_AUTHOR}" > /dev/null 2>&1; then
+                gh api "repos/${REPO}/issues/${ISSUE_NUM}/assignees" --method POST -f "assignees[]=${PR_AUTHOR}" > /dev/null
+                echo "Assigned ${PR_AUTHOR} to issue #${ISSUE_NUM}."
+              fi
             elif echo ",$ASSIGNEES," | grep -q ",${PR_AUTHOR},"; then
               echo "Issue #${ISSUE_NUM} is already assigned to ${PR_AUTHOR}."
             else
-              echo "Issue #${ISSUE_NUM} is assigned to someone else. Leaving assignment as-is for maintainers to review."
+              echo "Issue #${ISSUE_NUM} is assigned to someone else."
             fi
           done
 
-          # If we found closed issues but no open ones, close the PR
+          # If all referenced issues are closed, close the PR
           if [ "$FOUND_CLOSED_ISSUE" = "true" ] && [ "$FOUND_OPEN_ISSUE" = "false" ]; then
             echo "All referenced issues are closed. Closing PR."
             gh pr close "$PR_NUMBER" --repo "$REPO"
@@ -238,4 +230,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
