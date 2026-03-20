@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -46,6 +47,7 @@ from pydantic_ai.messages import (
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.output import NativeOutput
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -478,6 +480,163 @@ The temperature in London on 1st January 2022 was 30°C.\
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_native_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    agent: Agent[None, CityLocation] = Agent(
+        model=model,
+        output_type=NativeOutput(CityLocation),
+    )
+
+    result = await agent.run('Where were the 2024 Olympics held?')
+    assert result.output == snapshot(CityLocation(city='Paris', country='France'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Where were the 2024 Olympics held?',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='bedrock',
+                provider_url=IsStr(),
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_native_structured_output_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    agent: Agent[None, CityLocation] = Agent(
+        model=model,
+        output_type=NativeOutput(CityLocation),
+    )
+
+    async with agent.run_stream('Where were the 2024 Olympics held?') as result:
+        output = await result.get_output()
+    assert output == snapshot(CityLocation(city='Paris', country='France'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Where were the 2024 Olympics held?',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='bedrock',
+                provider_url=IsStr(),
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_native_structured_output_with_tools(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    agent: Agent[None, CityLocation] = Agent(
+        model=model,
+        output_type=NativeOutput(CityLocation),
+    )
+
+    @agent.tool_plain
+    async def get_olympics_host(year: int) -> str:
+        """Get the host city for a given Olympics year."""
+        return 'Paris, France'
+
+    result = await agent.run('Where were the 2024 Olympics held? Use the tool to find out.')
+    assert result.output == snapshot(CityLocation(city='Paris', country='France'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Where were the 2024 Olympics held? Use the tool to find out.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_olympics_host',
+                        args=IsInstance(dict),
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=IsInstance(RequestUsage),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='bedrock',
+                provider_url=IsStr(),
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_olympics_host',
+                        content='Paris, France',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='bedrock',
+                provider_url=IsStr(),
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
                 run_id=IsStr(),
             ),
         ]
@@ -3656,3 +3815,41 @@ async def test_uploaded_file_audio_not_supported(allow_model_requests: None, bed
                 UploadedFile(file_id='s3://bucket/audio.wav', provider_name='bedrock', media_type='audio/wav'),
             ]
         )
+
+
+def test_bedrock_strict_tool_definition(bedrock_provider: BedrockProvider):
+    """Strict flag is passed through to tool spec only when supported."""
+    tool_def = ToolDefinition(
+        name='test_tool',
+        description='A test tool',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'x': {'type': 'string'}},
+            'additionalProperties': False,
+        },
+        strict=True,
+    )
+
+    # Model that supports structured output: strict is passed through
+    supported_model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
+    tool = supported_model._map_tool_definition(tool_def)  # type: ignore[reportPrivateUsage]
+    assert tool['toolSpec'].get('strict') is True
+
+    # Model that does not support structured output: strict is silently skipped
+    unsupported_model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    tool = unsupported_model._map_tool_definition(tool_def)  # type: ignore[reportPrivateUsage]
+    assert 'strict' not in tool['toolSpec']
+
+    # strict=None/False: never passed through regardless of model
+    non_strict_def = ToolDefinition(
+        name='test_tool',
+        description='A test tool',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'x': {'type': 'string'}},
+            'additionalProperties': False,
+        },
+        strict=None,
+    )
+    tool = supported_model._map_tool_definition(non_strict_def)  # type: ignore[reportPrivateUsage]
+    assert 'strict' not in tool['toolSpec']

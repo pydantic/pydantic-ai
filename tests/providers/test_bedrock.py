@@ -20,6 +20,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.bedrock import LatestBedrockModelNames
     from pydantic_ai.providers.bedrock import (
         BEDROCK_GEO_PREFIXES,
+        BedrockJsonSchemaTransformer,
         BedrockModelProfile,
         BedrockProvider,
         remove_bedrock_geo_prefix,
@@ -81,9 +82,9 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     anthropic_model_profile_mock.assert_called_with('claude-3-5-sonnet-20240620')
     assert isinstance(anthropic_profile, BedrockModelProfile)
     assert anthropic_profile.bedrock_supports_tool_choice is True
-    # Bedrock does not support native structured output, even for models that support it via direct Anthropic API
+    # claude-3-5-sonnet doesn't support native structured output
     assert anthropic_profile.supports_json_schema_output is False
-    assert anthropic_profile.json_schema_transformer is None
+    assert anthropic_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert anthropic_profile.supported_builtin_tools == frozenset()
 
     anthropic_profile = provider.model_profile('anthropic.claude-instant-v1')
@@ -91,20 +92,20 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(anthropic_profile, BedrockModelProfile)
     assert anthropic_profile.bedrock_supports_tool_choice is True
     assert anthropic_profile.supports_json_schema_output is False
-    assert anthropic_profile.json_schema_transformer is None
+    assert anthropic_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert anthropic_profile.supported_builtin_tools == frozenset()
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
     assert isinstance(anthropic_profile, BedrockModelProfile)
-    # Anthropic's direct API supports native structured output for this family,
-    # but Bedrock support is not implemented yet and must stay disabled.
-    assert anthropic_profile.supports_json_schema_output is False
+    # claude-sonnet-4-5 supports native structured output
+    assert anthropic_profile.supports_json_schema_output is True
 
     mistral_profile = provider.model_profile('mistral.mistral-large-2407-v1:0')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
     assert isinstance(mistral_profile, BedrockModelProfile)
     assert mistral_profile.bedrock_tool_result_format == 'json'
+    assert mistral_profile.json_schema_transformer is BedrockJsonSchemaTransformer
     assert mistral_profile.supported_builtin_tools == frozenset()
 
     meta_profile = provider.model_profile('meta.llama3-8b-instruct-v1:0')

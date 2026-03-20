@@ -1,0 +1,50 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Where were the 2024 Olympics held?"}]}], "system": [], "inferenceConfig":
+      {}, "outputConfig": {"textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"schema": "{\"properties\":
+      {\"city\": {\"type\": \"string\"}, \"country\": {\"type\": \"string\"}}, \"required\": [\"city\", \"country\"], \"type\":
+      \"object\", \"additionalProperties\": false}", "name": "CityLocation"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MzRhODIzNjQtYTIzMi00OTZhLTlhOTMtYTQ5M2QyM2IxODUx
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '439'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-6/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '385'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 941
+      output:
+        message:
+          content:
+          - text: '{"city":"Paris","country":"France"}'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 180
+        outputTokens: 12
+        serverToolUsage: {}
+        totalTokens: 192
+    status:
+      code: 200
+      message: OK
+version: 1

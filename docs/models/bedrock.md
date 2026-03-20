@@ -74,6 +74,33 @@ model = BedrockConverseModel(model_name='us.amazon.nova-pro-v1:0')
 agent = Agent(model=model, model_settings=bedrock_model_settings)
 ```
 
+## Structured Output
+
+Bedrock supports [native structured output](../output.md#native-output) via the Converse API for [supported models](https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html), including Anthropic Claude 4.5+, Mistral, and DeepSeek models.
+
+```python {test="skip"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, NativeOutput
+
+
+class CityLocation(BaseModel):
+    city: str
+    country: str
+
+
+agent = Agent(
+    'bedrock:us.anthropic.claude-sonnet-4-6',
+    output_type=NativeOutput(CityLocation),
+)
+
+result = agent.run_sync('Where were the 2024 Olympics held?')
+print(result.output)
+#> city='Paris' country='France'
+```
+
+Strict tool calling is also supported: when `strict=True` is set on a tool definition, the Converse API enforces that tool inputs match the schema exactly.
+
 ## Prompt Caching
 
 Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests. Pydantic AI provides four ways to use prompt caching:

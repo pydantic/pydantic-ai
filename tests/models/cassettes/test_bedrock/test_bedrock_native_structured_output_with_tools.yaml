@@ -1,0 +1,111 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Where were the 2024 Olympics held? Use the tool to find out."}]}],
+      "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_olympics_host", "inputSchema":
+      {"json": {"additionalProperties": false, "properties": {"year": {"type": "integer"}}, "required": ["year"], "type":
+      "object"}}, "description": "Get the host city for a given Olympics year."}}], "toolChoice": {"auto": {}}}, "outputConfig":
+      {"textFormat": {"type": "json_schema", "structure": {"jsonSchema": {"schema": "{\"properties\": {\"city\": {\"type\":
+      \"string\"}, \"country\": {\"type\": \"string\"}}, \"required\": [\"city\", \"country\"], \"type\": \"object\", \"additionalProperties\":
+      false}", "name": "CityLocation"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MjI4YmI4ODUtMThmMy00MTI1LTg1MjctZDNiYmVhMjNmZmVk
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '771'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-6/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '466'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 12218
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                year: 2024
+              name: get_olympics_host
+              toolUseId: tooluse_lYKOXHgZwE67ZIbFINPr6d
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 750
+        outputTokens: 57
+        serverToolUsage: {}
+        totalTokens: 807
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Where were the 2024 Olympics held? Use the tool to find out."}]},
+      {"role": "assistant", "content": [{"toolUse": {"toolUseId": "tooluse_lYKOXHgZwE67ZIbFINPr6d", "name": "get_olympics_host",
+      "input": {"year": 2024}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_lYKOXHgZwE67ZIbFINPr6d",
+      "content": [{"text": "Paris, France"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig":
+      {"tools": [{"toolSpec": {"name": "get_olympics_host", "inputSchema": {"json": {"additionalProperties": false, "properties":
+      {"year": {"type": "integer"}}, "required": ["year"], "type": "object"}}, "description": "Get the host city for a given
+      Olympics year."}}], "toolChoice": {"auto": {}}}, "outputConfig": {"textFormat": {"type": "json_schema", "structure":
+      {"jsonSchema": {"schema": "{\"properties\": {\"city\": {\"type\": \"string\"}, \"country\": {\"type\": \"string\"}},
+      \"required\": [\"city\", \"country\"], \"type\": \"object\", \"additionalProperties\": false}", "name": "CityLocation"}}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ODk0ZDhiYjQtYzA4NS00YjljLWJmMjMtZjllNDAzY2M4ODNk
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1080'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-6/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '389'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1212
+      output:
+        message:
+          content:
+          - text: '{"city": "Paris", "country": "France"}'
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 822
+        outputTokens: 15
+        serverToolUsage: {}
+        totalTokens: 837
+    status:
+      code: 200
+      message: OK
+version: 1

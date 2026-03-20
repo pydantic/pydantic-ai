@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.builtin_tools import CodeExecutionTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.amazon import amazon_model_profile
@@ -29,6 +30,31 @@ except ImportError as _import_error:
         'Please install the `boto3` package to use the Bedrock provider, '
         'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
     ) from _import_error
+
+
+@dataclass(init=False)
+class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
+    """Transforms schemas for the Bedrock Converse API's structured output feature.
+
+    The Converse API requires `additionalProperties: false` on all objects.
+    Other constraints (like `minLength`, `pattern`, `$ref`) are accepted.
+    """
+
+    def walk(self) -> JsonSchema:
+        schema = super().walk()
+        # Don't default tools to strict=True — only enable when explicitly requested.
+        # Same approach as AnthropicJsonSchemaTransformer.
+        self.is_strict_compatible = self.strict is True
+        return schema
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        schema.pop('title', None)
+        schema.pop('$schema', None)
+
+        if schema.get('type') == 'object':
+            schema['additionalProperties'] = False
+
+        return schema
 
 
 @dataclass(kw_only=True)
@@ -93,6 +119,19 @@ def _without_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
     return replace(profile or BedrockModelProfile(), supported_builtin_tools=frozenset())
 
 
+def _with_bedrock_json_schema_transformer(profile: ModelProfile) -> ModelProfile:
+    """Set the Bedrock Converse API JSON schema transformer on a model profile.
+
+    This does NOT unconditionally enable native structured output — the underlying
+    model profile (e.g. from `anthropic_model_profile`) is responsible for setting
+    `supports_json_schema_output` based on the specific model.
+    """
+    return replace(
+        profile,
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+    )
+
+
 class BedrockProvider(Provider[BaseClient]):
     """Provider for AWS Bedrock."""
 
@@ -111,25 +150,26 @@ class BedrockProvider(Provider[BaseClient]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': lambda model_name: replace(
+            'anthropic': lambda model_name: _with_bedrock_json_schema_transformer(
                 BedrockModelProfile(
                     bedrock_supports_tool_choice=True,
                     bedrock_send_back_thinking_parts=True,
                     bedrock_supports_prompt_caching=True,
                     bedrock_supports_tool_caching=True,
                     bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
-                ).update(_without_builtin_tools(anthropic_model_profile(model_name))),
-                # We don't currently support native structured output with Bedrock.
-                # See https://github.com/pydantic/pydantic-ai/issues/4209.
-                supports_json_schema_output=False,
+                ).update(_without_builtin_tools(anthropic_model_profile(model_name)))
             ),
-            'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
-                _without_builtin_tools(mistral_model_profile(model_name))
+            'mistral': lambda model_name: _with_bedrock_json_schema_transformer(
+                BedrockModelProfile(bedrock_tool_result_format='json').update(
+                    _without_builtin_tools(mistral_model_profile(model_name))
+                )
             ),
             'cohere': lambda model_name: _without_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
             'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
-            'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
+            'deepseek': lambda model_name: _with_bedrock_json_schema_transformer(
+                _without_builtin_tools(bedrock_deepseek_model_profile(model_name))
+            ),
         }
 
         # Split the model name into parts

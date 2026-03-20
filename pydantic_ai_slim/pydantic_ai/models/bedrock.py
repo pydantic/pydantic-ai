@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import json
 import typing
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -69,7 +70,9 @@ if TYPE_CHECKING:
         DocumentSourceTypeDef,
         GuardrailConfigurationTypeDef,
         InferenceConfigurationTypeDef,
+        JsonSchemaDefinitionTypeDef,
         MessageUnionTypeDef,
+        OutputConfigTypeDef,
         PerformanceConfigurationTypeDef,
         PromptVariableValuesTypeDef,
         ReasoningContentBlockOutputTypeDef,
@@ -403,12 +406,13 @@ class BedrockConverseModel(Model):
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
+    def _map_tool_definition(self, f: ToolDefinition) -> ToolTypeDef:
         tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
 
         if f.description:  # pragma: no branch
             tool_spec['description'] = f.description
+        if f.strict and self.profile.supports_json_schema_output:
+            tool_spec['strict'] = f.strict
 
         return {'toolSpec': tool_spec}
 
@@ -605,6 +609,10 @@ class BedrockConverseModel(Model):
         if tool_config:
             params['toolConfig'] = tool_config
 
+        output_config = self._build_output_config(model_request_parameters)
+        if output_config:
+            params['outputConfig'] = output_config
+
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
 
@@ -695,6 +703,32 @@ class BedrockConverseModel(Model):
             tool_config['toolChoice'] = tool_choice
 
         return tool_config
+
+    @staticmethod
+    def _build_output_config(model_request_parameters: ModelRequestParameters) -> OutputConfigTypeDef | None:
+        if model_request_parameters.output_mode != 'native':
+            return None
+
+        assert model_request_parameters.output_object is not None
+        output_object = model_request_parameters.output_object
+
+        json_schema: JsonSchemaDefinitionTypeDef = {
+            'schema': json.dumps(output_object.json_schema),
+        }
+        if output_object.name:
+            json_schema['name'] = output_object.name
+        if output_object.description:
+            json_schema['description'] = output_object.description
+
+        output_config: OutputConfigTypeDef = {
+            'textFormat': {
+                'type': 'json_schema',
+                'structure': {
+                    'jsonSchema': json_schema,
+                },
+            }
+        }
+        return output_config
 
     async def _map_messages(  # noqa: C901
         self,
