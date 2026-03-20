@@ -91,8 +91,6 @@ if TYPE_CHECKING:
     from ..ui._web import ModelsParam
     from .spec import AgentSpec
 
-Instructions = _instructions.Instructions
-
 __all__ = (
     'Agent',
     'AgentRun',
@@ -107,7 +105,6 @@ __all__ = (
     'WrapperAgent',
     'AbstractAgent',
     'EventStreamHandler',
-    'Instructions',
     'AgentModelSettings',
 )
 
@@ -388,7 +385,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for history_processor in self.history_processors:
             capabilities.append(HistoryProcessorCapability(history_processor))
 
-        self.root_capability = CombinedCapability(capabilities)
+        self._root_capability = CombinedCapability(capabilities)
 
         self.model_settings = model_settings
 
@@ -409,7 +406,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_validators = []
 
         self._instructions = _instructions.normalize_instructions(instructions)
-        self._instructions.extend(_instructions.normalize_instructions(self.root_capability.get_instructions()))
+        self._instructions.extend(_instructions.normalize_instructions(self._root_capability.get_instructions()))
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -422,7 +419,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._validation_context = validation_context
 
         self._builtin_tools = list(builtin_tools)
-        self._builtin_tools.extend(self.root_capability.get_builtin_tools())
+        self._builtin_tools.extend(self._root_capability.get_builtin_tools())
 
         self._prepare_tools = prepare_tools
         self._prepare_output_tools = prepare_output_tools
@@ -439,7 +436,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         toolsets = list(toolsets or [])
-        toolset = self.root_capability.get_toolset()
+        toolset = self._root_capability.get_toolset()
         if toolset is not None:
             toolsets.append(toolset)
 
@@ -938,7 +935,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 output_toolset.output_validators = output_validators
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
         tool_manager = ToolManager[AgentDepsT](
-            toolset, root_capability=self.root_capability, default_max_retries=self._max_tool_retries
+            toolset, root_capability=self._root_capability, default_max_retries=self._max_tool_retries
         )
 
         # Build the graph
@@ -974,7 +971,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             # Capability settings (e.g. from Thinking, ModelSettings capabilities)
             run_context.model_settings = merged
-            cap_settings = self.root_capability.get_model_settings()
+            cap_settings = self._root_capability.get_model_settings()
             resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings
             merged = merge_model_settings(merged, resolved_cap)
 
@@ -1020,7 +1017,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_schema=output_schema,
             output_validators=output_validators,
             validation_context=self._validation_context,
-            root_capability=self.root_capability,
+            root_capability=self._root_capability,
             builtin_tools=[*self._builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,
@@ -1086,7 +1083,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     _run_error: BaseException | None = None
 
                     async def _do_run() -> AgentRunResult[Any]:
-                        await self.root_capability.before_run(run_ctx)
+                        await self._root_capability.before_run(run_ctx)
                         _run_ready.set()
                         await _run_done.wait()
                         if _run_error is not None:
@@ -1095,7 +1092,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         assert r is not None
                         return r
 
-                    _wrap_task = asyncio.create_task(self.root_capability.wrap_run(run_ctx, handler=_do_run))
+                    _wrap_task = asyncio.create_task(self._root_capability.wrap_run(run_ctx, handler=_do_run))
 
                     # Wait for handler to start or wrap_run to complete (short-circuit)
                     _ready_waiter = asyncio.create_task(_run_ready.wait())
@@ -1105,7 +1102,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     _short_circuited = _wrap_task.done() and not _run_ready.is_set()
                     if _short_circuited:
                         _result = _wrap_task.result()
-                        _result = await self.root_capability.after_run(run_ctx, result=_result)
+                        _result = await self._root_capability.after_run(run_ctx, result=_result)
                         agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
 
                     try:
@@ -1123,7 +1120,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             _run_done.set()
                             if _run_error is None and agent_run.result is not None:
                                 _result = await _wrap_task
-                                _result = await self.root_capability.after_run(run_ctx, result=_result)
+                                _result = await self._root_capability.after_run(run_ctx, result=_result)
                                 agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
                             elif not _wrap_task.done():
                                 _wrap_task.cancel()

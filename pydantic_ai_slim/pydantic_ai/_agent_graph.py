@@ -496,16 +496,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.usage.requests += 1
             skip_mrp = await _prepare_request_parameters(ctx)
             skip_sr = _SkipStreamedResponse(model_request_parameters=skip_mrp, _response=e.response)
-            agent_stream = result.AgentStream[DepsT, T](
-                _raw_stream_response=skip_sr,
-                _output_schema=ctx.deps.output_schema,
-                _model_request_parameters=skip_mrp,
-                _output_validators=ctx.deps.output_validators,
-                _run_ctx=build_run_context(ctx),
-                _usage_limits=ctx.deps.usage_limits,
-                _tool_manager=ctx.deps.tool_manager,
-                _metadata_getter=lambda: ctx.state.metadata,
-            )
+            agent_stream = self._build_agent_stream(ctx, skip_sr, skip_mrp)
             yield agent_stream
             await self._finish_handling(ctx, e.response)
             assert self._result is not None
@@ -525,16 +516,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ) as sr:
                     self._did_stream = True
                     ctx.state.usage.requests += 1
-                    agent_stream = result.AgentStream[DepsT, T](
-                        _raw_stream_response=sr,
-                        _output_schema=ctx.deps.output_schema,
-                        _model_request_parameters=req_ctx.model_request_parameters,
-                        _output_validators=ctx.deps.output_validators,
-                        _run_ctx=build_run_context(ctx),
-                        _usage_limits=ctx.deps.usage_limits,
-                        _tool_manager=ctx.deps.tool_manager,
-                        _metadata_getter=lambda: ctx.state.metadata,
-                    )
+                    agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
                     await stream_done.wait()
@@ -564,16 +546,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             self._did_stream = True
             ctx.state.usage.requests += 1
             skip_sr = _SkipStreamedResponse(model_request_parameters=model_request_parameters, _response=model_response)
-            agent_stream = result.AgentStream[DepsT, T](
-                _raw_stream_response=skip_sr,
-                _output_schema=ctx.deps.output_schema,
-                _model_request_parameters=model_request_parameters,
-                _output_validators=ctx.deps.output_validators,
-                _run_ctx=build_run_context(ctx),
-                _usage_limits=ctx.deps.usage_limits,
-                _tool_manager=ctx.deps.tool_manager,
-                _metadata_getter=lambda: ctx.state.metadata,
-            )
+            agent_stream = self._build_agent_stream(ctx, skip_sr, model_request_parameters)
             yield agent_stream
             await self._finish_handling(ctx, model_response)
             assert self._result is not None
@@ -602,6 +575,24 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 model_response = await wrap_task
                 await self._finish_handling(ctx, model_response)
                 assert self._result is not None
+
+    @staticmethod
+    def _build_agent_stream(
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
+        stream_response: models.StreamedResponse,
+        model_request_parameters: models.ModelRequestParameters,
+    ) -> result.AgentStream[DepsT, T]:
+        """Build an AgentStream from the given stream response and context."""
+        return result.AgentStream[DepsT, T](
+            _raw_stream_response=stream_response,
+            _output_schema=ctx.deps.output_schema,
+            _model_request_parameters=model_request_parameters,
+            _output_validators=ctx.deps.output_validators,
+            _run_ctx=build_run_context(ctx),
+            _usage_limits=ctx.deps.usage_limits,
+            _tool_manager=ctx.deps.tool_manager,
+            _metadata_getter=lambda: ctx.state.metadata,
+        )
 
     async def _make_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
