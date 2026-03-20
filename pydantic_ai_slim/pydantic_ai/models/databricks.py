@@ -113,7 +113,7 @@ class DatabricksModel(OpenAIChatModel):
         """Normalizes Databricks responses to the strict OpenAI schema."""
         data = response.model_dump(mode='json', warnings=False)
 
-        # gemini 2.5 pro doesn't return a chat id
+        # databricks hosted gemini 2.5 pro doesn't return a chat id
         if data.get('id') is None:
             data['id'] = 'databricks-placeholder-id'
 
@@ -142,6 +142,7 @@ class DatabricksModel(OpenAIChatModel):
 
         return chat.ChatCompletion.model_validate(data)
 
+    @override
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
         """Capture Databricks-specific details."""
         details = super()._process_provider_details(response) or {}

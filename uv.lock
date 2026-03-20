@@ -6862,6 +6862,7 @@ cohere = [
 ]
 databricks = [
     { name = "databricks-sdk" },
+    { name = "openai" },
 ]
 dbos = [
     { name = "dbos" },
@@ -6984,6 +6985,7 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.16.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.25.0,<2.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.9.11" },
+    { name = "openai", marker = "extra == 'databricks'", specifier = ">=2.25.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=2.25.0" },
     { name = "openai", marker = "extra == 'openrouter'", specifier = ">=2.8.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },

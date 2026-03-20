@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Literal, overload
 import httpx
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, cached_async_http_client
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.databricks import databricks_model_profile
 from pydantic_ai.providers import Provider
@@ -145,7 +145,7 @@ class DatabricksProvider(Provider['AsyncOpenAI']):
 
         if use_sdk_auth:
             if http_client is None:
-                http_client = httpx.AsyncClient()
+                http_client = httpx.AsyncClient(timeout=httpx.Timeout(timeout=DEFAULT_HTTP_TIMEOUT, connect=5))
             http_client.auth = DatabricksAuth(ws)
         elif http_client is None:
             http_client = cached_async_http_client(provider='databricks')
