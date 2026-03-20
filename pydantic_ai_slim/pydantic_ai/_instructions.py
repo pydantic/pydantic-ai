@@ -19,6 +19,7 @@ def normalize_instructions(
 ) -> list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]:
     if instructions is None:
         return []
+    # Note: TemplateStr is callable (__call__) so it's handled by the callable branch
     if isinstance(instructions, str) or callable(instructions):
         return [instructions]
     return list(instructions)

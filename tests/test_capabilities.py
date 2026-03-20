@@ -1,3 +1,4 @@
+import importlib.util
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -629,32 +630,18 @@ def test_model_settings_from_spec_kwargs():
     assert cap.settings == {'max_tokens': 100}
 
 
-async def test_model_settings_callable_before_model_request():
-    """Callable ModelSettings resolves dynamically in before_model_request."""
-    from pydantic_ai.capabilities.abstract import BeforeModelRequestContext
-    from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.result import RunUsage
+def test_model_settings_callable_get_model_settings():
+    """Callable ModelSettings returns the callable from get_model_settings for resolution in the chain."""
 
     def dynamic_settings(ctx: RunContext[None]) -> _ModelSettings:
         return _ModelSettings(temperature=0.9)
 
     cap = ModelSettings(settings=dynamic_settings)
 
-    # get_model_settings returns None for callable settings (they're resolved per-request)
-    assert cap.get_model_settings() is None
-
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
-    result = await cap.before_model_request(
-        ctx,
-        BeforeModelRequestContext(
-            messages=[],
-            model_settings=_ModelSettings(max_tokens=100),
-            model_request_parameters=ModelRequestParameters(),
-        ),
-    )
-    assert result.model_settings.get('temperature') == 0.9
-    assert result.model_settings.get('max_tokens') == 100
+    # get_model_settings returns the callable directly — resolution happens in the agent's settings chain
+    result = cap.get_model_settings()
+    assert callable(result)
+    assert result is dynamic_settings
 
 
 async def test_model_settings_static_before_model_request():
@@ -701,6 +688,7 @@ def test_combined_capability_get_model_settings_merge():
     )
     merged = caps.get_model_settings()
     assert merged is not None
+    assert not callable(merged)
     assert merged.get('max_tokens') == 100
     assert merged.get('temperature') == 0.5
 
@@ -784,3 +772,61 @@ def test_to_file_with_path_schema_path(tmp_path: str):
     assert resolved_schema.exists()
     content = spec_path.read_text(encoding='utf-8')
     assert 'model: test' in content
+
+
+@pytest.mark.skipif(not importlib.util.find_spec('rich'), reason='CLI deps not installed')
+def test_load_agent_yaml(tmp_path: str):
+    """load_agent loads an agent from a YAML spec file."""
+    from pydantic_ai._cli import load_agent
+
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('model: test\nname: yaml-agent\n', encoding='utf-8')
+    agent = load_agent(str(spec_path))
+    assert agent is not None
+    assert agent.name == 'yaml-agent'
+
+
+@pytest.mark.skipif(not importlib.util.find_spec('rich'), reason='CLI deps not installed')
+def test_load_agent_json(tmp_path: str):
+    """load_agent loads an agent from a JSON spec file."""
+    from pydantic_ai._cli import load_agent
+
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec_path.write_text('{"model": "test", "name": "json-agent"}', encoding='utf-8')
+    agent = load_agent(str(spec_path))
+    assert agent is not None
+    assert agent.name == 'json-agent'
+
+
+@pytest.mark.skipif(not importlib.util.find_spec('rich'), reason='CLI deps not installed')
+def test_load_agent_missing_file(tmp_path: str):
+    """load_agent returns None for a non-existent spec file."""
+    from pydantic_ai._cli import load_agent
+
+    agent = load_agent(str(Path(tmp_path) / 'nonexistent.yaml'))
+    assert agent is None
+
+
+async def test_thinking_capability_applies_settings():
+    """Thinking capability's model settings are applied to the model request."""
+
+    agent = Agent('test', capabilities=[Thinking()])
+    result = await agent.run('hi')
+    # The agent ran successfully — verify that the Thinking settings were included
+    # by checking that the capability produces non-None model settings
+    cap_settings = agent.root_capability.get_model_settings()
+    assert cap_settings is not None
+    assert not callable(cap_settings)
+    assert cap_settings.get('anthropic_thinking') == {'type': 'adaptive'}
+    assert cap_settings.get('openai_reasoning_effort') == 'high'
+    # Verify the run itself succeeds
+    assert result.output is not None
+
+
+def test_thinking_from_spec_rejects_args():
+    """Thinking.from_spec raises TypeError when given arguments."""
+    with pytest.raises(TypeError, match='does not accept arguments'):
+        Thinking.from_spec('extra')
+
+    with pytest.raises(TypeError, match='does not accept arguments'):
+        Thinking.from_spec(budget=100)

@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 
 from pydantic_ai import _history_processor
-from pydantic_ai._utils import now_utc
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability, BeforeModelRequestContext
@@ -21,10 +20,6 @@ class HistoryProcessorCapability(AbstractCapability[AgentDepsT]):
         request_context.messages = await _history_processor.run_history_processor(
             self.processor, ctx, request_context.messages
         )
-
-        # Ensure the last request has a timestamp (history processors may create new ModelRequest objects without one)
-        if request_context.messages and request_context.messages[-1].timestamp is None:
-            request_context.messages[-1].timestamp = now_utc()
 
         return request_context
 
