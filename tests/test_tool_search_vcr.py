@@ -1,15 +1,26 @@
-"""VCR integration tests for tool search functionality."""
+"""VCR integration tests for tool search functionality using pydantic-evals.
+
+NOTE: If you change the search tool description or keyword schema in _searchable.py,
+re-record all cassettes with: uv run pytest tests/test_tool_search_vcr.py --record-mode=rewrite
+"""
 
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai._utils import is_str_dict
+from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
+from pydantic_ai.run import AgentRunResult
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 from .conftest import try_import
 
@@ -38,9 +49,108 @@ def _mock_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.setenv(key, default)
 
 
-def _build_agent() -> Agent[None, str]:
+# --- Eval types ---
+
+
+class EvalOutput(BaseModel):
+    tool_calls: list[str]
+    search_interactions: list[tuple[Any, Any]]
+
+
+class EvalMetadata(BaseModel):
+    expected_tools: list[str]
+    scenario: str
+
+
+# --- Evaluators ---
+
+
+@dataclass(repr=False)
+class UsedSearchTools(Evaluator[str, EvalOutput, EvalMetadata]):
+    """Check that the model used search_tools when expected tools exist."""
+
+    evaluation_name: str | None = field(default='used_search_tools')
+
+    def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
+        if not ctx.metadata or not ctx.metadata.expected_tools:
+            return True
+        return 'search_tools' in ctx.output.tool_calls
+
+
+@dataclass(repr=False)
+class FoundExpectedTools(Evaluator[str, EvalOutput, EvalMetadata]):
+    """Check that the model found and called the expected tools."""
+
+    evaluation_name: str | None = field(default='found_expected_tools')
+
+    def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
+        if not ctx.metadata or not ctx.metadata.expected_tools:
+            return True
+        return all(t in ctx.output.tool_calls for t in ctx.metadata.expected_tools)
+
+
+@dataclass(repr=False)
+class ReasonableToolUsage(Evaluator[str, EvalOutput, EvalMetadata]):
+    """Check that the model didn't use an excessive number of tool calls."""
+
+    max_calls: int = 10
+    evaluation_name: str | None = field(default='reasonable_usage')
+
+    def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> bool:
+        return len(ctx.output.tool_calls) <= self.max_calls
+
+
+@dataclass(repr=False)
+class KeywordCount(Evaluator[str, EvalOutput, EvalMetadata]):
+    """Score the number of keywords used in the search query. Best is <= 3."""
+
+    evaluation_name: str | None = field(default='keyword_count')
+
+    def evaluate(self, ctx: EvaluatorContext[str, EvalOutput, EvalMetadata]) -> int | dict[str, int]:
+        if not ctx.output.search_interactions:
+            return {}
+        args = ctx.output.search_interactions[0][0]
+        if isinstance(args, str):
+            args = json.loads(args)
+        if is_str_dict(args):
+            keywords_str = args.get('keywords', '')
+        else:
+            return 0
+        return len(keywords_str.split())
+
+
+# --- Helpers ---
+
+
+def _extract_tool_calls(result: AgentRunResult[str]) -> list[str]:
+    tool_calls: list[str] = []
+    for msg in result.all_messages():
+        if isinstance(msg, ModelResponse):
+            for part in msg.parts:
+                if isinstance(part, ToolCallPart):
+                    tool_calls.append(part.tool_name)
+    return tool_calls
+
+
+def _extract_search_interactions(result: AgentRunResult[str]) -> list[tuple[Any, Any]]:
+    """Extract (keywords_args, return_content) pairs from search_tools calls."""
+    calls: dict[str, Any] = {}
+    interactions: list[tuple[Any, Any]] = []
+    for msg in result.all_messages():
+        if isinstance(msg, ModelResponse):
+            for part in msg.parts:
+                if isinstance(part, ToolCallPart) and part.tool_name == 'search_tools':
+                    calls[part.tool_call_id] = part.args
+        elif isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'search_tools':
+                    interactions.append((calls.get(part.tool_call_id), part.content))
+    return interactions
+
+
+def _build_agent(model_name: str) -> Agent[None, str]:
     """Build an agent with a visible tool and several deferred tools for testing."""
-    agent: Agent[None, str] = Agent()
+    agent: Agent[None, str] = Agent(model=model_name)
 
     @agent.tool_plain
     def get_weather(city: str) -> str:  # pragma: no cover
@@ -61,7 +171,7 @@ def _build_agent() -> Agent[None, str]:
         return f'1 {from_currency} = {rate} {to_currency}'
 
     @agent.tool_plain(defer_loading=True)
-    def stock_lookup(symbol: str) -> str:  # pragma: no cover
+    def stock_lookup(symbol: str) -> str:
         """Look up stock price by ticker symbol."""
         return f'Stock {symbol}: $150.00'
 
@@ -83,61 +193,77 @@ def _build_agent() -> Agent[None, str]:
     return agent
 
 
-@dataclass
-class Case:
-    model_name: str
-    expected_output: str
+def _build_dataset() -> Dataset[str, EvalOutput, EvalMetadata]:
+    return Dataset[str, EvalOutput, EvalMetadata](
+        cases=[
+            Case(
+                name='exchange_rate',
+                inputs='What is the current exchange rate from USD to EUR?',
+                metadata=EvalMetadata(expected_tools=['get_exchange_rate'], scenario='exchange_rate'),
+            ),
+            Case(
+                name='stock_price',
+                inputs='What is the current stock price for AAPL?',
+                metadata=EvalMetadata(expected_tools=['stock_lookup'], scenario='stock_price'),
+            ),
+            Case(
+                name='translation',
+                inputs="Translate 'hello, how are you?' to French.",
+                metadata=EvalMetadata(expected_tools=[], scenario='translation'),
+            ),
+            Case(
+                name='no_matching_tool',
+                inputs='Book a flight from New York to London for next week.',
+                metadata=EvalMetadata(expected_tools=[], scenario='no_matching_tool'),
+            ),
+        ],
+        evaluators=[
+            UsedSearchTools(),
+            FoundExpectedTools(),
+            ReasonableToolUsage(max_calls=10),
+            KeywordCount(),
+        ],
+    )
 
 
-@pytest.mark.parametrize(
-    'case',
-    [
-        pytest.param(
-            Case(
-                model_name='openai:gpt-5-mini',
-                expected_output=snapshot('The current exchange rate is 1 USD = 0.92 EUR.'),
-            ),
-            id='openai',
-        ),
-        pytest.param(
-            Case(
-                model_name='anthropic:claude-sonnet-4-5',
-                expected_output=snapshot(
-                    'The current exchange rate from USD to EUR is **1 USD = 0.92 EUR**. This means that 1 US Dollar is equal to 0.92 Euros.'
-                ),
-            ),
-            id='anthropic',
-            marks=pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed'),
-        ),
-        pytest.param(
-            Case(
-                model_name='google-gla:gemini-3-flash-preview',
-                expected_output=snapshot('The current exchange rate from USD to EUR is 1 USD = 0.92 EUR.'),
-            ),
-            id='google',
-            marks=pytest.mark.skipif(not google_available(), reason='google-genai not installed'),
-        ),
-    ],
-)
-async def test_tool_search_discovers_and_uses_tool(allow_model_requests: None, case: Case) -> None:
-    """Test that a model naturally discovers and uses a deferred tool via search.
+_MODELS = [
+    pytest.param('openai:gpt-5-mini', id='openai'),
+    pytest.param(
+        'anthropic:claude-sonnet-4-5',
+        id='anthropic',
+        marks=pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed'),
+    ),
+    pytest.param(
+        'google-gla:gemini-3-flash-preview',
+        id='google',
+        marks=pytest.mark.skipif(not google_available(), reason='google-genai not installed'),
+    ),
+]
 
-    The prompt asks a question that requires a tool the model can't see.
-    The model must figure out on its own that it should use search_tools to find it.
+
+@pytest.mark.parametrize('model_name', _MODELS)
+async def test_tool_search_eval(allow_model_requests: None, model_name: str) -> None:
+    """Evaluate tool search behavior across scenarios using pydantic-evals.
+
+    Runs 4 scenarios per model: exchange_rate, stock_price, translation, no_matching_tool.
+    Evaluators check: used_search_tools, found_expected_tools, reasonable_usage, keyword_count.
     """
-    agent = _build_agent()
-    agent.model = case.model_name
+    agent = _build_agent(model_name)
 
-    result = await agent.run('What is the current exchange rate from USD to EUR?')
+    async def task(prompt: str) -> EvalOutput:
+        try:
+            result = await agent.run(prompt)
+        except UnexpectedModelBehavior:
+            return EvalOutput(tool_calls=[], search_interactions=[])
+        return EvalOutput(
+            tool_calls=_extract_tool_calls(result),
+            search_interactions=_extract_search_interactions(result),
+        )
 
-    assert result.output == case.expected_output
+    dataset = _build_dataset()
+    report = await dataset.evaluate(task, name='tool_search', progress=False, max_concurrency=1)
 
-    tool_calls: list[str] = []
-    for msg in result.all_messages():
-        if isinstance(msg, ModelResponse):
-            for part in msg.parts:
-                if isinstance(part, ToolCallPart):
-                    tool_calls.append(part.tool_name)
-
-    assert 'search_tools' in tool_calls
-    assert 'get_exchange_rate' in tool_calls
+    assert not report.failures
+    for case in report.cases:
+        for name, result in case.assertions.items():
+            assert result.value, f'{case.name}/{name} failed'

@@ -1,4 +1,4 @@
-"""Unit tests for SearchableToolset."""
+"""Unit tests for ToolSearchToolset."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets._searchable import (
     _DISCOVERED_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
-    SearchableToolset,
+    ToolSearchToolset,
 )
 from pydantic_ai.usage import RunUsage
 
@@ -70,7 +70,7 @@ def create_function_toolset() -> FunctionToolset[None]:
 async def test_searchable_toolset_filters_deferred_tools():
     """Test that deferred tools are not exposed initially."""
     toolset = create_function_toolset()
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
@@ -85,25 +85,25 @@ async def test_searchable_toolset_filters_deferred_tools():
 async def test_search_tool_def_description_and_schema():
     """Test that the search tool definition includes deferred count and TypeAdapter-generated schema."""
     toolset = create_function_toolset()
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
     assert search_tool.tool_def.description == snapshot(
-        'There are 3 additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by keyword to discover and activate relevant tools.'
+        'There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword is matched independently against tool names and descriptions. If no tools are found, they do not exist — do not retry.'
     )
     assert search_tool.tool_def.parameters_json_schema == snapshot(
         {
             'properties': {
-                'query': {
-                    'description': 'A keyword to match against tool names and descriptions.',
-                    'title': 'Query',
+                'keywords': {
+                    'description': 'Space-separated keywords to match against tool names and descriptions. Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.',
+                    'title': 'Keywords',
                     'type': 'string',
                 }
             },
-            'required': ['query'],
+            'required': ['keywords'],
             'title': '_SearchToolArgs',
             'type': 'object',
         }
@@ -113,13 +113,13 @@ async def test_search_tool_def_description_and_schema():
 async def test_searchable_toolset_search_returns_matching_tools():
     """Test that search_tools returns matching deferred tools."""
     toolset = create_function_toolset()
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'mortgage'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'mortgage'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     assert result.return_value == snapshot(
         [{'name': 'calculate_mortgage', 'description': 'Calculate monthly mortgage payment for a loan.'}]
@@ -130,13 +130,13 @@ async def test_searchable_toolset_search_returns_matching_tools():
 async def test_searchable_toolset_search_is_case_insensitive():
     """Test that search is case insensitive."""
     toolset = create_function_toolset()
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'STOCK'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'STOCK'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     rv: list[dict[str, str | None]] = result.return_value  # pyright: ignore[reportAssignmentType]
     assert len(rv) == 1
@@ -146,13 +146,13 @@ async def test_searchable_toolset_search_is_case_insensitive():
 async def test_searchable_toolset_search_matches_description():
     """Test that search matches tool descriptions."""
     toolset = create_function_toolset()
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'cryptocurrency'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'cryptocurrency'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     rv: list[dict[str, str | None]] = result.return_value  # pyright: ignore[reportAssignmentType]
     assert len(rv) == 1
@@ -162,29 +162,29 @@ async def test_searchable_toolset_search_matches_description():
 async def test_searchable_toolset_search_returns_no_matches():
     """Test that search returns empty list when no matches."""
     toolset = create_function_toolset()
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'nonexistent'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'nonexistent'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
-    assert result.return_value == snapshot([])
+    assert result.return_value == snapshot('No matching tools found. The tools you need may not be available.')
     assert result.metadata == snapshot({'discovered_tools': []})
 
 
 async def test_searchable_toolset_search_empty_query():
     """Test that search with empty query raises ModelRetry."""
     toolset = create_function_toolset()
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    with pytest.raises(ModelRetry, match='Please provide a search query.'):
-        await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': ''}, ctx, search_tool)
+    with pytest.raises(ModelRetry, match='Please provide search keywords.'):
+        await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': ''}, ctx, search_tool)
 
 
 async def test_searchable_toolset_max_results():
@@ -198,13 +198,13 @@ async def test_searchable_toolset_max_results():
             """A tool for testing."""
             return 'result'
 
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'tool'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'tool'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     rv: list[dict[str, str | None]] = result.return_value  # pyright: ignore[reportAssignmentType]
     assert len(rv) == 10
@@ -213,7 +213,7 @@ async def test_searchable_toolset_max_results():
 async def test_searchable_toolset_discovered_tools_available():
     """Test that discovered tools become available after search."""
     toolset = create_function_toolset()
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -252,7 +252,7 @@ async def test_searchable_toolset_reserved_name_collision():
         """A deferred tool to trigger search injection."""
         return 'deferred'
 
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     with pytest.raises(UserError, match="Tool name 'search_tools' is reserved"):
@@ -273,7 +273,7 @@ async def test_searchable_toolset_no_deferred_tools_returns_all():
         """Get the current time in a timezone."""
         return f'Time in {timezone}'
 
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
@@ -284,7 +284,7 @@ async def test_searchable_toolset_no_deferred_tools_returns_all():
 
 
 async def test_agent_always_wraps_in_searchable_toolset():
-    """Test that agent always wraps toolset in SearchableToolset."""
+    """Test that agent always wraps toolset in ToolSearchToolset."""
     agent = Agent('test')
 
     @agent.tool_plain
@@ -293,11 +293,11 @@ async def test_agent_always_wraps_in_searchable_toolset():
         return f'Weather in {city}'
 
     toolset = agent._get_toolset()  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(toolset, SearchableToolset)
+    assert isinstance(toolset, ToolSearchToolset)
 
 
 async def test_agent_wraps_in_searchable_with_deferred():
-    """Test that agent wraps with SearchableToolset when there are deferred tools."""
+    """Test that agent wraps with ToolSearchToolset when there are deferred tools."""
     agent = Agent('test')
 
     @agent.tool_plain
@@ -311,13 +311,13 @@ async def test_agent_wraps_in_searchable_with_deferred():
         return 'Calculated'
 
     toolset = agent._get_toolset()  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(toolset, SearchableToolset)
+    assert isinstance(toolset, ToolSearchToolset)
 
 
 async def test_tool_manager_with_searchable_toolset():
-    """Test that ToolManager works correctly with SearchableToolset."""
+    """Test that ToolManager works correctly with ToolSearchToolset."""
     toolset = create_function_toolset()
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tool_manager = ToolManager[None](searchable)
@@ -328,7 +328,7 @@ async def test_tool_manager_with_searchable_toolset():
     assert 'get_weather' in tool_names
     assert 'calculate_mortgage' not in tool_names
 
-    result = await run_step_toolset.handle_call(ToolCallPart(tool_name='search_tools', args={'query': 'mortgage'}))
+    result = await run_step_toolset.handle_call(ToolCallPart(tool_name='search_tools', args={'keywords': 'mortgage'}))
     assert 'calculate_mortgage' in str(result)
 
 
@@ -340,13 +340,13 @@ async def test_searchable_toolset_tool_with_none_description():
     def no_desc_tool() -> str:  # pragma: no cover
         return 'no description'
 
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'no_desc'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'no_desc'}, ctx, search_tool)
     assert isinstance(result, ToolReturn)
     assert result.return_value == snapshot([{'name': 'no_desc_tool', 'description': None}])
 
@@ -354,7 +354,7 @@ async def test_searchable_toolset_tool_with_none_description():
 async def test_searchable_toolset_multiple_searches_accumulate():
     """Test that tools discovered in multiple searches accumulate correctly."""
     toolset = create_function_toolset()
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -403,7 +403,7 @@ async def test_function_toolset_all_deferred():
         """Second deferred tool."""
         return 'result2'
 
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
@@ -417,7 +417,7 @@ async def test_function_toolset_all_deferred():
 async def test_searchable_toolset_ignores_non_metadata_history():
     """Test that discovery only reads metadata, ignoring malformed content."""
     toolset = create_function_toolset()
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
 
     messages: list[ModelMessage] = [
         # metadata is None (no discovered tools)
@@ -480,7 +480,7 @@ async def test_deferred_loading_toolset_marks_all_tools():
         return 'b'
 
     deferred = toolset.defer_loading()
-    searchable = SearchableToolset(wrapped=deferred)
+    searchable = ToolSearchToolset(wrapped=deferred)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
@@ -504,7 +504,7 @@ async def test_deferred_loading_toolset_marks_specific_tools():
         return 'b'
 
     deferred = toolset.defer_loading(['tool_b'])
-    searchable = SearchableToolset(wrapped=deferred)
+    searchable = ToolSearchToolset(wrapped=deferred)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
@@ -516,13 +516,13 @@ async def test_deferred_loading_toolset_marks_specific_tools():
 async def test_call_tool_returns_tool_return_with_metadata():
     """Test that call_tool for search_tools returns a ToolReturn with metadata listing matched tools."""
     toolset = create_function_toolset()
-    searchable = SearchableToolset(wrapped=toolset)
+    searchable = ToolSearchToolset(wrapped=toolset)
     ctx = build_run_context(None)
 
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'query': 'mortgage'}, ctx, search_tool)
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'keywords': 'mortgage'}, ctx, search_tool)
     assert result == snapshot(
         ToolReturn(
             return_value=[

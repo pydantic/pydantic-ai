@@ -21,7 +21,15 @@ _MAX_SEARCH_RESULTS = 10
 
 
 class _SearchToolArgs(TypedDict):
-    query: Annotated[str, Field(description='A keyword to match against tool names and descriptions.')]
+    keywords: Annotated[
+        str,
+        Field(
+            description=(
+                'Space-separated keywords to match against tool names and descriptions.'
+                ' Use specific words likely to appear in tool names or descriptions to narrow down relevant tools.'
+            )
+        ),
+    ]
 
 
 _search_tool_args_ta = TypeAdapter(_SearchToolArgs)
@@ -42,7 +50,7 @@ class _SearchTool(ToolsetTool[AgentDepsT]):
 
 
 @dataclass
-class SearchableToolset(WrapperToolset[AgentDepsT]):
+class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     """A toolset that enables tool discovery for large toolsets.
 
     This toolset wraps another toolset and provides a `search_tools` tool that allows
@@ -73,6 +81,9 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
 
         discovered = self._parse_discovered_tools(ctx)
 
+        if discovered.issuperset(deferred):
+            return all_tools
+
         search_index = [
             _SearchToolIndex(
                 name=name,
@@ -83,13 +94,14 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
             for name, tool in deferred.items()
         ]
 
-        remaining = len(deferred) - len(discovered.intersection(deferred))
         search_tool_def = ToolDefinition(
             name=_SEARCH_TOOLS_NAME,
             description=(
-                f'There are {remaining} additional tools not yet visible to you.'
+                'There are additional tools not yet visible to you.'
                 ' When you need a capability not provided by your current tools,'
-                ' search here by keyword to discover and activate relevant tools.'
+                ' search here by providing specific keywords to discover and activate relevant tools.'
+                ' Each keyword is matched independently against tool names and descriptions.'
+                ' If no tools are found, they do not exist — do not retry.'
             ),
             parameters_json_schema=_search_tool_args_ta.json_schema(),
         )
@@ -135,17 +147,17 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
     async def _search_tools(self, tool_args: dict[str, Any], search_tool: _SearchTool[AgentDepsT]) -> ToolReturn:
-        """Search for tools matching the query.
+        """Search for tools matching the keywords.
 
-        Splits the query into individual terms and matches any term against
-        tool names and descriptions. This handles natural multi-word queries
-        like "exchange rate currency" matching a tool named "get_exchange_rate".
+        Splits the keywords into individual terms and matches any term against
+        tool names and descriptions. This handles multi-keyword queries
+        like "exchange rate" matching a tool named "get_exchange_rate".
         """
-        query = tool_args['query']
-        if not query:
-            raise ModelRetry('Please provide a search query.')
+        keywords = tool_args['keywords']
+        if not keywords:
+            raise ModelRetry('Please provide search keywords.')
 
-        terms = query.lower().split()
+        terms = keywords.lower().split()
 
         matches: list[dict[str, str | None]] = []
         for entry in search_tool.search_index:
@@ -156,6 +168,12 @@ class SearchableToolset(WrapperToolset[AgentDepsT]):
                     break
 
         tool_names = [match['name'] for match in matches]
+
+        if not matches:
+            return ToolReturn(
+                return_value='No matching tools found. The tools you need may not be available.',
+                metadata={_DISCOVERED_TOOLS_METADATA_KEY: tool_names},
+            )
 
         return ToolReturn(
             return_value=matches,

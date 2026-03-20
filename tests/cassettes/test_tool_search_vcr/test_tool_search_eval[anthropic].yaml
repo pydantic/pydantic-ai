@@ -1,0 +1,1196 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1121'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the current exchange rate from USD to EUR?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: There are 3 additional tools not yet visible to you. When you need a capability not provided by your
+          current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+          is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+          retry.
+        input_schema:
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        name: search_tools
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '783'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - proxy;dur=2842
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: I don't currently have a tool available to check exchange rates. Let me search for one that can help with currency
+          conversion.
+        type: text
+      - caller:
+          type: direct
+        id: toolu_01DkA18bW7Gn4os8NQZdhwDN
+        input:
+          keywords: exchange rate currency conversion USD EUR
+        name: search_tools
+        type: tool_use
+      id: msg_01QyQnZJBPpnSnz2tx3DGbnk
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 724
+        output_tokens: 84
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2052'
+      content-type:
+      - application/json
+      cookie:
+      - _cfuvid=xdSHomj2xEH73L4qZYRLTAb2IEunYp61JkgdwXrkQgA-1773893493.077296-1.0.1.1-.vnzEyyNF7ZE2WJz7dPy3RTYuV3r18Z0a9YTP6argJc
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the current exchange rate from USD to EUR?
+          type: text
+        role: user
+      - content:
+        - text: I don't currently have a tool available to check exchange rates. Let me search for one that can help with
+            currency conversion.
+          type: text
+        - id: toolu_01DkA18bW7Gn4os8NQZdhwDN
+          input:
+            keywords: exchange rate currency conversion USD EUR
+          name: search_tools
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: '{"name":"get_exchange_rate","description":"Look up the current exchange rate between two currencies."}'
+            type: text
+          is_error: false
+          tool_use_id: toolu_01DkA18bW7Gn4os8NQZdhwDN
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: There are 2 additional tools not yet visible to you. When you need a capability not provided by your
+          current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+          is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+          retry.
+        input_schema:
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        name: search_tools
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+      - description: Look up the current exchange rate between two currencies.
+        input_schema:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        name: get_exchange_rate
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '754'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - proxy;dur=2503
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: Great! I found the exchange rate tool. Let me check the current exchange rate from USD to EUR for you.
+        type: text
+      - caller:
+          type: direct
+        id: toolu_017FD29KgHU9kBF8usMX6JVp
+        input:
+          from_currency: USD
+          to_currency: EUR
+        name: get_exchange_rate
+        type: tool_use
+      id: msg_01JCQnP56t8bTcQJLRfH6QaV
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 928
+        output_tokens: 100
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2551'
+      content-type:
+      - application/json
+      cookie:
+      - _cfuvid=xdSHomj2xEH73L4qZYRLTAb2IEunYp61JkgdwXrkQgA-1773893493.077296-1.0.1.1-.vnzEyyNF7ZE2WJz7dPy3RTYuV3r18Z0a9YTP6argJc
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the current exchange rate from USD to EUR?
+          type: text
+        role: user
+      - content:
+        - text: I don't currently have a tool available to check exchange rates. Let me search for one that can help with
+            currency conversion.
+          type: text
+        - id: toolu_01DkA18bW7Gn4os8NQZdhwDN
+          input:
+            keywords: exchange rate currency conversion USD EUR
+          name: search_tools
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: '{"name":"get_exchange_rate","description":"Look up the current exchange rate between two currencies."}'
+            type: text
+          is_error: false
+          tool_use_id: toolu_01DkA18bW7Gn4os8NQZdhwDN
+          type: tool_result
+        role: user
+      - content:
+        - text: Great! I found the exchange rate tool. Let me check the current exchange rate from USD to EUR for you.
+          type: text
+        - id: toolu_017FD29KgHU9kBF8usMX6JVp
+          input:
+            from_currency: USD
+            to_currency: EUR
+          name: get_exchange_rate
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: 1 USD = 0.92 EUR
+            type: text
+          is_error: false
+          tool_use_id: toolu_017FD29KgHU9kBF8usMX6JVp
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: There are 2 additional tools not yet visible to you. When you need a capability not provided by your
+          current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+          is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+          retry.
+        input_schema:
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        name: search_tools
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+      - description: Look up the current exchange rate between two currencies.
+        input_schema:
+          additionalProperties: false
+          properties:
+            from_currency:
+              type: string
+            to_currency:
+              type: string
+          required:
+          - from_currency
+          - to_currency
+          type: object
+        name: get_exchange_rate
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '597'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - proxy;dur=1266
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: The current exchange rate from USD to EUR is **1 USD = 0.92 EUR**. This means that 1 US Dollar is equivalent
+          to 0.92 Euros.
+        type: text
+      id: msg_01VbTU8RdLyGAG9YcrdzsmiH
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 1050
+        output_tokens: 44
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1112'
+      content-type:
+      - application/json
+      cookie:
+      - _cfuvid=xdSHomj2xEH73L4qZYRLTAb2IEunYp61JkgdwXrkQgA-1773893493.077296-1.0.1.1-.vnzEyyNF7ZE2WJz7dPy3RTYuV3r18Z0a9YTP6argJc
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the current stock price for AAPL?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: There are 3 additional tools not yet visible to you. When you need a capability not provided by your
+          current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+          is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+          retry.
+        input_schema:
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        name: search_tools
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '713'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - proxy;dur=1885
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: I need to search for a tool that can help me get stock price information.
+        type: text
+      - caller:
+          type: direct
+        id: toolu_01DSqee4QurSNxEC4oUyHj7j
+        input:
+          keywords: stock price quote ticker
+        name: search_tools
+        type: tool_use
+      id: msg_012bEhg3i3XH3KU28TUftuTP
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 725
+        output_tokens: 73
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1859'
+      content-type:
+      - application/json
+      cookie:
+      - _cfuvid=xdSHomj2xEH73L4qZYRLTAb2IEunYp61JkgdwXrkQgA-1773893493.077296-1.0.1.1-.vnzEyyNF7ZE2WJz7dPy3RTYuV3r18Z0a9YTP6argJc
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the current stock price for AAPL?
+          type: text
+        role: user
+      - content:
+        - text: I need to search for a tool that can help me get stock price information.
+          type: text
+        - id: toolu_01DSqee4QurSNxEC4oUyHj7j
+          input:
+            keywords: stock price quote ticker
+          name: search_tools
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: '{"name":"stock_lookup","description":"Look up stock price by ticker symbol."}'
+            type: text
+          is_error: false
+          tool_use_id: toolu_01DSqee4QurSNxEC4oUyHj7j
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: There are 2 additional tools not yet visible to you. When you need a capability not provided by your
+          current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+          is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+          retry.
+        input_schema:
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        name: search_tools
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+      - description: Look up stock price by ticker symbol.
+        input_schema:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        name: stock_lookup
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '701'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - proxy;dur=1719
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: Great! I can use the stock_lookup function to get the current stock price for AAPL.
+        type: text
+      - caller:
+          type: direct
+        id: toolu_01AYpJpNZGdgv1S8azvkDZ4L
+        input:
+          symbol: AAPL
+        name: stock_lookup
+        type: tool_use
+      id: msg_01Rs8Wc6qcdJpQXJs244NF7T
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 889
+        output_tokens: 79
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2309'
+      content-type:
+      - application/json
+      cookie:
+      - _cfuvid=xdSHomj2xEH73L4qZYRLTAb2IEunYp61JkgdwXrkQgA-1773893493.077296-1.0.1.1-.vnzEyyNF7ZE2WJz7dPy3RTYuV3r18Z0a9YTP6argJc
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the current stock price for AAPL?
+          type: text
+        role: user
+      - content:
+        - text: I need to search for a tool that can help me get stock price information.
+          type: text
+        - id: toolu_01DSqee4QurSNxEC4oUyHj7j
+          input:
+            keywords: stock price quote ticker
+          name: search_tools
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: '{"name":"stock_lookup","description":"Look up stock price by ticker symbol."}'
+            type: text
+          is_error: false
+          tool_use_id: toolu_01DSqee4QurSNxEC4oUyHj7j
+          type: tool_result
+        role: user
+      - content:
+        - text: Great! I can use the stock_lookup function to get the current stock price for AAPL.
+          type: text
+        - id: toolu_01AYpJpNZGdgv1S8azvkDZ4L
+          input:
+            symbol: AAPL
+          name: stock_lookup
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: 'Stock AAPL: $150.00'
+            type: text
+          is_error: false
+          tool_use_id: toolu_01AYpJpNZGdgv1S8azvkDZ4L
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: There are 2 additional tools not yet visible to you. When you need a capability not provided by your
+          current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+          is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+          retry.
+        input_schema:
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        name: search_tools
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+      - description: Look up stock price by ticker symbol.
+        input_schema:
+          additionalProperties: false
+          properties:
+            symbol:
+              type: string
+          required:
+          - symbol
+          type: object
+        name: stock_lookup
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '534'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - proxy;dur=1215
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: The current stock price for AAPL (Apple Inc.) is **$150.00**.
+        type: text
+      id: msg_01Lur4ivQHsQyKgePH2VdBy5
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 990
+        output_tokens: 23
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1113'
+      content-type:
+      - application/json
+      cookie:
+      - _cfuvid=xdSHomj2xEH73L4qZYRLTAb2IEunYp61JkgdwXrkQgA-1773893493.077296-1.0.1.1-.vnzEyyNF7ZE2WJz7dPy3RTYuV3r18Z0a9YTP6argJc
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Translate 'hello, how are you?' to French.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: There are 3 additional tools not yet visible to you. When you need a capability not provided by your
+          current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+          is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+          retry.
+        input_schema:
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        name: search_tools
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '719'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - proxy;dur=1642
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: I need to search for a translation tool to help with this request.
+        type: text
+      - caller:
+          type: direct
+        id: toolu_016EHj4bZ8YKVw1YwXjxZ3W4
+        input:
+          keywords: translate translation language French
+        name: search_tools
+        type: tool_use
+      id: msg_014VetKjXYFVd4uHTDYDqQeG
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 726
+        output_tokens: 71
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1627'
+      content-type:
+      - application/json
+      cookie:
+      - _cfuvid=xdSHomj2xEH73L4qZYRLTAb2IEunYp61JkgdwXrkQgA-1773893493.077296-1.0.1.1-.vnzEyyNF7ZE2WJz7dPy3RTYuV3r18Z0a9YTP6argJc
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Translate 'hello, how are you?' to French.
+          type: text
+        role: user
+      - content:
+        - text: I need to search for a translation tool to help with this request.
+          type: text
+        - id: toolu_016EHj4bZ8YKVw1YwXjxZ3W4
+          input:
+            keywords: translate translation language French
+          name: search_tools
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: No matching tools found. The tools you need may not be available.
+            type: text
+          is_error: false
+          tool_use_id: toolu_016EHj4bZ8YKVw1YwXjxZ3W4
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: There are 3 additional tools not yet visible to you. When you need a capability not provided by your
+          current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+          is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+          retry.
+        input_schema:
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        name: search_tools
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '971'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - proxy;dur=3778
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: "I don't have access to a translation tool, but I can help you with this common phrase. \n\n\"Hello, how are
+          you?\" translates to French as:\n\n**\"Bonjour, comment allez-vous?\"** (formal)\n\nor\n\n**\"Bonjour, comment vas-tu?\"**
+          (informal)\n\n- \"Bonjour\" = Hello\n- \"Comment allez-vous?\" = How are you? (formal/polite form)\n- \"Comment
+          vas-tu?\" = How are you? (informal form, used with friends/family)\n\nYou can also use \"Salut\" instead of \"Bonjour\"
+          for a more casual \"Hi\" greeting."
+        type: text
+      id: msg_019pZYsXWa9NVJf7vcc1zb7b
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 822
+        output_tokens: 156
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1123'
+      content-type:
+      - application/json
+      cookie:
+      - _cfuvid=xdSHomj2xEH73L4qZYRLTAb2IEunYp61JkgdwXrkQgA-1773893493.077296-1.0.1.1-.vnzEyyNF7ZE2WJz7dPy3RTYuV3r18Z0a9YTP6argJc
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Book a flight from New York to London for next week.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: There are 3 additional tools not yet visible to you. When you need a capability not provided by your
+          current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+          is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+          retry.
+        input_schema:
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        name: search_tools
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '778'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - proxy;dur=2221
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: I don't have access to a flight booking tool. Let me search to see if there are any relevant tools available
+          for booking flights.
+        type: text
+      - caller:
+          type: direct
+        id: toolu_01Jw8KDdXHjEUVf7hEfvc8ep
+        input:
+          keywords: flight booking travel reservation
+        name: search_tools
+        type: tool_use
+      id: msg_01F9vjzd8Lbj5z6RkM1p8f8Z
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 725
+        output_tokens: 84
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1696'
+      content-type:
+      - application/json
+      cookie:
+      - _cfuvid=xdSHomj2xEH73L4qZYRLTAb2IEunYp61JkgdwXrkQgA-1773893493.077296-1.0.1.1-.vnzEyyNF7ZE2WJz7dPy3RTYuV3r18Z0a9YTP6argJc
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Book a flight from New York to London for next week.
+          type: text
+        role: user
+      - content:
+        - text: I don't have access to a flight booking tool. Let me search to see if there are any relevant tools available
+            for booking flights.
+          type: text
+        - id: toolu_01Jw8KDdXHjEUVf7hEfvc8ep
+          input:
+            keywords: flight booking travel reservation
+          name: search_tools
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: No matching tools found. The tools you need may not be available.
+            type: text
+          is_error: false
+          tool_use_id: toolu_01Jw8KDdXHjEUVf7hEfvc8ep
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: There are 3 additional tools not yet visible to you. When you need a capability not provided by your
+          current tools, search here by providing specific keywords to discover and activate relevant tools. Each keyword
+          is matched independently against tool names and descriptions. If no tools are found, they do not exist -- do not
+          retry.
+        input_schema:
+          properties:
+            keywords:
+              description: Space-separated keywords to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools.
+              type: string
+          required:
+          - keywords
+          type: object
+        name: search_tools
+      - description: Get the current weather for a city.
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_weather
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1025'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - proxy;dur=3496
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: |-
+          Unfortunately, I don't have access to a flight booking tool. I can only check weather information with my current capabilities.
+
+          To book a flight from New York to London for next week, you would need to:
+
+          1. Visit airline websites directly (British Airways, American Airlines, Delta, Virgin Atlantic, etc.)
+          2. Use online travel agencies like Expedia, Kayak, Google Flights, or Skyscanner
+          3. Contact a travel agent
+          4. Call airlines directly
+
+          Would you like me to help you with anything else, such as checking the weather in New York or London?
+        type: text
+      id: msg_01V42MfUJxFtm8khVFUhTuKd
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 834
+        output_tokens: 128
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

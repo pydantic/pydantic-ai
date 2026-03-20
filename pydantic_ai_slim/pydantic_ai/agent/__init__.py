@@ -65,7 +65,7 @@ from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
-from ..toolsets._searchable import SearchableToolset
+from ..toolsets._searchable import ToolSearchToolset
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
@@ -1597,7 +1597,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Always wraps; short-circuits when no deferred tools.
         # Wraps outside PreparedToolset so search_tools is always available regardless of prepare_tools.
-        toolset = SearchableToolset(wrapped=toolset)
+        toolset = ToolSearchToolset(wrapped=toolset)
 
         output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
         if output_toolset is not None:
