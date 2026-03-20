@@ -122,22 +122,6 @@ jobs:
 
           echo "Found linked issues: $ISSUE_NUMBERS"
 
-          # Helper: attempt to assign a user to an issue.
-          # GitHub silently ignores assignees who lack push access (returns 201 but doesn't add them).
-          # We check assignability first via GET /repos/{owner}/{repo}/assignees/{user} (204 = yes, 404 = no).
-          try_assign() {
-            local issue_num="$1"
-            local user="$2"
-            if gh api "repos/${REPO}/assignees/${user}" > /dev/null 2>&1; then
-              gh api "repos/${REPO}/issues/${issue_num}/assignees" --method POST -f "assignees[]=${user}" > /dev/null
-              echo "Assigned ${user} to issue #${issue_num}."
-              return 0
-            else
-              echo "Cannot assign ${user} to issue #${issue_num} (user is not assignable to this repo)."
-              return 1
-            fi
-          }
-
           # Fetch all open PRs once for duplicate detection.
           # This is only open PRs (not closed), so the volume is manageable.
           ALL_OPEN_PRS=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate) || ALL_OPEN_PRS="[]"
@@ -213,7 +197,7 @@ jobs:
             ASSIGNEES=$(echo "$ISSUE_JSON" | jq -r '[.assignees[].login] | join(",")')
             if [ -z "$ASSIGNEES" ]; then
               if gh api "repos/${REPO}/assignees/${PR_AUTHOR}" > /dev/null 2>&1; then
-                gh api "repos/${REPO}/issues/${ISSUE_NUM}/assignees" --method POST -f "assignees[]=${PR_AUTHOR}" > /dev/null
+                gh api "repos/${REPO}/issues/${ISSUE_NUM}/assignees" --method POST -f "assignees[]=${PR_AUTHOR}" > /dev/null || true
                 echo "Assigned ${PR_AUTHOR} to issue #${ISSUE_NUM}."
               fi
             elif echo ",$ASSIGNEES," | grep -q ",${PR_AUTHOR},"; then
