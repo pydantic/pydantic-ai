@@ -4,7 +4,6 @@ from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -91,14 +90,11 @@ class TestDatabricks:
         model = DatabricksModel(model_name, provider=provider)
 
         async with model_request_stream(model, [ModelRequest.user_text_prompt('Count to 3')]) as stream:
-            assert stream.provider_details == snapshot({'usage': RequestUsage()})
-
             chunks = [chunk async for chunk in stream]
 
             assert len(chunks) > 0
             assert stream.provider_details is not None
             assert stream.provider_details['finish_reason'] == 'stop'
-            assert 'usage' in stream.provider_details
 
     async def test_databricks_tool_calling(
         self,
@@ -184,7 +180,6 @@ class TestDatabricks:
         last_msg = result.all_messages()[-1]
         assert isinstance(last_msg, ModelResponse)
         assert last_msg.provider_details is not None
-        assert 'usage' in last_msg.provider_details
 
     async def test_databricks_multimodal_content_structure(
         self,
@@ -486,107 +481,6 @@ class TestDatabricksMapUsage:
         assert result.input_tokens == 10
         assert result.output_tokens == 20
         assert result.details.get('reasoning_tokens') == 5
-
-
-class TestDatabricksProcessProviderDetails:
-    """Tests for DatabricksModel._process_provider_details."""
-
-    def _make_model(self) -> DatabricksModel:
-        provider = DatabricksProvider(api_key='test', base_url='https://test.com')
-        return DatabricksModel('test-model', provider=provider)
-
-    def test_provider_details_includes_usage(self):
-        model = self._make_model()
-        response = ChatCompletion(
-            id='test',
-            choices=[
-                Choice(
-                    index=0,
-                    finish_reason='stop',
-                    message=ChatCompletionMessage(role='assistant', content='hi'),
-                )
-            ],
-            created=0,
-            model='test',
-            object='chat.completion',
-            usage={'prompt_tokens': 5, 'completion_tokens': 10, 'total_tokens': 15},  # type: ignore
-        )
-        details = model._process_provider_details(response)
-        assert details is not None
-        assert 'usage' in details
-
-    def test_provider_details_no_usage(self):
-        model = self._make_model()
-        response = ChatCompletion(
-            id='test',
-            choices=[
-                Choice(
-                    index=0,
-                    finish_reason='stop',
-                    message=ChatCompletionMessage(role='assistant', content='hi'),
-                )
-            ],
-            created=0,
-            model='test',
-            object='chat.completion',
-        )
-        details = model._process_provider_details(response)
-        # Without usage, parent returns details from the choice but no 'usage' key
-        assert details is not None
-        assert 'usage' not in details
-
-
-class TestDatabricksStreamedResponseUnit:
-    """Tests for DatabricksStreamedResponse edge cases (no HTTP)."""
-
-    def test_usage_returns_accumulated_request_usage(self):
-        """Streaming usage returns the already-accumulated RequestUsage from the base class."""
-        sr = object.__new__(DatabricksStreamedResponse)
-        sr._usage = RequestUsage(input_tokens=10, output_tokens=20, details={'reasoning_tokens': 5})
-        result = sr.usage()
-        assert result.input_tokens == 10
-        assert result.output_tokens == 20
-        assert result.details['reasoning_tokens'] == 5
-
-    def test_usage_default_empty(self):
-        """Streaming usage returns empty RequestUsage when no usage accumulated."""
-        sr = object.__new__(DatabricksStreamedResponse)
-        sr._usage = RequestUsage()
-        result = sr.usage()
-        assert result == RequestUsage()
-
-    def test_provider_details_no_internal_with_default_usage(self):
-        """provider_details includes usage even with default RequestUsage (it's truthy)."""
-        sr = object.__new__(DatabricksStreamedResponse)
-        sr._internal_provider_details = None
-        sr._usage = RequestUsage()
-        details = sr.provider_details
-        assert details == {'usage': RequestUsage()}
-
-    def test_provider_details_with_internal_details(self):
-        """provider_details merges internal details with usage."""
-        sr = object.__new__(DatabricksStreamedResponse)
-        sr._internal_provider_details = {'timestamp': '2024-01-01'}
-        sr._usage = RequestUsage()
-        details = sr.provider_details
-        assert details['timestamp'] == '2024-01-01'
-        assert 'usage' in details
-
-    def test_provider_details_setter(self):
-        """Setting provider_details stores in _internal_provider_details."""
-        sr = object.__new__(DatabricksStreamedResponse)
-        sr._internal_provider_details = None
-        sr._usage = RequestUsage()
-        sr.provider_details = {'key': 'value'}
-        assert sr._internal_provider_details == {'key': 'value'}
-
-    def test_provider_details_no_usage(self):
-        """provider_details returns empty dict when _usage is falsy."""
-        sr = object.__new__(DatabricksStreamedResponse)
-        sr._internal_provider_details = None
-        sr._usage = None  # type: ignore
-        details = sr.provider_details
-        assert details == {}
 
 
 class TestDatabricksProcessProviderDetailsSafety:

@@ -149,9 +149,6 @@ class DatabricksModel(OpenAIChatModel):
         """Capture Databricks-specific details."""
         details = super()._process_provider_details(response) or {}
 
-        if response.usage:
-            details['usage'] = response.usage.model_dump()
-
         if safety_id := getattr(response, 'safety_identifier', None):
             details['safety_identifier'] = safety_id
 
@@ -159,9 +156,7 @@ class DatabricksModel(OpenAIChatModel):
 
 
 class DatabricksStreamedResponse(OpenAIStreamedResponse):
-    """Custom streaming response to handle Databricks specific usage fields."""
-
-    _internal_provider_details: dict[str, Any] | None = None
+    """Custom streaming response to handle Databricks specific content blocks."""
 
     @override
     def _map_part_delta(self, choice: chat.chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
@@ -190,22 +185,3 @@ class DatabricksStreamedResponse(OpenAIStreamedResponse):
 
         else:
             yield from super()._map_part_delta(choice)
-
-    @property
-    def provider_details(self) -> dict[str, Any]:
-        """Ensure raw usage is included in provider details for streaming."""
-        details = dict(self._internal_provider_details or {})
-
-        if self._usage:
-            details['usage'] = {
-                'input_tokens': self._usage.input_tokens,
-                'output_tokens': self._usage.output_tokens,
-                'details': self._usage.details,
-            }
-
-        return details
-
-    @provider_details.setter
-    def provider_details(self, value: dict[str, Any]) -> None:
-        """Allow the base class to set provider_details."""
-        self._internal_provider_details = value
