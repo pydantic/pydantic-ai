@@ -996,7 +996,7 @@ async def test_combined_propagates_for_run():
     assert run_combined is not combined
     assert isinstance(run_combined, CombinedToolset)
     assert isinstance(run_combined.toolsets[0], StatefulToolset)
-    assert run_combined.toolsets[0].call_count == 0  # pyright: ignore[reportAttributeAccessIssue]
+    assert run_combined.toolsets[0].call_count == 0
     assert run_combined.toolsets[1] is static  # unchanged
 
 
