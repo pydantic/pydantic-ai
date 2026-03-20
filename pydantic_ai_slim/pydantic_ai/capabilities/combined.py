@@ -1,16 +1,15 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 
 from pydantic_ai import _instructions, _system_prompt
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
-from pydantic_ai.messages import ModelMessage, ModelResponse
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.messages import ModelResponse
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, RunContext
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetFunc
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from .abstract import AbstractCapability
+from .abstract import AbstractCapability, BeforeModelRequestContext
 
 
 @dataclass
@@ -31,13 +30,27 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             instructions.extend(_instructions.normalize_instructions(capability.get_instructions()))
         return instructions or None
 
-    def get_model_settings(self) -> ModelSettings | None:
-        model_settings: ModelSettings | None = None
+    def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
+        static_settings: ModelSettings | None = None
+        dynamic_settings: list[Callable[[RunContext[AgentDepsT]], ModelSettings]] = []
         for capability in self.capabilities:
             cap_settings = capability.get_model_settings()
-            if cap_settings is not None:
-                model_settings = merge_model_settings(model_settings, cap_settings)
-        return model_settings
+            if cap_settings is None:
+                pass
+            elif callable(cap_settings):
+                dynamic_settings.append(cap_settings)
+            else:
+                static_settings = merge_model_settings(static_settings, cap_settings)
+        if not dynamic_settings:
+            return static_settings
+
+        def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            merged = static_settings
+            for func in dynamic_settings:
+                merged = merge_model_settings(merged, func(ctx))
+            return merged or ModelSettings()
+
+        return resolve
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT] | None:
         toolsets: list[AbstractToolset[AgentDepsT]] = []
@@ -46,6 +59,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if toolset is None:
                 pass
             elif isinstance(toolset, AbstractToolset):
+                # Pyright can't narrow Callable type aliases out of unions after isinstance check
                 toolsets.append(toolset)  # pyright: ignore[reportUnknownArgumentType]
             else:
                 toolsets.append(DynamicToolset[AgentDepsT](toolset_func=toolset))
@@ -60,16 +74,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
-        *,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> tuple[list[ModelMessage], ModelSettings, ModelRequestParameters]:
+        request_context: BeforeModelRequestContext,
+    ) -> BeforeModelRequestContext:
         for capability in self.capabilities:
-            messages, model_settings, model_request_parameters = await capability.before_model_request(
-                ctx, messages=messages, model_settings=model_settings, model_request_parameters=model_request_parameters
-            )
-        return messages, model_settings, model_request_parameters
+            request_context = await capability.before_model_request(ctx, request_context)
+        return request_context
 
     async def after_model_request(
         self,

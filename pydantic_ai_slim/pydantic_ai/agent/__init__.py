@@ -360,6 +360,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 multiple agents, or None (default) for no limiting. When the limit is reached, additional calls
                 to `run()` or `iter()` will wait until a slot becomes available.
             capabilities: Optional list of capabilities to configure the agent with.
+                Built-in capabilities include [`Instructions`][pydantic_ai.capabilities.Instructions],
+                [`Thinking`][pydantic_ai.capabilities.Thinking],
+                [`ModelSettings`][pydantic_ai.capabilities.ModelSettings], and
+                [`WebSearch`][pydantic_ai.capabilities.WebSearch].
+                Custom capabilities can be created by subclassing
+                [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
         """
         if model is None or defer_model_check:
             self._model = model
@@ -374,7 +380,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         for history_processor in history_processors or []:
             capabilities.append(HistoryProcessorCapability(history_processor))
 
-        self.root_capability = CombinedCapability(capabilities)
+        self._root_capability = CombinedCapability(capabilities)
 
         self.model_settings = model_settings
 
@@ -395,7 +401,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_validators = []
 
         self._instructions = _instructions.normalize_instructions(instructions)
-        self._cap_instructions = _instructions.normalize_instructions(self.root_capability.get_instructions())
+        self._cap_instructions = _instructions.normalize_instructions(self._root_capability.get_instructions())
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -408,7 +414,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._validation_context = validation_context
 
         self._builtin_tools = list(builtin_tools)
-        self._cap_builtin_tools = list(self.root_capability.get_builtin_tools())
+        self._cap_builtin_tools = list(self._root_capability.get_builtin_tools())
 
         self._prepare_tools = prepare_tools
         self._prepare_output_tools = prepare_output_tools
@@ -434,7 +440,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._user_toolsets = [toolset for toolset in agent_toolsets if isinstance(toolset, AbstractToolset)]
 
         # Capability-contributed toolsets (stored separately for per-run re-extraction)
-        cap_toolset = self.root_capability.get_toolset()
+        cap_toolset = self._root_capability.get_toolset()
         self._cap_toolsets: list[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] = (
             [cap_toolset] if cap_toolset is not None else []
         )
@@ -757,6 +763,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Optional handler for events from the model's streaming response and the agent's execution of tools."""
         return self._event_stream_handler
 
+    @property
+    def history_processors(self) -> tuple[HistoryProcessor[AgentDepsT], ...]:
+        """History processors extracted from the agent's capabilities."""
+        return tuple(
+            cap.processor for cap in self._root_capability.capabilities if isinstance(cap, HistoryProcessorCapability)
+        )
+
     def __repr__(self) -> str:
         return f'{type(self).__name__}(model={self.model!r}, name={self.name!r}, end_strategy={self.end_strategy!r}, model_settings={self.model_settings!r}, output_type={self.output_type!r}, instrument={self.instrument!r})'
 
@@ -953,6 +966,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
             merged = merge_model_settings(base, resolved_agent)
             run_context.model_settings = merged
+            # Capability settings (e.g. from Thinking, ModelSettings capabilities)
+            cap_settings = self._root_capability.get_model_settings()
+            resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings
+            merged = merge_model_settings(merged, resolved_cap)
+            run_context.model_settings = merged
             resolved_run = run_model_settings(run_context) if callable(run_model_settings) else run_model_settings
             final = merge_model_settings(merged, resolved_run)
             run_context.model_settings = final
@@ -979,8 +997,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
-        run_capability = await self.root_capability.for_run(initial_ctx)
-        if run_capability is not self.root_capability:
+        run_capability = await self._root_capability.for_run(initial_ctx)
+        if run_capability is not self._root_capability:
             cap_instructions = _instructions.normalize_instructions(run_capability.get_instructions())
             cap_builtin_tools = list(run_capability.get_builtin_tools())
             cap_ts = run_capability.get_toolset()

@@ -15,7 +15,7 @@ from pydantic_ai.capabilities import (
     Toolset,
     WebSearch,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, BeforeModelRequestContext
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.messages import (
     ModelMessage,
@@ -336,7 +336,7 @@ def test_agent_from_spec_capabilities_merged():
         capabilities=[ExtraCap()],
     )
     # Should have both the Instructions capability from spec and ExtraCap from arg
-    children = agent.root_capability.capabilities
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
     assert any(isinstance(c, Instructions) for c in children)
     assert any(isinstance(c, ExtraCap) for c in children)
 
@@ -636,33 +636,23 @@ def test_model_settings_from_spec_kwargs():
     assert cap.settings == {'max_tokens': 100}
 
 
-async def test_model_settings_callable_before_model_request():
-    """Callable ModelSettings resolves dynamically in before_model_request."""
-    from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.result import RunUsage
+def test_model_settings_callable_get_model_settings():
+    """Callable ModelSettings returns the callable from get_model_settings for resolution in the chain."""
 
     def dynamic_settings(ctx: RunContext[None]) -> _ModelSettings:
         return _ModelSettings(temperature=0.9)
 
     cap = ModelSettings(settings=dynamic_settings)
 
-    # get_model_settings returns None for callable settings (they're resolved per-request)
-    assert cap.get_model_settings() is None
-
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
-    _, settings, _ = await cap.before_model_request(
-        ctx,
-        messages=[],
-        model_settings=_ModelSettings(max_tokens=100),
-        model_request_parameters=ModelRequestParameters(),
-    )
-    assert settings.get('temperature') == 0.9
-    assert settings.get('max_tokens') == 100
+    # get_model_settings returns the callable directly — resolution happens in the agent's settings chain
+    result = cap.get_model_settings()
+    assert callable(result)
+    assert result is dynamic_settings
 
 
 async def test_model_settings_static_before_model_request():
     """Static ModelSettings passes through before_model_request without modification."""
+    from pydantic_ai.capabilities.abstract import BeforeModelRequestContext
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.test import TestModel
     from pydantic_ai.result import RunUsage
@@ -671,14 +661,16 @@ async def test_model_settings_static_before_model_request():
 
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
     input_settings = _ModelSettings(temperature=0.5)
-    _, settings, _ = await cap.before_model_request(
+    result = await cap.before_model_request(
         ctx,
-        messages=[],
-        model_settings=input_settings,
-        model_request_parameters=ModelRequestParameters(),
+        BeforeModelRequestContext(
+            messages=[],
+            model_settings=input_settings,
+            model_request_parameters=ModelRequestParameters(),
+        ),
     )
     # Static settings are handled by get_model_settings, not before_model_request
-    assert settings is input_settings
+    assert result.model_settings is input_settings
 
 
 def test_abstract_capability_get_model_settings_default():
@@ -702,6 +694,7 @@ def test_combined_capability_get_model_settings_merge():
     )
     merged = caps.get_model_settings()
     assert merged is not None
+    assert not callable(merged)
     assert merged.get('max_tokens') == 100
     assert merged.get('temperature') == 0.5
 
@@ -917,14 +910,11 @@ async def test_concurrent_runs_capability_isolation():
         async def before_model_request(
             self,
             ctx: RunContext[None],
-            *,
-            messages: list[ModelMessage],
-            model_settings: _ModelSettings,
-            model_request_parameters: Any,
-        ) -> tuple[list[ModelMessage], _ModelSettings, Any]:
+            request_context: BeforeModelRequestContext,
+        ) -> BeforeModelRequestContext:
             self.request_count += 1
             assert self.request_count == 1, f'Expected 1, got {self.request_count} — state leaked between runs!'
-            return messages, model_settings, model_request_parameters
+            return request_context
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('Done')])
@@ -935,3 +925,28 @@ async def test_concurrent_runs_capability_isolation():
     results = await asyncio.gather(agent.run('A'), agent.run('B'))
     assert results[0].output == 'Done'
     assert results[1].output == 'Done'
+
+
+async def test_thinking_capability_applies_settings():
+    """Thinking capability's model settings are applied to the model request."""
+
+    agent = Agent('test', capabilities=[Thinking()])
+    result = await agent.run('hi')
+    # The agent ran successfully — verify that the Thinking settings were included
+    # by checking that the capability produces non-None model settings
+    cap_settings = agent._root_capability.get_model_settings()  # pyright: ignore[reportPrivateUsage]
+    assert cap_settings is not None
+    assert not callable(cap_settings)
+    assert cap_settings.get('anthropic_thinking') == {'type': 'adaptive'}
+    assert cap_settings.get('openai_reasoning_effort') == 'high'
+    # Verify the run itself succeeds
+    assert result.output is not None
+
+
+def test_thinking_from_spec_rejects_args():
+    """Thinking.from_spec raises TypeError when given arguments."""
+    with pytest.raises(TypeError, match='does not accept arguments'):
+        Thinking.from_spec('extra')
+
+    with pytest.raises(TypeError, match='does not accept arguments'):
+        Thinking.from_spec(budget=100)

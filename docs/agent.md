@@ -719,11 +719,20 @@ Both agent-level and run-level `model_settings` accept a callable that receives 
 The callable is invoked before each model request, so settings can vary per step.
 The current resolved settings so far are available via `ctx.model_settings` inside the callable.
 
-```py test="skip"
+Settings are resolved in layers, each merged on top of the previous:
+
+1. **Model defaults** (`model.settings`)
+2. **Agent-level** (`Agent(model_settings=...)`)
+3. **Capability-level** (e.g. from `Thinking()`, `ModelSettings(...)` capabilities)
+4. **Run-level** (`agent.run(model_settings=...)`)
+
+Inside a callable, `ctx.model_settings` contains the result of all previous layers. To reset a field set by a previous layer, set it explicitly (e.g. `{'temperature': None}`).
+
+```python
 from pydantic_ai import Agent, ModelSettings
 
 agent = Agent(
-    'openai:gpt-5',
+    'test',
     model_settings=lambda ctx: ModelSettings(
         temperature=0.0 if ctx.run_step <= 1 else 0.7,
     ),
