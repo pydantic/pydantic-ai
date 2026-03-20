@@ -366,8 +366,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities: Optional list of capabilities to configure the agent with.
                 Built-in capabilities include [`Instructions`][pydantic_ai.capabilities.Instructions],
                 [`Thinking`][pydantic_ai.capabilities.Thinking],
-                [`ModelSettings`][pydantic_ai.capabilities.ModelSettings], and
-                [`WebSearch`][pydantic_ai.capabilities.WebSearch].
+                [`ModelSettings`][pydantic_ai.capabilities.ModelSettings],
+                [`WebSearch`][pydantic_ai.capabilities.WebSearch],
+                [`HistoryProcessorCapability`][pydantic_ai.capabilities.HistoryProcessorCapability], and
+                [`Toolset`][pydantic_ai.capabilities.Toolset].
                 Custom capabilities can be created by subclassing
                 [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
         """
@@ -380,8 +382,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._description = description
         self.end_strategy = end_strategy
 
+        self.history_processors: list[HistoryProcessor[AgentDepsT]] = list(history_processors or [])
+
         capabilities = list(capabilities or [])
-        for history_processor in history_processors or []:
+        for history_processor in self.history_processors:
             capabilities.append(HistoryProcessorCapability(history_processor))
 
         self.root_capability = CombinedCapability(capabilities)
@@ -764,13 +768,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Optional handler for events from the model's streaming response and the agent's execution of tools."""
         return self._event_stream_handler
 
-    @property
-    def history_processors(self) -> tuple[HistoryProcessor[AgentDepsT], ...]:
-        """History processors extracted from the agent's capabilities."""
-        return tuple(
-            cap.processor for cap in self.root_capability.capabilities if isinstance(cap, HistoryProcessorCapability)
-        )
-
     def __repr__(self) -> str:
         return f'{type(self).__name__}(model={self.model!r}, name={self.name!r}, end_strategy={self.end_strategy!r}, model_settings={self.model_settings!r}, output_type={self.output_type!r}, instrument={self.instrument!r})'
 
@@ -964,22 +961,29 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_model_settings = model_settings if model_settings_override is None else None
 
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
-            base = model_used.settings
-            run_context.model_settings = base
+            # Resolve settings in layers, each merged on top of the previous.
+            # Before calling each callable, set run_context.model_settings so it
+            # can see the merged result of all previous layers.
+            merged = model_used.settings
+
+            run_context.model_settings = merged
             resolved_agent = (
                 agent_model_settings(run_context) if callable(agent_model_settings) else agent_model_settings
             )
-            merged = merge_model_settings(base, resolved_agent)
-            run_context.model_settings = merged
+            merged = merge_model_settings(merged, resolved_agent)
+
             # Capability settings (e.g. from Thinking, ModelSettings capabilities)
+            run_context.model_settings = merged
             cap_settings = self.root_capability.get_model_settings()
             resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings
             merged = merge_model_settings(merged, resolved_cap)
+
             run_context.model_settings = merged
             resolved_run = run_model_settings(run_context) if callable(run_model_settings) else run_model_settings
-            final = merge_model_settings(merged, resolved_run)
-            run_context.model_settings = final
-            return final
+            merged = merge_model_settings(merged, resolved_run)
+
+            run_context.model_settings = merged
+            return merged
 
         usage_limits = usage_limits or _usage.UsageLimits()
 

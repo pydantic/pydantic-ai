@@ -474,6 +474,15 @@ def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
     return type_hints.get(first_param_name)
 
 
+def get_function_type_hints(func: Any) -> dict[str, Any]:
+    """Resolve type hints for a function, including forward references.
+
+    Wraps `pydantic._internal._typing_extra.get_function_type_hints` so callers
+    don't need to import Pydantic internals directly.
+    """
+    return _typing_extra.get_function_type_hints(func)
+
+
 def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
     """Update $refs in a schema to use the new names from name_mapping."""
     if '$ref' in s:

@@ -726,7 +726,7 @@ Settings are resolved in layers, each merged on top of the previous:
 3. **Capability-level** (e.g. from `Thinking()`, `ModelSettings(...)` capabilities)
 4. **Run-level** (`agent.run(model_settings=...)`)
 
-Inside a callable, `ctx.model_settings` contains the result of all previous layers. To reset a field set by a previous layer, set it explicitly (e.g. `{'temperature': None}`).
+Inside a callable, `ctx.model_settings` contains the merged result of all *previous* layers (position-dependent). For example, an agent-level callable sees only model defaults, while a run-level callable sees model defaults + agent-level + capability-level settings. To reset a field set by a previous layer, set it explicitly (e.g. `{'temperature': None}`).
 
 ```python
 from pydantic_ai import Agent, ModelSettings
