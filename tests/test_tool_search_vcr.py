@@ -21,10 +21,12 @@ from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.run import AgentRunResult
-from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 from .conftest import try_import
+
+with try_import() as evals_available:
+    from pydantic_evals import Case, Dataset
+    from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 with try_import() as anthropic_available:
     import anthropic  # pyright: ignore[reportUnusedImport]  # noqa: F401
@@ -33,6 +35,7 @@ with try_import() as google_available:
     import google.genai  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
 pytestmark = [
+    pytest.mark.skipif(not evals_available(), reason='pydantic-evals not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
