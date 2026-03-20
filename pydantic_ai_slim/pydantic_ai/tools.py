@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from copy import deepcopy
 from dataclasses import KW_ONLY, dataclass, field, fields as dataclass_fields
 from functools import cached_property
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
@@ -471,10 +472,17 @@ class Tool(Generic[ToolAgentDepsT]):
         Returns:
             return a `ToolDefinition` or `None` if the tools should not be registered for this run.
         """
+        # `self.tool_def` is cached and reused across runs. Hand a per-run deep copy to prepare callbacks
+        # so in-place mutations don't leak.
+        #
+        # Example of mutation we intentionally isolate per run:
+        # `tool_def.parameters_json_schema['properties']['name']['description'] = 'Name of the human to greet.'`
+        #
+        # Without this copy, that description could accidentally persist into later runs with different deps.
         base_tool_def = self.tool_def
 
         if self.prepare is not None:
-            return await self.prepare(ctx, base_tool_def)
+            return await self.prepare(ctx, deepcopy(base_tool_def))
         else:
             return base_tool_def
 

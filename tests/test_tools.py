@@ -608,7 +608,8 @@ def test_repeat_tool_by_rename():
     agent = Agent('test')
 
     async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
-        return replace(tool_def, name='bar')
+        tool_def.name = 'bar'
+        return tool_def
 
     @agent.tool_plain
     def bar(x: int, y: str) -> str:  # pragma: no cover
@@ -631,7 +632,8 @@ def test_repeat_tool():
     agent = Agent('test')
 
     async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
-        return replace(tool_def, name='bar')
+        tool_def.name = 'bar'
+        return tool_def
 
     @agent.tool_plain(prepare=change_tool_name)
     def foo(x: int, y: str) -> str:  # pragma: no cover
@@ -1177,6 +1179,59 @@ def test_dynamic_tools_agent_wide():
 
     result = agent.run_sync('', deps=1)
     assert result.output == snapshot('{"foobar":"1 0 a"}')
+
+
+def test_prepare_mutation_does_not_leak_between_runs():
+    test_model = TestModel()
+    agent = Agent(test_model, deps_type=str)
+
+    async def prepare_greet(
+        ctx: RunContext[str], tool_def: ToolDefinition
+    ) -> ToolDefinition | None:
+        if ctx.deps == 'human':
+            tool_def.parameters_json_schema['properties']['name']['description'] = 'Name of the human to greet.'
+        return tool_def
+
+    @agent.tool_plain(prepare=prepare_greet)
+    def greet(name: str) -> str:
+        return f'hello {name}'
+
+    agent.run_sync('', deps='human')
+    assert test_model.last_model_request_parameters is not None
+    human_tool_def = test_model.last_model_request_parameters.function_tools[0]
+    assert human_tool_def.parameters_json_schema['properties']['name']['description'] == 'Name of the human to greet.'
+
+    agent.run_sync('', deps='machine')
+    assert test_model.last_model_request_parameters is not None
+    machine_tool_def = test_model.last_model_request_parameters.function_tools[0]
+    assert 'description' not in machine_tool_def.parameters_json_schema['properties']['name']
+
+
+def test_prepare_tools_mutation_does_not_leak_between_runs():
+    test_model = TestModel()
+
+    async def prepare_tool_defs(
+        ctx: RunContext[str], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition] | None:
+        if ctx.deps == 'human':
+            tool_defs[0].description = 'Tool for human prompts'
+        return tool_defs
+
+    agent = Agent(test_model, deps_type=str, prepare_tools=prepare_tool_defs)
+
+    @agent.tool_plain
+    def greet(name: str) -> str:
+        return f'hello {name}'
+
+    agent.run_sync('', deps='human')
+    assert test_model.last_model_request_parameters is not None
+    human_tool_def = test_model.last_model_request_parameters.function_tools[0]
+    assert human_tool_def.description == 'Tool for human prompts'
+
+    agent.run_sync('', deps='machine')
+    assert test_model.last_model_request_parameters is not None
+    machine_tool_def = test_model.last_model_request_parameters.function_tools[0]
+    assert machine_tool_def.description is None
 
 
 def test_function_tool_consistent_with_schema():

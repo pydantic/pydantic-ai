@@ -135,6 +135,22 @@ async def test_function_toolset():
     assert await bar_toolset.handle_call(ToolCallPart(tool_name='bar_add', args={'a': 1, 'b': 2})) == 3
 
 
+async def test_toolset_tool_python_signature_property():
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    managed_toolset = await ToolManager[None](toolset).for_run_step(build_run_context(None))
+    assert managed_toolset.tools is not None
+
+    sig = managed_toolset.tools['add'].python_signature
+    assert sig.name == 'add'
+    assert list(sig.params) == ['a', 'b']
+    assert str(sig.return_type) == 'int'
+
+
 async def test_function_toolset_with_defaults():
     defaults_toolset = FunctionToolset[None](require_parameter_descriptions=True)
 

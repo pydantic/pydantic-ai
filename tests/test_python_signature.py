@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import typing
+from dataclasses import replace
 from typing import Optional, Union
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, RootModel
+from typing_extensions import TypedDict
 
 from pydantic_ai._python_signature import (
     FunctionParam,
@@ -16,6 +19,10 @@ from pydantic_ai._python_signature import (
     TypeSignature,
     UnionTypeExpr,
     _annotation_to_type_expr,  # pyright: ignore[reportPrivateUsage]
+    _collect_referenced_types,  # pyright: ignore[reportPrivateUsage]
+    _get_schema_from_type,  # pyright: ignore[reportPrivateUsage]
+    _get_type_name,  # pyright: ignore[reportPrivateUsage]
+    _schema_allows_null,  # pyright: ignore[reportPrivateUsage]
     _to_pascal_case,  # pyright: ignore[reportPrivateUsage]
     collect_unique_referenced_types,
     dedup_referenced_types,
@@ -24,9 +31,23 @@ from pydantic_ai._python_signature import (
     schema_to_signature,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.tools import FunctionToolDefinition
+from pydantic_ai.tools import FunctionToolDefinition, Tool, ToolDefinition
 
 pytestmark = pytest.mark.anyio
+
+
+def test_render_function_signature_with_no_params():
+    sig = FunctionSignature(name='ping', params={}, return_type='None')
+    assert str(sig) == 'async def ping() -> None:\n    ...'
+
+
+def test_get_schema_from_type_uses_type_adapter_for_typed_dict():
+    class _Payload(TypedDict):
+        value: int
+
+    schema = _get_schema_from_type(_Payload)
+    assert schema['type'] == 'object'
+    assert 'value' in schema.get('properties', {})
 
 
 def test_dedup_referenced_types_substring_names():
@@ -115,6 +136,64 @@ def test_dedup_identical_types_unified():
     # collect_unique_referenced_types emits the definition only once
     defs = collect_unique_referenced_types([sig1, sig2])
     assert len(defs) == 1
+
+
+def test_dedup_replaces_nested_generic_and_union_refs_with_canonical():
+    user1 = TypeSignature(
+        name='User',
+        fields={
+            'name': TypeFieldSignature(name='name', type='str', required=True, description=None),
+        },
+    )
+    user2 = TypeSignature(
+        name='User',
+        fields={
+            'name': TypeFieldSignature(name='name', type='str', required=True, description=None),
+        },
+    )
+    wrapper = TypeSignature(
+        name='Wrapper',
+        fields={
+            'users': TypeFieldSignature(
+                name='users',
+                type=GenericTypeExpr(base='list', args=[user2]),
+                required=True,
+                description=None,
+            ),
+            'maybe_user': TypeFieldSignature(
+                name='maybe_user',
+                type=UnionTypeExpr(members=[user2, 'None']),
+                required=False,
+                description=None,
+            ),
+        },
+    )
+
+    sig1 = FunctionSignature(
+        name='tool_a',
+        params={'user': FunctionParam(name='user', type=user1, default=None)},
+        return_type='Any',
+        referenced_types=[user1],
+    )
+    sig2 = FunctionSignature(
+        name='tool_b',
+        params={'wrapper': FunctionParam(name='wrapper', type=wrapper, default=None)},
+        return_type=GenericTypeExpr(base='list', args=[user2]),
+        referenced_types=[user2, wrapper],
+    )
+
+    dedup_referenced_types([sig1, sig2])
+
+    users_expr = wrapper.fields['users'].type
+    maybe_user_expr = wrapper.fields['maybe_user'].type
+    return_expr = sig2.return_type
+
+    assert isinstance(users_expr, GenericTypeExpr)
+    assert isinstance(maybe_user_expr, UnionTypeExpr)
+    assert isinstance(return_expr, GenericTypeExpr)
+    assert users_expr.args[0] is user1
+    assert maybe_user_expr.members[0] is user1
+    assert return_expr.args[0] is user1
 
 
 def test_dedup_mixed_identical_and_conflicting_from_schemas():
@@ -319,8 +398,6 @@ def test_to_pascal_case_edge_cases():
 
 def test_function_tool_definition_produces_same_signature_as_function_based():
     """FunctionToolDefinition.python_signature matches the old FunctionToolsetTool approach."""
-    from pydantic_ai._python_signature import function_to_signature
-    from pydantic_ai.tools import Tool
 
     def my_tool(x: int, y: str = 'hello') -> bool:
         """A test tool."""
@@ -339,9 +416,6 @@ def test_function_tool_definition_produces_same_signature_as_function_based():
 
 def test_tool_definition_cached_property_reset_on_replace():
     """dataclasses.replace() on a ToolDefinition resets the cached python_signature."""
-    from dataclasses import replace
-
-    from pydantic_ai.tools import ToolDefinition
 
     td = ToolDefinition(
         name='test_tool',
@@ -730,6 +804,20 @@ async def t2(*, x: str | None = None) -> Any:
     ...\
 """)
 
+    # Optional with explicit default preserves default value
+    assert str(
+        schema_to_signature(
+            't_default',
+            {
+                'type': 'object',
+                'properties': {'x': {'type': 'integer', 'default': 7}},
+            },
+        )
+    ) == snapshot("""\
+async def t_default(*, x: int = 7) -> Any:
+    ...\
+""")
+
     # Unresolvable return_schema → JSON blob in description
     sig3 = schema_to_signature(
         't3',
@@ -799,7 +887,6 @@ def test_function_tool_definition_eq_non_tool():
 
 def test_get_type_name_repr_fallback():
     """Types without __name__ use repr fallback, NoneType returns 'None'."""
-    from pydantic_ai._python_signature import _get_type_name  # pyright: ignore[reportPrivateUsage]
 
     # NoneType returns 'None'
     assert _get_type_name(type(None)) == 'None'
@@ -810,8 +897,6 @@ def test_get_type_name_repr_fallback():
 
 def test_function_signature_literal_annotation():
     """Literal type annotations exercise the repr fallback in _get_type_name."""
-    import typing
-
     ns: dict[str, object] = {'typing': typing}
     exec("def func(x: typing.Literal['a', 'b']) -> None: ...", ns)
     sig = function_to_signature(ns['func'], name='func')  # pyright: ignore[reportArgumentType]
@@ -820,8 +905,6 @@ def test_function_signature_literal_annotation():
 
 def test_annotation_to_type_expr_bare_generic():
     """Bare generic (origin but no type args) returns the origin's type name."""
-    import typing
-
     # typing.List has __origin__=list but no __args__
     result = _annotation_to_type_expr(typing.List, {})  # noqa: UP006
     assert result == 'list'
@@ -842,8 +925,6 @@ def test_function_signature_nameerror_fallback():
 
 def test_schema_allows_null_anyof():
     """_schema_allows_null detects null in anyOf."""
-    from pydantic_ai._python_signature import _schema_allows_null  # pyright: ignore[reportPrivateUsage]
-
     assert _schema_allows_null({'anyOf': [{'type': 'string'}, {'type': 'null'}]}) is True
     assert _schema_allows_null({'anyOf': [{'type': 'string'}]}) is False
 
@@ -1051,8 +1132,6 @@ async def tool(*, item: Container) -> Any:
 
 def test_collect_referenced_types_skips_already_registered():
     """When a $def name is already in referenced_types, _collect_referenced_types skips it."""
-    from pydantic_ai._python_signature import _collect_referenced_types  # pyright: ignore[reportPrivateUsage]
-
     class _Address(BaseModel):
         street: str
 
