@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Generic
 
@@ -64,8 +64,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return static instructions to include in the system prompt, or None."""
         return None
 
-    def get_model_settings(self) -> ModelSettings | None:
-        """Return static model settings to merge into the agent's defaults, or None."""
+    def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
+        """Return model settings to merge into the agent's defaults, or None.
+
+        Can return a static `ModelSettings` dict or a callable that receives
+        `RunContext` and is resolved before each model request.
+        """
         return None
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT] | None:

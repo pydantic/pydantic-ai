@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from pydantic_ai import _instructions, _system_prompt
@@ -24,13 +24,27 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             instructions.extend(_instructions.normalize_instructions(capability.get_instructions()))
         return instructions or None
 
-    def get_model_settings(self) -> ModelSettings | None:
-        model_settings: ModelSettings | None = None
+    def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
+        static_settings: ModelSettings | None = None
+        dynamic_settings: list[Callable[[RunContext[AgentDepsT]], ModelSettings]] = []
         for capability in self.capabilities:
             cap_settings = capability.get_model_settings()
-            if cap_settings is not None:
-                model_settings = merge_model_settings(model_settings, cap_settings)
-        return model_settings
+            if cap_settings is None:
+                pass
+            elif callable(cap_settings):
+                dynamic_settings.append(cap_settings)
+            else:
+                static_settings = merge_model_settings(static_settings, cap_settings)
+        if not dynamic_settings:
+            return static_settings
+
+        def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
+            merged = static_settings
+            for func in dynamic_settings:
+                merged = merge_model_settings(merged, func(ctx))
+            return merged  # type: ignore[return-value]
+
+        return resolve
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT] | None:
         toolsets: list[AbstractToolset[AgentDepsT]] = []

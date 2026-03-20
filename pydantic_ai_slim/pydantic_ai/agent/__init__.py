@@ -961,7 +961,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_context.model_settings = merged
             # Capability settings (e.g. from Thinking, ModelSettings capabilities)
             cap_settings = self._root_capability.get_model_settings()
-            merged = merge_model_settings(merged, cap_settings)
+            resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings
+            merged = merge_model_settings(merged, resolved_cap)
             run_context.model_settings = merged
             resolved_run = run_model_settings(run_context) if callable(run_model_settings) else run_model_settings
             final = merge_model_settings(merged, resolved_run)

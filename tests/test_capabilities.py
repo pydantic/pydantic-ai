@@ -630,32 +630,18 @@ def test_model_settings_from_spec_kwargs():
     assert cap.settings == {'max_tokens': 100}
 
 
-async def test_model_settings_callable_before_model_request():
-    """Callable ModelSettings resolves dynamically in before_model_request."""
-    from pydantic_ai.capabilities.abstract import BeforeModelRequestContext
-    from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.result import RunUsage
+def test_model_settings_callable_get_model_settings():
+    """Callable ModelSettings returns the callable from get_model_settings for resolution in the chain."""
 
     def dynamic_settings(ctx: RunContext[None]) -> _ModelSettings:
         return _ModelSettings(temperature=0.9)
 
     cap = ModelSettings(settings=dynamic_settings)
 
-    # get_model_settings returns None for callable settings (they're resolved per-request)
-    assert cap.get_model_settings() is None
-
-    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
-    result = await cap.before_model_request(
-        ctx,
-        BeforeModelRequestContext(
-            messages=[],
-            model_settings=_ModelSettings(max_tokens=100),
-            model_request_parameters=ModelRequestParameters(),
-        ),
-    )
-    assert result.model_settings.get('temperature') == 0.9
-    assert result.model_settings.get('max_tokens') == 100
+    # get_model_settings returns the callable directly — resolution happens in the agent's settings chain
+    result = cap.get_model_settings()
+    assert callable(result)
+    assert result is dynamic_settings
 
 
 async def test_model_settings_static_before_model_request():
@@ -702,6 +688,7 @@ def test_combined_capability_get_model_settings_merge():
     )
     merged = caps.get_model_settings()
     assert merged is not None
+    assert not callable(merged)
     assert merged.get('max_tokens') == 100
     assert merged.get('temperature') == 0.5
 
@@ -827,9 +814,9 @@ async def test_thinking_capability_applies_settings():
     result = await agent.run('hi')
     # The agent ran successfully — verify that the Thinking settings were included
     # by checking that the capability produces non-None model settings
-    assert agent._root_capability.get_model_settings() is not None  # pyright: ignore[reportPrivateUsage]
     cap_settings = agent._root_capability.get_model_settings()  # pyright: ignore[reportPrivateUsage]
     assert cap_settings is not None
+    assert not callable(cap_settings)
     assert cap_settings.get('anthropic_thinking') == {'type': 'adaptive'}
     assert cap_settings.get('openai_reasoning_effort') == 'high'
     # Verify the run itself succeeds
