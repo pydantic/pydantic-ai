@@ -71,8 +71,8 @@ jobs:
             MAX_OPEN=$((MERGED_COUNT + 1))
             # Count open PRs by this author, excluding the current one.
             # Uses REST API (not search) to avoid indexing lag on newly opened PRs.
-            OPEN_COUNT=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate \
-              --jq "[.[] | select(.user.login == \"${PR_AUTHOR}\" and .number != ${PR_NUMBER})] | length")
+            OPEN_COUNT=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate --slurp \
+              --jq "[.[][] | select(.user.login == \"${PR_AUTHOR}\" and .number != ${PR_NUMBER})] | length")
             echo "Open PRs (excluding this one): ${OPEN_COUNT} (limit: ${MAX_OPEN})."
 
             if [ "$OPEN_COUNT" -ge "$MAX_OPEN" ]; then
@@ -123,7 +123,7 @@ jobs:
 
           # Fetch all open PRs once for duplicate detection.
           # This is only open PRs (not closed), so the volume is manageable.
-          ALL_OPEN_PRS=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate) || ALL_OPEN_PRS="[]"
+          ALL_OPEN_PRS=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate --slurp --jq 'flatten') || ALL_OPEN_PRS="[]"
 
           FOUND_OPEN_ISSUE="false"
           FOUND_CLOSED_ISSUE="false"
