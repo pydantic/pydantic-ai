@@ -395,7 +395,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_validators = []
 
         self._instructions = _instructions.normalize_instructions(instructions)
-        self._instructions.extend(_instructions.normalize_instructions(self.root_capability.get_instructions()))
+        self._cap_instructions = _instructions.normalize_instructions(self.root_capability.get_instructions())
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -408,7 +408,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._validation_context = validation_context
 
         self._builtin_tools = list(builtin_tools)
-        self._builtin_tools.extend(self.root_capability.get_builtin_tools())
+        self._cap_builtin_tools = list(self.root_capability.get_builtin_tools())
 
         self._prepare_tools = prepare_tools
         self._prepare_output_tools = prepare_output_tools
@@ -424,17 +424,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_schema=self._output_schema,
         )
 
-        toolsets = list(toolsets or [])
-        toolset = self.root_capability.get_toolset()
-        if toolset is not None:
-            toolsets.append(toolset)
-
+        # Agent-direct toolsets
+        agent_toolsets = list(toolsets or [])
         self._dynamic_toolsets = [
             DynamicToolset[AgentDepsT](toolset_func=toolset)
-            for toolset in toolsets or []
+            for toolset in agent_toolsets
             if not isinstance(toolset, AbstractToolset)
         ]
-        self._user_toolsets = [toolset for toolset in toolsets or [] if isinstance(toolset, AbstractToolset)]
+        self._user_toolsets = [toolset for toolset in agent_toolsets if isinstance(toolset, AbstractToolset)]
+
+        # Capability-contributed toolsets (stored separately for per-run re-extraction)
+        cap_toolset = self.root_capability.get_toolset()
+        self._cap_toolsets: list[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] = (
+            [cap_toolset] if cap_toolset is not None else []
+        )
 
         self._event_stream_handler = event_stream_handler
 
@@ -922,7 +925,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if output_toolset:
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
-        toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
 
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
@@ -958,7 +960,52 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         usage_limits = usage_limits or _usage.UsageLimits()
 
-        instructions_literal, instructions_functions = self._get_instructions(additional_instructions=instructions)
+        if isinstance(model_used, InstrumentedModel):
+            instrumentation_settings = model_used.instrumentation_settings
+            tracer = model_used.instrumentation_settings.tracer
+        else:
+            instrumentation_settings = None
+            tracer = NoOpTracer()
+
+        # Build initial RunContext for for_run lifecycle hooks
+        initial_ctx = RunContext[AgentDepsT](
+            deps=deps,
+            model=model_used,
+            usage=usage,
+            prompt=user_prompt,
+            messages=state.message_history,
+            tracer=tracer,
+            run_step=0,
+        )
+
+        # Per-run capability: re-extract get_*() if for_run returns a different instance
+        run_capability = await self.root_capability.for_run(initial_ctx)
+        if run_capability is not self.root_capability:
+            cap_instructions = _instructions.normalize_instructions(run_capability.get_instructions())
+            cap_builtin_tools = list(run_capability.get_builtin_tools())
+            cap_ts = run_capability.get_toolset()
+            cap_toolsets: list[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] = (
+                [cap_ts] if cap_ts is not None else []
+            )
+        else:
+            cap_instructions = None  # use init-time defaults
+            cap_builtin_tools = self._cap_builtin_tools
+            cap_toolsets = None  # use init-time defaults
+
+        # Build toolset with per-run capability contributions
+        toolset = self._get_toolset(
+            output_toolset=output_toolset,
+            additional_toolsets=toolsets,
+            cap_toolsets=cap_toolsets,
+        )
+        toolset = await toolset.for_run(initial_ctx)
+        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
+
+        # Build instructions with per-run capability contributions
+        instructions_literal, instructions_functions = self._get_instructions(
+            additional_instructions=instructions,
+            cap_instructions=cap_instructions,
+        )
 
         async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
             parts = [
@@ -970,26 +1017,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if not parts:
                 return None
             return '\n\n'.join(parts).strip()
-
-        if isinstance(model_used, InstrumentedModel):
-            instrumentation_settings = model_used.instrumentation_settings
-            tracer = model_used.instrumentation_settings.tracer
-        else:
-            instrumentation_settings = None
-            tracer = NoOpTracer()
-
-        # Build initial RunContext for for_run lifecycle hook
-        initial_ctx = RunContext[AgentDepsT](
-            deps=deps,
-            model=model_used,
-            usage=usage,
-            prompt=user_prompt,
-            messages=state.message_history,
-            tracer=tracer,
-            run_step=0,
-        )
-        toolset = await toolset.for_run(initial_ctx)
-        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
@@ -1004,8 +1031,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_schema=output_schema,
             output_validators=output_validators,
             validation_context=self._validation_context,
-            root_capability=self.root_capability,
-            builtin_tools=[*self._builtin_tools, *(builtin_tools or [])],
+            root_capability=run_capability,
+            builtin_tools=[*self._builtin_tools, *cap_builtin_tools, *(builtin_tools or [])],
             tool_manager=tool_manager,
             tracer=tracer,
             get_instructions=get_instructions,
@@ -1840,12 +1867,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _get_instructions(
         self,
         additional_instructions: _instructions.Instructions[AgentDepsT] = None,
+        cap_instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] | None = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         override_instructions = self._override_instructions.get()
         if override_instructions:
             instructions = override_instructions.value
         else:
             instructions = self._instructions.copy()
+            instructions.extend(cap_instructions if cap_instructions is not None else self._cap_instructions)
             if additional_instructions is not None:
                 instructions.extend(_instructions.normalize_instructions(additional_instructions))
 
@@ -1868,14 +1897,44 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        cap_toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
     ) -> AbstractToolset[AgentDepsT]:
         """Get the complete toolset.
 
         Args:
             output_toolset: The output toolset to use instead of the one built at agent construction time.
             additional_toolsets: Additional toolsets to add, unless toolsets have been overridden.
+            cap_toolsets: Per-run capability toolsets to use instead of the init-time capability toolsets.
         """
-        toolsets = self.toolsets
+        toolsets: Sequence[AbstractToolset[AgentDepsT]]
+        if cap_toolsets is not None:
+            # Build toolset list with per-run capability toolsets instead of init-time ones
+            base: list[AbstractToolset[AgentDepsT]] = []
+
+            if some_tools := self._override_tools.get():
+                function_toolset = _AgentFunctionToolset(
+                    some_tools.value,
+                    max_retries=self._max_tool_retries,
+                    timeout=self._tool_timeout,
+                    output_schema=self._output_schema,
+                )
+            else:
+                function_toolset = self._function_toolset
+            base.append(function_toolset)
+
+            if some_user_toolsets := self._override_toolsets.get():
+                base.extend(some_user_toolsets.value)
+            else:
+                base.extend(self._user_toolsets)
+                base.extend(self._dynamic_toolsets)
+                for cap_ts in cap_toolsets:
+                    if isinstance(cap_ts, AbstractToolset):
+                        base.append(cap_ts)
+                    else:
+                        base.append(DynamicToolset(cap_ts))
+            toolsets = base
+        else:
+            toolsets = self.toolsets
         # Don't add additional toolsets if the toolsets have been overridden
         if additional_toolsets and self._override_toolsets.get() is None:
             toolsets = [*toolsets, *additional_toolsets]
@@ -1915,7 +1974,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if some_user_toolsets := self._override_toolsets.get():
             user_toolsets = some_user_toolsets.value
         else:
-            user_toolsets = [*self._user_toolsets, *self._dynamic_toolsets]
+            user_toolsets: list[AbstractToolset[AgentDepsT]] = [*self._user_toolsets, *self._dynamic_toolsets]
+            for cap_ts in self._cap_toolsets:
+                if isinstance(cap_ts, AbstractToolset):
+                    user_toolsets.append(cap_ts)
+                else:
+                    user_toolsets.append(DynamicToolset(cap_ts))
         toolsets.extend(user_toolsets)
 
         return toolsets

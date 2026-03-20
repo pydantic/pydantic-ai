@@ -1,5 +1,7 @@
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -16,14 +18,19 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.messages import (
+    ModelMessage,
     ModelRequest,
     ModelResponse,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
+from pydantic_ai.usage import RunUsage
 
 from ._inline_snapshot import snapshot
 
@@ -778,3 +785,153 @@ def test_to_file_with_path_schema_path(tmp_path: str):
     assert resolved_schema.exists()
     content = spec_path.read_text(encoding='utf-8')
     assert 'model: test' in content
+
+
+# --- for_run tests ---
+
+
+def _build_run_context(deps: Any = None) -> RunContext[Any]:
+    return RunContext(deps=deps, model=TestModel(), usage=RunUsage(), run_step=0)
+
+
+async def test_capability_for_run_default_returns_self():
+    """Default for_run returns self."""
+    cap = Instructions(instructions='hello')
+    ctx = _build_run_context()
+    assert await cap.for_run(ctx) is cap
+
+
+async def test_combined_capability_for_run_propagates():
+    """CombinedCapability propagates for_run to children."""
+    cap1 = Instructions(instructions='a')
+    cap2 = Instructions(instructions='b')
+    combined = CombinedCapability([cap1, cap2])
+    ctx = _build_run_context()
+
+    # No child changes → returns self
+    result = await combined.for_run(ctx)
+    assert result is combined
+
+
+async def test_combined_capability_for_run_returns_new_when_child_changes():
+    """CombinedCapability returns new instance when a child's for_run returns different."""
+
+    class PerRunCap(AbstractCapability[None]):
+        def __init__(self, run_id: int = 0):
+            self.run_id = run_id
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            return PerRunCap(run_id=self.run_id + 1)
+
+    static_cap = Instructions(instructions='static')
+    per_run_cap = PerRunCap()
+    combined = CombinedCapability([static_cap, per_run_cap])
+    ctx = _build_run_context()
+
+    result = await combined.for_run(ctx)
+    assert result is not combined
+    assert isinstance(result, CombinedCapability)
+    assert result.capabilities[0] is static_cap  # unchanged
+    new_per_run = result.capabilities[1]
+    assert isinstance(new_per_run, PerRunCap)
+    assert new_per_run.run_id == 1
+
+
+async def test_for_run_with_different_toolset():
+    """When for_run returns a capability with a different get_toolset(), the per-run toolset is used."""
+    toolset_a = FunctionToolset(id='a')
+
+    @toolset_a.tool_plain
+    def tool_a() -> str:
+        return 'a'
+
+    toolset_b = FunctionToolset(id='b')
+
+    @toolset_b.tool_plain
+    def tool_b() -> str:
+        return 'b'
+
+    class SwitchingCap(AbstractCapability[None]):
+        def __init__(self, use_b: bool = False):
+            self.use_b = use_b
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            return SwitchingCap(use_b=True)
+
+        def get_toolset(self) -> AbstractToolset[None]:
+            return toolset_b if self.use_b else toolset_a
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Check which tools are available
+        tool_names = [t.name for t in info.function_tools]
+        return ModelResponse(parts=[TextPart(f'tools: {",".join(sorted(tool_names))}')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[SwitchingCap()])
+
+    # At run time, for_run switches to toolset_b
+    result = await agent.run('Hello')
+    assert 'tool_b' in result.output
+
+
+async def test_for_run_with_different_instructions():
+    """When for_run returns a capability with different get_instructions(), per-run instructions are used."""
+
+    class DynamicInstructionsCap(AbstractCapability[None]):
+        def __init__(self, run_instructions: str = 'init-time'):
+            self._run_instructions = run_instructions
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            return DynamicInstructionsCap(run_instructions='per-run')
+
+        def get_instructions(self) -> str:
+            return self._run_instructions
+
+    captured_messages: list[ModelMessage] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured_messages.extend(messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[DynamicInstructionsCap()])
+    await agent.run('Hello')
+
+    # The per-run instructions should appear in the request's instructions field
+    instructions_found = [
+        msg.instructions for msg in captured_messages if isinstance(msg, ModelRequest) and msg.instructions
+    ]
+    assert any('per-run' in i for i in instructions_found), (
+        f'Expected per-run instructions in messages, got: {captured_messages}'
+    )
+
+
+async def test_concurrent_runs_capability_isolation():
+    """Multiple concurrent runs don't share state on stateful capabilities."""
+
+    class CountingCap(AbstractCapability[None]):
+        def __init__(self) -> None:
+            self.request_count = 0
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            return CountingCap()
+
+        async def before_model_request(
+            self,
+            ctx: RunContext[None],
+            *,
+            messages: list[ModelMessage],
+            model_settings: _ModelSettings,
+            model_request_parameters: Any,
+        ) -> tuple[list[ModelMessage], _ModelSettings, Any]:
+            self.request_count += 1
+            assert self.request_count == 1, f'Expected 1, got {self.request_count} — state leaked between runs!'
+            return messages, model_settings, model_request_parameters
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[CountingCap()])
+
+    # Run two concurrent runs — each should get its own CountingCap with count=0
+    results = await asyncio.gather(agent.run('A'), agent.run('B'))
+    assert results[0].output == 'Done'
+    assert results[1].output == 'Done'

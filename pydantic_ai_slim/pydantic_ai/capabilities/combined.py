@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from pydantic_ai import _instructions, _system_prompt
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
@@ -18,6 +18,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     """A capability that combines multiple capabilities."""
 
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        new_caps = [await c.for_run(ctx) for c in self.capabilities]
+        if all(new is old for new, old in zip(new_caps, self.capabilities)):
+            return self
+        return replace(self, capabilities=new_caps)
 
     def get_instructions(self) -> _instructions.Instructions[AgentDepsT] | None:
         instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = []

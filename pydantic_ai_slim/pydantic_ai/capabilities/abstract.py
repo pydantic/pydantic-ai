@@ -34,6 +34,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return cls(*args, **kwargs)
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        """Return the capability instance to use for this agent run.
+
+        Called once per run, before ``get_*()`` re-extraction and before any hooks fire.
+        Override to return a fresh instance for per-run state isolation.
+        Default: return ``self`` (shared across runs).
+        """
+        return self
+
     def get_instructions(self) -> _instructions.Instructions[AgentDepsT] | None:
         """Return static instructions to include in the system prompt, or None."""
         return None
