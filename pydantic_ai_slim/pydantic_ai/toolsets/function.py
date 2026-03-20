@@ -45,7 +45,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     """
 
     tools: dict[str, Tool[Any]]
-    max_retries: int
+    max_retries: int | None
     timeout: float | None
     _id: str | None
     docstring_format: DocstringFormat
@@ -56,7 +56,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
         *,
-        max_retries: int = 1,
+        max_retries: int | None = None,
         timeout: float | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -495,7 +495,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         """
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
-        if tool.max_retries is None:
+        if tool.max_retries is None and self.max_retries is not None:
             tool.max_retries = self.max_retries
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
@@ -509,7 +509,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 ctx,
                 tool_name=original_name,
                 retry=ctx.retries.get(original_name, 0),
-                max_retries=max_retries,
+                max_retries=max_retries if max_retries is not None else ctx.max_retries,
             )
             tool_def = await tool.prepare_tool_def(run_context)
             if not tool_def:

@@ -629,6 +629,55 @@ async def test_tool_manager_retry_logic():
         await another_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
 
 
+async def test_toolset_max_retries_inherits_from_agent():
+    """Agent(retries=...) should propagate to user-provided toolsets that don't set max_retries explicitly."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def always_fails(x: int) -> int:
+        """A tool that always fails."""
+        raise ModelRetry('Always fails')
+
+    # retries=0 means the tool should fail immediately, no retries allowed
+    agent = Agent('test', toolsets=[toolset], retries=0)
+
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
+        await agent.run('call always_fails', model=TestModel())
+
+
+async def test_toolset_explicit_max_retries_overrides_agent():
+    """FunctionToolset(max_retries=X) should take precedence over Agent(retries=Y)."""
+    toolset = FunctionToolset[None](max_retries=2)
+
+    @toolset.tool_plain
+    def always_fails(x: int) -> int:
+        """A tool that always fails."""
+        raise ModelRetry('Always fails')
+
+    agent = Agent('test', toolsets=[toolset], retries=0)
+
+    # Toolset explicitly set max_retries=2, so it should use 2 despite agent retries=0
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 2'):
+        await agent.run('call always_fails', model=TestModel())
+
+
+async def test_tool_explicit_retries_overrides_toolset_and_agent():
+    """Tool(retries=X) should take precedence over both toolset and agent defaults."""
+    from pydantic_ai.tools import Tool
+
+    def always_fails(x: int) -> int:
+        """A tool that always fails."""
+        raise ModelRetry('Always fails')
+
+    toolset = FunctionToolset[None](tools=[Tool(always_fails, max_retries=3)])
+
+    agent = Agent('test', toolsets=[toolset], retries=0)
+
+    # Tool explicitly set max_retries=3
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 3'):
+        await agent.run('call always_fails', model=TestModel())
+
+
 async def test_tool_manager_multiple_failed_tools():
     """Test retry logic when multiple tools fail in the same run step."""
 

@@ -71,7 +71,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     tool_error_behavior: Literal['model_retry', 'error']
     """The behavior to take when a tool error occurs."""
 
-    max_retries: int
+    max_retries: int | None
     """The maximum number of retries to attempt if a tool call fails."""
 
     _id: str | None
@@ -88,7 +88,7 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         | dict[str, Any]
         | str,
         *,
-        max_retries: int = 1,
+        max_retries: int | None = None,
         tool_error_behavior: Literal['model_retry', 'error'] = 'model_retry',
         id: str | None = None,
     ) -> None:

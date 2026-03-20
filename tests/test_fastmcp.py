@@ -263,7 +263,7 @@ class TestFastMCPToolsetToolDiscovery:
             assert test_tool.tool_def.name == 'test_tool'
             assert test_tool.tool_def.description is not None
             assert 'test tool that returns a formatted string' in test_tool.tool_def.description
-            assert test_tool.max_retries == 1
+            assert test_tool.max_retries is None
             assert test_tool.toolset is toolset
 
             # Check that the tool has proper schema

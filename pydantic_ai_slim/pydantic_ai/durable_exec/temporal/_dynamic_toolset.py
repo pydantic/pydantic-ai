@@ -27,7 +27,7 @@ class _ToolInfo:
     """Serializable tool information returned from get_tools_activity."""
 
     tool_def: ToolDefinition
-    max_retries: int
+    max_retries: int | None
 
 
 class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
