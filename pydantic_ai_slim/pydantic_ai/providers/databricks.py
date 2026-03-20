@@ -1,8 +1,10 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Literal, overload
 
+import anyio.to_thread
 import httpx
 
 from pydantic_ai.exceptions import UserError
@@ -27,7 +29,8 @@ try:
     from openai import AsyncOpenAI
 except ImportError as _import_error:
     raise ImportError(
-        'Please install the `openai` package to use the Databricks provider: `pip install "pydantic-ai-slim[openai]"`'
+        'Please install the `openai` package to use the Databricks provider, '
+        'you can use the `databricks` optional group — `pip install "pydantic-ai-slim[databricks]"`'
     ) from _import_error
 
 _has_databricks_sdk = False
@@ -47,6 +50,12 @@ class DatabricksAuth(httpx.Auth):
 
     def auth_flow(self, request: httpx.Request):
         headers = self.db_client.config.authenticate()
+        for k, v in headers.items():
+            request.headers[k] = v
+        yield request
+
+    async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
+        headers = await anyio.to_thread.run_sync(self.db_client.config.authenticate)
         for k, v in headers.items():
             request.headers[k] = v
         yield request

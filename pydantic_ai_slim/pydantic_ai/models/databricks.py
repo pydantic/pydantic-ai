@@ -13,7 +13,6 @@ from pydantic_ai.profiles.databricks import DatabricksModelProfile
 
 from ..providers import Provider
 from ..settings import ModelSettings
-from . import OpenAIChatCompatibleProvider
 
 try:
     from openai import AsyncOpenAI
@@ -88,7 +87,7 @@ class DatabricksModel(OpenAIChatModel):
         self,
         model_name: str,
         *,
-        provider: OpenAIChatCompatibleProvider | Literal['databricks'] | Provider[AsyncOpenAI] = 'databricks',
+        provider: Literal['databricks'] | Provider[AsyncOpenAI] = 'databricks',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -148,7 +147,7 @@ class DatabricksModel(OpenAIChatModel):
         if safety_id := getattr(response, 'safety_identifier', None):
             details['safety_identifier'] = safety_id
 
-        return details
+        return details or None
 
 
 class DatabricksStreamedResponse(OpenAIStreamedResponse):
