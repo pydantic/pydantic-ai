@@ -781,13 +781,21 @@ async def test_native_json_schema_with_function_tools(allow_model_requests: None
 
 
 async def test_stream_tool_output_uses_json_object_mode(allow_model_requests: None):
-    """Streaming with explicit ToolOutput() uses the json_object fallback path."""
+    """Streaming with explicit ToolOutput() uses the json_object fallback path.
 
-    class MyResult(TypedDict, total=False):
+    Sends partial chunks to exercise _try_get_output_tool_from_text with
+    incomplete JSON (returns None) and _validate_required_json_schema (skips
+    incomplete objects).
+    """
+
+    class MyResult(TypedDict):
         value: str
+        count: int
 
     stream = [
-        text_chunk('{"value": "hello"}', finish_reason='stop'),
+        text_chunk('{'),  # partial — required fields missing, tool_from_text returns None
+        text_chunk('"value": "hel'),  # partial — 'count' still missing, validation skips
+        text_chunk('lo", "count": 1}', finish_reason='stop'),  # complete
         chunk([]),
     ]
 
@@ -797,7 +805,7 @@ async def test_stream_tool_output_uses_json_object_mode(allow_model_requests: No
 
     async with agent.run_stream('test') as result:
         v = [c async for c in result.stream_output(debounce_by=None)]
-        assert v == snapshot([{'value': 'hello'}, {'value': 'hello'}])
+        assert v == snapshot([{'value': 'hello', 'count': 1}, {'value': 'hello', 'count': 1}])
 
 
 def test_mistral_json_schema_transformer_strict_true():
