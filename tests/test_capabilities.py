@@ -2382,6 +2382,15 @@ class TestImageGenerationCapability:
         assert cap.get_toolset() is not None
 
 
+try:
+    import mcp  # noqa: F401
+
+    has_mcp = True
+except ImportError:
+    has_mcp = False
+
+
+@pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
 class TestMCPCapability:
     def test_mcp_default(self):
         """MCP(url=...) provides builtin + local fallback."""
