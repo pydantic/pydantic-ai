@@ -548,6 +548,14 @@ class ToolDefinition:
     Defaults to None (no timeout).
     """
 
+    prefer_builtin: str | None = None
+    """If set, this function tool is a local fallback for the builtin tool with the given unique_id.
+
+    When the model supports the corresponding builtin tool natively, this function tool is
+    removed from the request. When the model does not support the builtin, the builtin is
+    removed and this function tool stays.
+    """
+
     @property
     def defer(self) -> bool:
         """Whether calls to this tool will be deferred.

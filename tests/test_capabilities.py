@@ -12,15 +12,18 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
+    MCP,
+    ImageGeneration,
     Instructions,
     ModelSettings,
     Thinking,
     Toolset,
+    WebFetch,
     WebSearch,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability, BeforeModelRequestContext
 from pydantic_ai.capabilities.combined import CombinedCapability
-from pydantic_ai.exceptions import SkipModelRequest, SkipToolExecution, SkipToolValidation
+from pydantic_ai.exceptions import SkipModelRequest, SkipToolExecution, SkipToolValidation, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -49,9 +52,12 @@ pytestmark = [
 def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
+            'ImageGeneration': ImageGeneration,
             'Instructions': Instructions,
+            'MCP': MCP,
             'ModelSettings': ModelSettings,
             'Thinking': Thinking,
+            'WebFetch': WebFetch,
             'WebSearch': WebSearch,
         }
     )
@@ -376,7 +382,15 @@ def test_model_json_schema_with_capabilities():
                 if ref_name.startswith(prefix):
                     capability_names.add(ref_name[len(prefix) :])
 
-    assert capability_names == {'Instructions', 'ModelSettings', 'Thinking', 'WebSearch'}
+    assert capability_names == {
+        'ImageGeneration',
+        'Instructions',
+        'MCP',
+        'ModelSettings',
+        'Thinking',
+        'WebFetch',
+        'WebSearch',
+    }
 
 
 def test_model_json_schema_with_custom_capabilities():
@@ -2154,3 +2168,188 @@ class TestWrapRunStepHook:
         assert log[1] == 'inner:before:UserPromptNode'
         assert log[2] == 'inner:after:ModelRequestNode'
         assert log[3] == 'outer:after:ModelRequestNode'
+
+
+# --- BuiltinToolCapability tests ---
+
+
+class TestWebSearchCapability:
+    def test_websearch_default_with_supporting_model(self):
+        """WebSearch() with a model that supports builtin web search → builtin used, local removed."""
+        from pydantic_ai.builtin_tools import WebSearchTool
+
+        cap = WebSearch()
+        builtins = cap.get_builtin_tools()
+        assert len(builtins) == 1
+        assert isinstance(builtins[0], WebSearchTool)
+
+        toolset = cap.get_toolset()
+        # Should have a toolset (for the DuckDuckGo fallback wrapped with PreparedToolset)
+        assert toolset is not None
+
+    def test_websearch_default_with_nonsupporting_model(self, allow_model_requests: None):
+        """WebSearch() with a model that doesn't support builtin → DuckDuckGo fallback used."""
+        from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+        from pydantic_ai.models.function import FunctionModel
+        from pydantic_ai.profiles import ModelProfile
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # When called with tools, call the first one
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return ModelResponse(parts=[TextPart(content=f'Tool result: {part.content}')])
+            if info.function_tools:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name=info.function_tools[0].name, args='{"query": "test"}', tool_call_id='c1')
+                    ]
+                )
+            return ModelResponse(parts=[TextPart(content='no tools')])
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        agent = Agent(model, capabilities=[WebSearch()])
+        result = agent.run_sync('search for something')
+        # Should have used the DuckDuckGo fallback tool
+        assert 'Tool result' in result.output
+
+    def test_websearch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
+        """WebSearch(local=False) with non-supporting model → UserError."""
+        from pydantic_ai.models.function import FunctionModel
+        from pydantic_ai.profiles import ModelProfile
+
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebSearch(local=False)])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('search')
+
+    def test_websearch_builtin_false(self):
+        """WebSearch(builtin=False) → only local, no builtin registered."""
+        cap = WebSearch(builtin=False)
+        assert cap.get_builtin_tools() == []
+        toolset = cap.get_toolset()
+        # Should have a plain toolset (no PreparedToolset wrapping)
+        assert toolset is not None
+
+    def test_websearch_requires_builtin_with_constraints(self, allow_model_requests: None):
+        """WebSearch(allowed_domains=...) with non-supporting model → UserError."""
+        from pydantic_ai.models.function import FunctionModel
+        from pydantic_ai.profiles import ModelProfile
+
+        cap = WebSearch(allowed_domains=['example.com'])
+        assert cap._requires_builtin() is True
+        assert cap.get_toolset() is None  # Local suppressed
+
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[cap])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('search')
+
+    def test_websearch_both_false_raises(self):
+        """WebSearch(builtin=False, local=False) → UserError at construction."""
+        with pytest.raises(UserError, match='both builtin and local cannot be False'):
+            WebSearch(builtin=False, local=False)
+
+    def test_websearch_local_callable(self):
+        """WebSearch(local=some_function) → bare callable wrapped in Tool."""
+        from pydantic_ai.tools import Tool
+
+        def my_search(query: str) -> str:
+            return f'results for {query}'
+
+        cap = WebSearch(local=my_search)
+        assert isinstance(cap.local, Tool)
+
+
+class TestWebFetchCapability:
+    def test_webfetch_default(self):
+        """WebFetch() provides builtin + local fallback."""
+        from pydantic_ai.builtin_tools import WebFetchTool
+
+        cap = WebFetch()
+        builtins = cap.get_builtin_tools()
+        assert len(builtins) == 1
+        assert isinstance(builtins[0], WebFetchTool)
+        assert cap.get_toolset() is not None
+
+    def test_webfetch_requires_builtin_with_constraints(self):
+        """WebFetch(blocked_domains=...) → requires builtin."""
+        cap = WebFetch(blocked_domains=['evil.com'])
+        assert cap._requires_builtin() is True
+        assert cap.get_toolset() is None
+
+
+class TestImageGenerationCapability:
+    def test_image_generation_default(self):
+        """ImageGeneration() provides only builtin, no local fallback."""
+        from pydantic_ai.builtin_tools import ImageGenerationTool
+
+        cap = ImageGeneration()
+        builtins = cap.get_builtin_tools()
+        assert len(builtins) == 1
+        assert isinstance(builtins[0], ImageGenerationTool)
+        # No default local
+        assert cap.local is None
+        assert cap.get_toolset() is None
+
+    def test_image_generation_with_custom_local(self):
+        """ImageGeneration(local=custom) → provides custom local fallback."""
+        from pydantic_ai.tools import Tool
+
+        def my_gen(prompt: str) -> str:
+            return 'image_url'
+
+        cap = ImageGeneration(local=my_gen)
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+
+
+class TestMCPCapability:
+    def test_mcp_default(self):
+        """MCP(url=...) provides builtin + local fallback."""
+        from pydantic_ai.builtin_tools import MCPServerTool
+
+        cap = MCP(url='https://mcp.example.com/api')
+        builtins = cap.get_builtin_tools()
+        assert len(builtins) == 1
+        assert isinstance(builtins[0], MCPServerTool)
+        assert builtins[0].url == 'https://mcp.example.com/api'
+        assert cap.get_toolset() is not None
+
+    def test_mcp_id_from_url(self):
+        """MCP auto-derives id from URL path."""
+        cap = MCP(url='https://mcp.example.com/api')
+        assert cap._resolved_id == 'api'
+
+    def test_mcp_sse_transport(self):
+        """MCP with /sse URL uses MCPServerSSE for local."""
+        from pydantic_ai.mcp import MCPServerSSE
+
+        cap = MCP(url='https://mcp.example.com/sse')
+        assert isinstance(cap.local, MCPServerSSE)
+
+    def test_mcp_streamable_transport(self):
+        """MCP with non-/sse URL uses MCPServerStreamableHTTP for local."""
+        from pydantic_ai.mcp import MCPServerStreamableHTTP
+
+        cap = MCP(url='https://mcp.example.com/api')
+        assert isinstance(cap.local, MCPServerStreamableHTTP)
+
+    def test_mcp_authorization_token_in_local_headers(self):
+        """MCP passes authorization_token as Authorization header to local."""
+        from pydantic_ai.mcp import MCPServerStreamableHTTP
+
+        cap = MCP(url='https://mcp.example.com/api', authorization_token='Bearer xyz')
+        assert isinstance(cap.local, MCPServerStreamableHTTP)
+        assert cap.local.headers == {'Authorization': 'Bearer xyz'}
+
+    def test_mcp_requires_builtin_with_allowed_tools(self):
+        """MCP(allowed_tools=...) → requires builtin."""
+        cap = MCP(url='https://mcp.example.com/api', allowed_tools=['tool1'])
+        assert cap._requires_builtin() is True
+        assert cap.get_toolset() is None
+
+    def test_mcp_url_required(self):
+        """MCP without url raises TypeError."""
+        with pytest.raises(TypeError, match="missing 1 required keyword-only argument: 'url'"):
+            MCP()  # type: ignore[call-arg]
