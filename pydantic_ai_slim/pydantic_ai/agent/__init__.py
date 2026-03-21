@@ -1948,6 +1948,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         override_instructions = self._override_instructions.get()
         if override_instructions:
+            # Override replaces all instructions, including capability contributions.
             instructions = override_instructions.value
         else:
             instructions = self._instructions.copy()

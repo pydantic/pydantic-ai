@@ -507,7 +507,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             assert self._result is not None
             return
 
-        # Task-based wrap_model_request for streaming
+        # Cooperative hand-off between this coroutine and the wrap_model_request task:
+        # 1. The task runs capability middleware, then calls _streaming_handler which opens the stream.
+        # 2. _streaming_handler sets stream_ready once the stream is open, then waits on stream_done.
+        # 3. This coroutine waits for stream_ready (or early task completion), yields the stream
+        #    to the caller, and sets stream_done when the caller is finished consuming it.
+        # 4. The handler resumes, the stream context manager closes, and the task completes.
         stream_ready = asyncio.Event()
         stream_done = asyncio.Event()
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []

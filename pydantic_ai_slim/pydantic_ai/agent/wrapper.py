@@ -12,6 +12,7 @@ from .. import (
     usage as _usage,
 )
 from .._json_schema import JsonSchema
+from .._template import TemplateStr
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
 from ..run import AgentRun
@@ -52,7 +53,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         return self.wrapped.description
 
     @description.setter
-    def description(self, value: str | None) -> None:
+    def description(self, value: TemplateStr[AgentDepsT] | str | None) -> None:
         self.wrapped.description = value
 
     @property

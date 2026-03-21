@@ -27,6 +27,7 @@ from .. import (
 )
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
+from .._template import TemplateStr
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
 from ..output import OutputDataT, OutputSpec
@@ -104,7 +105,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @description.setter
     @abstractmethod
-    def description(self, value: str | None) -> None:
+    def description(self, value: TemplateStr[AgentDepsT] | str | None) -> None:
         """Set the description of the agent."""
         raise NotImplementedError
 
