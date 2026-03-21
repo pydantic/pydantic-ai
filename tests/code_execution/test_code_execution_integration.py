@@ -283,3 +283,55 @@ async def test_agent_no_toolset_pure_code_execution():
     )
     result = await agent.run('What is 2^10?')
     assert result.output == '1024'
+
+
+async def test_agent_restart_clears_state():
+    """Agent can use restart=True to clear REPL state and start fresh."""
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First: set a variable
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'x = 42'})])
+        if call_count == 2:
+            # Second: restart and try to use x (will get NameError → retry)
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'x', 'restart': True})])
+        if call_count == 3:
+            # Third: after retry, define x fresh
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'x = 99\nx'})])
+        return ModelResponse(parts=[TextPart('x is 99')])
+
+    agent = Agent(
+        FunctionModel(model_function),
+        toolsets=[CodeExecutionToolset()],
+    )
+    result = await agent.run('test restart')
+    assert result.output == 'x is 99'
+    assert call_count == 4
+
+
+async def test_agent_restart_only():
+    """Agent can use restart=True without code to just reset the session."""
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'x = 42'})])
+        if call_count == 2:
+            # Just restart, no code
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'restart': True})])
+        if call_count == 3:
+            # Fresh session
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': '"clean"'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_function),
+        toolsets=[CodeExecutionToolset()],
+    )
+    result = await agent.run('test restart only')
+    assert result.output == 'done'

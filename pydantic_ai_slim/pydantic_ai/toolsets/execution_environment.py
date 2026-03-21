@@ -273,7 +273,9 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                         # Image file — return as BinaryContent or placeholder
                         if self._image_support:
                             if len(content) > self._max_image_bytes:
-                                return f'Error: Image too large ({len(content)} bytes, max {self._max_image_bytes} bytes).'
+                                return (
+                                    f'Error: Image too large ({len(content)} bytes, max {self._max_image_bytes} bytes).'
+                                )
                             media_type = IMAGE_MEDIA_TYPES.get(ext, 'application/octet-stream')
                             return BinaryContent(data=content, media_type=media_type)
                         else:

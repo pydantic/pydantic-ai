@@ -439,6 +439,41 @@ class ExecutionEnvironment(ABC):
         """
         raise NotImplementedError(f'{type(self).__name__} does not support run_typescript_with_functions.')
 
+    # --- State management ---
+
+    def reset(self) -> None:
+        """Reset the environment to a clean state, discarding any accumulated REPL state.
+
+        Called by toolsets when the model requests a session restart. Environments
+        that maintain persistent state (e.g. a REPL session) should override this
+        to destroy and recreate their state. Stateless environments can use the
+        default no-op.
+        """
+
+    def type_check(
+        self,
+        code: str,
+        *,
+        signatures: list[FunctionSignature] | None = None,
+        referenced_types: list[TypeSignature] | None = None,
+    ) -> None:
+        """Statically type-check code before execution.
+
+        Only sound when the environment has no accumulated state (e.g. after a
+        `reset()`), since the type checker cannot see variables from prior calls.
+
+        Override in subclasses that support type checking. The default is a no-op.
+
+        Args:
+            code: The Python code to type-check.
+            signatures: Function signatures to include as type stubs.
+            referenced_types: Type definitions referenced by the signatures.
+
+        Raises:
+            CodeTypingError: If type errors are found.
+            CodeSyntaxError: If the code has a syntax error.
+        """
+
     # --- Internal helpers (not tools) ---
 
     async def create_process(

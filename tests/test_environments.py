@@ -2789,7 +2789,6 @@ async def test_docker_read_file_image_not_found(mock_docker_sandbox: Any, mock_c
         await mock_docker_sandbox.read_file('missing.png')
 
 
-
 async def test_local_process_wait_no_timeout(tmp_path: Path):
     """LocalEnvironmentProcess.wait without timeout (line 74)."""
     env = LocalEnvironment(tmp_path)

@@ -150,10 +150,14 @@ You can use it to:
 - pass the result of one tool to another without it entering your context window.
 
 Execution model:
-- State persists across calls — variables, functions, and imports defined in previous calls are available in subsequent calls. You can split work across multiple calls and build on earlier results.
+- This is a REPL session — state persists across calls. Variables, functions, and imports defined in previous calls are available in subsequent calls. You can split work across multiple calls and build on earlier results.
 - If a previous call failed, the state from earlier *successful* calls is still intact — you only need to fix the failed snippet, not rewrite everything from scratch.
 - You can create new functions for convenience.
 - This tool is for calling and chaining tools programmatically — don't use it just to format or print your final analysis. Write your report as regular text in your response.
+
+Session management:
+- Set `restart: true` to clear all accumulated state and start a fresh session. You can combine it with `code` to reset and run in one call, or use it alone to just reset.
+- Use restart when your session state is corrupted or you want a completely clean slate.
 
 
 
@@ -479,3 +483,75 @@ async def test_run_python_with_functions_default_params():
         function_callback=AsyncMock(),
     )
     assert result == 'hello'
+
+
+# --- Reset and type_check tests ---
+
+
+async def test_reset_clears_repl_state():
+    """reset() discards REPL state so prior variables are no longer available."""
+    env = MontyEnvironment()
+    await env.run_python('x = 42')
+    result = await env.run_python('x')
+    assert result == 42
+
+    env.reset()
+
+    from pydantic_ai.toolsets.code_execution._abstract import CodeRuntimeError
+
+    with pytest.raises(CodeRuntimeError, match='NameError'):
+        await env.run_python('x')
+
+
+async def test_reset_allows_fresh_start():
+    """After reset(), new code executes in a clean environment."""
+    env = MontyEnvironment()
+    await env.run_python('x = "old"')
+    env.reset()
+    await env.run_python('x = "new"')
+    result = await env.run_python('x')
+    assert result == 'new'
+
+
+async def test_type_check_catches_type_error():
+    """type_check() raises CodeTypingError for type mismatches."""
+    from pydantic_ai.toolsets.code_execution._abstract import CodeTypingError
+
+    env = MontyEnvironment()
+    with pytest.raises(CodeTypingError):
+        env.type_check('x: int = "hello"')
+
+
+async def test_type_check_catches_syntax_error():
+    """type_check() raises CodeSyntaxError for invalid syntax."""
+    from pydantic_ai.toolsets.code_execution._abstract import CodeSyntaxError
+
+    env = MontyEnvironment()
+    with pytest.raises(CodeSyntaxError):
+        env.type_check('def while')
+
+
+async def test_type_check_with_function_stubs():
+    """type_check() validates calls against provided function signatures."""
+    env = MontyEnvironment()
+    _, tools = await build_code_execution_toolset(env, (add, False))
+    tool = tools['run_code']
+
+    # Valid call — should not raise
+    env.type_check('await add(x=1, y=2)', signatures=tool.signatures, referenced_types=tool.referenced_types)
+
+
+async def test_type_check_valid_code_passes():
+    """type_check() does not raise for valid code."""
+    env = MontyEnvironment()
+    env.type_check('x: int = 42')  # Should not raise
+
+
+async def test_repl_state_persists_across_calls():
+    """REPL state persists — variables survive between calls."""
+    env = MontyEnvironment()
+    await env.run_python('count = 0')
+    await env.run_python('count = count + 1')
+    await env.run_python('count = count + 1')
+    result = await env.run_python('count')
+    assert result == 2

@@ -39,22 +39,22 @@ from ._abstract import (
 )
 
 __all__ = (
-    'CodeExecutionToolset',
     'CodeExecutionError',
+    'CodeExecutionTimeout',
+    'CodeExecutionToolset',
     'CodeRuntimeError',
     'CodeSyntaxError',
     'CodeTypingError',
-    'CodeExecutionTimeout',
     'DescriptionFunc',
     'FunctionCall',
-    'FunctionSignature',
     'FunctionCallback',
+    'FunctionSignature',
     'TypeSignature',
     'build_default_description',
 )
 
 
-EnvironmentName = Literal['monty', 'docker']
+EnvironmentName = Literal['monty']
 
 
 def get_environment(name: EnvironmentName) -> ExecutionEnvironment:
@@ -70,16 +70,19 @@ def get_environment(name: EnvironmentName) -> ExecutionEnvironment:
         from ...environments.monty import MontyEnvironment
 
         return MontyEnvironment()
-    elif name == 'docker':
-        from ...environments.docker import DockerEnvironment
-
-        return DockerEnvironment()
     else:
         assert_never(name)
 
 
-class _CodeToolArguments(TypedDict):
+# The `restart` parameter follows the pattern established by Anthropic's bash tool
+# (`bash_20250124`), where `restart: true` clears session state. Models are already
+# trained to understand this interaction pattern — it's a well-understood primitive
+# for "discard accumulated state and start fresh".
+
+
+class _CodeToolArguments(TypedDict, total=False):
     code: str
+    restart: bool
 
 
 _CODE_ADAPTER = TypeAdapter(_CodeToolArguments)
@@ -91,10 +94,14 @@ _BASE_PROMPT = """
 Use this tool to run Python code.
 
 Execution model:
-- State persists across calls — variables, functions, and imports defined in previous calls are available in subsequent calls
-- If a previous call failed, the state from earlier *successful* calls is still intact — you only need to fix the failed snippet
+- This is a REPL session — state persists across calls. Variables, functions, and imports defined in previous calls are available in subsequent calls.
+- If a previous call failed, the state from earlier *successful* calls is still intact — you only need to fix the failed snippet.
 - You can create new functions for convenience.
 - This tool is for running code — don't use it just to format or print your final analysis.
+
+Session management:
+- Set `restart: true` to clear all accumulated state and start a fresh session. You can combine it with `code` to reset and run in one call, or use it alone to just reset.
+- Use restart when your session state is corrupted or you want a completely clean slate.
 """
 
 _TOOLS_PROMPT = """
@@ -106,10 +113,14 @@ You can use it to:
 - pass the result of one tool to another without it entering your context window.
 
 Execution model:
-- State persists across calls — variables, functions, and imports defined in previous calls are available in subsequent calls. You can split work across multiple calls and build on earlier results.
+- This is a REPL session — state persists across calls. Variables, functions, and imports defined in previous calls are available in subsequent calls. You can split work across multiple calls and build on earlier results.
 - If a previous call failed, the state from earlier *successful* calls is still intact — you only need to fix the failed snippet, not rewrite everything from scratch.
 - You can create new functions for convenience.
 - This tool is for calling and chaining tools programmatically — don't use it just to format or print your final analysis. Write your report as regular text in your response.
+
+Session management:
+- Set `restart: true` to clear all accumulated state and start a fresh session. You can combine it with `code` to reset and run in one call, or use it alone to just reset.
+- Use restart when your session state is corrupted or you want a completely clean slate.
 """
 
 
@@ -340,8 +351,40 @@ class CodeExecutionToolset(AbstractToolset[AgentDepsT]):
         assert isinstance(tool, _CodeExecutionTool)
 
         code = tool_args.get('code')
-        assert isinstance(code, str)
+        restart = tool_args.get('restart', False)
 
+        if not code and not restart:
+            raise ModelRetry('Either `code` or `restart: true` (or both) must be provided.')
+
+        if restart:
+            self.environment.reset()
+
+        if not code:
+            return 'Session restarted successfully.'
+
+        # On restart, the REPL state is clean — no accumulated variables from prior
+        # snippets — so stateless type checking is sound.
+        if restart:
+            try:
+                self.environment.type_check(
+                    code,
+                    signatures=tool.signatures or None,
+                    referenced_types=tool.referenced_types or None,
+                )
+            except CodeTypingError as e:
+                raise ModelRetry(f'Type error in generated code:\n{e.message}') from e
+            except CodeSyntaxError as e:
+                raise ModelRetry(f'Syntax error in generated code:\n{e.message}') from e
+
+        return await self._execute_code(code, tool, ctx)
+
+    async def _execute_code(
+        self,
+        code: str,
+        tool: _CodeExecutionTool[AgentDepsT],
+        ctx: RunContext[AgentDepsT],
+    ) -> Any:
+        """Execute code in the environment, dispatching tool calls if needed."""
         tool_manager: ToolManager[AgentDepsT] | None = None
         if self.toolset is not None:
             tool_manager = ToolManager(

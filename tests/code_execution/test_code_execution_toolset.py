@@ -317,6 +317,158 @@ async def test_validation_error_becomes_runtime_error():
         await cm.call_tool('run_code', {'code': '_add(x="a", y="b")'}, ctx, tools['run_code'])
 
 
+# --- Restart tests ---
+
+
+async def test_restart_only_resets_environment():
+    """restart=True without code resets the environment and returns confirmation."""
+    reset_called = False
+
+    class _TrackResetEnv(StubEnvironment):
+        def reset(self) -> None:
+            nonlocal reset_called
+            reset_called = True
+
+    cm = CodeExecutionToolset(_TrackResetEnv())
+    ctx = build_run_context()
+    tools = await cm.get_tools(ctx)
+    result = await cm.call_tool('run_code', {'restart': True}, ctx, tools['run_code'])
+    assert result == 'Session restarted successfully.'
+    assert reset_called
+
+
+async def test_restart_with_code_resets_then_executes():
+    """restart=True with code resets the environment, then runs the code."""
+    events: list[str] = []
+
+    class _TrackEnv(StubEnvironment):
+        def reset(self) -> None:
+            events.append('reset')
+
+        async def run_python_with_functions(
+            self, code: str, *, function_callback: Any, functions: Any = None, referenced_types: Any = None
+        ) -> Any:
+            events.append(f'exec:{code}')
+            return 42
+
+    ts: FunctionToolset[None] = FunctionToolset()
+    ts.add_function(_add, takes_ctx=False)
+    cm = CodeExecutionToolset(_TrackEnv(), toolset=ts)
+    ctx = build_run_context()
+    tools = await cm.get_tools(ctx)
+    result = await cm.call_tool('run_code', {'code': '1 + 1', 'restart': True}, ctx, tools['run_code'])
+    assert result == 42
+    assert events == ['reset', 'exec:1 + 1']
+
+
+async def test_no_code_no_restart_raises_model_retry():
+    """Empty args (no code, no restart) raises ModelRetry."""
+    from pydantic_ai.exceptions import ModelRetry
+
+    cm = CodeExecutionToolset(StubEnvironment())
+    ctx = build_run_context()
+    tools = await cm.get_tools(ctx)
+    with pytest.raises(ModelRetry, match='Either `code` or `restart: true`'):
+        await cm.call_tool('run_code', {}, ctx, tools['run_code'])
+
+
+async def test_restart_calls_type_check():
+    """restart=True with code calls type_check before execution."""
+    events: list[str] = []
+
+    class _TypeCheckEnv(StubEnvironment):
+        def reset(self) -> None:
+            events.append('reset')
+
+        def type_check(self, code: str, *, signatures: Any = None, referenced_types: Any = None) -> None:
+            events.append(f'type_check:{code}')
+
+        async def run_python_with_functions(
+            self, code: str, *, function_callback: Any, functions: Any = None, referenced_types: Any = None
+        ) -> Any:
+            events.append(f'exec:{code}')
+            return 'ok'
+
+    ts: FunctionToolset[None] = FunctionToolset()
+    ts.add_function(_add, takes_ctx=False)
+    cm = CodeExecutionToolset(_TypeCheckEnv(), toolset=ts)
+    ctx = build_run_context()
+    tools = await cm.get_tools(ctx)
+    await cm.call_tool('run_code', {'code': 'x = 1', 'restart': True}, ctx, tools['run_code'])
+    assert events == ['reset', 'type_check:x = 1', 'exec:x = 1']
+
+
+async def test_no_restart_skips_type_check():
+    """Without restart, type_check is not called (accumulated state makes it unsound)."""
+    type_check_called = False
+
+    class _TypeCheckEnv(StubEnvironment):
+        def type_check(self, code: str, *, signatures: Any = None, referenced_types: Any = None) -> None:
+            nonlocal type_check_called
+            type_check_called = True
+
+        async def run_python_with_functions(
+            self, code: str, *, function_callback: Any, functions: Any = None, referenced_types: Any = None
+        ) -> Any:
+            return 'ok'
+
+    ts: FunctionToolset[None] = FunctionToolset()
+    ts.add_function(_add, takes_ctx=False)
+    cm = CodeExecutionToolset(_TypeCheckEnv(), toolset=ts)
+    ctx = build_run_context()
+    tools = await cm.get_tools(ctx)
+    await cm.call_tool('run_code', {'code': 'x = 1'}, ctx, tools['run_code'])
+    assert not type_check_called
+
+
+async def test_restart_type_error_raises_model_retry():
+    """Type error during restart type check surfaces as ModelRetry."""
+    from pydantic_ai.exceptions import ModelRetry
+    from pydantic_ai.toolsets.code_execution._abstract import CodeTypingError
+
+    class _TypeErrorEnv(StubEnvironment):
+        def reset(self) -> None:
+            pass
+
+        def type_check(self, code: str, *, signatures: Any = None, referenced_types: Any = None) -> None:
+            raise CodeTypingError('x is not an int')
+
+    cm = CodeExecutionToolset(_TypeErrorEnv())
+    ctx = build_run_context()
+    tools = await cm.get_tools(ctx)
+    with pytest.raises(ModelRetry, match='Type error in generated code'):
+        await cm.call_tool('run_code', {'code': 'bad code', 'restart': True}, ctx, tools['run_code'])
+
+
+async def test_restart_syntax_error_raises_model_retry():
+    """Syntax error during restart type check surfaces as ModelRetry."""
+    from pydantic_ai.exceptions import ModelRetry
+    from pydantic_ai.toolsets.code_execution._abstract import CodeSyntaxError
+
+    class _SyntaxErrorEnv(StubEnvironment):
+        def reset(self) -> None:
+            pass
+
+        def type_check(self, code: str, *, signatures: Any = None, referenced_types: Any = None) -> None:
+            raise CodeSyntaxError('unexpected EOF')
+
+    cm = CodeExecutionToolset(_SyntaxErrorEnv())
+    ctx = build_run_context()
+    tools = await cm.get_tools(ctx)
+    with pytest.raises(ModelRetry, match='Syntax error in generated code'):
+        await cm.call_tool('run_code', {'code': 'def', 'restart': True}, ctx, tools['run_code'])
+
+
+async def test_description_includes_session_management():
+    """Tool description explains restart/session management."""
+    cm = CodeExecutionToolset(StubEnvironment())
+    tools = await cm.get_tools(build_run_context())
+    description = tools['run_code'].tool_def.description or ''
+    assert 'REPL session' in description
+    assert 'restart' in description
+    assert 'clean slate' in description
+
+
 async def test_run_python_fallback_without_functions_capability():
     """CodeExecutionToolset falls back to run_python when env lacks run_python_with_functions."""
     from pydantic_ai.environments._base import Capability as EnvCapability, ExecutionEnvironment

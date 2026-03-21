@@ -15,6 +15,7 @@ from pydantic_ai.toolsets.code_execution._abstract import (
     CodeExecutionTimeout,
     CodeRuntimeError,
     CodeSyntaxError,
+    CodeTypingError,
     FunctionCall,
 )
 
@@ -31,10 +32,12 @@ try:
         ExternalReturnValue,
         FunctionSnapshot,
         FutureSnapshot,
+        Monty,
         MontyComplete,
         MontyRepl,
         MontyRuntimeError,
         MontySyntaxError,
+        MontyTypingError,
         NameLookupSnapshot,
         ResourceLimits,
     )
@@ -110,6 +113,40 @@ class MontyEnvironment(ExecutionEnvironment):
     async def __aexit__(self, *args: object) -> None:
         self._repl = None
 
+    def reset(self) -> None:
+        """Discard the current REPL session so the next execution starts fresh."""
+        self._repl = None
+
+    def type_check(
+        self,
+        code: str,
+        *,
+        signatures: list[FunctionSignature] | None = None,
+        referenced_types: list[TypeSignature] | None = None,
+    ) -> None:
+        """Type-check code using a stateless Monty instance.
+
+        This is only sound when the REPL has no accumulated state (i.e. after a
+        reset), because the stateless type checker has no visibility into
+        variables defined in prior REPL snippets.
+
+        Args:
+            code: The Python code to type-check.
+            signatures: Function signatures to include as type stubs.
+            referenced_types: Type definitions referenced by the signatures.
+
+        Raises:
+            CodeTypingError: If type errors are found.
+            CodeSyntaxError: If the code has a syntax error.
+        """
+        prefix = self._build_type_check_prefix(signatures or [], referenced_types or [])
+        try:
+            Monty(code, type_check=True, type_check_stubs=prefix)
+        except MontySyntaxError as e:
+            raise CodeSyntaxError(e.display()) from e
+        except MontyTypingError as e:
+            raise CodeTypingError(e.display()) from e
+
     # TODO: Concurrent agent runs sharing a MontyEnvironment will fail because
     # MontyRepl has an internal mutex — only one snippet can execute at a time.
     # Once PR #4688 (for_run/for_run_step lifecycle hooks) lands,
@@ -120,9 +157,7 @@ class MontyEnvironment(ExecutionEnvironment):
         """Return the active REPL, creating it lazily if needed."""
         if self._repl is None:
             limits = (
-                ResourceLimits(max_duration_secs=self.execution_timeout)
-                if self.execution_timeout is not None
-                else None
+                ResourceLimits(max_duration_secs=self.execution_timeout) if self.execution_timeout is not None else None
             )
             self._repl = MontyRepl(limits=limits)
             self._repl.feed_start('import asyncio')
@@ -130,17 +165,14 @@ class MontyEnvironment(ExecutionEnvironment):
 
     async def run_python(self, code: str) -> Any:
         """Execute code in the Monty REPL sandbox without external functions."""
-        # TODO: Re-enable type checking with accumulated stubs.
-        # MontyRepl does not support type_check. We previously used a throwaway
-        # Monty(code, type_check=True, type_check_stubs=...) to catch type errors
-        # before execution. With REPL state persistence, the stubs would need to
-        # include declarations for all variables/functions from prior snippets,
-        # which requires tracking the REPL's type context across calls.
+        # Type checking for non-restart (continuation) calls is not yet supported.
+        # The stateless type checker cannot see variables from prior REPL snippets,
+        # so it would false-positive on any accumulated state. For restart calls,
+        # CodeExecutionToolset calls type_check() before execution since the REPL
+        # state is guaranteed to be clean.
         prints: list[str] = []
         try:
-            monty_state = self._ensure_repl().feed_start(
-                code, print_callback=lambda _stream, text: prints.append(text)
-            )
+            monty_state = self._ensure_repl().feed_start(code, print_callback=lambda _stream, text: prints.append(text))
             # Handle NameLookupSnapshot by resuming without a value (raises NameError in sandbox)
             while isinstance(monty_state, NameLookupSnapshot):
                 monty_state = monty_state.resume()
@@ -168,12 +200,10 @@ class MontyEnvironment(ExecutionEnvironment):
         if functions is None:
             functions = {}
 
-        # TODO: Re-enable type checking — see comment in run_python.
+        # Type checking for continuation calls — see comment in run_python.
         prints: list[str] = []
         try:
-            monty_state = self._ensure_repl().feed_start(
-                code, print_callback=lambda _stream, text: prints.append(text)
-            )
+            monty_state = self._ensure_repl().feed_start(code, print_callback=lambda _stream, text: prints.append(text))
             monty_state = await self._execution_loop(monty_state, function_callback, functions=functions)
         except MontySyntaxError as e:
             raise CodeSyntaxError(e.display()) from e
@@ -200,8 +230,8 @@ class MontyEnvironment(ExecutionEnvironment):
     ) -> str:
         """Build the prefix code used for Monty type checking.
 
-        Currently unused while type checking is disabled for REPL mode,
-        but retained for when type checking is re-enabled.
+        Used by `type_check()` to provide function stubs and type definitions
+        to the stateless `Monty` type checker.
         """
         parts = ['import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal']
         parts.extend(str(t) for t in referenced_types)
