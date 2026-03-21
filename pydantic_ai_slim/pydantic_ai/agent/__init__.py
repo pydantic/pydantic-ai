@@ -421,6 +421,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._builtin_tools = list(builtin_tools)
         self._builtin_tools.extend(self._root_capability.get_builtin_tools())
 
+        self._cap_model_settings = self._root_capability.get_model_settings()
+
         self._prepare_tools = prepare_tools
         self._prepare_output_tools = prepare_output_tools
 
@@ -442,10 +444,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._dynamic_toolsets = [
             DynamicToolset[AgentDepsT](toolset_func=toolset)
-            for toolset in toolsets or []
+            for toolset in toolsets
             if not isinstance(toolset, AbstractToolset)
         ]
-        self._user_toolsets = [toolset for toolset in toolsets or [] if isinstance(toolset, AbstractToolset)]
+        self._user_toolsets = [toolset for toolset in toolsets if isinstance(toolset, AbstractToolset)]
 
         self._event_stream_handler = event_stream_handler
 
@@ -969,9 +971,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
             merged = merge_model_settings(merged, resolved_agent)
 
-            # Capability settings (e.g. from Thinking, ModelSettings capabilities)
+            # Capability settings (e.g. from Thinking, ModelSettings capabilities), cached at init
             run_context.model_settings = merged
-            cap_settings = self._root_capability.get_model_settings()
+            cap_settings = self._cap_model_settings
             resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings
             merged = merge_model_settings(merged, resolved_cap)
 
