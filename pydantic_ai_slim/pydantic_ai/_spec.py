@@ -19,6 +19,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from pydantic_core import to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import NotRequired, TypedDict
 
@@ -28,6 +29,19 @@ if TYPE_CHECKING:
     from pydantic import ModelWrapValidatorHandler
 
 T = TypeVar('T')
+
+
+def serializes_as_string_keyed_dict(value: Any) -> bool:
+    """Check if a value would serialize to a dict with all string keys.
+
+    When serialize() uses the compact tuple form (arguments = (value,)), the serialized
+    output becomes {Name: value}. On deserialization, _SerializedNamedSpec._args
+    treats any dict with all-string keys as kwargs. This means a single positional argument
+    that is itself a dict (like ModelSettings) would be incorrectly unpacked as kwargs
+    on the round-trip. We avoid the compact form in this case.
+    """
+    jsonable = to_jsonable_python(value, serialize_unknown=True)
+    return isinstance(jsonable, dict) and all(isinstance(k, str) for k in jsonable)  # pyright: ignore[reportUnknownVariableType]
 
 
 class NamedSpec(BaseModel):
@@ -82,6 +96,10 @@ class NamedSpec(BaseModel):
             if self.arguments is None:
                 return self.name
             elif isinstance(self.arguments, tuple):
+                # A single positional arg that serializes as a string-keyed dict would be
+                # misinterpreted as kwargs on deserialization. Fall back to the long form.
+                if serializes_as_string_keyed_dict(self.arguments[0]):
+                    return handler(self)
                 return {self.name: self.arguments[0]}
             else:
                 return {self.name: self.arguments}

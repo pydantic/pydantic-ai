@@ -8,6 +8,7 @@ from .instructions import Instructions
 # Short name is intentional — passing a dict is enough to get type checking,
 # and users rarely need both this and settings.ModelSettings in the same scope.
 from .model_settings import ModelSettings
+from .prepare_tools import PrepareTools
 from .thinking import Thinking
 from .toolset import Toolset
 from .web_search import WebSearch
@@ -42,6 +43,7 @@ __all__ = [
     'Instructions',
     'HistoryProcessor',
     'ModelSettings',
+    'PrepareTools',
     'Thinking',
     'Toolset',
     'WebSearch',

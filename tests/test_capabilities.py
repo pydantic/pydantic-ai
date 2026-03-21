@@ -2154,3 +2154,135 @@ class TestWrapNodeRunHook:
         assert log[1] == 'inner:before:UserPromptNode'
         assert log[2] == 'inner:after:ModelRequestNode'
         assert log[3] == 'outer:after:ModelRequestNode'
+
+
+class TestNamedSpecDictRoundTrip:
+    """Test that NamedSpec correctly round-trips a dict-as-first-arg without misinterpreting it as kwargs."""
+
+    def test_model_settings_dict_round_trip(self):
+        """ModelSettings with a dict positional arg survives serialize -> deserialize."""
+        from pydantic_ai._spec import NamedSpec
+
+        spec = NamedSpec(name='ModelSettings', arguments=({'max_tokens': 4096, 'temperature': 0.5},))
+
+        # Serialize with short form
+        serialized = spec.model_dump(context={'use_short_form': True})
+
+        # The short form would be ambiguous (dict with string keys), so it should use the long form
+        assert serialized['name'] == 'ModelSettings'
+        # arguments is a tuple with one dict element
+        assert len(serialized['arguments']) == 1
+        assert serialized['arguments'][0] == {'max_tokens': 4096, 'temperature': 0.5}
+
+        # Deserialize and verify the round-trip
+        deserialized = NamedSpec.model_validate(serialized)
+        assert deserialized.name == 'ModelSettings'
+        assert deserialized.arguments == ({'max_tokens': 4096, 'temperature': 0.5},)
+        assert deserialized.args == ({'max_tokens': 4096, 'temperature': 0.5},)
+        assert deserialized.kwargs == {}
+
+    def test_non_dict_positional_arg_uses_short_form(self):
+        """A non-dict positional arg still uses the compact short form."""
+        from pydantic_ai._spec import NamedSpec
+
+        spec = NamedSpec(name='Instructions', arguments=('Be helpful.',))
+        serialized = spec.model_dump(context={'use_short_form': True})
+        assert serialized == {'Instructions': 'Be helpful.'}
+
+    def test_kwargs_still_use_short_form(self):
+        """Kwargs (dict arguments) still use the short form correctly."""
+        from pydantic_ai._spec import NamedSpec
+
+        spec = NamedSpec(name='ModelSettings', arguments={'max_tokens': 4096})
+        serialized = spec.model_dump(context={'use_short_form': True})
+        assert serialized == {'ModelSettings': {'max_tokens': 4096}}
+
+    def test_agent_from_spec_model_settings_round_trip(self):
+        """Agent.from_spec with ModelSettings dict works correctly both ways."""
+
+        # Construct via the dict short form (kwargs interpretation)
+        agent = Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [
+                    {'ModelSettings': {'max_tokens': 4096, 'temperature': 0.5}},
+                ],
+            }
+        )
+        assert agent.model is not None
+
+
+class TestPrepareToolsCapability:
+    async def test_prepare_tools_filters(self):
+        """PrepareTools capability filters tools using the provided callable."""
+        from pydantic_ai.capabilities import PrepareTools
+
+        async def hide_secret_tools(
+            ctx: RunContext[None], tool_defs: list[ToolDefinition]
+        ) -> list[ToolDefinition] | None:
+            return [td for td in tool_defs if td.name != 'secret_tool']
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tool_names = [t.name for t in info.function_tools]
+            return make_text_response(f'tools: {sorted(tool_names)}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(hide_secret_tools)])
+
+        @agent.tool_plain
+        def secret_tool() -> str:
+            return 'secret'
+
+        @agent.tool_plain
+        def public_tool() -> str:
+            return 'public'
+
+        result = await agent.run('hello')
+        assert result.output == "tools: ['public_tool']"
+
+    async def test_prepare_tools_none_returns_all(self):
+        """PrepareTools treats None return as 'keep all tools'."""
+        from pydantic_ai.capabilities import PrepareTools
+
+        async def noop_prepare(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+            return None
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tool_names = [t.name for t in info.function_tools]
+            return make_text_response(f'tools: {sorted(tool_names)}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(noop_prepare)])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        result = await agent.run('hello')
+        assert result.output == "tools: ['my_tool']"
+
+    async def test_prepare_tools_modifies_definitions(self):
+        """PrepareTools can modify tool definitions (e.g. set strict mode)."""
+        from dataclasses import replace as dc_replace
+
+        from pydantic_ai.capabilities import PrepareTools
+
+        async def set_strict(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+            return [dc_replace(td, strict=True) for td in tool_defs]
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            strictness = [t.strict for t in info.function_tools]
+            return make_text_response(f'strict: {strictness}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(set_strict)])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        result = await agent.run('hello')
+        assert result.output == 'strict: [True]'
+
+    def test_prepare_tools_not_serializable(self):
+        """PrepareTools opts out of spec serialization."""
+        from pydantic_ai.capabilities import PrepareTools
+
+        assert PrepareTools.get_serialization_name() is None
