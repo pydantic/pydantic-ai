@@ -309,13 +309,6 @@ async def main():
     print(nodes)
     """
     [
-        UserPromptNode(
-            user_prompt='What is the capital of France?',
-            instructions_functions=[],
-            system_prompts=(),
-            system_prompt_functions=[],
-            system_prompt_dynamic_functions={},
-        ),
         ModelRequestNode(
             request=ModelRequest(
                 parts=[
@@ -545,7 +538,6 @@ if __name__ == '__main__':
     print(output_messages)
     """
     [
-        '=== UserPromptNode: What will the weather be like in Paris on Tuesday? ===',
         '=== ModelRequestNode: streaming partial request tokens ===',
         "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', tool_call_id='0001')",
         '[Request] Part 0 args delta: {"location":"Pa',

@@ -1098,13 +1098,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             print(nodes)
             '''
             [
-                UserPromptNode(
-                    user_prompt='What is the capital of France?',
-                    instructions_functions=[],
-                    system_prompts=(),
-                    system_prompt_functions=[],
-                    system_prompt_dynamic_functions={},
-                ),
                 ModelRequestNode(
                     request=ModelRequest(
                         parts=[
