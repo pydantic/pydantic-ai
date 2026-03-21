@@ -85,6 +85,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         _agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[OutputDataT]
     ]
     _result_override: AgentRunResult[OutputDataT] | None = dataclasses.field(default=None, repr=False, init=False)
+    _node_error: BaseException | None = dataclasses.field(default=None, repr=False, init=False)
+    """Stores the original exception from node execution, before context manager __aexit__ may transform it."""
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...
@@ -179,7 +181,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         next_node = self.next_node
         if isinstance(next_node, End):
             raise StopAsyncIteration
-        return await self.next(next_node)
+        try:
+            return await self.next(next_node)
+        except BaseException as exc:
+            # Store the original exception before it passes through context manager
+            # __aexit__ chains (e.g. GraphRun) that may transform it.
+            self._node_error = exc
+            raise
 
     def _task_to_node(
         self, task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTaskRequest]

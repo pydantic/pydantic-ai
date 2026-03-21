@@ -56,7 +56,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
             merged = static_settings
             for func in dynamic_settings:
-                merged = merge_model_settings(merged, func(ctx))
+                # Update ctx.model_settings so each callable sees prior capabilities' contributions
+                ctx.model_settings = merge_model_settings(ctx.model_settings, merged)
+                resolved = func(ctx)
+                merged = merge_model_settings(merged, resolved)
             return merged if merged is not None else ModelSettings()
 
         return resolve

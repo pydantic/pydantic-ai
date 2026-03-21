@@ -469,6 +469,35 @@ def test_from_file_with_schema_field(tmp_path: str):
     assert spec.json_schema_path == './agent_schema.json'
 
 
+def test_agent_from_file_yaml(tmp_path: str):
+    from pathlib import Path
+
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('model: test\nname: my-agent\ninstructions: Be helpful\n', encoding='utf-8')
+    agent = Agent.from_file(spec_path)
+    assert agent.name == 'my-agent'
+    assert 'Be helpful' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_file_json(tmp_path: str):
+    from pathlib import Path
+
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec_path.write_text('{"model": "test", "name": "json-agent"}', encoding='utf-8')
+    agent = Agent.from_file(spec_path)
+    assert agent.name == 'json-agent'
+
+
+def test_agent_from_file_with_overrides(tmp_path: str):
+    from pathlib import Path
+
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('model: test\nname: spec-name\nretries: 5\n', encoding='utf-8')
+    agent = Agent.from_file(spec_path, name='override-name', retries=2)
+    assert agent.name == 'override-name'
+    assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
+
+
 def test_to_file_yaml(tmp_path: str):
     from pathlib import Path
 
@@ -1153,6 +1182,55 @@ class TestRunHooks:
         agent = Agent(FunctionModel(simple_model_function), capabilities=[ShortCircuitRunCap()])
         result = await agent.run('hello')
         assert result.output == 'short-circuited'
+
+    async def test_wrap_run_can_recover_from_error(self):
+        """wrap_run can catch errors from handler() and return a recovery result."""
+
+        @dataclass
+        class ErrorRecoveryCap(AbstractCapability[Any]):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                try:
+                    return await handler()
+                except RuntimeError:
+                    return AgentRunResult(output='recovered from error')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[ErrorRecoveryCap()])
+        result = await agent.run('hello')
+        assert result.output == 'recovered from error'
+
+    async def test_wrap_run_error_propagates_without_recovery(self):
+        """Without recovery in wrap_run, errors propagate normally."""
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model))
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+
+    async def test_wrap_run_recovery_via_iter(self):
+        """wrap_run error recovery works when using agent.iter() too."""
+
+        @dataclass
+        class ErrorRecoveryCap(AbstractCapability[Any]):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                try:
+                    return await handler()
+                except RuntimeError:
+                    return AgentRunResult(output='recovered via iter')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[ErrorRecoveryCap()])
+        async with agent.iter('hello') as agent_run:
+            async for _node in agent_run:
+                pass
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'recovered via iter'
 
 
 class TestModelRequestHooks:

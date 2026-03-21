@@ -215,6 +215,8 @@ Before diving into the individual hooks, it's worth knowing about three exceptio
 | [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run] | `(ctx: RunContext, *, result: AgentRunResult) -> AgentRunResult` | Modify the final result |
 | [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] | `(ctx: RunContext, *, handler: () -> AgentRunResult) -> AgentRunResult` | Wrap the entire run |
 
+`wrap_run` supports error recovery: if `handler()` raises and `wrap_run` catches the exception and returns a result instead, the error is suppressed and the recovery result is used. This works with both [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] and [`agent.iter()`][pydantic_ai.agent.Agent.iter].
+
 ### Node hooks
 
 | Hook | Signature | Purpose |
@@ -530,12 +532,12 @@ capabilities:
       max_tokens: 8192
 ```
 
-Load it with [`Agent.from_spec`][pydantic_ai.Agent.from_spec]:
+Load it with [`Agent.from_file`][pydantic_ai.Agent.from_file]:
 
-```python {title="from_spec_example.py" test="skip"}
+```python {title="from_file_example.py" test="skip"}
 from pydantic_ai import Agent
 
-agent = Agent.from_spec('agent.yaml')
+agent = Agent.from_file('agent.yaml')
 ```
 
 ### Spec syntax
@@ -596,4 +598,4 @@ The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full sp
 | `instrument` | `bool \| None` | Enable [Logfire](logfire.md) instrumentation |
 | `metadata` | `dict \| None` | Agent metadata |
 
-Specs can be loaded from files with [`AgentSpec.from_file`][pydantic_ai.agent.spec.AgentSpec.from_file] and saved with [`AgentSpec.to_file`][pydantic_ai.agent.spec.AgentSpec.to_file], which also generates a JSON schema for editor autocompletion.
+Specs can be loaded from files directly via [`Agent.from_file`][pydantic_ai.Agent.from_file], or via [`AgentSpec.from_file`][pydantic_ai.agent.spec.AgentSpec.from_file] for more control. Specs can be saved with [`AgentSpec.to_file`][pydantic_ai.agent.spec.AgentSpec.to_file], which also generates a JSON schema for editor autocompletion.

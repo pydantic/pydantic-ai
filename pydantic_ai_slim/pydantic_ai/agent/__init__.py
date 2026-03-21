@@ -730,6 +730,98 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=all_capabilities,
         )
 
+    @overload
+    @classmethod
+    def from_file(
+        cls,
+        path: Path | str,
+        *,
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[Any] = str,
+        instructions: _instructions.AgentInstructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        name: str | None = None,
+        description: str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | None = None,
+        validation_context: Any = None,
+        output_retries: int | None = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[Any]] = (),
+        prepare_tools: ToolsPrepareFunc[Any] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
+        event_stream_handler: EventStreamHandler[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AbstractCapability[Any]] | None = None,
+    ) -> Agent[None, str]: ...
+
+    @overload
+    @classmethod
+    def from_file(
+        cls,
+        path: Path | str,
+        *,
+        deps_type: type[T],
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[Any] = str,
+        instructions: _instructions.AgentInstructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        name: str | None = None,
+        description: str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | None = None,
+        validation_context: Any = None,
+        output_retries: int | None = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[Any]] = (),
+        prepare_tools: ToolsPrepareFunc[Any] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[Any] | None = None,
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        instrument: InstrumentationSettings | bool | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        history_processors: Sequence[HistoryProcessor[Any]] | None = None,
+        event_stream_handler: EventStreamHandler[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AbstractCapability[Any]] | None = None,
+    ) -> Agent[T, str]: ...
+
+    @classmethod
+    def from_file(
+        cls,
+        path: Path | str,
+        **kwargs: Any,
+    ) -> Agent[Any, Any]:
+        """Construct an Agent from a YAML or JSON spec file.
+
+        This is a convenience method equivalent to
+        ``Agent.from_spec(AgentSpec.from_file(path), ...)``.
+
+        The file format is inferred from the extension (`.yaml`/`.yml` or `.json`).
+
+        Args:
+            path: Path to the spec file.
+            **kwargs: All other arguments are forwarded to [`from_spec`][pydantic_ai.Agent.from_spec].
+
+        Returns:
+            A new Agent instance.
+        """
+        from pydantic_ai.agent.spec import AgentSpec as _AgentSpecModel
+
+        spec = _AgentSpecModel.from_file(path)
+        return cls.from_spec(spec, **kwargs)
+
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
         """Set the instrumentation options for all agents where `instrument` is not set."""
@@ -1207,7 +1299,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         _run_ready.set()
                         await _run_done.wait()
                         if _run_error is not None:
-                            raise _run_error
+                            # Raise the original node error, not the potentially
+                            # transformed version from context manager __aexit__ chains.
+                            raise agent_run._node_error or _run_error  # pyright: ignore[reportPrivateUsage]
                         r = agent_run.result
                         assert r is not None
                         return r
@@ -1228,8 +1322,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     try:
                         yield agent_run
                     except BaseException as _exc:
-                        _run_error = _exc
-                        raise
+                        # Use the original node error if available, since context manager
+                        # __aexit__ chains (GraphRun → anyio TaskGroup) may transform
+                        # the exception (e.g. into CancelledError or ExceptionGroup).
+                        _run_error = agent_run._node_error or _exc  # pyright: ignore[reportPrivateUsage]
+                        # Don't re-raise yet — give wrap_run a chance to recover.
+                        # If wrap_run catches the error from handler() and returns
+                        # a recovery result, the exception will be suppressed.
                     finally:
                         if agent_run.result is not None:
                             run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
@@ -1242,12 +1341,28 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                 _result = await _wrap_task
                                 _result = await run_capability.after_run(run_ctx, result=_result)
                                 agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
+                            elif _run_error is not None:
+                                # Error path: await wrap_run to see if it recovers.
+                                # _do_run() re-raises _run_error; if wrap_run catches
+                                # it and returns a result, recovery succeeds.
+                                try:
+                                    _result = await _wrap_task
+                                    _result = await run_capability.after_run(run_ctx, result=_result)
+                                    agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
+                                    _run_error = None  # Recovery succeeded
+                                except BaseException:
+                                    pass  # wrap_run didn't recover
                             elif not _wrap_task.done():
                                 _wrap_task.cancel()
                                 try:
                                     await _wrap_task
                                 except (asyncio.CancelledError, BaseException):
                                     pass
+
+                    # If wrap_run didn't recover from the error, re-raise.
+                    # In an @asynccontextmanager, not re-raising suppresses the exception.
+                    if _run_error is not None:
+                        raise _run_error
 
                     final_result = agent_run.result
                     if (
