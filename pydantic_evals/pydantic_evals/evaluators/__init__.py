@@ -1,4 +1,5 @@
 from .common import (
+    AgentJudge,
     Contains,
     Equals,
     EqualsExpected,
@@ -26,6 +27,7 @@ __all__ = (
     'IsInstance',
     'MaxDuration',
     'LLMJudge',
+    'AgentJudge',
     'HasMatchingSpan',
     'OutputConfig',
     # context

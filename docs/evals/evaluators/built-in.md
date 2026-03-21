@@ -347,6 +347,106 @@ dataset = Dataset(
 
 ---
 
+### AgentJudge
+
+Use any Pydantic AI [`Agent`][pydantic_ai.Agent] as an evaluator. Unlike [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] which uses a fixed internal agent with a rubric-based prompt, `AgentJudge` lets you bring your own agent with custom system prompts, tools, output types, and dependencies.
+
+```python
+from pydantic_ai import Agent
+from pydantic_evals.evaluators import AgentJudge, EvaluationReason
+
+AgentJudge(
+    agent=Agent('openai:gpt-5', output_type=EvaluationReason[bool]),
+    prompt='Evaluate the output',
+)
+```
+
+**Parameters:**
+
+- `agent` ([`Agent`][pydantic_ai.Agent]): The Pydantic AI agent to run for evaluation
+- `prompt` (str | Callable): User prompt for the agent — either a static string or a callable that takes an [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] and returns a prompt
+- `deps` (Any): Dependencies to pass to the agent — either a static value or a callable that takes an [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] (default: `None`)
+- `model` (Model | str | None): Override the agent's model (default: `None`, uses the agent's own model)
+- `model_settings` (ModelSettings | None): Override model settings
+- `evaluation_name` (str | None): Custom name for this evaluation in reports
+
+**Returns:** Depends on the agent's output type
+
+The agent's output type should be compatible with evaluation results:
+
+- **Scalar** (`bool`, `int`, `float`, `str`) for a single result
+- **[`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason]** for a result with an explanation (can be parameterized, e.g. `EvaluationReason[bool]`)
+- **Structured type** (`BaseModel`, `dataclass`, `TypedDict`) with fields of the above types — automatically converted to a dict of named results
+
+**Example — single evaluation with reason:**
+
+```python
+from pydantic_ai import Agent
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import AgentJudge, EvaluationReason
+
+grading_agent = Agent(
+    'openai:gpt-5',
+    system_prompt='You are an expert grader. Evaluate whether the output is correct.',
+    output_type=EvaluationReason[bool],
+)
+
+dataset = Dataset(
+    cases=[Case(inputs='What is 2+2?', expected_output='4')],
+    evaluators=[
+        AgentJudge(
+            agent=grading_agent,
+            prompt=lambda ctx: f'Input: {ctx.inputs}\nOutput: {ctx.output}\nExpected: {ctx.expected_output}',
+        ),
+    ],
+)
+```
+
+**Example — multi-aspect evaluation with structured output:**
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import AgentJudge, EvaluationReason
+
+
+class QualityGrade(BaseModel):
+    accuracy: EvaluationReason[bool]
+    clarity: EvaluationReason[float]
+
+
+grading_agent = Agent(
+    'openai:gpt-5',
+    system_prompt=(
+        'Grade the output for accuracy (correct or not) and clarity (0.0 to 1.0).'
+        ' Provide reasons for each.'
+    ),
+    output_type=QualityGrade,
+)
+
+dataset = Dataset(
+    cases=[Case(inputs='Explain gravity')],
+    evaluators=[
+        AgentJudge(
+            agent=grading_agent,
+            prompt=lambda ctx: f'Evaluate this explanation:\n{ctx.output}',
+        ),
+    ],
+)
+```
+
+The `QualityGrade` model is automatically converted to a dict with named evaluation results (`accuracy` and `clarity`), each appearing as a separate column in the evaluation report.
+
+**Notes:**
+
+- `AgentJudge` does not support serialization — it can only be used when defined in code, not from YAML dataset files
+- For simple rubric-based evaluation, prefer [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] which requires less setup
+- `AgentJudge` is useful when you need custom tools, structured output types, or complex evaluation logic that goes beyond a rubric
+
+---
+
 ## Span-Based Evaluation
 
 ### HasMatchingSpan
@@ -431,6 +531,7 @@ including how to write custom report evaluators that produce `ScalarResult` and 
 | [`IsInstance`][pydantic_evals.evaluators.IsInstance] | Type validation | `bool` + reason | Free | Instant |
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | `bool` | Free | Instant |
 | [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] | Subjective quality | `bool` and/or `float` | $$ | Slow |
+| [`AgentJudge`][pydantic_evals.evaluators.AgentJudge] | Custom agent evaluation | Any | $$ | Slow |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavioral check | `bool` | Free | Fast |
 
 ### Report-Level Evaluators

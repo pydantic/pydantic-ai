@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Literal, cast
@@ -7,8 +8,9 @@ from typing import Any, Literal, cast
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
-from pydantic_ai import models
+from pydantic_ai import Agent, models
 from pydantic_ai._utils import is_model_like
+from pydantic_ai.messages import UserContent
 from pydantic_ai.settings import ModelSettings
 
 from ..otel.span_tree import SpanQuery
@@ -22,6 +24,7 @@ __all__ = (
     'IsInstance',
     'MaxDuration',
     'LLMJudge',
+    'AgentJudge',
     'HasMatchingSpan',
     'OutputConfig',
 )
@@ -264,6 +267,124 @@ class LLMJudge(Evaluator[object, object, object]):
         # I expect that is rare enough to be worth not solving yet, but common enough that we probably will want to
         # solve it eventually. I'm imagining some kind of model registry, but don't want to work out the details yet.
         return result
+
+
+@dataclass(repr=False)
+class AgentJudge(Evaluator[object, object, object]):
+    """Use an arbitrary pydantic_ai Agent as an evaluator.
+
+    This allows you to use any pre-configured Agent — with custom system prompts, tools,
+    output types, etc. — to evaluate task output.
+
+    The agent is called with the provided prompt (which can be a static string or a function
+    of the evaluator context) and optionally with deps. The agent's output is used as the
+    evaluation result.
+
+    The agent's output type should be compatible with ``EvaluatorOutput``:
+
+    - A scalar (bool, int, float, str) for a single evaluation result.
+    - An ``EvaluationReason`` (optionally parameterized, e.g. ``EvaluationReason[bool]``)
+      for a result with an explanation.
+    - A ``Mapping[str, ...]`` or structured type (BaseModel, dataclass, TypedDict) with
+      fields of the above types, for multiple named evaluation results.
+
+    Note: This evaluator does not support serialization/deserialization. It can only be used
+    when defined in code, not from YAML dataset files.
+
+    Example:
+    ```python
+    from pydantic_ai import Agent
+
+    from pydantic_evals.evaluators import AgentJudge, EvaluationReason
+
+    grading_agent = Agent(
+        'openai:gpt-4o',
+        system_prompt='You are an expert grader. Return whether the output is correct and why.',
+        output_type=EvaluationReason[bool],
+    )
+
+    evaluator = AgentJudge(
+        agent=grading_agent,
+        prompt=lambda ctx: f'Grade this output: {ctx.output}',
+    )
+    ```
+    """
+
+    agent: Agent[Any, Any]
+    """The pydantic_ai Agent to use for evaluation.
+
+    The agent's output type should be compatible with ``EvaluatorOutput``. Structured types
+    (BaseModel, dataclass) are automatically converted to a dict of field values.
+    """
+
+    # TODO: Should the EvaluatorContext be serialized into context by default?
+    #   If not, we need to disallow the use of a plain string as a prompt — the agent MUST receive the EvaluatorContext
+    #   to make any sense at all.. Also, I think we should consider creating a tool/toolset for retrieving more info
+    #   from the EvaluatorContext (or maybe it's a capability of some sort if we can get a tool _and_ the system
+    #   prompt / user prompt generation into it? In particular, it would be nice to expose the spans as tool calls
+    #   rather than always baking them into context. That way the agent can choose to ignore it when the info it
+    #   needs is all contained in the prompt.
+    prompt: str | Callable[[EvaluatorContext[object, object, object]], str | Sequence[UserContent]]
+    """The user prompt to pass to the agent.
+
+    Can be a static string or a callable that takes the evaluator context and returns the prompt.
+    """
+
+    deps: Any = None
+    """Dependencies to pass to the agent.
+
+    If a callable, it will be called with the evaluator context to produce the deps value.
+    Otherwise, the value is passed directly to ``agent.run()``.
+    """
+
+    model: models.Model | models.KnownModelName | str | None = None
+    """Optional model override. If ``None``, the agent's own model is used."""
+
+    model_settings: ModelSettings | None = None
+    """Optional model settings override."""
+
+    # TODO: In the case of multiple evaluator outputs, should this be a namespace/prefix or similar?
+    evaluation_name: str | None = field(default=None)
+
+    async def evaluate(
+        self,
+        ctx: EvaluatorContext[object, object, object],
+    ) -> EvaluatorOutput:
+        user_prompt: str | Sequence[UserContent]
+        if callable(self.prompt):
+            user_prompt = self.prompt(ctx)
+        else:
+            user_prompt = self.prompt
+
+        deps = self.deps(ctx) if callable(self.deps) else self.deps
+
+        result = await self.agent.run(
+            user_prompt,
+            deps=deps,
+            model=self.model,
+            model_settings=self.model_settings,
+        )
+
+        output: Any = result.output
+
+        # Already a valid EvaluatorOutput
+        if isinstance(output, (bool, int, float, str, EvaluationReason)):
+            return cast(EvaluatorOutput, output)
+        if isinstance(output, Mapping):
+            return cast(EvaluatorOutput, output)
+
+        # Convert model-like types (BaseModel, dataclass) to a dict, preserving field values
+        if hasattr(output, 'model_fields'):
+            return {name: getattr(output, name) for name in output.model_fields}
+        if hasattr(output, '__dataclass_fields__'):
+            return {name: getattr(output, name) for name in output.__dataclass_fields__}
+
+        return output
+
+    def build_serialization_arguments(self) -> dict[str, Any]:
+        raise NotImplementedError(
+            '`AgentJudge` does not support serialization. It can only be used when defined in code.'
+        )
 
 
 @dataclass(repr=False)

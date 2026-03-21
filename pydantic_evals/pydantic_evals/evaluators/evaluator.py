@@ -30,28 +30,34 @@ EvaluationScalar = bool | int | float | str
 """
 
 
+# TODO(DavidM): Add bound=EvaluationScalar to the following typevar once pydantic 2.11 is the min supported version
+EvaluationScalarT = TypeVar('EvaluationScalarT', default=EvaluationScalar, covariant=True)
+"""Type variable for the scalar result type of an evaluation."""
+
+
+# TODO (v2): Make this dataclass kw-only and move reason to the start so during generation it goes first.
+#   Alternatively, ensure the JSON schema is generated with the `reason` field first...
 @dataclass
-class EvaluationReason:
+class EvaluationReason(Generic[EvaluationScalarT]):
     """The result of running an evaluator with an optional explanation.
 
     Contains a scalar value and an optional "reason" explaining the value.
+
+    Can be parameterized with a specific scalar type, e.g. ``EvaluationReason[bool]``,
+    to constrain the value type. When unparameterized, the value type defaults to
+    ``EvaluationScalar`` (bool | int | float | str).
 
     Args:
         value: The scalar result of the evaluation (boolean, integer, float, or string).
         reason: An optional explanation of the evaluation result.
     """
 
-    value: EvaluationScalar
+    value: EvaluationScalarT
     reason: str | None = None
 
 
 EvaluatorOutput = EvaluationScalar | EvaluationReason | Mapping[str, EvaluationScalar | EvaluationReason]
 """Type for the output of an evaluator, which can be a scalar, an EvaluationReason, or a mapping of names to either."""
-
-
-# TODO(DavidM): Add bound=EvaluationScalar to the following typevar once pydantic 2.11 is the min supported version
-EvaluationScalarT = TypeVar('EvaluationScalarT', default=EvaluationScalar, covariant=True)
-"""Type variable for the scalar result type of an evaluation."""
 
 T = TypeVar('T')
 

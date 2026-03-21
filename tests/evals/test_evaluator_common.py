@@ -20,6 +20,7 @@ with try_import() as imports_successful:
 
     from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
     from pydantic_evals.evaluators.common import (
+        AgentJudge,
         Contains,
         Equals,
         EqualsExpected,
@@ -498,3 +499,151 @@ async def test_span_query_evaluator(capfire: CaptureLogfire):
     # Test non-matching attributes
     evaluator = HasMatchingSpan(query=SpanQuery(name_equals='child1', has_attributes={'wrong': 'value'}))
     assert evaluator.evaluate(ctx) is False
+
+
+async def test_agent_judge_scalar_output():
+    """Test AgentJudge with an agent that returns a scalar (bool)."""
+    from pydantic_ai import Agent
+
+    agent = Agent('test', output_type=bool)
+    evaluator = AgentJudge(agent=agent, prompt='Is this correct?')
+
+    result = await evaluator.evaluate(MockContext(output='hello'))
+    assert isinstance(result, bool)
+
+
+async def test_agent_judge_evaluation_reason_output():
+    """Test AgentJudge with an agent that returns EvaluationReason."""
+    from pydantic_ai import Agent
+
+    agent = Agent('test', output_type=EvaluationReason[bool])
+    evaluator = AgentJudge(agent=agent, prompt='Grade this output')
+
+    result = await evaluator.evaluate(MockContext(output='hello'))
+    assert isinstance(result, EvaluationReason)
+
+
+async def test_agent_judge_basemodel_output():
+    """Test AgentJudge auto-converts BaseModel output to dict."""
+    from pydantic_ai import Agent
+
+    class GradeResult(BaseModel):
+        correctness: EvaluationReason[bool]
+        clarity: EvaluationReason[float]
+
+    agent = Agent('test', output_type=GradeResult)
+    evaluator = AgentJudge(agent=agent, prompt='Grade this')
+
+    result = await evaluator.evaluate(MockContext(output='hello'))
+    assert isinstance(result, dict)
+    assert 'correctness' in result
+    assert 'clarity' in result
+    assert isinstance(result['correctness'], EvaluationReason)
+    assert isinstance(result['clarity'], EvaluationReason)
+
+
+async def test_agent_judge_dataclass_output():
+    """Test AgentJudge auto-converts dataclass output to dict."""
+    from pydantic_ai import Agent
+
+    @dataclass
+    class GradeResult:
+        score: float = 0.0
+        passed: bool = False
+
+    agent = Agent('test', output_type=GradeResult)
+    evaluator = AgentJudge(agent=agent, prompt='Grade this')
+
+    result = await evaluator.evaluate(MockContext(output='hello'))
+    assert isinstance(result, dict)
+    assert 'score' in result
+    assert 'passed' in result
+
+
+async def test_agent_judge_dict_output():
+    """Test AgentJudge passes dict output through directly."""
+    from typing_extensions import TypedDict
+
+    from pydantic_ai import Agent
+
+    class GradeDict(TypedDict):
+        score: float
+        passed: bool
+
+    agent = Agent('test', output_type=GradeDict)
+    evaluator = AgentJudge(agent=agent, prompt='Grade this')
+
+    result = await evaluator.evaluate(MockContext(output='hello'))
+    assert isinstance(result, dict)
+
+
+async def test_agent_judge_callable_prompt():
+    """Test AgentJudge with a callable prompt that uses context."""
+    from pydantic_ai import Agent
+
+    agent = Agent('test', output_type=bool)
+
+    prompt_calls: list[Any] = []
+
+    def build_prompt(ctx: EvaluatorContext[Any, Any, Any]) -> str:
+        prompt_calls.append(ctx.output)
+        return f'Evaluate: {ctx.output}'
+
+    evaluator = AgentJudge(agent=agent, prompt=build_prompt)
+    await evaluator.evaluate(MockContext(output='test_value'))
+
+    assert prompt_calls == ['test_value']
+
+
+async def test_agent_judge_callable_deps():
+    """Test AgentJudge with callable deps."""
+    from pydantic_ai import Agent
+
+    agent = Agent('test', deps_type=str, output_type=bool)
+
+    def build_deps(ctx: EvaluatorContext[Any, Any, Any]) -> str:
+        return f'context: {ctx.output}'
+
+    evaluator = AgentJudge(
+        agent=agent,
+        prompt='Evaluate',
+        deps=build_deps,
+    )
+    result = await evaluator.evaluate(MockContext(output='hello'))
+    assert isinstance(result, bool)
+
+
+async def test_agent_judge_static_deps():
+    """Test AgentJudge with static deps value."""
+    from pydantic_ai import Agent
+
+    agent = Agent('test', deps_type=str, output_type=bool)
+
+    evaluator = AgentJudge(
+        agent=agent,
+        prompt='Evaluate',
+        deps='static_deps',
+    )
+    result = await evaluator.evaluate(MockContext(output='hello'))
+    assert isinstance(result, bool)
+
+
+async def test_agent_judge_evaluation_name():
+    """Test AgentJudge with custom evaluation name."""
+    from pydantic_ai import Agent
+
+    agent = Agent('test', output_type=bool)
+    evaluator = AgentJudge(agent=agent, prompt='Test', evaluation_name='my_eval')
+
+    assert evaluator.get_default_evaluation_name() == 'my_eval'
+
+
+async def test_agent_judge_serialization_error():
+    """Test that AgentJudge raises NotImplementedError on serialization."""
+    from pydantic_ai import Agent
+
+    agent = Agent('test', output_type=bool)
+    evaluator = AgentJudge(agent=agent, prompt='Test')
+
+    with pytest.raises(NotImplementedError, match='does not support serialization'):
+        evaluator.build_serialization_arguments()
