@@ -820,6 +820,16 @@ def test_mistral_json_schema_transformer_incompatible():
     assert transformer.is_strict_compatible is False
 
 
+def test_mistral_json_schema_transformer_strict_false():
+    """MistralJsonSchemaTransformer leaves schema untouched when strict=False."""
+    from pydantic_ai.profiles.mistral import MistralJsonSchemaTransformer
+
+    schema = {'type': 'object', 'properties': {'name': {'type': 'string'}}}
+    transformer = MistralJsonSchemaTransformer(schema, strict=False)
+    result = transformer.walk()
+    assert 'additionalProperties' not in result
+
+
 def test_mistral_provider_model_profile():
     """MistralProvider sets MistralJsonSchemaTransformer on the profile."""
     from pydantic_ai.profiles.mistral import MistralJsonSchemaTransformer

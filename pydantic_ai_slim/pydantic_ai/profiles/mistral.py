@@ -31,13 +31,14 @@ class MistralJsonSchemaTransformer(JsonSchemaTransformer):
 def mistral_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Mistral model.
 
-    Note: ``json_schema_transformer`` is intentionally not set here because it
-    depends on the provider API, not the model.  The native Mistral API needs
-    ``MistralJsonSchemaTransformer`` while OpenAI-compatible providers
-    (Fireworks, Azure, etc.) need ``OpenAIJsonSchemaTransformer``.  Each
-    provider sets the appropriate transformer in its own ``model_profile()``.
+    Note: ``json_schema_transformer`` and ``default_structured_output_mode``
+    are intentionally not set here because they depend on the provider API,
+    not the model.  The native Mistral API needs
+    ``MistralJsonSchemaTransformer`` and ``'native'`` mode, while
+    OpenAI-compatible providers (Fireworks, Azure, etc.) need
+    ``OpenAIJsonSchemaTransformer`` and may not support native mode at all.
+    Each provider sets these in its own ``model_profile()``.
     """
     return ModelProfile(
         supports_json_schema_output=True,
-        default_structured_output_mode='native',
     )

@@ -39,9 +39,13 @@ class MistralProvider(Provider[Mistral]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = mistral_model_profile(model_name)
-        if profile is not None:
-            return replace(profile, json_schema_transformer=MistralJsonSchemaTransformer)
-        return profile
+        if profile is None:  # pragma: no cover
+            return None
+        return replace(
+            profile,
+            json_schema_transformer=MistralJsonSchemaTransformer,
+            default_structured_output_mode='native',
+        )
 
     @overload
     def __init__(self, *, mistral_client: Mistral | None = None) -> None: ...
