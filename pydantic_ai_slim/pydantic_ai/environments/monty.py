@@ -107,7 +107,7 @@ class MontyEnvironment(ExecutionEnvironment):
         self._ensure_repl()
         return self
 
-    async def __aexit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: object) -> None:
         self._repl = None
 
     # TODO: Concurrent agent runs sharing a MontyEnvironment will fail because
