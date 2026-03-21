@@ -302,6 +302,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         infer_name=infer_name,
                         toolsets=toolsets,
                         event_stream_handler=event_stream_handler,
+                        spec=spec,
                     )
                     return result
             finally:
@@ -437,6 +438,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                             infer_name=infer_name,
                             toolsets=toolsets,
                             event_stream_handler=event_stream_handler,
+                            spec=spec,
                         )
                     )
                     return result
@@ -570,6 +572,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
             builtin_tools=builtin_tools,
+            spec=spec,
             **_deprecated_kwargs,
         ) as result:
             yield result
@@ -713,6 +716,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name=infer_name,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            spec=spec,
         )
 
     @overload
@@ -873,6 +877,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 metadata=metadata,
                 infer_name=infer_name,
                 toolsets=toolsets,
+                spec=spec,
             ) as run:
                 yield run
 

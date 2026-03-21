@@ -418,6 +418,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 toolsets=toolsets,
                 builtin_tools=builtin_tools,
                 event_stream_handler=event_stream_handler or self.event_stream_handler,
+                spec=spec,
                 **_deprecated_kwargs,
             )
 
@@ -546,6 +547,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             builtin_tools=builtin_tools,
             event_stream_handler=event_stream_handler,
+            spec=spec,
             **_deprecated_kwargs,
         )
 
@@ -674,6 +676,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
             builtin_tools=builtin_tools,
+            spec=spec,
             **_deprecated_kwargs,
         ) as result:
             yield result
@@ -817,6 +820,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name=infer_name,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            spec=spec,
         )
 
     @overload
@@ -993,6 +997,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name=infer_name,
             toolsets=toolsets,
             builtin_tools=builtin_tools,
+            spec=spec,
             **_deprecated_kwargs,
         ) as run:
             yield run

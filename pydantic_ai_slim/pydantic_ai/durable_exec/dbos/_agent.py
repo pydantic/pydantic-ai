@@ -163,6 +163,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
             builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
             event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+            spec: dict[str, Any] | AgentSpec | None = None,
             **_deprecated_kwargs: Never,
         ) -> AgentRunResult[Any]:
             with self._dbos_overrides():
@@ -182,6 +183,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     toolsets=toolsets,
                     builtin_tools=builtin_tools,
                     event_stream_handler=event_stream_handler,
+                    spec=spec,
                     **_deprecated_kwargs,
                 )
 
@@ -206,6 +208,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
             builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
             event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+            spec: dict[str, Any] | AgentSpec | None = None,
             **_deprecated_kwargs: Never,
         ) -> AgentRunResult[Any]:
             with self._dbos_overrides():
@@ -225,6 +228,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     toolsets=toolsets,
                     builtin_tools=builtin_tools,
                     event_stream_handler=event_stream_handler,
+                    spec=spec,
                     **_deprecated_kwargs,
                 )
 
@@ -407,6 +411,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets=toolsets,
             builtin_tools=builtin_tools,
             event_stream_handler=event_stream_handler,
+            spec=spec,
             **_deprecated_kwargs,
         )
 
@@ -534,6 +539,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets=toolsets,
             builtin_tools=builtin_tools,
             event_stream_handler=event_stream_handler,
+            spec=spec,
             **_deprecated_kwargs,
         )
 
@@ -662,6 +668,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets=toolsets,
             builtin_tools=builtin_tools,
             event_stream_handler=event_stream_handler,
+            spec=spec,
             **_deprecated_kwargs,
         ) as result:
             yield result
@@ -951,6 +958,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 infer_name=infer_name,
                 toolsets=toolsets,
                 builtin_tools=builtin_tools,
+                spec=spec,
                 **_deprecated_kwargs,
             ) as run:
                 yield run

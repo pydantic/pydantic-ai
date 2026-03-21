@@ -120,7 +120,7 @@ class _ResolvedSpec:
 
     spec: AgentSpec
     capability: CombinedCapability[Any] | None
-    instructions: list[Any]
+    instructions: list[str | _system_prompt.SystemPromptFunc[Any]]
     model: str | None
     model_settings: ModelSettings | None
     metadata: dict[str, Any] | None
@@ -488,10 +488,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_root_capability: ContextVar[_utils.Option[CombinedCapability[AgentDepsT]]] = ContextVar(
             '_override_root_capability', default=None
         )
-        self._override_builtin_tools: ContextVar[
-            _utils.Option[list[AbstractBuiltinTool | _utils.Callable[..., Any]]]
-        ] = ContextVar('_override_builtin_tools', default=None)
-
         self._enter_lock = Lock()
         self._entered_count = 0
         self._exit_stack = None
@@ -1056,9 +1052,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if metadata is not None:
                     if callable(metadata):
                         _spec_meta = resolved.metadata
+                        _orig_metadata = metadata
 
                         def _merged_meta(ctx: RunContext[AgentDepsT]) -> dict[str, Any]:
-                            return {**(_spec_meta or {}), **metadata(ctx)}  # type: ignore[operator]
+                            return {**(_spec_meta or {}), **_orig_metadata(ctx)}
 
                         metadata = _merged_meta
                     else:
@@ -1228,7 +1225,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             builtin_tools=[
                 *self._builtin_tools,
                 *cap_builtin_tools,
-                *(override_bt.value if (override_bt := self._override_builtin_tools.get()) is not None else []),
                 *(builtin_tools or []),
             ],
             tool_manager=tool_manager,
@@ -1670,14 +1666,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             model_settings_token = None
 
-        # Set capability and builtin_tools from spec
+        # Set capability from spec, combining with agent's existing root capability
         if resolved is not None and resolved.capability is not None:
-            cap_token = self._override_root_capability.set(_utils.Some(resolved.capability))
-            builtin_tools_from_cap = list(resolved.capability.get_builtin_tools())
-            bt_token = self._override_builtin_tools.set(_utils.Some(builtin_tools_from_cap))
+            combined = CombinedCapability([self._root_capability, resolved.capability])
+            cap_token = self._override_root_capability.set(_utils.Some(combined))
         else:
             cap_token = None
-            bt_token = None
 
         try:
             yield
@@ -1700,8 +1694,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_model_settings.reset(model_settings_token)
             if cap_token is not None:
                 self._override_root_capability.reset(cap_token)
-            if bt_token is not None:
-                self._override_builtin_tools.reset(bt_token)
 
     @overload
     def instructions(

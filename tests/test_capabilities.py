@@ -2401,12 +2401,21 @@ class TestOverrideWithSpec:
         assert 'from spec' not in result.output
 
     async def test_override_with_spec_capabilities(self):
-        """Override with spec capabilities works."""
-        agent = Agent('test')
+        """Override with spec capabilities are combined with agent's existing capabilities."""
 
-        with agent.override(spec={'capabilities': ['Thinking']}):
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), instructions='agent-level')
+
+        with agent.override(spec={'capabilities': [{'Instructions': 'from-spec-cap'}]}):
             result = await agent.run('hello')
-            assert result.output is not None
+            # Both agent-level and spec capability instructions should be present
+            assert 'agent-level' in result.output
+            assert 'from-spec-cap' in result.output
 
 
 class TestRunWithSpec:
@@ -2431,7 +2440,7 @@ class TestRunWithSpec:
         agent = Agent(None)  # No model set
 
         result = await agent.run('hello', spec={'model': 'test'})
-        assert result.output is not None
+        assert result.output == 'success (no tool calls)'
 
     async def test_run_with_spec_model_settings_merged(self):
         """Spec model_settings are merged with run model_settings."""
@@ -2450,24 +2459,40 @@ class TestRunWithSpec:
 
     async def test_run_with_spec_partial_no_model(self):
         """Partial spec without model works if agent has a model."""
-        agent = Agent('test')
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn))
 
         result = await agent.run('hello', spec={'instructions': 'be helpful'})
-        assert result.output is not None
+        assert 'be helpful' in result.output
 
     async def test_run_with_spec_capabilities(self):
         """Run with spec capabilities merges with agent's root capability."""
-        agent = Agent('test')
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions = next(
+                (m.instructions for m in messages if isinstance(m, ModelRequest) and m.instructions), None
+            )
+            return make_text_response(f'instructions: {instructions}')
+
+        agent = Agent(FunctionModel(model_fn), instructions='agent-level')
 
         result = await agent.run(
             'hello',
             spec={
                 'capabilities': [
-                    {'Instructions': 'extra instructions from spec'},
+                    {'Instructions': 'extra from spec cap'},
                 ],
             },
         )
-        assert result.output is not None
+        # Both should be present (additive)
+        assert 'agent-level' in result.output
+        assert 'extra from spec cap' in result.output
 
     async def test_run_with_spec_metadata_merged(self):
         """Spec metadata is merged with run metadata."""
