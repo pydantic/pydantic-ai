@@ -35,6 +35,7 @@ try:
         MontyRepl,
         MontyRuntimeError,
         MontySyntaxError,
+        NameLookupSnapshot,
         ResourceLimits,
     )
 except ImportError as _import_error:
@@ -140,6 +141,9 @@ class MontyEnvironment(ExecutionEnvironment):
             monty_state = self._ensure_repl().feed_start(
                 code, print_callback=lambda _stream, text: prints.append(text)
             )
+            # Handle NameLookupSnapshot by resuming without a value (raises NameError in sandbox)
+            while isinstance(monty_state, NameLookupSnapshot):
+                monty_state = monty_state.resume()
             if not isinstance(monty_state, MontyComplete):
                 raise CodeRuntimeError(
                     'Unexpected external function call in code without functions.'
@@ -212,7 +216,7 @@ class MontyEnvironment(ExecutionEnvironment):
 
     @staticmethod
     async def _execution_loop(
-        monty_state: MontyComplete | FutureSnapshot | FunctionSnapshot,
+        monty_state: MontyComplete | FutureSnapshot | FunctionSnapshot | NameLookupSnapshot,
         function_callback: FunctionCallback,
         *,
         functions: dict[str, FunctionSignature],
@@ -220,6 +224,10 @@ class MontyEnvironment(ExecutionEnvironment):
         tasks: dict[int, asyncio.Task[Any]] = {}
         try:
             while not isinstance(monty_state, MontyComplete):
+                if isinstance(monty_state, NameLookupSnapshot):
+                    # Resume without a value — raises NameError in the sandbox
+                    monty_state = monty_state.resume()
+                    continue
                 if isinstance(monty_state, FunctionSnapshot):
                     call = FunctionCall(
                         call_id=f'monty_{monty_state.call_id}',
