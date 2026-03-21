@@ -530,12 +530,12 @@ capabilities:
       max_tokens: 8192
 ```
 
-Load it with [`Agent.from_spec`][pydantic_ai.Agent.from_spec]:
+Load it with [`Agent.from_file`][pydantic_ai.Agent.from_file]:
 
-```python {title="from_spec_example.py" test="skip"}
+```python {title="from_file_example.py" test="skip"}
 from pydantic_ai import Agent
 
-agent = Agent.from_spec('agent.yaml')
+agent = Agent.from_file('agent.yaml')
 ```
 
 ### Spec syntax
@@ -596,4 +596,4 @@ The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full sp
 | `instrument` | `bool \| None` | Enable [Logfire](logfire.md) instrumentation |
 | `metadata` | `dict \| None` | Agent metadata |
 
-Specs can be loaded from files with [`AgentSpec.from_file`][pydantic_ai.agent.spec.AgentSpec.from_file] and saved with [`AgentSpec.to_file`][pydantic_ai.agent.spec.AgentSpec.to_file], which also generates a JSON schema for editor autocompletion.
+Specs can be loaded from files directly via [`Agent.from_file`][pydantic_ai.Agent.from_file], or via [`AgentSpec.from_file`][pydantic_ai.agent.spec.AgentSpec.from_file] for more control. Specs can be saved with [`AgentSpec.to_file`][pydantic_ai.agent.spec.AgentSpec.to_file], which also generates a JSON schema for editor autocompletion.
