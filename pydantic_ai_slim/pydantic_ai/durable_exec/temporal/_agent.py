@@ -837,6 +837,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         infer_name: bool = True,
         builtin_tools: Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 

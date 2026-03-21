@@ -2401,36 +2401,12 @@ class TestOverrideWithSpec:
         assert 'from spec' not in result.output
 
     async def test_override_with_spec_capabilities(self):
-        """Override with spec capabilities applies hooks."""
-        before_called = False
-
-        @dataclass
-        class TrackingCap(AbstractCapability[None]):
-            async def before_model_request(
-                self,
-                ctx: RunContext[None],
-                request_context: ModelRequestContext,
-            ) -> ModelRequestContext:
-                nonlocal before_called
-                before_called = True
-                return request_context
-
-            @classmethod
-            def get_serialization_name(cls) -> str | None:
-                return None
-
+        """Override with spec capabilities works."""
         agent = Agent('test')
 
-        with agent.override(spec={'capabilities': []}, model='test'):
-            # Override with empty caps - just make sure it works
+        with agent.override(spec={'capabilities': ['Thinking']}):
             result = await agent.run('hello')
             assert result.output is not None
-
-        # Now test with custom cap via direct capability
-        agent2 = Agent('test')
-        with agent2.override(spec={'capabilities': ['Thinking']}):
-            result2 = await agent2.run('hello')
-            assert result2.output is not None
 
 
 class TestRunWithSpec:
