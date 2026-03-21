@@ -24,18 +24,17 @@ class Thinking(ModelSettings[AgentDepsT]):
     def from_spec(cls, *args: Any, **kwargs: Any) -> Thinking[Any]:
         if args or kwargs:
             raise TypeError(
-                'Thinking() does not accept arguments yet — configurable parameters will be available once'
-                ' #3894 lands. Use ModelSettings capability for custom thinking settings.'
+                'Thinking() does not accept arguments yet. '
+                'Use the ModelSettings capability for custom thinking settings.'
             )
         return cls()
 
     def __init__(self):
-        # Bypasses the dataclass-generated __init__ to hardcode provider-specific
-        # thinking settings. Cast needed because ModelSettings is a TypedDict and
-        # these provider-specific keys aren't in the base type.
+        # Cast needed because ModelSettings is a TypedDict and these provider-specific
+        # keys aren't in the base type.
         # Providers covered: OpenAI, Anthropic, Google (google.genai SDK), Gemini (direct API)
         super().__init__(
-            cast(
+            settings=cast(
                 _ModelSettings,
                 {
                     'openai_reasoning_effort': 'high',
