@@ -1121,7 +1121,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         _run_ready.set()
                         await _run_done.wait()
                         if _run_error is not None:
-                            raise _run_error
+                            # Raise the original node error, not the potentially
+                            # transformed version from context manager __aexit__ chains.
+                            raise agent_run._node_error or _run_error  # pyright: ignore[reportPrivateUsage]
                         r = agent_run.result
                         assert r is not None
                         return r
@@ -1142,8 +1144,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     try:
                         yield agent_run
                     except BaseException as _exc:
-                        _run_error = _exc
-                        raise
+                        # Use the original node error if available, since context manager
+                        # __aexit__ chains (GraphRun → anyio TaskGroup) may transform
+                        # the exception (e.g. into CancelledError or ExceptionGroup).
+                        _run_error = agent_run._node_error or _exc  # pyright: ignore[reportPrivateUsage]
+                        # Don't re-raise yet — give wrap_run a chance to recover.
+                        # If wrap_run catches the error from handler() and returns
+                        # a recovery result, the exception will be suppressed.
                     finally:
                         if agent_run.result is not None:
                             run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
@@ -1156,12 +1163,28 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                 _result = await _wrap_task
                                 _result = await run_capability.after_run(run_ctx, result=_result)
                                 agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
+                            elif _run_error is not None:
+                                # Error path: await wrap_run to see if it recovers.
+                                # _do_run() re-raises _run_error; if wrap_run catches
+                                # it and returns a result, recovery succeeds.
+                                try:
+                                    _result = await _wrap_task
+                                    _result = await run_capability.after_run(run_ctx, result=_result)
+                                    agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
+                                    _run_error = None  # Recovery succeeded
+                                except BaseException:
+                                    pass  # wrap_run didn't recover
                             elif not _wrap_task.done():
                                 _wrap_task.cancel()
                                 try:
                                     await _wrap_task
                                 except (asyncio.CancelledError, BaseException):
                                     pass
+
+                    # If wrap_run didn't recover from the error, re-raise.
+                    # In an @asynccontextmanager, not re-raising suppresses the exception.
+                    if _run_error is not None:
+                        raise _run_error
 
                     final_result = agent_run.result
                     if (

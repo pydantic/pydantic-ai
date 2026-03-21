@@ -1154,6 +1154,55 @@ class TestRunHooks:
         result = await agent.run('hello')
         assert result.output == 'short-circuited'
 
+    async def test_wrap_run_can_recover_from_error(self):
+        """wrap_run can catch errors from handler() and return a recovery result."""
+
+        @dataclass
+        class ErrorRecoveryCap(AbstractCapability[Any]):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                try:
+                    return await handler()
+                except RuntimeError:
+                    return AgentRunResult(output='recovered from error')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[ErrorRecoveryCap()])
+        result = await agent.run('hello')
+        assert result.output == 'recovered from error'
+
+    async def test_wrap_run_error_propagates_without_recovery(self):
+        """Without recovery in wrap_run, errors propagate normally."""
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model))
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+
+    async def test_wrap_run_recovery_via_iter(self):
+        """wrap_run error recovery works when using agent.iter() too."""
+
+        @dataclass
+        class ErrorRecoveryCap(AbstractCapability[Any]):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                try:
+                    return await handler()
+                except RuntimeError:
+                    return AgentRunResult(output='recovered via iter')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[ErrorRecoveryCap()])
+        async with agent.iter('hello') as agent_run:
+            async for _node in agent_run:
+                pass
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'recovered via iter'
+
 
 class TestModelRequestHooks:
     async def test_before_model_request(self):
