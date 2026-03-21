@@ -23,6 +23,7 @@ nav:
           - tools.md
           - output.md
           - message-history.md
+          - capabilities.md
           - direct.md
       - Models & Providers:
           - Overview: models/overview.md
