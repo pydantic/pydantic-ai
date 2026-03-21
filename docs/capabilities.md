@@ -55,7 +55,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -118,8 +118,7 @@ Instructions can use Handlebars-style templates that are rendered against the ag
 ```python {title="template_instructions.py" test="skip"}
 from dataclasses import dataclass
 
-from pydantic_ai import Agent
-from pydantic_ai._template import TemplateStr
+from pydantic_ai import Agent, TemplateStr
 from pydantic_ai.capabilities import Instructions
 
 
@@ -148,7 +147,7 @@ When model settings need to vary per step, return a callable from `get_model_set
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 
@@ -230,7 +229,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 
@@ -285,7 +284,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import (
     ModelMessage,
@@ -353,7 +352,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
@@ -410,12 +409,14 @@ This means the first capability in the list has the first and last say on the op
 
 By default, a capability instance is shared across all runs of an agent. If your capability accumulates mutable state that should not leak between runs, override [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] to return a fresh instance:
 
-```python {title="per_run_state.py" test="skip"}
+```python {title="per_run_state.py"}
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import RunContext
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities.abstract import BeforeModelRequestContext
+from pydantic_ai.models.test import TestModel
 
 
 @dataclass
@@ -427,9 +428,21 @@ class RequestCounter(AbstractCapability[Any]):
     async def for_run(self, ctx: RunContext[Any]) -> 'RequestCounter':
         return RequestCounter()  # fresh instance for each run
 
-    async def before_model_request(self, ctx, request_context):
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: BeforeModelRequestContext
+    ) -> BeforeModelRequestContext:
         self.count += 1
         return request_context
+
+
+counter = RequestCounter()
+agent = Agent(TestModel(), capabilities=[counter])
+
+# The shared counter stays at 0 because for_run returns a fresh instance
+agent.run_sync('first run')
+agent.run_sync('second run')
+print(counter.count)
+#> 0
 ```
 
 ## Agent specs
@@ -471,7 +484,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability
 
 
 @dataclass
