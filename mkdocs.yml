@@ -46,7 +46,10 @@ nav:
           - builtin-tools.md
           - common-tools.md
           - third-party-tools.md
+      - Execution Environments:
+          - environments.md
       - Advanced Features:
+          - Code Execution: code-execution.md
           - input.md
           - thinking.md
           - retries.md
@@ -171,6 +174,7 @@ nav:
           - api/result.md
           - api/retries.md
           - api/run.md
+          - api/environments.md
           - api/settings.md
           - api/tools.md
           - api/toolsets.md
