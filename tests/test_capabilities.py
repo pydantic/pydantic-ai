@@ -469,6 +469,35 @@ def test_from_file_with_schema_field(tmp_path: str):
     assert spec.json_schema_path == './agent_schema.json'
 
 
+def test_agent_from_file_yaml(tmp_path: str):
+    from pathlib import Path
+
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('model: test\nname: my-agent\ninstructions: Be helpful\n', encoding='utf-8')
+    agent = Agent.from_file(spec_path)
+    assert agent.name == 'my-agent'
+    assert 'Be helpful' in agent._instructions  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_file_json(tmp_path: str):
+    from pathlib import Path
+
+    spec_path = Path(tmp_path) / 'agent.json'
+    spec_path.write_text('{"model": "test", "name": "json-agent"}', encoding='utf-8')
+    agent = Agent.from_file(spec_path)
+    assert agent.name == 'json-agent'
+
+
+def test_agent_from_file_with_overrides(tmp_path: str):
+    from pathlib import Path
+
+    spec_path = Path(tmp_path) / 'agent.yaml'
+    spec_path.write_text('model: test\nname: spec-name\nretries: 5\n', encoding='utf-8')
+    agent = Agent.from_file(spec_path, name='override-name', retries=2)
+    assert agent.name == 'override-name'
+    assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
+
+
 def test_to_file_yaml(tmp_path: str):
     from pathlib import Path
 
