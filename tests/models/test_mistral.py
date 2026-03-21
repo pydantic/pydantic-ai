@@ -780,6 +780,58 @@ async def test_native_json_schema_with_function_tools(allow_model_requests: None
     assert result.output == WeatherResult(temperature=15, description='cloudy')
 
 
+async def test_stream_tool_output_uses_json_object_mode(allow_model_requests: None):
+    """Streaming with explicit ToolOutput() uses the json_object fallback path."""
+
+    class MyResult(TypedDict, total=False):
+        value: str
+
+    stream = [
+        text_chunk('{"value": "hello"}', finish_reason='stop'),
+        chunk([]),
+    ]
+
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model, output_type=ToolOutput(MyResult))
+
+    async with agent.run_stream('test') as result:
+        v = [c async for c in result.stream_output(debounce_by=None)]
+        assert v == snapshot([{'value': 'hello'}, {'value': 'hello'}])
+
+
+def test_mistral_json_schema_transformer_strict_true():
+    """MistralJsonSchemaTransformer adds additionalProperties: false when strict=True."""
+    from pydantic_ai.profiles.mistral import MistralJsonSchemaTransformer
+
+    schema = {'type': 'object', 'properties': {'name': {'type': 'string'}}}
+    transformer = MistralJsonSchemaTransformer(schema, strict=True)
+    result = transformer.walk()
+    assert result['additionalProperties'] is False
+
+
+def test_mistral_json_schema_transformer_incompatible():
+    """MistralJsonSchemaTransformer marks schemas with additionalProperties: true as non-strict."""
+    from pydantic_ai.profiles.mistral import MistralJsonSchemaTransformer
+
+    schema = {'type': 'object', 'properties': {'name': {'type': 'string'}}, 'additionalProperties': True}
+    transformer = MistralJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is False
+
+
+def test_mistral_provider_model_profile():
+    """MistralProvider sets MistralJsonSchemaTransformer on the profile."""
+    from pydantic_ai.profiles.mistral import MistralJsonSchemaTransformer
+
+    provider = MistralProvider(api_key='foobar')
+    profile = provider.model_profile('mistral-small-latest')
+    assert profile is not None
+    assert profile.supports_json_schema_output is True
+    assert profile.default_structured_output_mode == 'native'
+    assert profile.json_schema_transformer is MistralJsonSchemaTransformer
+
+
 #####################
 ## Completion Model Structured Stream (JSON Mode)
 #####################
