@@ -1126,7 +1126,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     _run_error: BaseException | None = None
 
                     async def _do_run() -> AgentRunResult[Any]:
-                        await self._root_capability.before_run(run_ctx)
+                        await run_capability.before_run(run_ctx)
                         _run_ready.set()
                         await _run_done.wait()
                         if _run_error is not None:
@@ -1135,7 +1135,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         assert r is not None
                         return r
 
-                    _wrap_task = asyncio.create_task(self._root_capability.wrap_run(run_ctx, handler=_do_run))
+                    _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
 
                     # Wait for handler to start or wrap_run to complete (short-circuit)
                     _ready_waiter = asyncio.create_task(_run_ready.wait())
@@ -1145,7 +1145,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     _short_circuited = _wrap_task.done() and not _run_ready.is_set()
                     if _short_circuited:
                         _result = _wrap_task.result()
-                        _result = await self._root_capability.after_run(run_ctx, result=_result)
+                        _result = await run_capability.after_run(run_ctx, result=_result)
                         agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
 
                     try:
@@ -1163,7 +1163,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             _run_done.set()
                             if _run_error is None and agent_run.result is not None:
                                 _result = await _wrap_task
-                                _result = await self._root_capability.after_run(run_ctx, result=_result)
+                                _result = await run_capability.after_run(run_ctx, result=_result)
                                 agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
                             elif not _wrap_task.done():
                                 _wrap_task.cancel()
