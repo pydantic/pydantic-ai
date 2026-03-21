@@ -320,19 +320,6 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
 
 
 @dataclass
-class _ResponsesRequestInput:
-    """Common input parameters for OpenAI Responses API requests."""
-
-    tools: list[responses.ToolParam]
-    tool_choice: Literal['none', 'required', 'auto'] | None
-    previous_response_id: str | None
-    instructions: str | Omit
-    messages: list[responses.ResponseInputItemParam]
-    reasoning: Reasoning | Omit
-    text: responses.ResponseTextConfigParam | None
-
-
-@dataclass
 class _ResponsesRequestParams:
     """Typed request parameters shared by Responses API calls."""
 
@@ -1494,13 +1481,13 @@ class OpenAIResponsesModel(Model):
         if not messages and not settings.get('openai_previous_response_id'):
             raise UserError('Cannot count tokens without any messages or a previous response ID.')
 
-        request_input = await self._build_request_input(
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        request_params = await self._build_responses_request_params(
             messages,
             settings,
             model_request_parameters,
+            profile,
         )
-
-        request_params = self._build_responses_request_params(request_input, settings)
 
         try:
             extra_headers, timeout = self._build_request_options(settings)
@@ -1714,43 +1701,43 @@ class OpenAIResponsesModel(Model):
             else None,
         )
 
-    async def _build_request_input(
+    async def _build_responses_request_params(
         self,
         messages: list[ModelRequest | ModelResponse],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> _ResponsesRequestInput:
-        """Build common request input parameters for the Responses API.
-
-        This method extracts the shared logic between count_tokens and _responses_create.
-        """
+        profile: OpenAIModelProfile,
+    ) -> _ResponsesRequestParams:
+        """Build typed request parameters shared by Responses API calls."""
         tools: list[responses.ToolParam] = (
             self._get_builtin_tools(model_request_parameters)
             + list(model_settings.get('openai_builtin_tools', []))
             + self._get_tools(model_request_parameters)
         )
-        profile = OpenAIModelProfile.from_profile(self.profile)
         if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
+            tool_choice: Literal['none', 'required', 'auto'] | Omit = OMIT
         elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
 
-        previous_response_id = model_settings.get('openai_previous_response_id')
-        if previous_response_id == 'auto':
+        previous_response_id_setting = model_settings.get('openai_previous_response_id')
+        previous_response_id: str | None
+        if previous_response_id_setting == 'auto':
             previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
+        else:
+            previous_response_id = previous_response_id_setting
 
         instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
         reasoning = self._get_reasoning(model_settings)
 
-        text: responses.ResponseTextConfigParam | None = None
+        text: responses.ResponseTextConfigParam | Omit = OMIT
         if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object
             assert output_object is not None
             text = {'format': self._map_json_schema(output_object)}
         elif (
-            model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
+            model_request_parameters.output_mode == 'prompted' and profile.supports_json_object_output
         ):  # pragma: no branch
             text = {'format': {'type': 'json_object'}}
 
@@ -1764,6 +1751,11 @@ class OpenAIResponsesModel(Model):
             )
             instructions = OMIT
 
+        if verbosity := model_settings.get('openai_text_verbosity'):
+            text_with_verbosity: responses.ResponseTextConfigParam = text if isinstance(text, dict) else {}
+            text_with_verbosity['verbosity'] = verbosity
+            text = text_with_verbosity
+
         # When there are no input messages and we're not reusing a previous response,
         # the OpenAI API will reject a request without any input,
         # even if there are instructions.
@@ -1776,36 +1768,16 @@ class OpenAIResponsesModel(Model):
                 )
             )
 
-        return _ResponsesRequestInput(
-            tools=tools,
-            tool_choice=tool_choice,
-            previous_response_id=previous_response_id,
-            instructions=instructions,
-            messages=openai_messages,
-            reasoning=reasoning,
-            text=text,
-        )
-
-    def _build_responses_request_params(
-        self,
-        request_input: _ResponsesRequestInput,
-        model_settings: OpenAIResponsesModelSettings,
-    ) -> _ResponsesRequestParams:
-        text = request_input.text
-        if verbosity := model_settings.get('openai_text_verbosity'):
-            text = text or {}
-            text['verbosity'] = verbosity
-
         return _ResponsesRequestParams(
             model=self.model_name,
-            input=request_input.messages,
-            instructions=request_input.instructions,
+            input=openai_messages,
+            instructions=instructions,
             parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT),
-            tools=request_input.tools or OMIT,
-            tool_choice=request_input.tool_choice or OMIT,
-            previous_response_id=request_input.previous_response_id or OMIT,
-            reasoning=request_input.reasoning,
-            text=text or OMIT,
+            tools=tools or OMIT,
+            tool_choice=tool_choice,
+            previous_response_id=previous_response_id or OMIT,
+            reasoning=reasoning,
+            text=text,
             truncation=model_settings.get('openai_truncation', OMIT),
         )
 
@@ -1843,12 +1815,6 @@ class OpenAIResponsesModel(Model):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
-        request_input = await self._build_request_input(
-            messages,
-            model_settings,
-            model_request_parameters,
-        )
-
         profile = OpenAIModelProfile.from_profile(self.profile)
         _drop_sampling_params_for_reasoning(profile, model_settings)
         _drop_unsupported_params(profile, model_settings)
@@ -1865,7 +1831,12 @@ class OpenAIResponsesModel(Model):
         if model_settings.get('openai_logprobs'):
             include.append('message.output_text.logprobs')
 
-        request_params = self._build_responses_request_params(request_input, model_settings)
+        request_params = await self._build_responses_request_params(
+            messages,
+            model_settings,
+            model_request_parameters,
+            profile,
+        )
         extra_headers, timeout = self._build_request_options(model_settings)
 
         # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors

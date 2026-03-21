@@ -10052,6 +10052,33 @@ async def test_responses_usage_limit_not_exceeded(allow_model_requests: None, op
         "That's a classic pangram! It contains every letter of the English alphabet"
         " at least once. It's commonly used for testing fonts, typewriters, and keyboards."
     )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='The quick brown fox jumps over the lazy dog.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=(run_id := IsStr()),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="That's a classic pangram! It contains every letter of the English alphabet at least once. It's commonly used for testing fonts, typewriters, and keyboards.",
+                        id=IsStr(),
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=18, output_tokens=28, details={'reasoning_tokens': 0}),
+                model_name='gpt-4.1-mini',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=run_id,
+            ),
+        ]
+    )
 
 
 async def test_openai_include_raw_annotations_non_streaming(allow_model_requests: None, openai_api_key: str):
