@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import dataclasses
 import inspect
 import json
@@ -813,7 +814,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def iter(
+    async def iter(  # noqa: C901
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -1025,7 +1026,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_toolsets=cap_toolsets,
         )
         toolset = await toolset.for_run(initial_ctx)
-        tool_manager = ToolManager[AgentDepsT](toolset, default_max_retries=self._max_tool_retries)
+        tool_manager = ToolManager[AgentDepsT](
+            toolset, root_capability=run_capability, default_max_retries=self._max_tool_retries
+        )
 
         # Build instructions with per-run capability contributions
         instructions_literal, instructions_functions = self._get_instructions(
@@ -1087,7 +1090,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             'logfire.msg': f'{agent_name} run',
         }
         if self._description is not None:
-            if isinstance(self._description, TemplateStr):  # pragma: no cover — requires pydantic-handlebars
+            if isinstance(self._description, TemplateStr):
                 span_attributes['gen_ai.agent.description'] = self._description.render(deps)
             else:
                 span_attributes['gen_ai.agent.description'] = self._description
@@ -1113,13 +1116,61 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     agent_run = AgentRun(graph_run)
                     run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
 
+                    # Build RunContext for run lifecycle hooks
+                    run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+
+                    # Task-based wrap_run: handler calls before_run, signals readiness,
+                    # then waits for caller to finish
+                    _run_ready = asyncio.Event()
+                    _run_done = asyncio.Event()
+                    _run_error: BaseException | None = None
+
+                    async def _do_run() -> AgentRunResult[Any]:
+                        await self._root_capability.before_run(run_ctx)
+                        _run_ready.set()
+                        await _run_done.wait()
+                        if _run_error is not None:
+                            raise _run_error
+                        r = agent_run.result
+                        assert r is not None
+                        return r
+
+                    _wrap_task = asyncio.create_task(self._root_capability.wrap_run(run_ctx, handler=_do_run))
+
+                    # Wait for handler to start or wrap_run to complete (short-circuit)
+                    _ready_waiter = asyncio.create_task(_run_ready.wait())
+                    await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+                    _ready_waiter.cancel()
+
+                    _short_circuited = _wrap_task.done() and not _run_ready.is_set()
+                    if _short_circuited:
+                        _result = _wrap_task.result()
+                        _result = await self._root_capability.after_run(run_ctx, result=_result)
+                        agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
+
                     try:
                         yield agent_run
+                    except BaseException as _exc:
+                        _run_error = _exc
+                        raise
                     finally:
                         if agent_run.result is not None:
                             run_metadata = self._resolve_and_store_metadata(agent_run.ctx, metadata)
                         else:
                             run_metadata = graph_run.state.metadata
+
+                        if not _short_circuited:
+                            _run_done.set()
+                            if _run_error is None and agent_run.result is not None:
+                                _result = await _wrap_task
+                                _result = await self._root_capability.after_run(run_ctx, result=_result)
+                                agent_run._result_override = _result  # pyright: ignore[reportPrivateUsage]
+                            elif not _wrap_task.done():
+                                _wrap_task.cancel()
+                                try:
+                                    await _wrap_task
+                                except (asyncio.CancelledError, BaseException):
+                                    pass
 
                     final_result = agent_run.result
                     if (

@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from typing import Any, Generic, Literal
+from typing import TYPE_CHECKING, Any, Generic, Literal
 
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
@@ -15,11 +15,14 @@ from typing_extensions import deprecated
 from . import messages as _messages
 from ._instrumentation import InstrumentationNames
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
+from .exceptions import ModelRetry, SkipToolExecution, SkipToolValidation, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
+
+if TYPE_CHECKING:
+    from .capabilities.abstract import AbstractCapability
 
 ParallelExecutionMode = Literal['parallel', 'sequential', 'parallel_ordered_events']
 
@@ -58,6 +61,8 @@ class ToolManager(Generic[AgentDepsT]):
 
     toolset: AbstractToolset[AgentDepsT]
     """The toolset that provides the tools for this run step."""
+    root_capability: AbstractCapability[AgentDepsT] | None = None
+    """The root capability for hook invocation."""
     ctx: RunContext[AgentDepsT] | None = None
     """The agent run context for a specific run step."""
     tools: dict[str, ToolsetTool[AgentDepsT]] | None = None
@@ -109,6 +114,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         return self.__class__(
             toolset=self.toolset,
+            root_capability=self.root_capability,
             ctx=ctx,
             tools=await self.toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
@@ -192,6 +198,7 @@ class ToolManager(Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         allow_partial: bool,
+        args_override: str | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Validate tool arguments using Pydantic schema and custom args_validator_func.
 
@@ -202,15 +209,16 @@ class ToolManager(Generic[AgentDepsT]):
             ValidationError: If argument validation fails.
             ModelRetry: If argument validation fails with a retry request.
         """
+        raw_args = args_override if args_override is not None else call.args
         pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
         validator = tool.args_validator
-        if isinstance(call.args, str):
+        if isinstance(raw_args, str):
             args_dict = validator.validate_json(
-                call.args or '{}', allow_partial=pyd_allow_partial, context=ctx.validation_context
+                raw_args or '{}', allow_partial=pyd_allow_partial, context=ctx.validation_context
             )
         else:
             args_dict = validator.validate_python(
-                call.args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
+                raw_args or {}, allow_partial=pyd_allow_partial, context=ctx.validation_context
             )
 
         if tool.args_validator_func is not None:
@@ -219,6 +227,70 @@ class ToolManager(Generic[AgentDepsT]):
                 await result
 
         return args_dict
+
+    async def _run_validate_hooks(
+        self,
+        call: ToolCallPart,
+        tool: ToolsetTool[AgentDepsT],
+        ctx: RunContext[AgentDepsT],
+        *,
+        allow_partial: bool,
+    ) -> dict[str, Any]:
+        """Run validation with before/wrap/after tool_validate hooks."""
+        cap = self.root_capability
+
+        async def do_validate(args: str | dict[str, Any]) -> dict[str, Any]:
+            # Update call.args with the (possibly modified) args before validation
+            validated = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
+            return validated
+
+        if cap is not None:
+            # before_tool_validate
+            raw_args: str | dict[str, Any] = call.args if call.args is not None else {}
+            raw_args = await cap.before_tool_validate(ctx, call=call, args=raw_args)
+
+            # wrap_tool_validate wraps the validation
+            validated_args = await cap.wrap_tool_validate(ctx, call=call, args=raw_args, handler=do_validate)
+
+            # after_tool_validate
+            validated_args = await cap.after_tool_validate(ctx, call=call, args=validated_args)
+        else:
+            validated_args = await do_validate(call.args if call.args is not None else {})
+
+        return validated_args
+
+    async def _run_execute_hooks(
+        self,
+        validated: ValidatedToolCall[AgentDepsT],
+        *,
+        usage: RunUsage | None = None,
+    ) -> Any:
+        """Run execution with before/wrap/after tool_execute hooks."""
+        assert validated.tool is not None
+        assert validated.validated_args is not None
+
+        cap = self.root_capability
+        call = validated.call
+        ctx = validated.ctx
+
+        async def do_execute(args: dict[str, Any]) -> Any:
+            # Execute with potentially modified args
+            modified_validated = replace(validated, validated_args=args)
+            return await self._raw_execute(modified_validated, usage=usage)
+
+        if cap is not None:
+            # before_tool_execute
+            args = await cap.before_tool_execute(ctx, call=call, args=validated.validated_args)
+
+            # wrap_tool_execute wraps the execution
+            tool_result = await cap.wrap_tool_execute(ctx, call=call, args=args, handler=do_execute)
+
+            # after_tool_execute
+            tool_result = await cap.after_tool_execute(ctx, call=call, args=args, result=tool_result)
+        else:
+            tool_result = await do_execute(validated.validated_args)
+
+        return tool_result
 
     async def validate_tool_call(
         self,
@@ -264,13 +336,25 @@ class ToolManager(Generic[AgentDepsT]):
             ctx = self._build_tool_context(
                 call, tool, allow_partial=allow_partial, approved=approved, metadata=metadata
             )
-            validated_args = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial)
+
+            validated_args = await self._run_validate_hooks(call, tool, ctx, allow_partial=allow_partial)
             return ValidatedToolCall(
                 call=call,
                 tool=tool,
                 ctx=ctx,
                 args_valid=True,
                 validated_args=validated_args,
+                validation_error=None,
+            )
+        except SkipToolValidation as e:
+            if tool is None:
+                raise ValueError('Cannot skip validation for unknown tool')  # pragma: no cover
+            return ValidatedToolCall(
+                call=call,
+                tool=tool,
+                ctx=ctx,
+                args_valid=True,
+                validated_args=e.validated_args,
                 validation_error=None,
             )
         except (ValidationError, ModelRetry) as e:
@@ -334,7 +418,7 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         usage: RunUsage | None = None,
     ) -> Any:
-        """Execute a validated tool call without tracing.
+        """Execute a validated tool call without tracing, with capability hooks.
 
         Raises ToolRetryError if validation previously failed or the tool raises ModelRetry.
         Raises UnexpectedModelBehavior if max retries exceeded.
@@ -349,6 +433,25 @@ class ToolManager(Generic[AgentDepsT]):
 
         if validated.tool.tool_def.kind == 'external':
             raise RuntimeError('External tools cannot be called')
+
+        try:
+            tool_result = await self._run_execute_hooks(validated, usage=usage)
+        except SkipToolExecution as e:
+            if usage is not None:
+                usage.tool_calls += 1
+            return e.result
+
+        return tool_result
+
+    async def _raw_execute(
+        self,
+        validated: ValidatedToolCall[AgentDepsT],
+        *,
+        usage: RunUsage | None = None,
+    ) -> Any:
+        """Execute a validated tool call without hooks or tracing."""
+        assert validated.tool is not None
+        assert validated.validated_args is not None
 
         name = validated.call.tool_name
         try:

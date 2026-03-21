@@ -284,7 +284,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     self.is_model_request_node(node) or self.is_call_tools_node(node)
                 ):
                     async with node.stream(agent_run.ctx) as stream:
-                        await event_stream_handler(_agent_graph.build_run_context(agent_run.ctx), stream)
+                        run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+                        wrapped = await agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
+                        await event_stream_handler(run_ctx, wrapped)
 
         assert agent_run.result is not None, 'The graph run did not finish properly'
         return agent_run.result
@@ -549,10 +551,20 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets=toolsets,
             builtin_tools=builtin_tools,
         ) as agent_run:
+            # Handle wrap_run short-circuit: result is already available
+            if agent_run.result is not None:
+                graph_ctx = agent_run.ctx
+                yield StreamedRunResult(
+                    graph_ctx.state.message_history,
+                    graph_ctx.deps.new_message_index,
+                    run_result=agent_run.result,
+                )
+                yielded = True
+
             first_node = agent_run.next_node  # start with the first node
             assert isinstance(first_node, _agent_graph.UserPromptNode)  # the first node should be a user prompt node
-            node = first_node
-            while True:
+            node: _agent_graph.AgentNode[Any, Any] = first_node
+            while not yielded:
                 graph_ctx = agent_run.ctx
                 if self.is_model_request_node(node):
                     async with node.stream(graph_ctx) as stream:
@@ -568,12 +580,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     final_result_event = event
                                     break
 
+                        run_ctx = _agent_graph.build_run_context(graph_ctx)
+                        wrapped = await graph_ctx.deps.root_capability.wrap_run_event_stream(
+                            run_ctx, stream=stream_to_final(stream)
+                        )
                         if event_stream_handler is not None:
-                            await event_stream_handler(
-                                _agent_graph.build_run_context(graph_ctx), stream_to_final(stream)
-                            )
+                            await event_stream_handler(run_ctx, wrapped)
                         else:
-                            async for _ in stream_to_final(stream):
+                            async for _ in wrapped:
                                 pass
 
                         if final_result_event is not None:
@@ -637,7 +651,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             break
                 elif self.is_call_tools_node(node) and event_stream_handler is not None:
                     async with node.stream(agent_run.ctx) as stream:
-                        await event_stream_handler(_agent_graph.build_run_context(agent_run.ctx), stream)
+                        run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+                        wrapped = await agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
+                        await event_stream_handler(run_ctx, wrapped)
 
                 next_node = await agent_run.next(node)
                 if isinstance(next_node, End) and agent_run.result is not None:
