@@ -2314,12 +2314,8 @@ class TestWebSearchCapability:
         from pydantic_ai.models.function import FunctionModel
         from pydantic_ai.profiles import ModelProfile
 
-        cap = WebSearch(allowed_domains=['example.com'])
-        assert cap._requires_builtin() is True
-        assert cap.get_toolset() is None  # Local suppressed
-
         model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
-        agent = Agent(model, capabilities=[cap])
+        agent = Agent(model, capabilities=[WebSearch(allowed_domains=['example.com'])])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
 
@@ -2327,6 +2323,11 @@ class TestWebSearchCapability:
         """WebSearch(builtin=False, local=False) → UserError at construction."""
         with pytest.raises(UserError, match='both builtin and local cannot be False'):
             WebSearch(builtin=False, local=False)
+
+    def test_websearch_builtin_false_with_constraints_raises(self):
+        """WebSearch(builtin=False, allowed_domains=...) → UserError at construction."""
+        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
+            WebSearch(builtin=False, allowed_domains=['example.com'])
 
     def test_websearch_local_callable(self):
         """WebSearch(local=some_function) → bare callable wrapped in Tool."""
@@ -2350,11 +2351,15 @@ class TestWebFetchCapability:
         assert isinstance(builtins[0], WebFetchTool)
         assert cap.get_toolset() is not None
 
-    def test_webfetch_requires_builtin_with_constraints(self):
-        """WebFetch(blocked_domains=...) → requires builtin."""
-        cap = WebFetch(blocked_domains=['evil.com'])
-        assert cap._requires_builtin() is True
-        assert cap.get_toolset() is None
+    def test_webfetch_requires_builtin_with_constraints(self, allow_model_requests: None):
+        """WebFetch(blocked_domains=...) with non-supporting model → UserError."""
+        from pydantic_ai.models.function import FunctionModel
+        from pydantic_ai.profiles import ModelProfile
+
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebFetch(blocked_domains=['evil.com'])])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('fetch')
 
 
 class TestImageGenerationCapability:
@@ -2430,11 +2435,15 @@ class TestMCPCapability:
         assert isinstance(cap.local, MCPServerStreamableHTTP)
         assert cap.local.headers == {'Authorization': 'Bearer xyz'}
 
-    def test_mcp_requires_builtin_with_allowed_tools(self):
-        """MCP(allowed_tools=...) → requires builtin."""
-        cap = MCP(url='https://mcp.example.com/api', allowed_tools=['tool1'])
-        assert cap._requires_builtin() is True
-        assert cap.get_toolset() is None
+    def test_mcp_requires_builtin_with_allowed_tools(self, allow_model_requests: None):
+        """MCP(allowed_tools=...) with non-supporting model → UserError."""
+        from pydantic_ai.models.function import FunctionModel
+        from pydantic_ai.profiles import ModelProfile
+
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[MCP(url='https://mcp.example.com/api', allowed_tools=['tool1'])])
+        with pytest.raises(UserError, match='not supported'):
+            agent.run_sync('use mcp')
 
     def test_mcp_url_required(self):
         """MCP without url raises TypeError."""

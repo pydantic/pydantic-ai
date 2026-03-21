@@ -56,6 +56,12 @@ class BuiltinToolCapability(AbstractCapability[AgentDepsT], ABC):
         elif callable(self.local) and not isinstance(self.local, (Tool, AbstractToolset)):
             self.local = Tool(self.local)
 
+        # Catch contradictory config: builtin disabled but constraint fields require it
+        if self.builtin is False and self._requires_builtin():
+            raise UserError(
+                f'{type(self).__name__}: constraint fields require the builtin tool, but builtin=False'
+            )
+
     # --- Subclass hooks ---
 
     @abstractmethod
@@ -88,6 +94,7 @@ class BuiltinToolCapability(AbstractCapability[AgentDepsT], ABC):
     def get_builtin_tools(self) -> Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]]:
         if self.builtin is False:
             return []
+        # After __post_init__, builtin is AbstractBuiltinTool | BuiltinToolFunc (not bool True)
         return [self.builtin]  # type: ignore[list-item]
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
@@ -98,6 +105,7 @@ class BuiltinToolCapability(AbstractCapability[AgentDepsT], ABC):
         from pydantic_ai.toolsets.function import FunctionToolset
         from pydantic_ai.toolsets.prepared import PreparedToolset
 
+        # local is Tool | AbstractToolset after __post_init__ resolution
         toolset: AbstractToolset[AgentDepsT] = local if isinstance(local, AbstractToolset) else FunctionToolset([local])  # pyright: ignore[reportUnknownVariableType]
 
         if self.builtin is not False:

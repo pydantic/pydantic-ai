@@ -91,7 +91,7 @@ class MCP(BuiltinToolCapability[AgentDepsT]):
         if self.authorization_token:
             local_headers['Authorization'] = self.authorization_token
 
-        # Transport detection per _mcp_server_discriminator (mcp.py:1319-1324)
+        # Transport detection matching _mcp_server_discriminator() in pydantic_ai.mcp
         if self.url.endswith('/sse'):
             from pydantic_ai.mcp import MCPServerSSE
 
@@ -102,5 +102,6 @@ class MCP(BuiltinToolCapability[AgentDepsT]):
         return MCPServerStreamableHTTP(self.url, headers=local_headers or None)
 
     def _requires_builtin(self) -> bool:
-        # allowed_tools and description are builtin-only features
-        return bool(self.allowed_tools or self.description)
+        # allowed_tools is a genuine constraint the local fallback can't enforce;
+        # description is just metadata and degrades gracefully
+        return bool(self.allowed_tools)

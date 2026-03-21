@@ -797,8 +797,7 @@ class Model(ABC):
             # Error only for unsupported builtins that have no local fallback
             without_fallback = unsupported_ids - fallback_ids
             if without_fallback:
-                unfallbacked = [t for t in unsupported_builtins if t.unique_id in without_fallback]
-                unsupported_names = [type(t).__name__ for t in unfallbacked]
+                unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
                 supported_names = [t.__name__ for t in supported_types]
                 raise UserError(
                     f'Builtin tool(s) {unsupported_names} not supported by this model. Supported: {supported_names}'
