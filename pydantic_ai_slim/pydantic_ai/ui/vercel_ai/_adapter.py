@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
+from pydantic_ai._utils import is_str_dict as _is_str_dict
+
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -107,18 +109,6 @@ def _generate_message_id(
         return f'{msg.run_id}-{message_index}'
     ts_str = msg.timestamp.isoformat() if msg.timestamp else ''
     return str(uuid.uuid5(uuid.NAMESPACE_OID, f'{ts_str}-{msg.kind}-{role}-{message_index}'))
-
-
-def _safe_args_as_dict(part: ToolCallPart | BuiltinToolCallPart) -> dict[str, Any] | str:
-    """Safely convert tool call args to dict, falling back to JSON string on parse failure.
-
-    In practice, incomplete tool calls don't reach dump_messages(), but this provides
-    defensive handling for edge cases like interrupted streaming or invalid JSON.
-    """
-    try:
-        return part.args_as_dict()
-    except (ValueError, AssertionError):
-        return part.args_as_json_str()
 
 
 @dataclass
@@ -326,8 +316,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         if isinstance(args, str):
                             try:
                                 parsed = json.loads(args)
-                                if isinstance(parsed, dict):
-                                    args = cast(dict[str, Any], parsed)
+                                if _is_str_dict(parsed):
+                                    args = parsed
                             except json.JSONDecodeError:
                                 pass
                         elif isinstance(args, dict) or args is None:
@@ -548,7 +538,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             ToolOutputDeniedPart(
                                 type=tool_name,
                                 tool_call_id=part.tool_call_id,
-                                input=_safe_args_as_dict(part),
+                                input=part.args_as_dict(),
                                 provider_executed=True,
                                 call_provider_metadata=combined_provider_meta,
                                 approval=ToolApprovalResponded(
@@ -568,7 +558,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             ToolOutputErrorPart(
                                 type=tool_name,
                                 tool_call_id=part.tool_call_id,
-                                input=_safe_args_as_dict(part),
+                                input=part.args_as_dict(),
                                 error_text=error_text,
                                 provider_executed=True,
                                 call_provider_metadata=combined_provider_meta,
@@ -579,7 +569,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             ToolOutputAvailablePart(
                                 type=tool_name,
                                 tool_call_id=part.tool_call_id,
-                                input=_safe_args_as_dict(part),
+                                input=part.args_as_dict(),
                                 output=tool_return_output(builtin_return),
                                 provider_executed=True,
                                 call_provider_metadata=combined_provider_meta,
@@ -593,7 +583,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         ToolInputAvailablePart(
                             type=tool_name,
                             tool_call_id=part.tool_call_id,
-                            input=_safe_args_as_dict(part),
+                            input=part.args_as_dict(),
                             provider_executed=True,
                             call_provider_metadata=call_provider_metadata,
                         )
@@ -623,7 +613,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     ToolOutputDeniedPart(
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
-                        input=_safe_args_as_dict(part),
+                        input=part.args_as_dict(),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
                         approval=ToolApprovalResponded(
@@ -638,7 +628,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     ToolOutputErrorPart(
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
-                        input=_safe_args_as_dict(part),
+                        input=part.args_as_dict(),
                         error_text=tool_result.model_response_str(),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
@@ -649,7 +639,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     ToolOutputAvailablePart(
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
-                        input=_safe_args_as_dict(part),
+                        input=part.args_as_dict(),
                         output=tool_return_output(tool_result),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
@@ -662,7 +652,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 ToolOutputErrorPart(
                     type=tool_type,
                     tool_call_id=part.tool_call_id,
-                    input=_safe_args_as_dict(part),
+                    input=part.args_as_dict(),
                     error_text=tool_result.model_response(),
                     provider_executed=False,
                     call_provider_metadata=call_provider_metadata,
@@ -673,7 +663,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 ToolInputAvailablePart(
                     type=tool_type,
                     tool_call_id=part.tool_call_id,
-                    input=_safe_args_as_dict(part),
+                    input=part.args_as_dict(),
                     provider_executed=False,
                     call_provider_metadata=call_provider_metadata,
                 )
