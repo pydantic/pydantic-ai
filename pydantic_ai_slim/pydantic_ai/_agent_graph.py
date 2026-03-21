@@ -394,9 +394,15 @@ async def _prepare_request_parameters(
         output_schema.template if isinstance(output_schema, _output.StructuredTextOutputSchema) else None
     )
 
+    all_tool_defs = list(ctx.deps.tool_manager.tool_defs)
+
+    # Let capabilities filter/modify tool definitions
+    run_context = build_run_context(ctx)
+    all_tool_defs = await ctx.deps.root_capability.prepare_tools(run_context, all_tool_defs)
+
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
-    for tool_def in ctx.deps.tool_manager.tool_defs:
+    for tool_def in all_tool_defs:
         if tool_def.kind == 'output':
             output_tools.append(tool_def)
         else:
@@ -405,7 +411,6 @@ async def _prepare_request_parameters(
     # resolve dynamic builtin tools
     builtin_tools: list[AbstractBuiltinTool] = []
     if ctx.deps.builtin_tools:
-        run_context = build_run_context(ctx)
         for tool in ctx.deps.builtin_tools:
             if isinstance(tool, AbstractBuiltinTool):
                 builtin_tools.append(tool)

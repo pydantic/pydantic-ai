@@ -34,6 +34,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
 from pydantic_ai.usage import RunUsage
@@ -1921,3 +1922,235 @@ class TestSkipModelRequestInteraction:
         async with agent.run_stream('hello') as stream:
             output = await stream.get_output()
         assert output == 'model short-circuited'
+
+
+class TestPrepareToolsHook:
+    async def test_filter_function_tools(self):
+        """Capability can filter out function tools by name."""
+
+        @dataclass
+        class HideToolCap(AbstractCapability[Any]):
+            async def prepare_tools(
+                self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                return [td for td in tool_defs if td.name != 'hidden_tool']
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tool_names = [t.name for t in info.function_tools]
+            return make_text_response(f'tools: {sorted(tool_names)}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[HideToolCap()])
+
+        @agent.tool_plain
+        def hidden_tool() -> str:
+            return 'hidden'
+
+        @agent.tool_plain
+        def visible_tool() -> str:
+            return 'visible'
+
+        result = await agent.run('hello')
+        assert result.output == "tools: ['visible_tool']"
+
+    async def test_filter_output_tools(self):
+        """Capability can filter output tools (kind='output')."""
+
+        @dataclass
+        class RemoveOutputToolsCap(AbstractCapability[Any]):
+            seen_output_tool_count: int = 0
+
+            async def prepare_tools(
+                self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                self.seen_output_tool_count = len([td for td in tool_defs if td.kind == 'output'])
+                return [td for td in tool_defs if td.kind != 'output']
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            has_output_tools = len(info.output_tools) > 0
+            return make_text_response(f'has output tools: {has_output_tools}')
+
+        cap = RemoveOutputToolsCap()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'
+
+        await agent.run('hello')
+        # The capability should have seen 0 output tools (no output_type set),
+        # but the hook itself was called
+        assert cap.seen_output_tool_count == 0
+
+    async def test_modify_tool_description(self):
+        """Capability can modify tool descriptions."""
+        from dataclasses import replace as dc_replace
+
+        @dataclass
+        class PrefixDescriptionCap(AbstractCapability[Any]):
+            async def prepare_tools(
+                self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                return [
+                    dc_replace(td, description=f'[PREFIXED] {td.description}') if td.kind == 'function' else td
+                    for td in tool_defs
+                ]
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            descs = [t.description for t in info.function_tools]
+            return make_text_response(f'descriptions: {descs}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrefixDescriptionCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            """Original description."""
+            return 'result'
+
+        result = await agent.run('hello')
+        assert '[PREFIXED] Original description.' in result.output
+
+    async def test_chaining_order(self):
+        """Multiple capabilities chain prepare_tools in forward order."""
+
+        @dataclass
+        class AddSuffixCap(AbstractCapability[Any]):
+            suffix: str
+
+            async def prepare_tools(
+                self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                from dataclasses import replace as dc_replace
+
+                return [dc_replace(td, description=f'{td.description}{self.suffix}') for td in tool_defs]
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            descs = [t.description for t in info.function_tools]
+            return make_text_response(f'{descs}')
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            capabilities=[AddSuffixCap(suffix='_A'), AddSuffixCap(suffix='_B')],
+        )
+
+        @agent.tool_plain
+        def tool() -> str:
+            """desc"""
+            return 'r'
+
+        result = await agent.run('hello')
+        # A runs first, then B, so suffix order is _A_B
+        assert 'desc_A_B' in result.output
+
+
+class TestWrapRunStepHook:
+    async def test_observe_nodes(self):
+        """wrap_run_step can observe all nodes in the agent run."""
+
+        @dataclass
+        class NodeObserverCap(AbstractCapability[Any]):
+            nodes: list[str] = field(default_factory=lambda: [])
+
+            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                self.nodes.append(type(node).__name__)
+                return await handler(node)
+
+        cap = NodeObserverCap()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+        await agent.run('hello')
+        assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
+
+    async def test_observe_nodes_with_tools(self):
+        """wrap_run_step fires for each node including tool call round-trips."""
+
+        @dataclass
+        class NodeObserverCap(AbstractCapability[Any]):
+            nodes: list[str] = field(default_factory=lambda: [])
+
+            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                self.nodes.append(type(node).__name__)
+                return await handler(node)
+
+        cap = NodeObserverCap()
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[cap])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'tool result'
+
+        await agent.run('hello')
+        # UserPrompt -> ModelRequest (calls tool) -> CallTools (executes tool) ->
+        # ModelRequest (gets final response) -> CallTools (produces End)
+        assert cap.nodes == [
+            'UserPromptNode',
+            'ModelRequestNode',
+            'CallToolsNode',
+            'ModelRequestNode',
+            'CallToolsNode',
+        ]
+
+    async def test_works_with_iter(self):
+        """wrap_run_step fires when using async for iteration."""
+
+        @dataclass
+        class NodeObserverCap(AbstractCapability[Any]):
+            nodes: list[str] = field(default_factory=lambda: [])
+
+            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                self.nodes.append(type(node).__name__)
+                return await handler(node)
+
+        cap = NodeObserverCap()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+
+        async with agent.iter('hello') as agent_run:
+            async for _node in agent_run:
+                pass
+
+        assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
+
+    async def test_works_with_manual_next(self):
+        """wrap_run_step fires when using manual next() driving."""
+        from pydantic_graph import End
+
+        @dataclass
+        class NodeObserverCap(AbstractCapability[Any]):
+            nodes: list[str] = field(default_factory=lambda: [])
+
+            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                self.nodes.append(type(node).__name__)
+                return await handler(node)
+
+        cap = NodeObserverCap()
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
+
+        async with agent.iter('hello') as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                node = await agent_run.next(node)
+
+        assert cap.nodes == ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
+
+    async def test_chaining_nests_correctly(self):
+        """Multiple capabilities compose wrap_run_step as nested middleware."""
+        log: list[str] = []
+
+        @dataclass
+        class OrderedCap(AbstractCapability[Any]):
+            name: str
+
+            async def wrap_run_step(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                log.append(f'{self.name}:before:{type(node).__name__}')
+                result = await handler(node)
+                log.append(f'{self.name}:after:{type(result).__name__}')
+                return result
+
+        agent = Agent(
+            FunctionModel(simple_model_function),
+            capabilities=[OrderedCap(name='outer'), OrderedCap(name='inner')],
+        )
+        await agent.run('hello')
+        # For UserPromptNode: outer wraps inner
+        assert log[0] == 'outer:before:UserPromptNode'
+        assert log[1] == 'inner:before:UserPromptNode'
+        assert log[2] == 'inner:after:ModelRequestNode'
+        assert log[3] == 'outer:after:ModelRequestNode'

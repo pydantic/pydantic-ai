@@ -183,8 +183,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """Advance to the next node automatically based on the last returned node."""
         if self._result_override is not None:
             raise StopAsyncIteration
-        task = await anext(self._graph_run)
-        return self._task_to_node(task)
+        next_node = self.next_node
+        if isinstance(next_node, End):
+            raise StopAsyncIteration
+        return await self.next(next_node)
 
     def _task_to_node(
         self, task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTaskRequest]
@@ -278,12 +280,19 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
-        task = [self._node_to_task(node)]
-        try:
-            task = await self._graph_run.next(task)
-        except StopAsyncIteration:
-            pass
-        return self._task_to_node(task)
+        run_context = _agent_graph.build_run_context(self.ctx)
+
+        async def _step_handler(
+            n: _agent_graph.AgentNode[AgentDepsT, OutputDataT],
+        ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
+            task = [self._node_to_task(n)]
+            try:
+                task = await self._graph_run.next(task)
+            except StopAsyncIteration:
+                pass
+            return self._task_to_node(task)
+
+        return await self.ctx.deps.root_capability.wrap_run_step(run_context, node=node, handler=_step_handler)
 
     # TODO (v2): Make this a property
     def usage(self) -> _usage.RunUsage:

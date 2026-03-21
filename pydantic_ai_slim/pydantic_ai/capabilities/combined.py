@@ -8,14 +8,17 @@ from pydantic_ai import _instructions, _system_prompt
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
-from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, RunContext
+from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetFunc
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from .abstract import AbstractCapability, BeforeModelRequestContext
 
 if TYPE_CHECKING:
+    from pydantic_ai import _agent_graph
+    from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
+    from pydantic_graph import End
 
 
 @dataclass
@@ -77,6 +80,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             builtin_tools.extend(capability.get_builtin_tools() or [])
         return builtin_tools
 
+    # --- Tool preparation hook ---
+
+    async def prepare_tools(
+        self,
+        ctx: RunContext[AgentDepsT],
+        tool_defs: list[ToolDefinition],
+    ) -> list[ToolDefinition]:
+        for capability in self.capabilities:
+            tool_defs = await capability.prepare_tools(ctx, tool_defs)
+        return tool_defs
+
     # --- Run lifecycle hooks ---
 
     async def before_run(
@@ -106,6 +120,21 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for cap in reversed(self.capabilities):
             chain = _make_run_wrap(cap, ctx, chain)
         return await chain()
+
+    async def wrap_run_step(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+        handler: Callable[
+            [_agent_graph.AgentNode[AgentDepsT, Any]],
+            Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+        ],
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        chain = handler
+        for cap in reversed(self.capabilities):
+            chain = _make_run_step_wrap(cap, ctx, chain)
+        return await chain(node)
 
     # --- Event stream hook ---
 
@@ -267,6 +296,25 @@ def _make_tool_validate_wrap(
 ) -> Callable[[str | dict[str, Any]], Awaitable[dict[str, Any]]]:
     async def wrapped(args: str | dict[str, Any]) -> dict[str, Any]:
         return await cap.wrap_tool_validate(ctx, call=call, args=args, handler=inner)
+
+    return wrapped
+
+
+def _make_run_step_wrap(
+    cap: AbstractCapability[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    inner: Callable[
+        [_agent_graph.AgentNode[AgentDepsT, Any]],
+        Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+    ],
+) -> Callable[
+    [_agent_graph.AgentNode[AgentDepsT, Any]],
+    Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+]:
+    async def wrapped(
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        return await cap.wrap_run_step(ctx, node=node, handler=inner)
 
     return wrapped
 

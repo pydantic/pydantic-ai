@@ -10,11 +10,15 @@ from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, RunContext
+from pydantic_ai.tools import AgentDepsT, BuiltinToolFunc, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetFunc
 
 if TYPE_CHECKING:
+    from pydantic_ai import _agent_graph
+    from pydantic_ai.agent.abstract import AgentModelSettings
+    from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
+    from pydantic_graph import End
 
 
 @dataclass
@@ -88,7 +92,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return static instructions to include in the system prompt, or None."""
         return None
 
-    def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
+    def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         """Return model settings to merge into the agent's defaults, or None.
 
         Return a static `ModelSettings` dict when the settings are known at agent
@@ -109,6 +113,22 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_builtin_tools(self) -> Sequence[AbstractBuiltinTool | BuiltinToolFunc[AgentDepsT]]:
         """Return builtin tools to register with the agent."""
         return []
+
+    # --- Tool preparation hook ---
+
+    async def prepare_tools(
+        self,
+        ctx: RunContext[AgentDepsT],
+        tool_defs: list[ToolDefinition],
+    ) -> list[ToolDefinition]:
+        """Filter or modify tool definitions visible to the model for this step.
+
+        The list contains all tool kinds (function, output, unapproved) distinguished
+        by [`tool_def.kind`][pydantic_ai.tools.ToolDefinition.kind]. Return a filtered
+        or modified list. Called after the agent-level
+        [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] has already run.
+        """
+        return tool_defs
 
     # --- Run lifecycle hooks ---
 
@@ -135,6 +155,28 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     ) -> AgentRunResult[Any]:
         """Wraps the entire agent run. handler() executes the run."""
         return await handler()
+
+    async def wrap_run_step(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        node: _agent_graph.AgentNode[AgentDepsT, Any],
+        handler: Callable[
+            [_agent_graph.AgentNode[AgentDepsT, Any]],
+            Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+        ],
+    ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+        """Wraps execution of each agent graph node (run step).
+
+        Called for every node in the agent graph (``UserPromptNode``,
+        ``ModelRequestNode``, ``CallToolsNode``).  ``handler(node)`` executes
+        the node and returns the next node (or ``End``).
+
+        Override to inspect or modify nodes before execution, inspect or modify
+        the returned next node, call ``handler`` multiple times (retry), or
+        return a different node to redirect graph progression.
+        """
+        return await handler(node)
 
     # --- Event stream hook ---
 
