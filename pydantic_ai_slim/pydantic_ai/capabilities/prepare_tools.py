@@ -15,8 +15,6 @@ class PrepareTools(AbstractCapability[AgentDepsT]):
     allowing it to be composed with other capabilities via the capability system.
 
     ```python
-    from dataclasses import replace
-
     from pydantic_ai import Agent, RunContext
     from pydantic_ai.capabilities import PrepareTools
     from pydantic_ai.tools import ToolDefinition

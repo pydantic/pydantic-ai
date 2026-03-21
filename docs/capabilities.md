@@ -22,6 +22,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`ModelSettings`][pydantic_ai.capabilities.ModelSettings] | Static or dynamic model settings |
 | [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model thinking/reasoning mode |
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Registers the web search [builtin tool](builtin-tools.md) |
+| [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies tool definitions per step |
 | [`Toolset`][pydantic_ai.capabilities.Toolset] | Wraps an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] |
 | [`HistoryProcessor`][pydantic_ai.capabilities.HistoryProcessor] | Wraps a [history processor](message-history.md) |
 
@@ -48,9 +49,35 @@ To build your own capability, subclass [`AbstractCapability`][pydantic_ai.capabi
 
 ### Providing configuration
 
-The simplest capabilities just provide static configuration:
+The simplest capabilities just provide static configuration. Here's a `KnowsCurrentTime` capability that injects the current time into the system prompt:
 
 ```python {title="custom_capability_config.py"}
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass
+class KnowsCurrentTime(AbstractCapability[Any]):
+    """Tells the agent what time it is."""
+
+    def get_instructions(self):
+        return f'The current date and time is {datetime.now().isoformat()}.'
+
+
+agent = Agent(TestModel(), capabilities=[KnowsCurrentTime()])
+result = agent.run_sync('What time is it?')
+print(result.output)
+#> success (no tool calls)
+```
+
+A capability that provides tools can return a pre-built [toolset](toolsets.md) from [`get_toolset`][pydantic_ai.capabilities.AbstractCapability.get_toolset]:
+
+```python {title="custom_capability_tools.py"}
 from dataclasses import dataclass
 from typing import Any
 
@@ -60,66 +87,52 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 
 
-@dataclass
-class KnowsCurrentTime(AbstractCapability[Any]):
-    """A capability that tells the agent what time it is."""
+def _add(a: float, b: float) -> float:
+    """Add two numbers."""
+    return a + b
 
-    def get_instructions(self):
-        from datetime import datetime
 
-        return f'The current date and time is {datetime.now().isoformat()}.'
+def _multiply(a: float, b: float) -> float:
+    """Multiply two numbers."""
+    return a * b
+
+
+_math_toolset = FunctionToolset(tools=[_add, _multiply])
 
 
 @dataclass
 class MathTools(AbstractCapability[Any]):
-    """A capability that provides math tools."""
+    """Provides basic math operations."""
 
     def get_toolset(self):
-        toolset = FunctionToolset()
-
-        @toolset.tool_plain
-        def add(a: float, b: float) -> float:
-            """Add two numbers."""
-            return a + b
-
-        @toolset.tool_plain
-        def multiply(a: float, b: float) -> float:
-            """Multiply two numbers."""
-            return a * b
-
-        return toolset
+        return _math_toolset
 
 
-agent = Agent(
-    TestModel(),
-    capabilities=[
-        KnowsCurrentTime(),
-        MathTools(),
-    ],
-)
+agent = Agent(TestModel(), capabilities=[MathTools()])
 result = agent.run_sync('What is 2 + 3?')
 print(result.output)
-#> {"add":0.0,"multiply":0.0}
+#> {"_add":0.0,"_multiply":0.0}
 ```
 
-The configuration methods are:
+The full set of configuration methods:
 
 | Method | Return type | Purpose |
 |---|---|---|
-| [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`Instructions`][pydantic_ai._instructions.AgentInstructions] ` \| None` | System prompt additions (static strings, [template strings](#template-instructions), or callables) |
+| [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai._instructions.AgentInstructions] ` \| None` | System prompt additions (static strings, [template strings](#template-instructions), or callables) |
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.abstract.AgentModelSettings] ` \| None` | Model settings dict, or a callable for [per-step settings](#dynamic-model-settings) |
-| [`get_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_toolset] | [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] ` \| None` | A [toolset](toolsets.md) to register with the agent |
+| [`get_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_toolset] | [`AgentToolset`][pydantic_ai.toolsets.AgentToolset] ` \| None` | A [toolset](toolsets.md) to register with the agent |
 | [`get_builtin_tools()`][pydantic_ai.capabilities.AbstractCapability.get_builtin_tools] | `Sequence[AbstractBuiltinTool]` | [Builtin tools](builtin-tools.md) to register |
 
 ### Template instructions
 
 Instructions can use Handlebars-style templates that are rendered against the agent's [dependencies](dependencies.md) at runtime:
 
-```python {title="template_instructions.py" test="skip"}
+```python {title="template_instructions.py"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, TemplateStr
 from pydantic_ai.capabilities import Instructions
+from pydantic_ai.models.test import TestModel
 
 
 @dataclass
@@ -129,19 +142,22 @@ class UserProfile:
 
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-20250514',
+    TestModel(),
     deps_type=UserProfile,
     capabilities=[
         Instructions(TemplateStr('You are assisting {{name}}, who is a {{role}}.')),
     ],
 )
+result = agent.run_sync('hello', deps=UserProfile(name='Alice', role='engineer'))
+print(result.output)
+#> success (no tool calls)
 ```
 
 Template strings are automatically detected (by the presence of `{{`) when loading from [spec files](#agent-specs).
 
 ### Dynamic model settings
 
-When model settings need to vary per step, return a callable from `get_model_settings()`:
+When model settings need to vary per step — for example, enabling thinking only on retry — return a callable from [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings]:
 
 ```python {title="dynamic_settings.py"}
 from dataclasses import dataclass
@@ -153,21 +169,19 @@ from pydantic_ai.settings import ModelSettings
 
 
 @dataclass
-class AdaptiveTokenLimit(AbstractCapability[None]):
-    """Increases max_tokens on retries."""
-
-    base_tokens: int = 4096
+class ThinkingOnRetry(AbstractCapability[None]):
+    """Enables thinking mode when the agent is retrying."""
 
     def get_model_settings(self):
-        base = self.base_tokens
-
         def resolve(ctx: RunContext[None]) -> ModelSettings:
-            return ModelSettings(max_tokens=base * (ctx.run_step + 1))
+            if ctx.run_step > 1:
+                return ModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 5000})
+            return ModelSettings()
 
         return resolve
 
 
-agent = Agent(TestModel(), capabilities=[AdaptiveTokenLimit()])
+agent = Agent(TestModel(), capabilities=[ThinkingOnRetry()])
 result = agent.run_sync('hello')
 print(result.output)
 #> success (no tool calls)
@@ -177,52 +191,98 @@ The callable receives a [`RunContext`][pydantic_ai.tools.RunContext] where `ctx.
 
 ## Lifecycle hooks
 
-Capabilities can hook into four lifecycle points, each with three variants:
+Capabilities can hook into four lifecycle points, each with up to three variants:
 
 * **`before_*`** — fires before the action, can modify inputs
-* **`after_*`** — fires after the action (in reverse order), can modify outputs
+* **`after_*`** — fires after the action (in reverse capability order), can modify outputs
 * **`wrap_*`** — full middleware control: receives a `handler` callable and decides whether/how to call it
+
+### Short-circuit exceptions
+
+Before diving into the individual hooks, it's worth knowing about three exceptions that allow `before_*` and `wrap_*` hooks to short-circuit the normal flow:
+
+| Exception | Raised in | Effect |
+|---|---|---|
+| [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] | `before_model_request`, `wrap_model_request` | Skips the model call, uses the provided `ModelResponse` instead |
+| [`SkipToolValidation(validated_args)`][pydantic_ai.exceptions.SkipToolValidation] | `before_tool_validate`, `wrap_tool_validate` | Skips argument validation, uses the provided `dict` as validated args |
+| [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] | `before_tool_execute`, `wrap_tool_execute` | Skips tool execution, uses the provided value as the tool result |
 
 ### Run hooks
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| `before_run` | `(ctx) -> None` | Observe-only notification that a run is starting |
-| `after_run` | `(ctx, *, result) -> AgentRunResult` | Modify the final result |
-| `wrap_run` | `(ctx, *, handler) -> AgentRunResult` | Wrap the entire run |
+| [`before_run`][pydantic_ai.capabilities.AbstractCapability.before_run] | `(ctx: RunContext) -> None` | Observe-only notification that a run is starting |
+| [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run] | `(ctx: RunContext, *, result: AgentRunResult) -> AgentRunResult` | Modify the final result |
+| [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] | `(ctx: RunContext, *, handler: () -> AgentRunResult) -> AgentRunResult` | Wrap the entire run |
 
-### Run step hooks
+### Node hooks
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| `wrap_node_run` | `(ctx, *, node, handler) -> AgentNode \| End` | Wrap each graph node execution |
+| [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run] | `(ctx: RunContext, *, node: AgentNode, handler: (AgentNode) -> AgentNode \| End) -> AgentNode \| End` | Wrap each graph node execution |
 
-The `wrap_node_run` hook fires for every node in the agent graph (`UserPromptNode`, `ModelRequestNode`, `CallToolsNode`). The `handler` executes the node and returns the next node. Override this to observe node transitions, add logging, or modify graph progression.
+The [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run] hook fires for every node in the [agent graph](agent.md#iterating-over-an-agents-graph) ([`UserPromptNode`][pydantic_ai._agent_graph.UserPromptNode], [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode], [`CallToolsNode`][pydantic_ai._agent_graph.CallToolsNode]). The `handler` executes the node and returns the next node (or [`End`][pydantic_graph.nodes.End]). Override this to observe node transitions, add per-step logging, or modify graph progression:
+
+```python {title="node_logging_example.py"}
+from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass
+class NodeLogger(AbstractCapability[Any]):
+    """Logs each node that executes during a run."""
+
+    nodes: list[str] = field(default_factory=lambda: [])
+
+    async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+        self.nodes.append(type(node).__name__)
+        return await handler(node)
+
+
+logger = NodeLogger()
+agent = Agent(TestModel(), capabilities=[logger])
+agent.run_sync('hello')
+print(logger.nodes)
+#> ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
+```
 
 ### Model request hooks
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| `before_model_request` | `(ctx, request_context) -> ModelRequestContext` | Modify messages, settings, or parameters before the model call |
-| `after_model_request` | `(ctx, *, response) -> ModelResponse` | Modify the model's response |
-| `wrap_model_request` | `(ctx, *, request_context, handler) -> ModelResponse` | Wrap the model call |
+| [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] | `(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext` | Modify messages, settings, or parameters before the model call |
+| [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] | `(ctx: RunContext, *, response: ModelResponse) -> ModelResponse` | Modify the model's response |
+| [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] | `(ctx: RunContext, *, request_context: ModelRequestContext, handler: (ModelRequestContext) -> ModelResponse) -> ModelResponse` | Wrap the model call |
 
 [`ModelRequestContext`][pydantic_ai.capabilities.ModelRequestContext] bundles `messages`, `model_settings`, and `model_request_parameters` into a single object, making the signature future-proof.
 
 ### Tool hooks
 
+Tool processing has two phases: **validation** (parsing and validating the model's JSON arguments against the tool's schema) and **execution** (running the tool function). Each phase has its own hooks:
+
+**Validation hooks** — `args` is the raw `str | dict[str, Any]` from the model before validation, or the validated `dict[str, Any]` after:
+
 | Hook | Signature | Purpose |
 |---|---|---|
-| `before_tool_validate` | `(ctx, *, call, args) -> args` | Modify raw args before validation (e.g. JSON repair) |
-| `after_tool_validate` | `(ctx, *, call, args) -> args` | Modify validated args |
-| `wrap_tool_validate` | `(ctx, *, call, args, handler) -> args` | Wrap validation |
-| `before_tool_execute` | `(ctx, *, call, args) -> args` | Modify args before execution |
-| `after_tool_execute` | `(ctx, *, call, args, result) -> result` | Modify execution result |
-| `wrap_tool_execute` | `(ctx, *, call, args, handler) -> result` | Wrap execution |
+| [`before_tool_validate`][pydantic_ai.capabilities.AbstractCapability.before_tool_validate] | `(ctx, *, call: ToolCallPart, args: str \| dict) -> str \| dict` | Modify raw args before validation (e.g. JSON repair) |
+| [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate] | `(ctx, *, call: ToolCallPart, args: dict) -> dict` | Modify validated args |
+| [`wrap_tool_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_validate] | `(ctx, *, call: ToolCallPart, args: str \| dict, handler) -> dict` | Wrap the validation step |
+
+**Execution hooks** — `args` is always the validated `dict[str, Any]`:
+
+| Hook | Signature | Purpose |
+|---|---|---|
+| [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute] | `(ctx, *, call: ToolCallPart, args: dict) -> dict` | Modify args before execution |
+| [`after_tool_execute`][pydantic_ai.capabilities.AbstractCapability.after_tool_execute] | `(ctx, *, call: ToolCallPart, args: dict, result: Any) -> Any` | Modify execution result |
+| [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute] | `(ctx, *, call: ToolCallPart, args: dict, handler) -> Any` | Wrap execution |
 
 ### Tool preparation
 
-In addition to the lifecycle hooks above, capabilities can filter or modify which tools the model sees on each step via [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools]:
+Capabilities can filter or modify which tool definitions the model sees on each step via [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools]. This controls tool **visibility**, not execution — use execution hooks for that.
 
 ```python {title="prepare_tools_example.py"}
 from dataclasses import dataclass
@@ -236,7 +296,7 @@ from pydantic_ai.tools import ToolDefinition
 
 @dataclass
 class HideDangerousTools(AbstractCapability[Any]):
-    """Hides tools matching certain names unless explicitly enabled."""
+    """Hides tools matching certain name prefixes from the model."""
 
     hidden_prefixes: tuple[str, ...] = ('delete_', 'drop_')
 
@@ -265,106 +325,63 @@ result = agent.run_sync('hello')
 # The model only sees `read_file`, not `delete_file`
 ```
 
-The list includes all tool kinds (function, output, unapproved) — use `tool_def.kind` to distinguish. This hook runs after the agent-level [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc].
+The list includes all tool kinds (function, output, unapproved) — use `tool_def.kind` to distinguish. This hook runs after the agent-level [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc]. For simple cases, the built-in [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] capability wraps a callable without needing a custom subclass.
 
 ### Event stream hook
 
-For streamed runs, capabilities can observe or transform the event stream:
+For streamed runs ([`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream], [UI event streams](ui/overview.md)), capabilities can observe or transform the event stream:
 
 | Hook | Signature | Purpose |
 |---|---|---|
-| `wrap_run_event_stream` | `(ctx, *, stream) -> AsyncIterable[AgentStreamEvent]` | Observe, filter, or transform streamed events |
+| [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] | `(ctx, *, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterable[AgentStreamEvent]` | Observe, filter, or transform streamed events |
 
-## Example: building a guardrail
-
-A guardrail is a capability that uses hooks to enforce safety rules. Here's one that blocks tool calls to certain tools:
-
-```python {title="guardrail_example.py"}
-from dataclasses import dataclass, field
+```python {title="event_stream_example.py" test="skip"}
+from collections.abc import AsyncIterable
+from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import SkipToolExecution
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelResponse,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-)
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import AgentStreamEvent, PartStartEvent, TextPart
 
 
 @dataclass
-class ToolApprovalGuardrail(AbstractCapability[Any]):
-    """Blocks tool calls that aren't in the allowed set."""
+class StreamLogger(AbstractCapability[Any]):
+    """Logs text parts as they stream."""
 
-    allowed_tools: set[str] = field(default_factory=set)
-
-    async def before_tool_execute(
+    async def wrap_run_event_stream(
         self,
         ctx: RunContext[Any],
         *,
-        call: ToolCallPart,
-        args: dict[str, Any],
-    ) -> dict[str, Any]:
-        if self.allowed_tools and call.tool_name not in self.allowed_tools:
-            raise SkipToolExecution(result=f'Tool {call.tool_name!r} is not allowed.')
-        return args
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
+        async def _wrap():
+            async for event in stream:
+                if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                    print(f'Streaming text: {event.part.content!r}')
+                yield event
 
-
-def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    for msg in messages:
-        for part in msg.parts:
-            if isinstance(part, ToolReturnPart):
-                return ModelResponse(parts=[TextPart(content=f'Tool said: {part.content}')])
-    if info.function_tools:
-        tool = info.function_tools[0]
-        return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{}', tool_call_id='c1')])
-    return ModelResponse(parts=[TextPart(content='no tools')])
-
-
-agent = Agent(
-    FunctionModel(model_fn),
-    capabilities=[ToolApprovalGuardrail(allowed_tools={'safe_tool'})],
-)
-
-
-@agent.tool_plain
-def dangerous_tool() -> str:
-    return 'this should not run'
-
-
-result = agent.run_sync('do something')
-print(result.output)
-#> Tool said: Tool 'dangerous_tool' is not allowed.
+        return _wrap()
 ```
 
-The three `Skip*` exceptions ([`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest], [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation], [`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution]) let `before_*` and `wrap_*` hooks short-circuit the normal flow with a replacement value.
+## Example: building a guardrail
 
-## Example: building a cost tracker
+A guardrail is a capability that intercepts model requests or responses to enforce safety rules. Here's one that scans model responses for potential PII and redacts it:
 
-A cost tracker demonstrates the `wrap_*` pattern — wrapping the run to observe the outcome and accumulating state across model requests:
-
-```python {title="cost_tracker_example.py"}
+```python {title="guardrail_example.py"}
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.run import AgentRunResult
 
 
 @dataclass
-class CostTracker(AbstractCapability[Any]):
-    """Tracks token usage across model requests."""
-
-    total_input_tokens: int = 0
-    total_output_tokens: int = 0
-    request_count: int = 0
+class PIIRedactionGuardrail(AbstractCapability[Any]):
+    """Redacts email addresses and phone numbers from model responses."""
 
     async def after_model_request(
         self,
@@ -372,26 +389,80 @@ class CostTracker(AbstractCapability[Any]):
         *,
         response: ModelResponse,
     ) -> ModelResponse:
-        if response.usage:
-            self.total_input_tokens += response.usage.input_tokens or 0
-            self.total_output_tokens += response.usage.output_tokens or 0
-        self.request_count += 1
+        for part in response.parts:
+            if isinstance(part, TextPart):
+                # Redact email addresses
+                part.content = re.sub(
+                    r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
+                    '[EMAIL REDACTED]',
+                    part.content,
+                )
+                # Redact phone numbers (simple US pattern)
+                part.content = re.sub(
+                    r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b',
+                    '[PHONE REDACTED]',
+                    part.content,
+                )
         return response
 
-    async def after_run(
+
+agent = Agent(TestModel(), capabilities=[PIIRedactionGuardrail()])
+result = agent.run_sync('hello')
+print(result.output)
+#> success (no tool calls)
+```
+
+## Example: building a logging middleware
+
+The `wrap_*` pattern is useful when you need to observe or time both the input and output of an operation. Here's a capability that logs every model request and tool call:
+
+```python {title="logging_middleware_example.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities.abstract import ModelRequestContext
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass
+class VerboseLogging(AbstractCapability[Any]):
+    """Logs model requests and tool executions."""
+
+    async def wrap_model_request(
         self,
         ctx: RunContext[Any],
         *,
-        result: AgentRunResult[Any],
-    ) -> AgentRunResult[Any]:
+        request_context: ModelRequestContext,
+        handler: Any,
+    ) -> ModelResponse:
+        print(f'  Model request (step {ctx.run_step}, {len(request_context.messages)} messages)')
+        #>   Model request (step 1, 1 messages)
+        response = await handler(request_context)
+        print(f'  Model response: {len(response.parts)} parts')
+        #>   Model response: 1 parts
+        return response
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        args: dict[str, Any],
+        handler: Any,
+    ) -> Any:
+        print(f'  Tool call: {call.tool_name}({args})')
+        result = await handler(args)
+        print(f'  Tool result: {result!r}')
         return result
 
 
-tracker = CostTracker()
-agent = Agent(TestModel(), capabilities=[tracker])
+agent = Agent(TestModel(), capabilities=[VerboseLogging()])
 result = agent.run_sync('hello')
-print(f'Requests: {tracker.request_count}')
-#> Requests: 1
+print(f'Output: {result.output}')
+#> Output: success (no tool calls)
 ```
 
 ## Composition
@@ -477,7 +548,7 @@ Capabilities in specs support three forms:
 
 ### Custom capabilities in specs
 
-To make your custom capability work with specs, ensure it has a [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name] (defaults to the class name) and a [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] that accepts serializable arguments:
+To make a custom capability work with specs, it needs a [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name] (defaults to the class name) and a constructor that accepts serializable arguments. The default [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] implementation calls `cls(*args, **kwargs)`, so for simple dataclasses no override is needed:
 
 ```python {title="custom_spec_capability.py" test="skip"}
 from dataclasses import dataclass
@@ -493,10 +564,6 @@ class RateLimit(AbstractCapability[Any]):
 
     rpm: int = 60
 
-    @classmethod
-    def from_spec(cls, rpm: int = 60) -> 'RateLimit':
-        return cls(rpm=rpm)
-
 
 # In YAML: `- RateLimit: {rpm: 30}`
 # In Python:
@@ -506,7 +573,9 @@ agent = Agent.from_spec(
 )
 ```
 
-Pass custom capability types via [`custom_capability_types`][pydantic_ai.Agent.from_spec] so the spec resolver can find them.
+Override [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] only when the constructor takes non-serializable types (like callables) or when you need to transform the spec arguments into a different constructor signature.
+
+Pass custom capability types via the `custom_capability_types` parameter so the spec resolver can find them.
 
 ### `AgentSpec`
 
@@ -516,8 +585,8 @@ The [`AgentSpec`][pydantic_ai.agent.spec.AgentSpec] model represents the full sp
 |---|---|---|
 | `model` | `str` | Model name (required) |
 | `name` | `str \| None` | Agent name |
-| `description` | `str \| None` | Agent description (supports templates) |
-| `instructions` | `str \| list[str] \| None` | System prompt instructions (supports templates) |
+| `description` | [`TemplateStr`][pydantic_ai.TemplateStr] ` \| str \| None` | Agent description (supports templates) |
+| `instructions` | [`TemplateStr`][pydantic_ai.TemplateStr] ` \| str \| list \| None` | System prompt instructions (supports templates) |
 | `model_settings` | `dict \| None` | Model settings |
 | `capabilities` | `list[CapabilitySpec]` | Capabilities |
 | `retries` | `int` | Default tool retries |
