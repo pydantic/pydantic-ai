@@ -66,6 +66,8 @@ class OllamaProvider(Provider[AsyncOpenAI]):
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_thinking_field='reasoning',
+            supports_json_schema_output=True,
+            supports_json_object_output=True,
         ).update(profile)
 
     def __init__(

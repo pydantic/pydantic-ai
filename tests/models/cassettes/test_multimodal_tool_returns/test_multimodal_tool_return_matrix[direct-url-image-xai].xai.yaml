@@ -1,0 +1,158 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a image file, then describe
+            what you received.
+        role: ROLE_USER
+      model: grok-4-1-fast-non-reasoning
+      tools:
+      - function:
+          name: get_file
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      CloKVgpUVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGltYWdlIGZpbGUs
+      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAESG2dyb2stNC0xLWZhc3Qtbm9uLXJl
+      YXNvbmluZ4oBUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAi
+      cHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
+  response_sample:
+    json:
+      id: f84e16f6-07aa-6d70-13a3-379ea15e730b
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_13503873
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_file
+              arguments: '{}'
+      created: '2026-02-09T18:40:48.848629889Z'
+      model: grok-4-1-fast-non-reasoning
+      system_fingerprint: fp_9bb3d5b553
+      usage:
+        completion_tokens: 15
+        prompt_tokens: 359
+        total_tokens: 374
+        prompt_text_tokens: 359
+        cached_prompt_text_tokens: 158
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_file
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiRmODRlMTZmNi0wN2FhLTZkNzAtMTNhMy0zNzllYTE1ZTczMGISKwgEGicQAhojCg1jYWxsXzEz
+      NTAzODczEAEYAVIOCghnZXRfZmlsZRICe30qDAiw1KjMBhCBodSUAzIbZ3Jvay00LTEtZmFzdC1u
+      b24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIDxDnAhj2AiDnAjieAVjg9yFaYxABLTMzMz86
+      AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
+      cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a image file, then describe
+            what you received.
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_13503873
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: get_file
+            arguments: '{}'
+      - content:
+        - text: See file 6a18c6.
+        role: ROLE_TOOL
+      - content:
+        - text: 'This is file 6a18c6:'
+        - image_url:
+            image_url: https://www.gstatic.com/webp/gallery3/1.png
+            detail: DETAIL_AUTO
+        role: ROLE_USER
+      model: grok-4-1-fast-non-reasoning
+      tools:
+      - function:
+          name: get_file
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      CloKVgpUVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGltYWdlIGZpbGUs
+      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzEzNTAz
+      ODczEAEYAVIOCghnZXRfZmlsZRICe30KFgoSChBTZWUgZmlsZSA2YTE4YzYuEAUKTQoWChRUaGlz
+      IGlzIGZpbGUgNmExOGM2OgoxEi8KK2h0dHBzOi8vd3d3LmdzdGF0aWMuY29tL3dlYnAvZ2FsbGVy
+      eTMvMS5wbmcQARABEhtncm9rLTQtMS1mYXN0LW5vbi1yZWFzb25pbmeKAVEKTwoIZ2V0X2ZpbGUi
+      Q3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRpZXMiOiB7fSwgInR5cGUi
+      OiAib2JqZWN0In2SAQIIAQ==
+  response_sample:
+    json:
+      id: 14544c79-f3b4-2cce-59d4-650984043cce
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: The file 6a18c6 contains a high-resolution close-up photograph
+            of a vibrant orange-yellow rose flower. The rose is in full bloom with
+            layered petals that transition from deep orange at the edges to softer
+            yellow tones toward the center. Several water droplets are visible on
+            the petals, particularly clustered on the upper petals, glistening as
+            if freshly rained on. The stem and a few green leaves are included in
+            the frame, extending from the bottom right. The background features a
+            blurred, multicolored gradient (greens, oranges, and browns) that creates
+            a soft bokeh effect, emphasizing the flower as the focal point. The overall
+            style is artistic and macro-style photography with warm, saturated colors.
+          role: ROLE_ASSISTANT
+      created: '2026-02-09T18:40:49.674066859Z'
+      model: grok-4-1-fast-non-reasoning
+      system_fingerprint: fp_9bb3d5b553
+      usage:
+        completion_tokens: 139
+        prompt_tokens: 665
+        total_tokens: 804
+        prompt_text_tokens: 409
+        prompt_image_tokens: 256
+        cached_prompt_text_tokens: 359
+      settings:
+        parallel_tool_calls: true
+        temperature: 0.7
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_file
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+        top_p: 0.95
+    raw: !!binary |
+      CiQxNDU0NGM3OS1mM2I0LTJjY2UtNTlkNC02NTA5ODQwNDNjY2USzwUIAxrKBQrFBVRoZSBmaWxl
+      IDZhMThjNiBjb250YWlucyBhIGhpZ2gtcmVzb2x1dGlvbiBjbG9zZS11cCBwaG90b2dyYXBoIG9m
+      IGEgdmlicmFudCBvcmFuZ2UteWVsbG93IHJvc2UgZmxvd2VyLiBUaGUgcm9zZSBpcyBpbiBmdWxs
+      IGJsb29tIHdpdGggbGF5ZXJlZCBwZXRhbHMgdGhhdCB0cmFuc2l0aW9uIGZyb20gZGVlcCBvcmFu
+      Z2UgYXQgdGhlIGVkZ2VzIHRvIHNvZnRlciB5ZWxsb3cgdG9uZXMgdG93YXJkIHRoZSBjZW50ZXIu
+      IFNldmVyYWwgd2F0ZXIgZHJvcGxldHMgYXJlIHZpc2libGUgb24gdGhlIHBldGFscywgcGFydGlj
+      dWxhcmx5IGNsdXN0ZXJlZCBvbiB0aGUgdXBwZXIgcGV0YWxzLCBnbGlzdGVuaW5nIGFzIGlmIGZy
+      ZXNobHkgcmFpbmVkIG9uLiBUaGUgc3RlbSBhbmQgYSBmZXcgZ3JlZW4gbGVhdmVzIGFyZSBpbmNs
+      dWRlZCBpbiB0aGUgZnJhbWUsIGV4dGVuZGluZyBmcm9tIHRoZSBib3R0b20gcmlnaHQuIFRoZSBi
+      YWNrZ3JvdW5kIGZlYXR1cmVzIGEgYmx1cnJlZCwgbXVsdGljb2xvcmVkIGdyYWRpZW50IChncmVl
+      bnMsIG9yYW5nZXMsIGFuZCBicm93bnMpIHRoYXQgY3JlYXRlcyBhIHNvZnQgYm9rZWggZWZmZWN0
+      LCBlbXBoYXNpemluZyB0aGUgZmxvd2VyIGFzIHRoZSBmb2NhbCBwb2ludC4gVGhlIG92ZXJhbGwg
+      c3R5bGUgaXMgYXJ0aXN0aWMgYW5kIG1hY3JvLXN0eWxlIHBob3RvZ3JhcGh5IHdpdGggd2FybSwg
+      c2F0dXJhdGVkIGNvbG9ycy4QAioMCLHUqMwGEKvjtcECMhtncm9rLTQtMS1mYXN0LW5vbi1yZWFz
+      b25pbmc6DWZwXzliYjNkNWI1NTNKFgiLARCZBRikBiCZAyiAAjjnAlik3VpaYxABLTMzMz86AggB
+      QlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRp
+      ZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
